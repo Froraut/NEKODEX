@@ -2,6 +2,7 @@ const { createServer } = require("node:http");
 const { createHash, randomBytes, timingSafeEqual } = require("node:crypto");
 const { validateNativeUsageSample } = require("./usage-store.cjs");
 
+const { assertTaskObservation } = require("./task-observation.cjs");
 const { isTaskModel } = require("./browser-task-ledger.cjs");
 const { READINESS_CODES } = require("./admission-failure-copy.cjs");
 
@@ -250,6 +251,10 @@ class BrowserControlServer {
       if (body.connectorBound !== undefined && typeof body.connectorBound !== "boolean") {
         throw new Error("connectorBound is invalid");
       }
+      if (body.observation !== undefined) {
+        if (request.url !== '/v1/turn/progress') throw new Error('Task observation requires exact progress owner');
+        assertTaskObservation(body.observation);
+      }
       if (body.toolProof !== undefined && (request.url !== "/v1/turn/end" || !body.toolProof
         || typeof body.toolProof !== "object" || Array.isArray(body.toolProof)
         || Object.keys(body.toolProof).length !== 1 || typeof body.toolProof.tool !== "string"
@@ -492,7 +497,7 @@ class BrowserControlServer {
         writeJson(response, 200, { ok: true, ...result }); return;
       } else if (request.url === '/v1/turn/progress') {
         const result = await this.reconcileAutomaticMutation('progress', body, () => {
-          host.taskProgress(body.traceId, body.helperPid, body.surfaceId, body.taskPhase, body.sequence);
+          host.taskProgress(body.traceId, body.helperPid, body.surfaceId, body.taskPhase, body.sequence, body.observation);
           return { ok: true };
         });
         writeJson(response, 200, result); return;

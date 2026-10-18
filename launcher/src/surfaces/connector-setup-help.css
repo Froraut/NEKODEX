@@ -1,0 +1,15 @@
+.nk-connector-help-entry { margin-block: var(--space-2); }
+.nk-connector-help { width: min(680px, 100%); max-height: calc(100dvh - var(--space-8)); overflow: auto; overscroll-behavior: contain; }
+.nk-connector-help__scope { overflow-wrap: anywhere; }
+.nk-connector-help__guide { display: grid; gap: var(--space-3); margin-top: var(--space-4); }
+.nk-connector-help__guide h3 { margin: 0; color: var(--text-primary); font-size: 16px; line-height: 24px; }
+.nk-connector-help__figure { margin: 0; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-panel); }
+.nk-connector-help__art { display: block; width: 100%; aspect-ratio: 4.5; background: var(--text-accent); mask-size: contain; mask-position: center; mask-repeat: no-repeat; -webkit-mask-size: contain; -webkit-mask-position: center; -webkit-mask-repeat: no-repeat; }
+.nk-connector-help__labels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); margin: var(--space-2) 0 0; padding: 0; list-style: none; color: var(--text-primary); font-size: 12px; line-height: 18px; text-align: center; }
+.nk-connector-help__labels li { overflow-wrap: anywhere; }
+.nk-connector-help__figure figcaption { margin-top: var(--space-3); color: var(--text-tertiary); font-size: 12px; line-height: 18px; }
+.nk-connector-help__steps { display: grid; gap: var(--space-3); margin: 0; padding-inline-start: var(--space-5); }
+.nk-connector-help__proof { margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--border); color: var(--text-secondary); }
+@media (max-width: 420px) {
+  .nk-connector-help__labels { gap: var(--space-2); font-size: 11px; line-height: 16px; }
+}

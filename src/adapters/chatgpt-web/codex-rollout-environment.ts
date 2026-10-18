@@ -60,6 +60,23 @@ export function verifyNativeDelegation(codexHome: string, threadId: string, turn
   } finally { closeSync(fd); }
 }
 
+/** Metadata-only proof for the task inspector. It neither recovers environment nor scans transcripts. */
+export function verifyCurrentCodexObservationIdentity(codexHome: string, identity: RolloutIdentity, turnId: string): boolean {
+  if (!CODEX_ID.test(identity.threadId) || !CODEX_ID.test(turnId)
+    || ("parentThreadId" in identity && !CODEX_ID.test(identity.parentThreadId))) return false;
+  try {
+    const indexed = indexedRollout(configuredSqliteHome(codexHome), identity);
+    if (indexed.kind !== "found") return false;
+    const filename = validateRolloutPath(codexHome, indexed.path, identity.threadId);
+    const fd = openSync(filename, "r");
+    try {
+      const size = fstatSync(fd).size;
+      validateSessionMeta(firstRolloutRecord(fd, size), identity);
+      return latestTurnContext(fd, size, 1024 * 1024)?.turn_id === turnId;
+    } finally { closeSync(fd); }
+  } catch { return false; }
+}
+
 const CODEX_ID_SOURCE = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const CODEX_ID = new RegExp(`^${CODEX_ID_SOURCE}$`, "i");
 const ROLLOUT_READ_CHUNK_BYTES = 64 * 1024;
@@ -224,7 +241,7 @@ function firstRolloutRecord(fd: number, size: number): Record<string, unknown> {
   throw new Error("Codex rollout has no complete session metadata record");
 }
 
-function latestTurnContext(fd: number, size: number): Record<string, unknown> | undefined {
+function latestTurnContext(fd: number, size: number, maxBytes = Number.POSITIVE_INFINITY): Record<string, unknown> | undefined {
   let position = size;
   let carry = Buffer.alloc(0);
   let firstSegmentAtEof = true;
@@ -234,8 +251,8 @@ function latestTurnContext(fd: number, size: number): Record<string, unknown> | 
     return readSync(fd, byte, 0, 1, size - 1) === 1 && byte[0] === 0x0a;
   })();
 
-  while (position > 0) {
-    const length = Math.min(ROLLOUT_READ_CHUNK_BYTES, position);
+  while (position > 0 && size - position < maxBytes) {
+    const length = Math.min(ROLLOUT_READ_CHUNK_BYTES, position, maxBytes - (size - position));
     position -= length;
     const chunk = Buffer.alloc(length);
     const count = readSync(fd, chunk, 0, length, position);
@@ -260,6 +277,7 @@ function latestTurnContext(fd: number, size: number): Record<string, unknown> | 
       throw new Error("Codex rollout JSONL record exceeds the bounded record size");
     }
   }
+  if (position > 0) return undefined;
   if (carry.length === 0) return undefined;
   const item = parseJsonLine(carry);
   return item.type === "turn_context" ? record(item.payload) : undefined;

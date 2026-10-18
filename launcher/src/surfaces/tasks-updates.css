@@ -104,3 +104,34 @@
   line-height: 20px;
 }
 .updates-source { margin: var(--space-4) 0 0; color: var(--text-tertiary); font-size: 13px; line-height: 18px; }
+
+/* Task details retain the row's actions and account identity while exposing bounded receipts. */
+.task-history-filters { grid-template-columns: minmax(0, 1fr) minmax(0, 150px) minmax(0, 170px) minmax(0, 160px) auto; }
+.task-details { grid-column: 1 / -1; min-width: 0; }
+.task-details__section + .task-details__section { padding-top: var(--space-4); margin-top: var(--space-4); border-top: 1px solid var(--border-light); }
+.task-details__section h3 { margin: 0 0 var(--space-2); font-size: 14px; line-height: 20px; font-weight: 600; }
+.task-details__section p, .task-details__section ul, .task-details__section ol { margin-block: var(--space-2); color: var(--text-secondary); font-size: 13px; line-height: 20px; }
+.task-details__facts { display: grid; grid-template-columns: minmax(100px, 150px) minmax(0, 1fr); gap: var(--space-1) var(--space-4); margin: var(--space-2) 0; font-size: 13px; line-height: 20px; }
+.task-details__facts dt { color: var(--text-tertiary); }
+.task-details__facts dd { margin: 0; min-width: 0; }
+.task-details code { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.task-details__receipts { padding-inline-start: var(--space-5); }
+.task-details__receipts li { padding-bottom: var(--space-2); }
+.task-details__receipts span { display: block; color: var(--text-tertiary); }
+.task-details__records { list-style: none; padding: 0; display: grid; gap: var(--space-3); }
+.task-details__records li { min-width: 0; overflow-wrap: anywhere; }
+.task-details__badges { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-block: var(--space-1); }
+.task-details__section .task-details__muted { color: var(--text-tertiary); }
+.task-details__capabilities { padding-inline-start: var(--space-5); }
+@container workspace (max-width: 1000px) {
+  .task-history-filters { grid-template-columns: repeat(3, minmax(0, 1fr)) auto; }
+  .task-history-filters > .task-history-search { grid-column: 1 / -1; }
+}
+@container workspace (max-width: 600px) {
+  .task-history-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .task-details__facts { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .task-details__facts dd { margin-bottom: var(--space-2); }
+}
+@container workspace (max-width: 480px) {
+  .task-history-filters { grid-template-columns: minmax(0, 1fr); }
+}

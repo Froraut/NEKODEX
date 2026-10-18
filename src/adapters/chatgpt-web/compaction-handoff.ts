@@ -1,3 +1,4 @@
+import { verifiedTaskObservationForRequest } from "./task-observation-native";
 import { withCompactionAbort } from "./compaction-lifecycle";
 import { CompactionCheckpointStore, type CompactionCheckpoint } from "./compaction-checkpoint-store";
 import type { CodexParsedRequest } from "../../types";
@@ -101,6 +102,9 @@ export async function requestRetainedCompactionHandoff(
     });
     browser = worker.run({
       traceId,
+      observation: { ...verifiedTaskObservationForRequest(parsed), lineage: [{ kind: "compaction", observedAt: Date.now(),
+        ...(source.traceId ? { sourceTraceId: source.traceId } : {}),
+        ...(source.nativeTurnId ? { fromId: source.nativeTurnId } : {}) }] },
       modelId: parsed.modelId,
       reasoning: parsed.options.reasoning,
       // The retained connector exposes only the one-shot control token embedded above. It does

@@ -8,6 +8,7 @@ import type { Copy } from "./i18n";
 import type { Language, LogRecord } from "./types";
 import { humanEvent } from "./log-format";
 import { activityCopy } from "./activity-copy";
+import { SupportReportButton } from "./SupportReportButton";
 import "./surfaces/activity.css";
 const api = window.codexWebLauncher;
 const ActivityUsage = memo(UsageDashboard);
@@ -89,6 +90,8 @@ export function ActivitySurface({
         title={copy.activityTitle}
         subtitle={copy.activitySubtitle}
         actions={(
+          <>
+          <SupportReportButton language={language} disabled={transitionBusy || exporting} onError={setError} />
           <Button
             icon="external"
             busy={exporting}
@@ -101,6 +104,7 @@ export function ActivitySurface({
           >
             {copy.exportSafeLog}
           </Button>
+          </>
         )}
       />
       {/* The event log comes first (layouts.md "Activity"); usage statistics are the second view. */}

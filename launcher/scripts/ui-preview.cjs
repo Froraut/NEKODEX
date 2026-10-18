@@ -6,6 +6,7 @@
 // benefits-repair-success, benefits-repair-failure, browser-ui-signed-out, browser-ui-ready, browser-ui-error,
 // browser-ui-home-loading, browser-ui-manual (a Manual mode turn waiting for the user to send its prompt),
 // picker-refresh (the Web model list changed: restart Codex, then confirm its picker again).
+// task-observability adds bounded synthetic lineage, worker, tool, skill and delivery receipts.
 // passkey-retry-pending (Retry waits for a host operation; Cancel must still settle that operation).
 // startup-loading (the first snapshot waits; Try again recovers), startup-slow (a delayed successful launch).
 // Account forms: accounts-ui-ready, accounts-ui-error (first add/save attempt fails).
@@ -51,7 +52,7 @@ function installMockLauncher() {
   }
   const browserUiScenario = scenario.startsWith("browser-ui-");
   const accountsUiScenario = scenario.startsWith("accounts-ui-");
-  const benefitsScenario = scenario.startsWith("benefits-") || browserUiScenario || accountsUiScenario;
+  const benefitsScenario = scenario.startsWith("benefits-") || browserUiScenario || accountsUiScenario || scenario === "task-observability";
   const astraScenario = scenario === "benefits-astra" || scenario === "browser-ui-ready";
   const listeners = {};
   const emit = (name, value) => (listeners[name] || []).forEach((listener) => listener(value));
@@ -213,7 +214,7 @@ function installMockLauncher() {
     return { ...task, canOpen: Boolean(tab), canCancel: tab?.status === "running",
       canDismiss: task.terminal && tab?.status !== "running" };
   });
-  if (scenario === "benefits-portfolio-mixed") {
+  if (scenario === "benefits-portfolio-mixed" || scenario === "task-observability") {
     // Task center: recorded tasks (running, completed, needs attention) and a queue with one row per action kind.
     const time = (value) => Date.parse(at(value));
     browser.tasks = [
@@ -242,6 +243,25 @@ function installMockLauncher() {
           createdAt: time("09:20:00"), position: 0, retryAt: null, ownerConnected: false,
           canCancel: false, canPrioritize: false, canResume: false, canDismiss: true },
       ] };
+    if (scenario === 'task-observability') {
+      const task = browser.tasks[0];
+      task.delivery = [
+        { phase: 'preparing', submission: 'not-sent', observedAt: task.createdAt, sequence: 0 },
+        { phase: 'sending', submission: 'uncertain', observedAt: task.createdAt + 100, sequence: 1 },
+        { phase: 'accepted', submission: 'accepted', observedAt: task.createdAt + 200, sequence: 2 },
+      ];
+      task.observation = { version: 1, observedAt: task.updatedAt, source: 'validated-request',
+        native: { threadId: 'fixture-child-thread', turnId: 'fixture-child-turn', parentThreadId: 'fixture-parent-thread',
+          agentName: '/root/reviewer', source: 'codex-client', state: 'request-observed' },
+        lineage: [{ kind: 'compaction', observedAt: task.createdAt, sourceTraceId: 'fixture-source-trace', fromId: 'fixture-source-turn' },
+          { kind: 'browser-rebind', observedAt: task.updatedAt, fromId: 'fixture-document-a', toId: 'fixture-document-b' }],
+        tools: [{ namespace: 'mcp__fixture', name: 'read', advertised: true, selected: true, observed: 'succeeded', observedAt: task.updatedAt },
+          { namespace: 'mcp__fixture', name: 'status', advertised: true, selected: false, observed: 'unobserved' }],
+        skills: [{ name: 'fixture-review', source: 'codex-selected-skill', contentDigest: 'a'.repeat(64), sourceDigest: 'b'.repeat(64) }],
+        toolsTruncated: false, skillsTruncated: false,
+        toolCounters: { total: 2, succeeded: 1, errors: 0, samples: 1, totalLatencyMs: 100 },
+      };
+    }
   }
   // Admission order for queueAction ("Move to front" raises a row's priority, as the main process does).
   const queuePriority = new Map();
@@ -929,6 +949,13 @@ function installMockLauncher() {
       return { status: "recovered", reason: null };
     },
     logs: async (limit = 300) => fixtureLogs.slice(-Math.max(0, limit)),
+    exportSupportReport: async () => {
+      calls.push(["export-support-report"]);
+      await new Promise(resolve => setTimeout(resolve, 150));
+      if (window.fixtureCancelExport) return null;
+      emitLog({ at: new Date().toISOString(), level: "info", event: "launcher.support_report_exported", detail: {} });
+      return "/fixture/Documents/nekodex-support.json";
+    },
     exportLogs: async () => {
       calls.push(["export-logs"]);
       await new Promise(resolve => setTimeout(resolve, 150));

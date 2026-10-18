@@ -144,6 +144,52 @@ export interface BrowserQueueState {
     ownerConnected: boolean; canCancel: boolean; canPrioritize: boolean; canResume: boolean; canDismiss: boolean }>;
 }
 
+export interface TaskObservation {
+  version: 1;
+  observedAt: number;
+  source: 'validated-request';
+  native?: {
+    threadId: string;
+    turnId: string;
+    parentThreadId?: string;
+    agentName?: string;
+    source: 'codex-client' | 'external-client';
+    state: 'request-observed';
+  };
+  lineage: Array<{
+    kind: 'compaction' | 'checkpoint' | 'browser-rebind' | 'assistant-replacement';
+    observedAt: number;
+    sourceTraceId?: string;
+    fromId?: string;
+    toId?: string;
+  }>;
+  tools: Array<{
+    name: string;
+    namespace?: string;
+    advertised: boolean;
+    selected: boolean;
+    observed: 'unobserved' | 'succeeded';
+    observedAt?: number;
+  }>;
+  skills: Array<{
+    name: string;
+    source: 'codex-selected-skill';
+    sourceDigest?: string;
+    contentDigest: string;
+  }>;
+  toolsTruncated: boolean;
+  skillsTruncated: boolean;
+  toolCounters?: {
+    total: number;
+    succeeded: number;
+    errors: number;
+    samples: number;
+    totalLatencyMs: number;
+    minLatencyMs?: number;
+    maxLatencyMs?: number;
+  };
+}
+
 export interface BrowserTaskState {
   model: string | null;
   id: string; traceId: string; tabId: string; accountId: string; accountName: string;
@@ -152,6 +198,8 @@ export interface BrowserTaskState {
     | 'completed' | 'failed-before-send' | 'send-uncertain' | 'failed-after-send' | 'cancelled' | 'interrupted';
   submission: 'not-sent' | 'unknown' | 'uncertain' | 'context-accepted' | 'accepted';
   terminal: boolean; canOpen: boolean; canCancel: boolean; canDismiss: boolean; retrySafe: boolean;
+  observation?: TaskObservation;
+  delivery?: Array<{ phase: BrowserTaskState['phase']; submission: BrowserTaskState['submission']; observedAt: number; sequence: number }>;
 }
 
 export interface ExistingChromeLoginProgress {
@@ -644,6 +692,7 @@ export interface LauncherApi {
   repairWebRoute(): Promise<{ status: "recovered" | "unavailable"; reason: string | null }>;
   logs(limit?: number): Promise<LogRecord[]>;
   exportLogs(): Promise<string | null>;
+  exportSupportReport(): Promise<string | null>;
   installUpdate(): Promise<boolean>;
   cancelUpdatePreparation(): Promise<CancelUpdatePreparationResult>;
   recheckUpdate(): Promise<UpdateState>;

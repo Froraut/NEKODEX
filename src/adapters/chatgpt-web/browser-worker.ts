@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { boundTaskObservation, taskObservationWithProgress, type TaskObservation } from "./task-observation";
 import { assertChatGptWebInputWithinLimits, assertChatGptWebMultipartInputWithinLimits, resolveChatGptWebMultipartStagingMode } from "./browser-input-policy";
 import { CHATGPT_DOM_REVISION_ATTRIBUTES } from "./browser-dom-revision";
 import { CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS, CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS, ChatGptBrowserObservationTimeoutError, CHATGPT_SEND_ENABLE_GRACE_MS, settleChatGptUi, withChatGptBrowserObservationTimeout } from "./browser-operation-support";
@@ -239,6 +241,7 @@ async function waitForOperationalChatGptViewport(page: Page, signal?: AbortSigna
 }
 
 export interface BrowserTurn {
+  observation?: TaskObservation;
   requestedModel?: string;
   accountRoutingKey?: string;
   traceId: string;
@@ -262,7 +265,7 @@ export interface BrowserTurn {
   /** Observed current-submission receipt/activity; not proof of model understanding or completion. */
   onSubmitted?: () => void | Promise<void>;
   /** Private to the launcher worker. Durable UI evidence; never a provider completion signal. */
-  onTaskProgress?: (phase: 'sending-context' | 'context-accepted' | 'sending' | 'accepted' | 'responding' | 'waiting-tools') => Promise<void>;
+  onTaskProgress?: (phase: 'preparing' | 'sending-context' | 'context-accepted' | 'sending' | 'accepted' | 'responding' | 'waiting-tools') => Promise<void>;
   /** One inert Bigger Context stage completed its exact acknowledgement boundary. */
   onMultipartStageAcknowledged?: (stageIndex: number) => void | Promise<void>;
   /** Visible ChatGPT reasoning-summary step titles only; never hidden chain-of-thought. */
@@ -2254,15 +2257,26 @@ export class ChatGptBrowserWorker {
       heartbeatTimer.unref?.();
       let sequence = lease.taskProgressSequence ?? 0;
       let lastPhase = '';
+      let lastObservation = '';
       const onTaskProgress: BrowserTurn['onTaskProgress'] = async phase => {
-        if (phase === lastPhase) return;
+        const observation = taskObservationWithProgress(turn.observation, turn.externalProgress?.snapshot());
+        if (observation && turn.observation) Object.assign(turn.observation, observation);
+        const bounded = observation ? boundTaskObservation(observation) : undefined;
+        const signature = bounded ? JSON.stringify(bounded) : '';
+        if (phase === lastPhase && signature === lastObservation) return;
         await notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
           phase: 'progress', traceId: turn.traceId, helperPid: process.pid, surfaceId,
-          taskPhase: phase, sequence: ++sequence,
+          taskPhase: phase, sequence: ++sequence, ...(bounded ? { observation: bounded } : {}),
         }, LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS);
-        lastPhase = phase;
+        lastPhase = phase; lastObservation = signature;
       };
-      return await this.runBrowserTurn({ ...turn, onTaskProgress }, surfaceId, undefined, reused);
+      await onTaskProgress('preparing');
+      try {
+        return await this.runBrowserTurn({ ...turn, onTaskProgress }, surfaceId, undefined, reused);
+      } finally {
+        // Capture a last returned tool result even when no further DOM polling occurs.
+        await onTaskProgress((lastPhase || 'preparing') as Parameters<NonNullable<BrowserTurn['onTaskProgress']>>[0]).catch(() => {});
+      }
     } catch (error) {
       originalError = error;
       terminal = error instanceof ChatGptCompactionHandoffAccepted
@@ -2570,6 +2584,10 @@ export class ChatGptBrowserWorker {
             turnConnection = connection.browser;
             page = connection.page;
             diagnosticPage = page;
+            if (turn.observation) {
+              turn.observation.lineage = [...turn.observation.lineage,
+                { kind: "browser-rebind" as const, observedAt: Date.now(), fromId: launcherSurfaceId, toId: launcherSurfaceId }].slice(-16);
+            }
             break;
           } catch (error) {
             if (!turnConnection || !canRetryOwnedPageRebind(error, {
@@ -3072,6 +3090,11 @@ export class ChatGptBrowserWorker {
               ),
             );
             const reboundIdentityChanged = rebound.identity !== responseTurn.identity;
+            if (reboundIdentityChanged && turn.observation) {
+              turn.observation.lineage = [...turn.observation.lineage, { kind: "assistant-replacement" as const, observedAt: Date.now(),
+                fromId: createHash("sha256").update(responseTurn.identity).digest("hex"),
+                toId: createHash("sha256").update(rebound.identity).digest("hex") }].slice(-16);
+            }
             responseTurn = rebound;
             if (reboundIdentityChanged) {
               resetChatGptResponseDomCache(responseDomCache);

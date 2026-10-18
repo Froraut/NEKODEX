@@ -102,6 +102,7 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   repairWebRoute: () => ipcRenderer.invoke("launcher:repair-web-route"),
   logs: (limit) => ipcRenderer.invoke("launcher:logs", limit),
   exportLogs: () => ipcRenderer.invoke("launcher:export-logs"),
+  exportSupportReport: () => ipcRenderer.invoke("launcher:export-support-report"),
   installUpdate: () => ipcRenderer.invoke("launcher:update-install"),
   cancelUpdatePreparation: () => ipcRenderer.invoke("launcher:update-cancel"),
   restartLauncher: () => ipcRenderer.invoke("launcher:restart"),

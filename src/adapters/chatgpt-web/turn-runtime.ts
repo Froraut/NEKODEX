@@ -1,3 +1,4 @@
+import { verifiedTaskObservationForRequest } from "./task-observation-native";
 import { randomBytes } from "node:crypto";
 import { type ChatGptWebCompactionExecution } from "../../chatgpt-web-compaction-policy";
 import { isChatGptWebZeroRiskBackendModel } from "../../chatgpt-web-models";
@@ -305,6 +306,10 @@ export function createChatGptTurnRuntimeFactory(context: ChatGptTurnRuntimeConte
     const automaticLifecycle = () => ({
       accountRoutingKey: chatGptAccountRoutingKey(checkpointInput.parsed),
       traceId,
+      observation: { ...verifiedTaskObservationForRequest(parsed),
+        ...(checkpointInput.applied ? { lineage: [{ kind: "checkpoint" as const, observedAt: Date.now(),
+          ...(checkpointInput.sourceTurnId ? { fromId: checkpointInput.sourceTurnId } : {}),
+          ...(identity.turnId ? { toId: identity.turnId } : {}) }] } : {}) },
       modelId: parsed.modelId,
       requestedModel: parsed.requestedModel,
       reasoning: parsed.options.reasoning,

@@ -4,6 +4,7 @@ import type { Copy } from './i18n';
 import type { AccountPoolSnapshot, BrowserInteractionMode, BrowserState, Language, LauncherSnapshot } from './types';
 import { accountToolsCopy, accountToolsHandoffAccount, accountToolsStep, accountTunnelFor } from './account-tools-onboarding';
 import { Button, Notice, TextField } from './design';
+import { ConnectorSetupHelp } from './ConnectorSetupHelp';
 
 type Account = AccountPoolSnapshot['accounts'][number];
 
@@ -30,10 +31,10 @@ export function AccountToolsOnboarding({ account, copy, language, interactionMod
       else await window.codexWebLauncher!.openExternal(url);
     } catch (error) { onError(error instanceof Error ? error.message : String(error)); }
   };
-  const openApiPanel = async () => {
+  const openApiPanel = async (section: 'tunnels' | 'keys' = 'tunnels') => {
     if (disabled) return;
     onError(null);
-    try { await window.codexWebLauncher!.openOpenAiApiPanel(account.id); }
+    try { await window.codexWebLauncher!.openOpenAiApiPanel(account.id, section); }
     catch (error) { onError(error instanceof Error ? error.message : String(error)); }
   };
   // A recorded tool run on this account's current sign-in replaces the "not confirmed" caveat with the fact.
@@ -52,6 +53,16 @@ export function AccountToolsOnboarding({ account, copy, language, interactionMod
       <Button size="sm" variant="ghost" iconEnd="browser" disabled={disabled}
         onClick={() => void openApiPanel()}>{copy.openAiApiPanel}</Button>
     </div>
+    <ConnectorSetupHelp accountId={account.id} accountLabel={account.accountLabel || account.label}
+      interactionMode={interactionMode} language={language} disabled={disabled}
+      initialTopic={tunnel?.ready ? 'connector' : 'platform'} connectorName={connectorName}
+      connectorLabel={copy.currentSavedConnector} actions={{
+        platform: { label: copy.openAiApiPanel, onOpen: () => void openApiPanel() },
+        tunnel: { label: copy.openAiApiPanel, onOpen: () => void openApiPanel() },
+        key: { label: copy.openKeys, onOpen: () => void openApiPanel('keys') },
+        ...(urls.developerMode ? { developer: { label: copy.openDeveloperMode, onOpen: () => void open(urls.developerMode!, true) } } : {}),
+        connector: { label: copy.openConnectors, onOpen: () => void open(urls.connectors, true), disabled: !connectorName },
+      }} />
     {(step !== 'sign-in' && step !== 'verification' && step !== 'checking') || manual ? <>
       {step !== 'verified' ? <>
         <p>{text.sharedTunnel}</p>

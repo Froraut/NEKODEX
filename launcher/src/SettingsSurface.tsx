@@ -10,6 +10,8 @@ import { RouteDiagnostics } from "./RouteDiagnostics";
 import { workflowCopy } from "./workflow-copy";
 import { APPEARANCE_OPTIONS, appearanceCopy } from "./appearance-copy";
 import { settingsCopy } from "./settings-copy";
+import { SettingsSearch } from "./SettingsSearch";
+import { SupportReportButton, supportReportCopy } from "./SupportReportButton";
 import type { Appearance, BrowserCapacitySettings, BrowserInteractionMode, BrowserState, DoctorReport, Language, LauncherSnapshot, LauncherState, OperationState, ProModelVersion } from "./types";
 import { Button, Disclosure, Mark, Notice, Page, Select, SettingRow, SettingsGroup, SurfaceHeader, Switch, TextField, cx } from "./design";
 import { messageOf, DoctorSummary, InteractionModePicker, ContextBudgetTable, LanguageMenu, ProModelVersionMenu, platformLabel } from './launcher-ui';
@@ -184,6 +186,7 @@ export function SettingsSurface({
   const [turnsCancelled, setTurnsCancelled] = useState<string | null>(null);
   const taskCopy = taskControlCopy[language] ?? taskControlCopy.en;
   const settings = settingsCopy(language);
+  const supportReport = supportReportCopy(language);
   const appearance = appearanceCopy(language);
   const network = workflowCopy(language).network;
   const [integrationRemoved, setIntegrationRemoved] = useState(false);
@@ -329,9 +332,12 @@ export function SettingsSurface({
     <div className="settings-layout" ref={layoutRef}>
       <Page className="settings-page" width="narrow">
         <SurfaceHeader title={devProfile ? copy.devSettingsTitle : copy.settingsTitle} subtitle={copy.settingsSubtitle} />
+        <SettingsSearch surface={layoutRef} language={language} reveal={row => {
+          if (row.closest("#settings-advanced")) flushSync(() => setAdvancedOpen(true));
+        }} />
 
         <SettingsGroup id="settings-agent" title={settings.agent}>
-          <div aria-busy={saving("mode") || undefined} className="settings-block">
+          <div aria-busy={saving("mode") || undefined} className="settings-block" data-settings-search>
             <strong className="nk-type-body-strong">{copy.interactionMode}</strong>
             <InteractionModePicker
               copy={copy}
@@ -340,7 +346,7 @@ export function SettingsSurface({
               onChange={(mode) => void setInteractionMode(mode)}
             />
           </div>
-          <SettingRow
+          <SettingRow data-settings-search
             title={copy.browserCapacity}
             description={<>
               {copy.browserCapacityBody}
@@ -370,7 +376,7 @@ export function SettingsSurface({
               </div>
             )}
           />
-          <SettingRow
+          <SettingRow data-settings-search
             title={copy.manualSubmitTime}
             description={copy.manualSubmitTimeBody}
             control={(
@@ -380,7 +386,7 @@ export function SettingsSurface({
                 options={[30, 60, 120, 180, 300, 600].map(value => ({ value: String(value), label: seconds.format(value) }))} />
             )}
           />
-          <SettingRow
+          <SettingRow data-settings-search
             title={copy.proModelVersion}
             description={copy.proModelVersionBody}
             control={(
@@ -392,14 +398,14 @@ export function SettingsSurface({
               />
             )}
           />
-          <SettingRow
+          <SettingRow data-settings-search
             title={copy.webSubagents}
             description={copy.webSubagentsBody}
             control={<Switch label={copy.webSubagents} checked={snapshot.state.allowWebSubagents}
               busy={saving("webSubagents")} disabled={locked || tasksRunning || !snapshot.state.coreSetupComplete}
               onChange={enabled => void savePreference("webSubagents", () => api!.setWebSubagents(enabled))} />}
           />
-          <SettingRow
+          <SettingRow data-settings-search
             title={copy.savedChats}
             description={copy.savedChatsBody}
             control={<Switch label={copy.savedChats} checked={snapshot.state.useSavedChats}
@@ -409,7 +415,7 @@ export function SettingsSurface({
         </SettingsGroup>
 
         <SettingsGroup id="settings-workspace" title={settings.workspace}>
-          <SettingRow
+          <SettingRow data-settings-search
             title={appearance.title}
             description={appearance.body}
             control={(
@@ -419,7 +425,7 @@ export function SettingsSurface({
                 options={APPEARANCE_OPTIONS.map(option => ({ value: option, label: appearance.options[option] }))} />
             )}
           />
-          <SettingRow
+          <SettingRow data-settings-search
             title={copy.language}
             description={settings.languageBody}
             control={(
@@ -430,34 +436,34 @@ export function SettingsSurface({
             )}
           />
           {!devProfile ? (
-            <SettingRow
+            <SettingRow data-settings-search
               title={copy.launchAtLogin}
               description={copy.launchAtLoginBody}
               control={<Switch label={copy.launchAtLogin} checked={snapshot.state.autoStart} busy={saving("autoStart")} disabled={locked}
                 onChange={(checked) => void savePreference("autoStart", async () => (await api!.setAutostart(checked)).state)} />}
             />
           ) : null}
-          <SettingRow
+          <SettingRow data-settings-search
             title={copy.keepRunningOnClose}
             description={devProfile ? copy.devKeepRunningBody : copy.keepRunningOnCloseBody}
             control={<Switch label={copy.keepRunningOnClose} checked={snapshot.state.keepRunningOnClose} busy={saving("keepRunning")} disabled={locked}
               onChange={(checked) => void savePreference("keepRunning", () => api!.setPreference("keepRunningOnClose", checked))} />}
           />
-          <SettingRow
+          <SettingRow data-settings-search
             title={copy.showDuringTurns}
             description={copy.showDuringTurnsBody}
             control={<Switch label={copy.showDuringTurns} checked={snapshot.state.showBrowserDuringTurns}
               busy={saving("showDuringTurns")} disabled={locked || manual}
               onChange={(checked) => void savePreference("showDuringTurns", () => api!.setPreference("showBrowserDuringTurns", checked))} />}
           />
-          <SettingRow
+          <SettingRow data-settings-search
             title={network.settingTitle}
             description={network.settingBody}
             control={<Switch label={network.settingTitle} checked={snapshot.state.showNetworkIssueNotice !== false}
               busy={saving("networkNotice")} disabled={locked}
               onChange={(checked) => void savePreference("networkNotice", () => api!.setPreference("showNetworkIssueNotice", checked))} />}
           />
-          <SettingRow
+          <SettingRow data-settings-search
             title={copy.passkeyBrowser}
             description={copy.passkeyBrowserBody}
             control={(
@@ -467,7 +473,7 @@ export function SettingsSurface({
                 options={[{ value: "chrome", label: "Google Chrome" }, { value: "firefox", label: "Firefox" }]} />
             )}
           />
-          <SettingRow
+          <SettingRow data-settings-search
             title={copy.toolsConnectionTab}
             description={copy.mcpBody}
             control={(
@@ -477,7 +483,7 @@ export function SettingsSurface({
             )}
           />
           {showChatGpt && browser ? (
-            <SettingRow
+            <SettingRow data-settings-search
               title="ChatGPT"
               description={browser.accountName || browser.accountLabel
                 ? [browser.accountName, browser.accountLabel].filter(Boolean).join(" · ") : undefined}
@@ -524,7 +530,7 @@ export function SettingsSurface({
             title={copy.advancedContext}
           >
             <div className="settings-rows">
-              <SettingRow
+              <SettingRow data-settings-search
                 title={copy.compactionModel}
                 description={copy.compactionModelBody}
                 control={(
@@ -540,7 +546,7 @@ export function SettingsSurface({
                     ]} />
                 )}
               />
-              <SettingRow
+              <SettingRow data-settings-search
                 title={copy.biggerContext}
                 description={manual ? copy.manualBiggerContextUnavailable : copy.biggerContextBody}
                 control={(
@@ -557,14 +563,14 @@ export function SettingsSurface({
                   </div>
                 )}
               />
-              <SettingRow
+              <SettingRow data-settings-search
                 title={copy.skillAttachments}
                 description={manual ? copy.manualSkillAttachmentsUnavailable : copy.skillAttachmentsBody}
                 control={<Switch label={copy.skillAttachments} checked={snapshot.state.experimentalSkillAttachments}
                   busy={saving("skills")} disabled={locked || manual || !snapshot.state.coreSetupComplete}
                   onChange={(checked) => void savePreference("skills", () => api!.setSkillAttachments(checked))} />}
               />
-              <SettingRow
+              <SettingRow data-settings-search
                 title={copy.freshConversation}
                 description={copy.freshConversationBody}
                 control={<Switch label={copy.freshConversation} checked={snapshot.state.experimentalFreshConversationPerTurn}
@@ -633,7 +639,12 @@ export function SettingsSurface({
                 readReport={() => api!.routeDiagnostics()}
               />
             ) : null}
-            <SettingRow
+            <SettingRow data-settings-search
+              title={supportReport.action}
+              description={supportReport.body}
+              control={<SupportReportButton language={language} onError={setError} />}
+            />
+            <SettingRow data-settings-search
               className={cx(doctor && "settings-row--with-result")}
               title={copy.runDoctor}
               description={settings.doctorBody}
@@ -649,14 +660,14 @@ export function SettingsSurface({
             {/* Both destructive rows open the launcher's own confirmation dialog, whose Cancel all / Remove is the
                 confirming (danger) step; the row button is only the first, secondary click. */}
             {!devProfile ? (
-              <SettingRow
+              <SettingRow data-settings-search
                 title={taskCopy.all}
                 description={turnsCancelled ?? taskCopy.detail}
                 control={<Button busy={saving("cancelTurns")} disabled={locked} onClick={() => void cancelTurns()}>{taskCopy.confirm}</Button>}
               />
             ) : null}
             {!devProfile ? (
-              <SettingRow
+              <SettingRow data-settings-search
                 title={copy.uninstallIntegration}
                 description={integrationGone ? copy.integrationRemoved : copy.uninstallIntegrationBody}
                 control={(

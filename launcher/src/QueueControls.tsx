@@ -55,6 +55,43 @@ const historyUnavailableCopy = {
   ko: '이 계정의 작업 기록을 사용할 수 없어 새 작업이 차단되었습니다.',
 };
 
+/** Shared read-only reason projection: no admission state or deadlines are inferred in the renderer. */
+export function queueEntryReason(row: QueueEntry, queue: BrowserQueueState, language: Language, deadlineFormat: Intl.DateTimeFormat): string {
+  const text = copy[language] ?? copy.en;
+  const pauseText = pauseCopy[language] ?? pauseCopy.en;
+  const reasons = queueReasonCopy(language);
+  const labels = new Map(queue.accounts.map(account => [account.id, account.label]));
+  const cancellingText = { en: 'Cancelling before sending', ru: 'Отмена до отправки', 'zh-CN': '正在取消，尚未发送', 'zh-TW': '正在取消，尚未傳送', ja: '送信前にキャンセル中', ko: '전송 전 취소 중' }[language];
+  const failure = failureCopy(language);
+  const cause = causeText(failure, row.cause);
+  const causeAccount = row.causeAccountId && row.causeAccountId !== row.accountId ? labels.get(row.causeAccountId) : undefined;
+  const causeLabel = cause ? `${cause}${causeAccount ? ` (${causeAccount})` : ''}` : null;
+  const failsAt = row.failsAt ? failure.failsAt.replace('{time}', deadlineFormat.format(row.failsAt)) : null;
+  const safety = row.reason ? (reasons.safety as Record<string, string>)[row.reason] : undefined;
+  // A neutral hold names its own reason; a readiness deadline still running behind it stays visible.
+  const hold = row.reason === 'capacity' ? reasons.capacity : row.reason === 'runtime-transition' ? reasons.runtimeTransition
+    : row.reason === 'local-admission' ? reasons.localAdmission : safety ?? null;
+  const withDeadline = (label: string) => causeLabel && row.reason !== 'account-not-ready'
+    ? `${label} · ${reasons.thenCause.replace('{cause}', () => causeLabel)}${failsAt ? ` · ${failsAt}` : ''}` : label;
+  const failedFor = row.failure ? (reasons.failures as Record<string, string>)[row.failure] : undefined;
+  // A row whose owner is back but that was restored after a restart waits for an explicit Resume.
+  return row.status === 'cancelling' ? cancellingText
+    : row.reason === 'owner-reconnect-required' ? (row.status === 'paused' && row.ownerConnected ? text[16] : text[9])
+    : row.reason === 'previous-submission-needs-review' ? withDeadline(text[10])
+      : row.status === 'cancelled' ? text[17]
+      : row.status === 'failed' ? (causeLabel ? `${text[18]}: ${causeLabel}` : failedFor ? `${text[18]}: ${failedFor}` : text[18])
+        : row.status === 'interrupted' ? (row.reason === 'lease-ended' ? reasons.interruptedLease
+    : row.reason === 'previous-run' ? reasons.interruptedRestart : text[19])
+        : row.status === 'admitting' ? text[15]
+    : row.reason === 'account-not-ready' && causeLabel ? (failsAt ? `${causeLabel} · ${failsAt}` : causeLabel)
+    : row.reason === 'account-checking' ? failure.checking : row.reason === 'account-busy' ? failure.busy
+    : row.reason === 'task-history-unavailable' ? (historyUnavailableCopy[language] ?? historyUnavailableCopy.en)
+    : row.reason === 'inspection-tabs' ? (inspectionTabsCopy[language] ?? inspectionTabsCopy.en)
+    : row.reason === 'paused-global' ? pauseText.globalReason : row.reason === 'paused-account' ? pauseText.accountReason
+    : hold ? withDeadline(hold)
+      : row.status === 'paused' || row.reason?.startsWith('paused') ? text[16] : withDeadline(text[14]);
+}
+
 export function QueueControls({ queue, language, disabled, action, pause, onError }: {
   queue?: BrowserQueueState; language: Language; disabled: boolean;
   action: (id: string, action: 'cancel' | 'resume' | 'prioritize' | 'dismiss') => Promise<unknown>;
@@ -72,8 +109,6 @@ export function QueueControls({ queue, language, disabled, action, pause, onErro
   const text = copy[language] ?? copy.en;
   const pauseText = pauseCopy[language] ?? pauseCopy.en;
   const shared = taskCenterCopy(language);
-  const reasons = queueReasonCopy(language);
-  const cancellingText = { en: 'Cancelling before sending', ru: 'Отмена до отправки', 'zh-CN': '正在取消，尚未发送', 'zh-TW': '正在取消，尚未傳送', ja: '送信前にキャンセル中', ko: '전송 전 취소 중' }[language];
   const timeFormat = useMemo(() => new Intl.DateTimeFormat(languages[language]?.locale ?? language, { dateStyle: 'medium', timeStyle: 'short' }), [language]);
   const deadlineFormat = useMemo(() => new Intl.DateTimeFormat(languages[language]?.locale ?? language, { timeStyle: 'medium' }), [language]);
   // A dismissed or cancelled row takes its focused button with it: continue from the neighbouring row, else the heading.
@@ -110,34 +145,7 @@ export function QueueControls({ queue, language, disabled, action, pause, onErro
     <div className="task-queue__list" ref={list}>
       {!queue.entries.length ? <div className="task-row task-row--empty"><EmptyState icon="logs" title={text[13]}>{shared.queueEmptyBody}</EmptyState></div> : null}
       {entries.map((row, index) => {
-        const failure = failureCopy(language);
-        const cause = causeText(failure, row.cause);
-        const causeAccount = row.causeAccountId && row.causeAccountId !== row.accountId ? labels.get(row.causeAccountId) : undefined;
-        const causeLabel = cause ? `${cause}${causeAccount ? ` (${causeAccount})` : ''}` : null;
-        const failsAt = row.failsAt ? failure.failsAt.replace('{time}', deadlineFormat.format(row.failsAt)) : null;
-        const safety = row.reason ? (reasons.safety as Record<string, string>)[row.reason] : undefined;
-        // A neutral hold names its own reason; a readiness deadline still running behind it stays visible.
-        const hold = row.reason === 'capacity' ? reasons.capacity : row.reason === 'runtime-transition' ? reasons.runtimeTransition
-          : row.reason === 'local-admission' ? reasons.localAdmission : safety ?? null;
-        const withDeadline = (label: string) => causeLabel && row.reason !== 'account-not-ready'
-          ? `${label} · ${reasons.thenCause.replace('{cause}', () => causeLabel)}${failsAt ? ` · ${failsAt}` : ''}` : label;
-        const failedFor = row.failure ? (reasons.failures as Record<string, string>)[row.failure] : undefined;
-        // A row whose owner is back but that was restored after a restart waits for an explicit Resume.
-        const reason = row.status === 'cancelling' ? cancellingText
-          : row.reason === 'owner-reconnect-required' ? (row.status === 'paused' && row.ownerConnected ? text[16] : text[9])
-          : row.reason === 'previous-submission-needs-review' ? withDeadline(text[10])
-            : row.status === 'cancelled' ? text[17]
-            : row.status === 'failed' ? (causeLabel ? `${text[18]}: ${causeLabel}` : failedFor ? `${text[18]}: ${failedFor}` : text[18])
-              : row.status === 'interrupted' ? (row.reason === 'lease-ended' ? reasons.interruptedLease
-                : row.reason === 'previous-run' ? reasons.interruptedRestart : text[19])
-              : row.status === 'admitting' ? text[15]
-                : row.reason === 'account-not-ready' && causeLabel ? (failsAt ? `${causeLabel} · ${failsAt}` : causeLabel)
-                : row.reason === 'account-checking' ? failure.checking : row.reason === 'account-busy' ? failure.busy
-                : row.reason === 'task-history-unavailable' ? (historyUnavailableCopy[language] ?? historyUnavailableCopy.en)
-                : row.reason === 'inspection-tabs' ? (inspectionTabsCopy[language] ?? inspectionTabsCopy.en)
-                : row.reason === 'paused-global' ? pauseText.globalReason : row.reason === 'paused-account' ? pauseText.accountReason
-                : hold ? withDeadline(hold)
-                  : row.status === 'paused' || row.reason?.startsWith('paused') ? text[16] : withDeadline(text[14]);
+        const reason = queueEntryReason(row, queue, language, deadlineFormat);
         const state = entryState(row);
         const notSent = ['waiting', 'paused', 'admitting', 'cancelling', 'cancelled', 'failed'].includes(row.status);
         // Moving to the front is offered only to a row that has another waiting row ahead of it.
@@ -146,7 +154,7 @@ export function QueueControls({ queue, language, disabled, action, pause, onErro
         // Row buttons repeat across rows ("Dismiss", "Cancel waiting task"): describe each by its row's title and trace.
         const id = `${rowId}-${index}`;
         const describedBy = `${id}-title ${id}-trace`;
-        return <article className="task-row" key={row.id} data-focus-row={row.id} aria-labelledby={`${id}-title`}>
+        return <article className="task-row" id={`queue-entry-${encodeURIComponent(row.id)}`} tabIndex={-1} key={row.id} data-focus-row={row.id} aria-labelledby={`${id}-title`}>
           <div className="task-row__main">
             <strong className="task-row__title" id={`${id}-title`}>{row.position > 0 ? `${row.position}. ` : ''}{row.accountId ? labels.get(row.accountId) : text[12]}</strong>
             <span className={`task-row__status is-${state}`}><StateDot state={state} /><span>{reason}</span></span>

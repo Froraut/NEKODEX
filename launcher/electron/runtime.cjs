@@ -1106,7 +1106,11 @@ class RuntimeHost {
       config = this.supervisor.readConfig();
       if (config) health = await this.supervisor.proxyHealthPayload(config);
     } catch { /* An unavailable daemon is diagnostic information, not a failed inspection. */ }
-    return withCatalogObservation(JSON.parse(result.stdout), health, config, this.supervisor.daemon?.pid);
+    const report = withCatalogObservation(JSON.parse(result.stdout), health, config, this.supervisor.daemon?.pid);
+    // The support export observes this receipt; it must never start diagnostics
+    // or a CLI child merely to fill a missing section.
+    this.lastRouteDiagnostics = { value: report, observedAt: Date.now() };
+    return report;
   }
 
   async restoreBridgeRouteWithinOperation(operationName, { keepPendingChain = false } = {}) {

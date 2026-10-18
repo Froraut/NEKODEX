@@ -1,12 +1,15 @@
 import { taskCenterCopy, type TaskCenterCopy } from "./task-center-copy";
-import { filterTasks, taskKey, eligibleTaskConfirmation, requiresDismissConfirmation, type HistoryStatus, type TaskConfirmationTarget } from "./task-center-model";
+import { taskOverview, taskKey, eligibleTaskConfirmation, requiresDismissConfirmation, type HistoryStatus, type TaskOrder, type TaskConfirmationTarget } from "./task-center-model";
 import { focusableHeading, rowFocusMemory, rowFocusTarget, useRowFocusRecovery, type RowFocusMemory } from "./task-center-focus";
+import { TaskDetails } from "./TaskDetails";
+import { taskDetailCopy } from "./task-detail-copy";
+import { queueEntryReason } from "./QueueControls";
 import { TaskActionConfirmation } from "./TaskActionConfirmation";
 import { stripIpcErrorPrefix } from "./ipc-error";
 import languages from "../electron/languages.json";
 import { Button, EmptyState, Notice, Panel, Select, StateDot, TextField, type Status } from './design';
 import { useId, useMemo, useRef, useState } from 'react';
-import type { BrowserTaskState, Language } from './types';
+import type { BrowserTaskState, BrowserQueueState, Language } from './types';
 import './surfaces/tasks-updates.css';
 
 type HistoryHealth = Array<{ accountId: string; accountName: string; issue: 'task-history-unavailable' }>;
@@ -43,11 +46,12 @@ function TaskRow({ task, text, language, timeFormat, controlsDisabled, onOpen, o
       {task.canDismiss ? <Button size="sm" variant="ghost" data-action="dismiss" aria-describedby={describedBy} disabled={controlsDisabled}
         onClick={event => onDismiss(event.currentTarget)}>{text.dismiss}</Button> : null}
     </div> : null}
+    <TaskDetails task={task} language={language} timeFormat={timeFormat} />
   </article>;
 }
 
-export function TaskCenter({ tasks, language, disabled, open, cancel, dismiss, onError, historyHealth = [] }: {
-  tasks: BrowserTaskState[]; historyHealth?: HistoryHealth; language: Language; disabled: boolean;
+export function TaskCenter({ tasks, language, disabled, open, cancel, dismiss, onError, historyHealth = [], queue }: {
+  tasks: BrowserTaskState[]; queue?: BrowserQueueState; historyHealth?: HistoryHealth; language: Language; disabled: boolean;
   open: (tabId: string) => Promise<unknown>; cancel: (tabId: string, traceId: string) => Promise<unknown>;
   dismiss: (accountId: string, id: string) => Promise<unknown>; onError: (error: unknown) => void;
 }) {
@@ -56,20 +60,27 @@ export function TaskCenter({ tasks, language, disabled, open, cancel, dismiss, o
   const [confirmError, setConfirmError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<HistoryStatus>('all');
+  const [order, setOrder] = useState<TaskOrder>('attention');
   const [account, setAccount] = useState('');
   const actionPending = useRef(false);
   const confirmationId = useId();
   const statusFieldId = useId();
   const accountFieldId = useId();
+  const orderFieldId = useId();
   const historyTitleId = useId();
   const confirmationTrigger = useRef<RowFocusMemory | null>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const text = taskCenterCopy(language);
+  const detailText = taskDetailCopy(language);
   const timeFormat = useMemo(() => new Intl.DateTimeFormat(languages[language]?.locale ?? language, { dateStyle: 'medium', timeStyle: 'short' }), [language]);
+  const deadlineFormat = useMemo(() => new Intl.DateTimeFormat(languages[language]?.locale ?? language, { timeStyle: 'medium' }), [language]);
   const accounts = new Map(tasks.map(task => [task.accountId, task.accountName]));
   for (const health of historyHealth) accounts.set(health.accountId, health.accountName);
-  const visible = filterTasks(tasks, { account, status, query, language });
+  for (const queuedAccount of queue?.accounts ?? []) accounts.set(queuedAccount.id, queuedAccount.label);
+  const overview = taskOverview(tasks, queue, { account, status, query, language }, order);
+  const visible = overview.flatMap(row => row.kind === 'task' ? [row.task] : []);
+  const total = tasks.length + (queue?.entries.length ?? 0);
   const confirmation = eligibleTaskConfirmation(visible, target);
   const confirmationTask = confirmation ? visible.find(task => taskKey(task) === confirmation.taskKey) : undefined;
   // A dismissed row takes its focused button with it: continue from the neighbouring row, else the search field
@@ -99,27 +110,44 @@ export function TaskCenter({ tasks, language, disabled, open, cancel, dismiss, o
   const accountOptions = [{ value: '', label: text.allAccounts }, ...[...accounts].map(([value, label]) => ({ value, label })),
     ...(account && !accounts.has(account) ? [{ value: account, label: account }] : [])];
   const controlsDisabled = disabled || !!pending;
-  const list = !tasks.length
+  const list = !total
     ? <div className="task-row task-row--empty"><EmptyState icon="logs" title={historyHealth.length ? text.emptyUnavailable : text.empty}>
       {historyHealth.length ? null : text.emptyBody}</EmptyState></div>
-    : !visible.length ? <div className="task-row task-row--empty"><EmptyState icon="logs" title={text.noMatches}
+    : !overview.length ? <div className="task-row task-row--empty"><EmptyState icon="logs" title={text.noMatches}
       action={<Button size="sm" onClick={clearFilters}>{text.clearFilters}</Button>} /></div>
-      : visible.map(task => <TaskRow key={taskKey(task)} task={task} text={text} language={language} timeFormat={timeFormat}
+      : overview.map(row => {
+        if (row.kind === 'queue') {
+          const entry = row.entry;
+          return <article className="task-row" key={row.key} data-focus-row={row.key}>
+            <div className="task-row__main">
+              <strong className="task-row__title">{entry.accountId ? accounts.get(entry.accountId) ?? entry.accountId : text.allAccounts}</strong>
+              <span className="task-row__status">{detailText.queue} · {queueEntryReason(entry, queue!, language, deadlineFormat)}</span>
+              <p className="task-row__meta"><code>{entry.traceId}</code> · {detailText.owner}: {detailText.originalClient}</p>
+            </div>
+            <Button size="sm" data-action="queue" onClick={() => {
+              const node = document.getElementById(`queue-entry-${encodeURIComponent(entry.id)}`);
+              node?.scrollIntoView({ block: 'center' }); node?.focus();
+            }}>{detailText.queueControls}</Button>
+          </article>;
+        }
+        const task = row.task;
+        return <TaskRow key={taskKey(task)} task={task} text={text} language={language} timeFormat={timeFormat}
         controlsDisabled={controlsDisabled}
         onOpen={() => void act(taskKey(task), () => open(task.tabId))}
         onCancel={trigger => openConfirmation('cancel', task, trigger)}
         onDismiss={trigger => {
           if (requiresDismissConfirmation(task)) openConfirmation('dismiss', task, trigger);
           else void act(taskKey(task), () => dismiss(task.accountId, task.id));
-        }} />);
+        }} />;
+      });
   return <div className="task-center">
-    <Panel padding="flush" className="task-history" title={text.history} titleId={historyTitleId}
-      actions={tasks.length ? <span className="task-history-count">{text.recordCount!.replace('{shown}', String(visible.length)).replace('{total}', String(tasks.length))}</span> : undefined}>
+    <Panel padding="flush" className="task-history" title={detailText.overview} titleId={historyTitleId}
+      actions={total ? <span className="task-history-count">{text.recordCount!.replace('{shown}', String(overview.length)).replace('{total}', String(total))}</span> : undefined}>
       {historyHealth.length ? <div className="task-history-notices">
         {historyHealth.map(health => <Notice tone="warning" key={health.accountId} title={health.accountName}>{text.historyUnavailable}</Notice>)}
       </div> : null}
       {/* Filters only help when there are records to narrow down. */}
-      {tasks.length ? <div className="task-history-filters">
+      {total ? <div className="task-history-filters">
         <TextField className="task-history-search" ref={searchInput} type="search" label={text.search} value={query}
           onChange={event => { setQuery(event.target.value); clearConfirmations(); }} />
         <div className="nk-field">
@@ -130,6 +158,10 @@ export function TaskCenter({ tasks, language, disabled, open, cancel, dismiss, o
         <div className="nk-field">
           <label htmlFor={accountFieldId}>{text.account}</label>
           <Select id={accountFieldId} value={account} onChange={value => { setAccount(value); clearConfirmations(); }} options={accountOptions} />
+        </div>
+        <div className="nk-field">
+          <label htmlFor={orderFieldId}>{detailText.order}</label>
+          <Select id={orderFieldId} value={order} onChange={value => setOrder(value as TaskOrder)} options={[{ value: 'attention', label: detailText.attentionView }, { value: 'recent', label: detailText.recentView }]} />
         </div>
         <Button variant="ghost" disabled={!filtered} onClick={clearFilters}>{text.clearFilters}</Button>
       </div> : null}

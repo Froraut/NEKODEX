@@ -981,14 +981,14 @@ function LauncherShell({
                 navigateSurface("mcp");
               }} /> : null}
             {surface === 'tasks' ? <ContentSurface title={taskCenterTitle(language)} subtitle={taskCenterSubtitle(language)}>
-              <QueueControls queue={browser?.queue} language={language} disabled={transitionBusy}
-                action={(id, action) => api!.queueAction(id, action)} pause={(accountId, paused) => api!.pauseQueue(accountId, paused)}
-                onError={cause => setError(messageOf(cause))} />
-              <TaskCenter loadCopy={copy} tasks={browser?.tasks ?? []} language={language} disabled={transitionBusy}
+              <TaskCenter loadCopy={copy} tasks={browser?.tasks ?? []} queue={browser?.queue} language={language} disabled={transitionBusy}
                 historyHealth={browser?.taskHistoryHealth}
                 open={async tabId => { await api!.selectBrowserTab(tabId); await activateBrowser(true); }}
                 cancel={(tabId, traceId) => api!.closeBrowserTab(tabId, traceId)}
                 dismiss={(accountId, id) => api!.dismissTask(accountId, id)}
+                onError={cause => setError(messageOf(cause))} />
+              <QueueControls queue={browser?.queue} language={language} disabled={transitionBusy}
+                action={(id, action) => api!.queueAction(id, action)} pause={(accountId, paused) => api!.pauseQueue(accountId, paused)}
                 onError={cause => setError(messageOf(cause))} />
             </ContentSurface> : null}
             {surface === "browser" ? (

@@ -1,3 +1,4 @@
+import type { TaskObservation } from "./adapters/chatgpt-web/task-observation";
 import { randomUUID } from "node:crypto";
 import { parseChatGptWebModelCapabilities, type ChatGptWebModelCapabilities } from "./chatgpt-web-models";
 import { dirname, join, resolve } from "node:path";
@@ -89,7 +90,7 @@ export const LAUNCHER_SESSION_INSPECTION_TIMEOUT_MS = 30_000;
 export const LAUNCHER_CAPABILITY_INSPECTION_TIMEOUT_MS = 120_000;
 
 export type LauncherTurnActivity =
-  | { phase: "progress"; traceId: string; helperPid: number; surfaceId: string; sequence: number;
+  | { phase: "progress"; traceId: string; helperPid: number; surfaceId: string; sequence: number; observation?: TaskObservation;
       taskPhase: "preparing" | "sending-context" | "context-accepted" | "sending" | "accepted" | "responding" | "waiting-tools" }
   | { phase: "usage"; traceId: string; helperPid: number; receipt: string;
       effort: string; modelVersion: string;

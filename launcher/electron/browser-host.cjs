@@ -828,8 +828,8 @@ class BrowserHost {
     return turnLifecycleFor(this).taskSnapshot();
   }
 
-  taskProgress(traceId, helperPid, surfaceId, phase, sequence) {
-    return turnLifecycleFor(this).taskProgress(traceId, helperPid, surfaceId, phase, sequence);
+  taskProgress(traceId, helperPid, surfaceId, phase, sequence, observation) {
+    return turnLifecycleFor(this).taskProgress(traceId, helperPid, surfaceId, phase, sequence, observation);
   }
 
   createAutomaticTurnView() {

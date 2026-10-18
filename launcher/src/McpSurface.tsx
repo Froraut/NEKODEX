@@ -1,5 +1,6 @@
 import { accountToolsCopy, accountToolsStep, accountTunnelFor } from "./account-tools-onboarding";
 import { useAccountPoolSnapshot } from "./useAccountPoolSnapshot";
+import { ConnectorSetupHelp } from './ConnectorSetupHelp';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { connectorAttachCopyFor, connectorAttachNotice, native6CopyFor, localizeRuntimeMessage, type Copy } from "./i18n";
 import { modelsTabConnection, type ConnectionStatus, type WorkspaceReadiness } from "./workspace-readiness";
@@ -443,6 +444,18 @@ export function McpSurface({
         </div>
 
         <div aria-busy={busy} className="nk-connections__stage">
+          {pageAccountId ? <ConnectorSetupHelp accountId={pageAccountId} accountLabel={tunnelAccountLabel ?? pageAccountId}
+            interactionMode={interactionMode} language={language} disabled={busy}
+            initialTopic={step === 2 ? 'connector' : step === 1 ? 'key' : 'platform'}
+            connectorName={targetConnectorName} connectorLabel={copy.createConnectorIdentity} actions={{
+              platform: { label: copy.openAiApiPanel, onOpen: () => void openApiPanel() },
+              tunnel: { label: copy.openAiApiPanel, onOpen: () => void openApiPanel() },
+              key: { label: copy.openKeys, onOpen: () => void openApiPanel('keys') },
+              ...(snapshot.urls.developerMode ? { developer: { label: copy.openDeveloperMode,
+                onOpen: () => void openChatGptPage(snapshot.urls.developerMode!) } } : {}),
+              connector: { label: copy.openConnectors, onOpen: () => void openChatGptPage(snapshot.urls.connectors),
+                disabled: !connectorConfiguredForTarget },
+            }} /> : null}
           <Panel as="section" className="nk-connections__step" key={step}>
             <header className="nk-connections__step-head">
               <small>{`0${step + 1}`}</small>

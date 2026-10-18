@@ -44,12 +44,12 @@ class BrowserTurnLifecycle {
     });
   }
 
-  taskProgress(traceId, helperPid, surfaceId, phase, sequence) {
+  taskProgress(traceId, helperPid, surfaceId, phase, sequence, observation) {
     const tab = [...this.tabs.values()].find(candidate => candidate.traceId === traceId);
     if (!tab || tab.helperPid !== helperPid || tab.surfaceId !== surfaceId || tab.status !== 'running' || !tab.taskRecordId) {
       throw new Error('Task progress does not match a live browser owner');
     }
-    this.context.ledger.progress(tab.taskRecordId, phase, sequence);
+    this.context.ledger.progress(tab.taskRecordId, phase, sequence, observation);
     publishBrowserSnapshot(this.presentation);
   }
 

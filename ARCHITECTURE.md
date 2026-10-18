@@ -395,6 +395,43 @@ retains any storage issue. It is not another journal/cache owner. Task Center
 reuses one date formatter per mounted language while retaining full filtering,
 confirmation and keyboard focus behavior.
 
+Task observations are an additive, metadata-only extension of that same version 1
+ledger. `task-observation.ts` projects exact tool identifiers, selected-skill
+content/source digests and confirmed continuity. The Bun-only
+`task-observation-native.ts` verifies canonical indexed native identities and the
+latest turn before exposing a parent relationship; it does not scan transcript
+directories. The helper transports at most 12,000 UTF-8 bytes of observation to
+the existing exact trace/helper/surface progress route. The launcher's
+`task-observation.cjs` validates the allowlist before the ledger writes it.
+At most 16 meaningful delivery milestones and 16 continuity links are retained
+per record. The existing 2,048-record limit remains; its bounded read ceiling is
+32 MiB to accommodate metadata. Old records remain readable. Tool counters measure
+observed dispatch-to-return duration and explicit outcomes; cancellation and
+unknown results do not fabricate failures. Inventory, selected tools and actual
+successful results remain distinct. A recorded worker request never claims a
+live worker status or grants messaging/scheduling authority.
+
+`TaskCenter.tsx` presents an attention-ranked overview of existing queue and
+ledger rows; `TaskDetails.tsx` reads the bounded receipts, continuity, worker and
+tool/skill provenance. Queue reasons remain owned by `QueueControls.tsx` and
+actions by backend capabilities. The inspector performs no tool calls or replay.
+`SettingsSearch.tsx` indexes marked rows in the mounted settings surface, reveals
+the controlled disclosure and focuses the exact destination without saving a
+draft. `ConnectorSetupHelp.tsx` supplies localized original schematic guidance,
+keyed to the captured account and interaction mode, within existing onboarding.
+Its links use the existing account owners and never set readiness or tool proof.
+
+`support-report-sources.cjs` passively projects cached owners and numeric process
+metrics for `support-report.cjs`. Exporting uses guarded IPC, a user-selected file,
+strict allowlists, report-local pseudonyms and bounded structural logs. It does
+not start a diagnostics CLI, browser, task, authentication or repair. Missing
+cached observations remain unavailable; retired process health is marked stale,
+and unreadable task histories remain explicit alongside valid records and waiting
+queue work. Node/Electron memory is normalized to bytes. Existing safe-log export
+remains separate. The report excludes prompts, messages, tool arguments/results,
+private labels/paths and credential values. `RuntimeHost.routeDiagnostics` caches
+its existing read receipt so export never creates a new probe to fill that section.
+
 | State | Owner and rule |
 | --- | --- |
 | Runtime config / Codex integration | Setup, file transactions and integration journal; compare the snapshot that produced the candidate. |
@@ -411,7 +448,8 @@ confirmation and keyboard focus behavior.
 - Core types: `bun run typecheck`. Renderer types: `bun run --cwd launcher typecheck`.
 - Renderer build: `bun run --cwd launcher build:renderer`. Browser helper:
   `bun run scripts/build-browser-helper.ts`.
-- The repository has no automated test suite. Root `bun run verify` runs audits,
+- Focused boundary regressions live in `tests/`; select the relevant files rather
+  than running the whole directory by default. Root `bun run verify` runs audits,
   typechecks and release-oriented build/smoke work; it is not a default check.
 - The [renderer preview](launcher/scripts/ui-preview.cjs) serves the built renderer
   with synthetic IPC. It does not prove live provider behavior or an installed release.

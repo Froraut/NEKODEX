@@ -48,6 +48,28 @@
 .settings-page .nk-settings-group { scroll-margin-top: var(--space-6); }
 .settings-page .nk-settings-group > header h2 { width: fit-content; max-width: 100%; }
 
+/* Search navigates the existing form; rows and their unfinished edits stay mounted. */
+.settings-search { margin-bottom: var(--space-6); }
+.settings-search > .nk-field__hint { margin: var(--space-2) 0 0; }
+.settings-search__results {
+  display: grid;
+  gap: var(--space-1);
+  max-height: 360px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: var(--space-3) 0 0;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  list-style: none;
+}
+.settings-search__result { height: auto; min-height: 64px; justify-content: flex-start; text-align: start; white-space: normal; }
+.settings-search__result > span { display: grid; gap: var(--space-1); min-width: 0; }
+.settings-search__section { color: var(--text-tertiary); font-size: 12px; line-height: 18px; }
+.settings-search__description { color: var(--text-secondary); font-size: 13px; line-height: 18px; }
+.settings-search__result strong { font-weight: 500; }
+[data-settings-search] { scroll-margin-block: var(--space-6); }
+
 /* ---------- Rows that are not a single control ---------- */
 /* Interaction mode: a titled block with the two choice cards under it, in the Agent behaviour panel. */
 .settings-block { padding: var(--space-4) 0 var(--space-5); border-bottom: 1px solid var(--border-light); }

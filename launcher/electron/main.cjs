@@ -2,6 +2,8 @@ const { registerClientConnections } = require("./ipc/client-connections.cjs");
 const { stableChromiumUserAgent } = require("./browser-user-agent.cjs");
 const { registerBrowserHandlers } = require("./ipc/browser-handlers.cjs");
 const { registerAccountHandlers } = require("./ipc/account-handlers.cjs");
+const { collectSupportReport, writeSupportReport } = require("./support-report.cjs");
+const { supportReportSources } = require("./support-report-sources.cjs");
 const { createChromeProfileChoice } = require("./chrome-profile-choice.cjs");
 const { showChromeProfilePicker } = require("./chrome-profile-picker.cjs");
 const { createProfileFirstLogin } = require("./profile-first-login.cjs");
@@ -1563,6 +1565,27 @@ function registerIpc({ logger, stateStore }) {
     return browserHost.usageSnapshot({ days: query.days, source: query.source ?? "web", accountId: query.accountId ?? null });
   });
   handle("launcher:logs", (_event, limit) => logger.recent(limit));
+  let supportReportExport = null;
+  handle("launcher:export-support-report", () => {
+    if (supportReportExport) return supportReportExport;
+    const run = (async () => {
+      const copy = nativeCopyFor(stateStore.read().language);
+      const result = await dialog.showSaveDialog(mainWindow, {
+        title: copy.exportDiagnostics,
+        defaultPath: path.join(app.getPath("documents"), `nekodex-support-${new Date().toISOString().slice(0, 10)}.json`),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (result.canceled || !result.filePath) return null;
+      const report = await collectSupportReport({ sources: supportReportSources({ app, webContents, mainWindow,
+        runtimeHost, runtimeSupervisor, browserHost, logger, profile: LAUNCHER_PROFILE.kind }) });
+      writeSupportReport({ destinationPath: result.filePath, report,
+        sourceLogPaths: [logger.filePath, `${logger.filePath}.1`] });
+      logger.info("launcher.support_report_exported", {});
+      return result.filePath;
+    })().finally(() => { if (supportReportExport === run) supportReportExport = null; });
+    supportReportExport = run;
+    return run;
+  });
   handle("launcher:export-logs", async () => {
     const date = new Date().toISOString().slice(0, 10);
     const copy = nativeCopyFor(stateStore.read().language);

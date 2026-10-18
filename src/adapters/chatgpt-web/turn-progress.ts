@@ -1,4 +1,5 @@
 export interface ChatGptExternalTurnProgressSnapshot {
+  toolCounters?: { total: number; succeeded: number; errors: number; samples: number; totalLatencyMs: number; minLatencyMs?: number; maxLatencyMs?: number };
   revision: number;
   lastToolBatchRevision: number;
   activeToolCalls: number;
@@ -7,10 +8,13 @@ export interface ChatGptExternalTurnProgressSnapshot {
   completedToolResults?: number;
   /** Wire name of the latest successful tool, the launcher's proof that a real tool ran. */
   lastCompletedTool?: string;
+  /** Bounded successful wire names only: no tool arguments or results. */
+  successfulTools?: Array<{ wireName: string; observedAt: number }>;
 }
 
 /** Tool wire names are model-visible identifiers; anything else is not reported to the launcher. */
 export const TOOL_PROOF_NAME = /^[A-Za-z0-9_.:-]{1,80}$/;
+const OBSERVED_TOOL_WIRE_NAME = /^[A-Za-z0-9_.:-]{1,258}$/;
 
 interface ProgressWaiter {
   afterRevision: number;
@@ -98,18 +102,24 @@ export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster 
   private readonly activeCallIds = new Set<string>();
   private lastProgressAt?: number;
   private completedToolResults = 0;
+  private readonly dispatchedAt = new Map<string, number>();
+  private readonly toolCounters = { total: 0, succeeded: 0, errors: 0, samples: 0, totalLatencyMs: 0 } as NonNullable<ChatGptExternalTurnProgressSnapshot["toolCounters"]>;
   private lastCompletedTool?: string;
+  private readonly successfulTools = new Map<string, number>();
   private retirementError?: Error;
   private readonly toolBatchObservationWaiters = new Set<ToolBatchObservationWaiter>();
 
   snapshot(): ChatGptExternalTurnProgressSnapshot {
     return {
       revision: this.revision,
+      ...(this.toolCounters.total > 0 ? { toolCounters: { ...this.toolCounters } } : {}),
       lastToolBatchRevision: this.lastToolBatchRevision,
       activeToolCalls: this.activeToolCalls,
       ...(this.lastProgressAt !== undefined ? { lastProgressAt: this.lastProgressAt } : {}),
       ...(this.completedToolResults > 0 && this.lastCompletedTool
         ? { completedToolResults: this.completedToolResults, lastCompletedTool: this.lastCompletedTool } : {}),
+      ...(this.successfulTools.size > 0
+        ? { successfulTools: [...this.successfulTools].map(([wireName, observedAt]) => ({ wireName, observedAt })) } : {}),
     };
   }
 
@@ -122,7 +132,10 @@ export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster 
     // A redelivered batch is the same unresolved work; counting it again would leave a phantom
     // in-flight call that vetoes completion after Codex returns every real result.
     if (fresh.length === 0) return this.lastToolBatchRevision;
-    for (const callId of fresh) this.activeCallIds.add(callId);
+    for (const callId of fresh) {
+      this.activeCallIds.add(callId); this.dispatchedAt.set(callId, now);
+      this.toolCounters.total += 1;
+    }
     this.activeToolCalls = this.activeCallIds.size;
     this.advance(now, "tool_batch");
     return this.lastToolBatchRevision;
@@ -161,16 +174,34 @@ export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster 
     });
   }
 
-  /** `succeededTool` names a result Codex returned without an error; failed results only advance progress. */
-  recordToolResult(callId: string, now = Date.now(), succeededTool?: string): void {
+  /** Outcomes describe returned results; retirement and unknown results never fabricate failures. */
+  recordToolResult(callId: string, now = Date.now(), succeededTool?: string, outcome?: "succeeded" | "error"): void {
     this.assertNotRetired();
     if (!this.activeCallIds.delete(callId)) {
       throw new Error("ChatGPT external progress received a tool result without an active call");
     }
     this.activeToolCalls = this.activeCallIds.size;
+    const started = this.dispatchedAt.get(callId);
+    this.dispatchedAt.delete(callId);
+    const observedOutcome = outcome ?? (succeededTool !== undefined ? "succeeded" : undefined);
+    if (observedOutcome) {
+      if (observedOutcome === "succeeded") this.toolCounters.succeeded += 1;
+      else this.toolCounters.errors += 1;
+      if (started !== undefined && Number.isSafeInteger(now) && now >= started) {
+        const latency = now - started;
+        this.toolCounters.samples += 1; this.toolCounters.totalLatencyMs += latency;
+        this.toolCounters.minLatencyMs = Math.min(this.toolCounters.minLatencyMs ?? latency, latency);
+        this.toolCounters.maxLatencyMs = Math.max(this.toolCounters.maxLatencyMs ?? latency, latency);
+      }
+    }
     if (succeededTool !== undefined && TOOL_PROOF_NAME.test(succeededTool)) {
       this.completedToolResults += 1;
       this.lastCompletedTool = succeededTool;
+    }
+    if (succeededTool !== undefined && OBSERVED_TOOL_WIRE_NAME.test(succeededTool)) {
+      this.successfulTools.delete(succeededTool);
+      this.successfulTools.set(succeededTool, now);
+      if (this.successfulTools.size > 128) this.successfulTools.delete(this.successfulTools.keys().next().value!);
     }
     this.advance(now, "tool_result");
   }
@@ -187,6 +218,7 @@ export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster 
     this.toolBatchObservationWaiters.clear();
     if (this.activeToolCalls === 0) return true;
     this.activeCallIds.clear();
+    this.dispatchedAt.clear();
     this.activeToolCalls = 0;
     // Retirement is not fresh model progress. Advance the transport revision so the browser mirror
     // drops its completion veto, while preserving the timestamp of the last proven MCP activity.
@@ -244,7 +276,7 @@ export class ChatGptMirroredTurnProgress extends ChatGptTurnProgressBroadcaster 
   }
 
   snapshot(): ChatGptExternalTurnProgressSnapshot {
-    return { ...this.current };
+    return structuredClone(this.current);
   }
 
   async acknowledgeToolBatch(revision: number): Promise<void> {
@@ -272,7 +304,12 @@ export class ChatGptMirroredTurnProgress extends ChatGptTurnProgressBroadcaster 
         && next.lastProgressAt < this.current.lastProgressAt)) {
       throw new Error("ChatGPT external progress snapshot regressed against the observed state");
     }
-    this.current = { ...next };
+    if (this.current.toolCounters && (!next.toolCounters
+      || (["total", "succeeded", "errors", "samples", "totalLatencyMs"] as const)
+        .some(key => next.toolCounters![key] < this.current.toolCounters![key]))) {
+      throw new Error("ChatGPT tool observation counters regressed");
+    }
+    this.current = structuredClone(next);
     this.notify(this.snapshot());
     return true;
   }
@@ -294,6 +331,18 @@ export function assertChatGptTurnProgressSnapshot(
     || (value.completedToolResults !== undefined
       && (!finiteIndex(value.completedToolResults) || value.completedToolResults === 0
         || typeof value.lastCompletedTool !== "string" || !TOOL_PROOF_NAME.test(value.lastCompletedTool)))
+    || (value.toolCounters !== undefined && (!value.toolCounters
+      || [value.toolCounters.total, value.toolCounters.succeeded, value.toolCounters.errors,
+        value.toolCounters.samples, value.toolCounters.totalLatencyMs].some(number => !finiteIndex(number))
+      || value.toolCounters.succeeded + value.toolCounters.errors > value.toolCounters.total
+      || value.toolCounters.samples > value.toolCounters.succeeded + value.toolCounters.errors
+      || (value.toolCounters.minLatencyMs !== undefined && !finiteIndex(value.toolCounters.minLatencyMs))
+      || (value.toolCounters.maxLatencyMs !== undefined && !finiteIndex(value.toolCounters.maxLatencyMs))))
+    || (value.successfulTools !== undefined && (!Array.isArray(value.successfulTools)
+      || value.successfulTools.length > 128 || value.successfulTools.some(tool => !tool
+        || typeof tool.wireName !== "string" || !OBSERVED_TOOL_WIRE_NAME.test(tool.wireName)
+        || !Number.isSafeInteger(tool.observedAt) || tool.observedAt < 0)
+      || new Set(value.successfulTools.map(tool => tool.wireName)).size !== value.successfulTools.length))
     || (value.lastCompletedTool !== undefined && value.completedToolResults === undefined)) {
     throw new Error("ChatGPT external progress snapshot is invalid");
   }

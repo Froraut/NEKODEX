@@ -39,7 +39,7 @@ async function stageAuthenticatedUpdate({ available, repository, platform, arch,
   executablePath, runtimeExecutable, logsDirectory, deps: { downloadText, verifyReleaseMetadata, sha256, downloadFile,
     extractMac, extractWindows, extractLinux, linuxRunnerSource, validateStagedApplication },
   signal, onProgress,
-  expectedChecksum, buildJob, logger }) {
+  buildJob, logger }) {
   let tempRoot;
   try {
     throwIfAborted(signal);
@@ -53,12 +53,9 @@ async function stageAuthenticatedUpdate({ available, repository, platform, arch,
     if (!authenticatedAsset || authenticatedAsset.size !== available.assetBytes) {
       throw new Error("Signed release metadata does not match the selected asset size");
     }
-    const checksums = await downloadText(available.checksumsUrl, 2 * 1024 * 1024, {
-      signal,
-    });
-    throwIfAborted(signal);
-    const expected = expectedChecksum(checksums, available.assetName);
-    if (expected !== authenticatedAsset.sha256) throw new Error("Checksums do not match independently authenticated release metadata");
+    // The publisher signature already binds this digest to the repository,
+    // version, asset name and size. An unsigned checksum file adds no authority.
+    const expected = authenticatedAsset.sha256;
     const assetPath = path.join(tempRoot, available.assetName);
     const cacheRoot = updateCacheRoot(logsDirectory);
     fs.mkdirSync(cacheRoot, { recursive: true, mode: 0o700 });
