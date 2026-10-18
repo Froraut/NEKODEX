@@ -44,11 +44,40 @@ The UI evidence remains a private local artifact rather than public fixture data
 
 ## Installed delivery
 
-Pending until the local application replacement and exact migration receipts are
-recorded below. Development success does not establish an installed update.
-The existing installation uses Developer ID team `CNMWGJF2CG`; the local update
-must retain that publisher. No DMG/ZIP, notarization submission, release tag or
-public installable asset is part of this task.
+Completed on the local Apple Silicon Mac at 2026-10-18 01:10 UTC:
+
+- `/Applications/NEKODEX.app` is `6.1.32-nekodex.8`. Its main application, embedded
+  Bun and both native helper locations retain Developer ID team `CNMWGJF2CG`.
+  Signature verification and native Keychain access across the two signed helper
+  paths passed before real keys were touched.
+- The prior app was retained in Trash. Private config/state/profile recovery
+  copies were captured without copying plaintext key files. The existing Native
+  stream survived GUI replacement; the normal activation owner upgraded the core
+  at an idle boundary. The running core now reports `6.1.32-nekodex.8`.
+- Both actual account/mode bindings were migrated through the installed Migrate
+  controls. Each reached ready with a fresh SDK PID, the exact `env:` profile
+  selector, current-version MCP command and readable scoped Keychain entry. Both
+  captured legacy key files were retired. Config and profiles contain no key.
+- One additional inactive global key was archived losslessly in scoped Keychain
+  storage after an exact SDK stopped proof. Its private archive receipt preserves
+  the reference, scope and old-file identity; its profile now uses the environment
+  selector. The inactive route was not reactivated. Its old plaintext file was
+  retired. No `.key` files remain in the application's secrets directory.
+- An ephemeral Codex request through the preserved local route returned exactly
+  `NEKODEX_D01_OK`. No global route/authentication setting was changed for it.
+- PR #97's macOS, Linux, Windows and actionlint jobs passed. The first map check
+  exposed a generated native binary in the source inventory; the portable map now
+  excludes generated helper files and includes native Swift source. This was a
+  metadata correction; application source bytes match implementation `5a053ea`.
+
+The installed browser session check currently reports a Cloudflare/refused check,
+not confirmed sign-out. Credential storage, transport readiness and the Native
+response above are proved; a new post-migration ChatGPT connector/tool execution
+is not claimed. Existing account data was retained.
+
+This is a local installed update. No DMG/ZIP, notarization submission, release tag
+or public installable asset was created. This task does not claim a new Apple
+notarization ticket. Source PRs #96 and #97 remain separate from merge/release.
 
 ## Deferred-feature decision
 

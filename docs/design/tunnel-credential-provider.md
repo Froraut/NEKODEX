@@ -2,8 +2,9 @@
 
 Status: implemented for macOS Keychain in `6.1.32-nekodex.8`. Electron, Bun CLI
 and the headless entry point share one provider. The real development UI migration
-and native Keychain roundtrip passed. Installed-app migration is a separate
-delivery step; this design document alone does not prove a live credential moved.
+and native Keychain roundtrip passed. The local installed app/core were updated,
+both active keys migrated and one inactive key archived in Keychain; exact scope
+and evidence are in the [delivery report](../reviews/2026-10-18-d01-implementation.md).
 
 Windows and Linux retain legacy configuration compatibility and an **explicit**
 `legacy-file` setup choice. Their OS-vault backends are unavailable. New keys
@@ -128,4 +129,4 @@ unencrypted. No secret, vault reference or raw provider error reaches the UI.
 
 These are focused credential-flow proofs. They do not establish Windows/Linux
 protected backends, a real ChatGPT connector, Apple notarization or public release.
-The local installed update and actual key migration require their own final receipt.
+The local installed update and key migration have their own receipt in the delivery report.
