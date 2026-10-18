@@ -4,6 +4,8 @@ import type { SkillIdentity, SkillRootGrant, SelectedSkill } from '../../src/age
 import type { BrowserBinding } from '../../src/browser-companion/protocol';
 import type { AgentDesktopStatus } from './agent-desktop-types';
 import type { AgentPendingToolCall } from './agent-mode-types';
+import type { RemoteAgentStatus, RemoteAgentTaskScope } from '../electron/agent-remote-types.cjs';
+export type { RemoteAgentStatus, RemoteAgentTaskScope };
 export type { ServerRecipe, ToolDescriptor, ToolScope, ToolOutcome, SkillIdentity, SkillRootGrant, SelectedSkill };
 export interface AgentToolsApi {
   request(body: Record<string, unknown>): Promise<unknown>;
@@ -11,7 +13,7 @@ export interface AgentToolsApi {
   pickInstallRoot?(): Promise<{ cancelled: boolean; root?: string }>;
   /** Exact private pending calls come from the owned Agent-mode store through its guarded API. */
   listTasks(): Promise<{ tasks: { id: string; generation: number; status: string }[] }>;
-  getTask(taskId: string): Promise<{ task: { id: string; generation: number }; dispatches: { id: string; generation: number; result?: { continuation?: { pending: AgentPendingToolCall[] } } }[]; toolOutcomes?: ToolOutcome[]; pendingToolCalls?: AgentPendingToolCall[]; coverage?: { pendingToolCalls?: { total: number; truncated: boolean } } }>;
+  getTask(taskId: string): Promise<{ task: { id: string; familyId: string; generation: number; revision: number }; dispatches: { id: string; generation: number; result?: { continuation?: { pending: AgentPendingToolCall[] } } }[]; toolOutcomes?: ToolOutcome[]; pendingToolCalls?: AgentPendingToolCall[]; coverage?: { pendingToolCalls?: { total: number; truncated: boolean } } }>;
   attachEvidence?(taskId: string, reference: { sourceEventId: string; requirementId: string; subject: string; subjectRevision: string; property: string }): Promise<unknown>;
 }
 export interface ManagedInstallReceipt {
@@ -52,4 +54,5 @@ export interface AgentToolsStatus {
   managedSkills?: { versions: ManagedSkillVersionView[]; retainedVersions: number; forgottenVersions: number; cleanup: string; attachments: { scope: ToolScope; versionIds: string[] }[]; actions: { actionId: string; label: string; state: string; versionId: string; lineageId: string; reviewDigest: string }[] };
   browserTools?: { providerId: string; available: boolean; selected: BrowserBinding | null; bound: boolean; reason: string | null; bindings: { taskId: string; generation: number; binding: BrowserBinding; observed: boolean; active: boolean }[] } | null;
   desktopTools?: AgentDesktopStatus | null;
+  remoteTools?: RemoteAgentStatus | null;
 }

@@ -11,6 +11,8 @@ const OBSERVATION_CHANNELS = new Set([
   "launcher:browser-existing-chrome-login-cancel", "launcher:cancel-context-change",
   "launcher:update-cancel",
   "launcher:conversation-history-revoke",
+  "launcher:agent-tools-revoke",
+  "launcher:agent-tools-observe",
 ]);
 
 function createLifecycleAdmission(onChange = () => {}) {

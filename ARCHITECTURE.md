@@ -433,6 +433,35 @@ See [design](docs/design/owned-native-final-history.md) and
 [focused evidence](docs/reviews/2026-10-18-owned-native-final-history.md).
 
 
+**Agent remote tools:** [protocol/provider/bridge](src/remote-workspace/agent-tools.ts)
+connect the existing [SSH owner](launcher/electron/remote-workspace.cjs) to the
+same approved ToolJournal. Explicit human attachment binds an already-connected
+saved host/root to actual task/family/generation/revision, main instance,
+connection ID and config fingerprint (not SSH host key). Main's callback validates
+the actual task plus already-begun exact pending ToolJournal intent/args/key before
+list/read/literal command. Fixed early routes on the existing private main
+listener do not depend on Web readiness. No autoconnect, second sender, implicit
+restart regrant or foreign connection adoption is introduced.
+
+The signed remote registry retains48 intents/180 KiB encoded full outcomes with
+pinned receipts/reserved terminal storage. Active duplicates coalesce; restarted
+started intents remain unknown. Lost reply uses pure exact receipt lookup,
+including old-instance receipts, then append-only ToolJournal reconciliation;
+never execute again. Truncated list/read content exposes incomplete coverage.
+A command's selected root is cwd, not OS sandbox; SSH user permissions apply.
+Receipts prove execution, not a business outcome. Close settles delayed attach
+before final revoke and retries only retained failed cleanup; dedicated status/
+revoke remain usable during drain directly through guarded main IPC on the same
+remote service even with core absent, without core reads or attach authority.
+Binding and ordinary approvals still require owned Agent readiness; commands
+retain private HTTP/core-intent checks. Source/fixtures passed, including actual
+Runtime/ToolJournal/privateHTTP/main owner with fake SFTP/runner1/48; actual SSH,
+authentication and remote UI/provider outcomes remain open. Both TS19:04,
+renderer196/CLI643exact `.9` and module-map730/finalcheck/paths passed19:06;
+new source commit/CI remain pending.
+See [contract](docs/design/agent-remote-tools.md) and
+[evidence](docs/reviews/2026-10-18-agent-remote-tools.md).
+
 **Project files:** `local-workspace.cjs` is distinct from ChatGPT browser workspace
 windows. Main captures the picker and private registry path; IPC accepts opaque
 workspace IDs and relative paths, not arbitrary roots. The private registry

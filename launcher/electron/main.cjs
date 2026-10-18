@@ -18,6 +18,7 @@ const { registerAgentMode } = require('./ipc/agent-mode.cjs');
 const { createCodexClientControl } = require('./codex-client-control.cjs');
 const { createAgentNativeBridge } = require('./agent-native-bridge.cjs');
 const { createAgentNativeDescriptorPublisher } = require('./agent-native-descriptor.cjs');
+const { createAgentRemoteDescriptorPublisher } = require('./agent-remote-descriptor.cjs');
 const { createNativeAccountAuthority } = require('./native-account-authority.cjs');
 const { fileDigest: nativeFileDigest, regular: nativeRegular, VERSION: NATIVE_CLI_VERSION } = require('./owned-native-admission.cjs');
 const { registerNativeAccounts } = require('./ipc/native-accounts.cjs');
@@ -151,10 +152,19 @@ let localWorkspaceService = null;
 let nativeClientControl = null;
 let agentNativeBridge = null;
 let agentNativeDescriptor = null;
+let agentRemoteDescriptor = null;
 let nativeAccountAuthority = null;
 let nativeAccountInventory = null;
 let nativeAccountExecution = null;
 let lastNativeModelPublication = null;
+async function validateRemoteCoreAuthority(action, body, allowDraining = false) {
+  if (!allowDraining && (quitting || shutdownInProgress || exitCommitted || lifecycleAdmission.busy())) throw new Error('Remote admission is closed');
+  const config = runtimeSupervisor?.readConfig();
+  if (!config || !await runtimeSupervisor.ownedAgentRuntimeReady(config, { allowDraining })) throw new Error('Remote runtime owner is unavailable');
+  const receipt = await runtimeSupervisor.control(config, 'agent-remote', { body: { action, ...body } });
+  if (receipt?.ok !== true) throw new Error('Remote task authority changed');
+  return receipt.value;
+}
 function publishNativeAccountModels() {
   if (!agentNativeDescriptor) return;
   const models = nativeAccountExecution?.models() ?? [];
@@ -1059,7 +1069,11 @@ function registerIpc({ logger, stateStore }) {
     },
   });
   registerConversationHistory({ handle, runtimeHost, clipboard, dialog, canonicalRecorder });
-  remoteWorkspaceService ??= createRemoteWorkspaceService({ storagePath: path.join(CORE_HOME, 'remote-workspaces', 'registry.json') });
+  remoteWorkspaceService ??= createRemoteWorkspaceService({ storagePath: path.join(CORE_HOME, 'remote-workspaces', 'registry.json'),
+    agentInstanceId: agentRemoteDescriptor?.instanceId,
+    validateAgentTask: scope => validateRemoteCoreAuthority('validate-task', { scope }),
+    validateAgentIntent: request => validateRemoteCoreAuthority('validate-intent', { request }),
+  });
   registerRemoteWorkspaceIpc({ registerIpcHandler: handle, service: remoteWorkspaceService });
   registerLifecycleParticipant('remote-workspaces', {
     currentOperation: () => remoteWorkspaceService.currentOperation?.() ?? null,
@@ -1070,7 +1084,7 @@ function registerIpc({ logger, stateStore }) {
     resolveWorkspace: id => localWorkspaceService.resolveGrant(id),
   });
   registerAgentMode({ handle, runtimeHost, workspaceService: localWorkspaceService, workspaceEvidenceService });
-  registerAgentTools({ handle, runtimeHost, dialog, getWindow: () => mainWindow });
+  registerAgentTools({ handle, runtimeHost, dialog, getWindow: () => mainWindow, remoteService: remoteWorkspaceService });
   registerBrowserCompanion({ handle, runtimeHost, clipboard });
   registerLocalControlApi({ handle, runtimeHost, clipboard });
   externalUsageService ??= createExternalUsageService({
@@ -2298,6 +2312,13 @@ async function start() {
     getPreferences: () => stateStore.read(),
     getAgentNativeBridge: () => agentNativeBridge,
     getAgentNativeInstance: () => agentNativeDescriptor?.instanceId,
+    getAgentRemoteService: () => remoteWorkspaceService,
+    getAgentRemoteInstance: () => agentRemoteDescriptor?.instanceId,
+    validateRemoteInvalidation: body => {
+      if (!body || typeof body !== 'object' || Array.isArray(body)
+        || Object.keys(body).some(key => !['taskId', 'familyId', 'beforeGeneration'].includes(key))) throw new Error('Invalid remote invalidation');
+      return validateRemoteCoreAuthority('validate-invalidation', body, true);
+    },
     validateNativeInvalidation: async body => {
       if (!body || typeof body !== 'object' || Array.isArray(body)
         || Object.keys(body).some(key => !['actionId', 'taskId', 'familyId', 'beforeGeneration'].includes(key))) throw new Error('Invalid Native invalidation');
@@ -2378,6 +2399,13 @@ async function start() {
     }
   }
   const configuredInteractionMode = runtimeHost.runtimeConfigSnapshot().config?.browserInteractionMode;
+  try {
+    agentRemoteDescriptor = createAgentRemoteDescriptorPublisher({ coreHome: CORE_HOME, profile: LAUNCHER_PROFILE.kind, control: browserControl.descriptor() });
+    agentRemoteDescriptor.publish();
+  } catch {
+    agentRemoteDescriptor = null;
+    logger.warn('agent_remote.descriptor_unavailable', { reasonCode: 'private-profile-unavailable' });
+  }
   contextChangeQueue?.stop();
   contextChangeQueue = createContextChangeQueue({
     read: () => stateStore.read(),

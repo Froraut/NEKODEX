@@ -9,8 +9,38 @@ const { createHash, createHmac, randomBytes, randomUUID } = require('node:crypto
 const { writePrivateFileAtomic } = require('./atomic-file.cjs');
 const { REMOTE_GIT_HELPER, createRemoteWorktreeController } = require('./remote-worktrees.cjs');
 const LIMITS = Object.freeze({ bytes: 256 * 1024, entries: 300, hosts: 24, receipts: 100, drafts: 40 });
+const AGENT_LIMITS = Object.freeze({ intents: 48, resultBytes: 180 * 1024, bindings: 64 });
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail = (code, message) => { throw Object.assign(new Error(message), { code }); };
+const record = value => value && typeof value === 'object' && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
+function canonical(value) {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value))) return JSON.stringify(value);
+  if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
+  if (record(value)) return '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + canonical(value[key])).join(',') + '}';
+  fail('AGENT', 'Remote Agent values must be plain JSON.');
+}
+function agentScope(value, task = false) {
+  if (!record(value) || typeof value.taskId !== 'string' || !value.taskId || value.taskId.length > 200 || !Number.isSafeInteger(value.generation) || value.generation < 1
+    || (task && (typeof value.familyId !== 'string' || !value.familyId || value.familyId.length > 200 || !Number.isSafeInteger(value.revision) || value.revision < 1))) fail('AGENT', 'Invalid current remote Agent task scope.');
+  return value;
+}
+function agentInvocation(input) {
+  if (!record(input) || Object.keys(input).some(k => !['scope', 'tool', 'arguments', 'idempotencyKey'].includes(k)) || !['remote/list', 'remote/read', 'remote/command'].includes(input.tool)
+    || typeof input.idempotencyKey !== 'string' || !input.idempotencyKey || input.idempotencyKey.length > 240 || !record(input.arguments) || !record(input.arguments.binding)) fail('AGENT', 'Invalid exact remote Agent invocation.');
+  agentScope(input.scope);
+  if (Object.keys(input.scope).sort().join(',') !== 'generation,taskId,toolCallId' || typeof input.scope.toolCallId !== 'string' || !input.scope.toolCallId || input.scope.toolCallId.length > 200) fail('AGENT', 'Invalid remote Agent tool scope.');
+  const args = input.arguments;
+  if (input.tool === 'remote/command') {
+    if (Object.keys(args).sort().join(',') !== 'binding,command,timeoutSeconds' || typeof args.command !== 'string' || !args.command.trim() || Buffer.byteLength(args.command) > 16384 || args.command.includes('\0')
+      || !Number.isInteger(args.timeoutSeconds) || args.timeoutSeconds < 1 || args.timeoutSeconds > 3600) fail('COMMAND', 'Provide an exact command and a 1–3600 second execution limit.');
+  } else {
+    if (Object.keys(args).some(k => !['binding', 'path'].includes(k))) fail('AGENT', 'Invalid remote Agent read arguments.');
+    relative(args.path ?? '', input.tool === 'remote/list');
+  }
+  const encoded = canonical(input);
+  if (Buffer.byteLength(encoded) > 64 * 1024) fail('AGENT', 'Remote Agent invocation exceeds its bound.');
+  return { request: JSON.parse(encoded), fingerprint: hash(encoded) };
+}
 const uint = value => { const b = Buffer.alloc(4); b.writeUInt32BE(value); return b; };
 const str = value => { const b = Buffer.isBuffer(value) ? value : Buffer.from(value); return Buffer.concat([uint(b.length), b]); };
 const offset = value => { const b = Buffer.alloc(8); b.writeBigUInt64BE(BigInt(value)); return b; };
@@ -144,18 +174,25 @@ async function runRemoteProgram(host, request, spawnProcess = spawn, program = C
 
 async function runCommand(host, request, spawnProcess = spawn) { const result = await runRemoteProgram(host, request, spawnProcess); if (!Number.isInteger(result.exitCode) || typeof result.stdout !== 'string' || typeof result.stderr !== 'string') throw new Error('Invalid command receipt.'); return result; }
 
-function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, transportFactory, commandRunner, remoteGitRunner } = {}) {
+function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, transportFactory, commandRunner, remoteGitRunner, validateAgentTask, validateAgentIntent, agentInstanceId = randomUUID() } = {}) {
   if (typeof storagePath !== 'string' || !path.isAbsolute(storagePath)) throw new Error('A private absolute remote-workspace storage path is required.');
   const hosts = new Map(); const sessions = new Map(); const approvals = new Map(); const busy = new Set();
   const active = new Map(); const owners = new Map(); const transports = new Set(); let closing = false;
-  let receipts = []; let drafts = []; let worktrees = []; let key;
+  if (typeof agentInstanceId !== 'string' || !/^[a-f0-9-]{36}$/.test(agentInstanceId)) throw new Error('Invalid remote Agent main instance.');
+  const mainInstanceId = agentInstanceId, agentBindings = new Map(), agentActive = new Map(), agentRevocations = new Map(), agentInvalidations = new Map();
+  let receipts = []; let drafts = []; let worktrees = []; let toolIntents = []; let key;
   const keyPath = storagePath + '.key';
   function safeRead(file, max) { const s = fs.lstatSync(file); if (!s.isFile() || s.isSymbolicLink() || s.size > max || (process.platform !== 'win32' && ((s.mode & 0o077) !== 0 || (process.getuid && s.uid !== process.getuid())))) fail('STORE', 'Remote workspace storage must be private and regular.'); return fs.readFileSync(file); }
   if (fs.existsSync(keyPath)) key = safeRead(keyPath, 64); else { key = randomBytes(32); writePrivateFileAtomic(keyPath, key, { durable: true }); }
   if (key.length !== 32) fail('STORE', 'Invalid remote receipt signing key.');
   const sign = value => createHmac('sha256', key).update(JSON.stringify(value)).digest('hex');
   function persist() { if (fs.existsSync(storagePath)) safeRead(storagePath, 24 * 1024 * 1024);
-    writePrivateFileAtomic(storagePath, JSON.stringify({ version: 1, hosts: [...hosts.values()], drafts, receipts, worktrees }), { durable: true }); }
+    const encoded = JSON.stringify({ version: 1, hosts: [...hosts.values()], drafts, receipts, worktrees, toolIntents });
+    // Reserve bounded terminal-result space before accepting a command. Other hosts/drafts
+    // cannot consume the capacity required to durably settle an already started operation.
+    const reserved = toolIntents.filter(item => item.state === 'started').reduce((bytes, item) => bytes + Math.max(0, AGENT_LIMITS.resultBytes - Buffer.byteLength(JSON.stringify(item.outcome))) + 1024, 0);
+    if (Buffer.byteLength(encoded) + reserved > 24 * 1024 * 1024) fail('STORE', 'Retained remote transaction storage limit reached.');
+    writePrivateFileAtomic(storagePath, encoded, { durable: true }); }
   if (fs.existsSync(storagePath)) {
     const saved = JSON.parse(safeRead(storagePath, 24 * 1024 * 1024).toString());
     if (saved.version !== 1 || !Array.isArray(saved.hosts) || saved.hosts.length > LIMITS.hosts || !Array.isArray(saved.receipts) || !Array.isArray(saved.drafts)) fail('STORE', 'Invalid remote workspace registry.');
@@ -164,16 +201,25 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
     if (saved.worktrees !== undefined && (!Array.isArray(saved.worktrees) || saved.worktrees.length > 24)) fail('STORE', 'Invalid managed remote worktree registry.');
     worktrees = (saved.worktrees ?? []).map(record => { if (!record || !/^[a-f0-9-]{36}$/.test(record.id) || !hosts.has(record.hostId) || typeof record.path !== 'string' || typeof record.sourceRoot !== 'string' || typeof record.branch !== 'string') fail('STORE', 'Invalid managed remote worktree record.'); return ['creating', 'archiving'].includes(record.state) ? { ...record, state: 'needs-inspection' } : record; });
     for (const receipt of receipts) { const { signature, ...payload } = receipt; if (sign(payload) !== signature) fail('STORE', 'Remote transaction receipt signature mismatch.'); }
+    if (saved.toolIntents !== undefined && (!Array.isArray(saved.toolIntents) || saved.toolIntents.length > AGENT_LIMITS.intents)) fail('STORE', 'Invalid remote Agent intent registry.');
+    const intentKeys = new Set();
+    toolIntents = (saved.toolIntents ?? []).map(item => {
+      if (!record(item) || typeof item.idempotencyKey !== 'string' || !item.idempotencyKey || item.idempotencyKey.length > 240 || intentKeys.has(item.idempotencyKey)
+        || !/^[a-f0-9]{64}$/.test(item.fingerprint) || !['started', 'completed', 'failed', 'unknown'].includes(item.state)
+        || !receipts.some(r => r.id === item.receiptId) || sign(withoutSignature(item)) !== item.signature || Buffer.byteLength(JSON.stringify(item.outcome)) > AGENT_LIMITS.resultBytes) fail('STORE', 'Remote Agent intent receipt is invalid.');
+      intentKeys.add(item.idempotencyKey);
+      return item.state === 'started' ? signed({ ...withoutSignature(item), state: 'unknown', outcome: { ...item.outcome, state: 'outcome_unknown', reason: 'Application restarted without terminal remote proof; no operation was replayed.' } }) : item;
+    });
     // A process that disappeared has no terminal remote proof. Do not replay it.
     receipts = receipts.map(r => r.state === 'started' ? signed({ ...withoutSignature(r), state: 'unknown', message: 'Application restarted before terminal proof; inspect remote state before another action.' }) : r);
     persist();
   }
   function withoutSignature(value) { const { signature, ...payload } = value; return payload; }
   function signed(value) { return { ...value, signature: sign(value) }; }
-  function receipt(host, kind, detail) { const r = signed({ id: randomUUID(), hostId: host.id, hostFingerprint: host.fingerprint, root: sessions.get(host.id)?.root ?? host.config.root, kind, time: new Date().toISOString(), ...detail }); if (receipts.length >= LIMITS.receipts) { const removable = receipts.findIndex(entry => !['started', 'unknown'].includes(entry.state)); if (removable < 0) fail('RECEIPTS', 'Reconcile outstanding transactions before starting more work.'); receipts.splice(removable, 1); } receipts.push(r); persist(); return r; }
+  function receipt(host, kind, detail, durable = true) { const r = signed({ id: randomUUID(), hostId: host.id, hostFingerprint: host.fingerprint, root: sessions.get(host.id)?.root ?? host.config.root, kind, time: new Date().toISOString(), ...detail }); if (receipts.length >= LIMITS.receipts) { const pinned = new Set(toolIntents.map(item => item.receiptId)); const removable = receipts.findIndex(entry => !['started', 'unknown'].includes(entry.state) && !pinned.has(entry.id)); if (removable < 0) fail('RECEIPTS', 'Retained transaction proof limit reached; no new operation was started.'); receipts.splice(removable, 1); } receipts.push(r); if (durable) persist(); return r; }
   function settle(id, update) { const index = receipts.findIndex(r => r.id === id); const r = signed({ ...withoutSignature(receipts[index]), ...update }); receipts[index] = r; persist(); return r; }
   function hostOf(id) { const host = hosts.get(id); if (!host) fail('HOST', 'Select a saved SSH host.'); return host; }
-  function connected(id) { const host = hostOf(id); const session = sessions.get(id); if (!session || session.fingerprint !== host.fingerprint) fail('OFFLINE', 'Connect this SSH host first.'); return { host, ...session }; }
+  function connected(id) { const host = hostOf(id); const session = sessions.get(id); if (!session || session.sftp.closed || session.fingerprint !== host.fingerprint) fail('OFFLINE', 'Connect this SSH host first.'); return { host, ...session }; }
   async function exclusive(id, action, kind = 'read') { hostOf(id); if (closing) fail('CLOSING', 'Remote workspace is closing.'); if (busy.has(id)) fail('BUSY', 'This host has an operation in progress.'); busy.add(id); owners.set(id, kind); const pending = Promise.resolve().then(action); active.set(id, pending); try { return await pending; } finally { active.delete(id); owners.delete(id); busy.delete(id); } }
   async function bounded(session, file, empty = false, missing = false) {
     relative(file, empty); const joined = path.posix.join(session.root, file); const parent = empty && !file ? joined : path.posix.dirname(joined);
@@ -182,6 +228,169 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
     if (await session.sftp.realpath(joined) !== joined || (stat.mode & 0xf000) === 0xa000) fail('BOUNDARY', 'Symbolic links are outside the remote editor boundary.'); return joined;
   }
   function publicHost(host) { const session = sessions.get(host.id); return { id: host.id, ...host.config, fingerprint: host.fingerprint, connected: Boolean(session && !session.sftp.closed), canonicalRoot: session?.root ?? null, busy: busy.has(host.id) }; }
+  async function listRemote(s, directory = '') {
+    const target = await bounded(s, directory, true); const listing = await s.sftp.list(target);
+    return { path: directory, truncated: listing.truncated, entries: listing.entries.map(e => ({ name: e.name, path: directory ? directory + '/' + e.name : e.name,
+      kind: (e.mode & 0xf000) === 0x4000 ? 'directory' : (e.mode & 0xf000) === 0x8000 ? 'file' : 'blocked', size: e.size ?? null })) };
+  }
+  async function readRemote(s, file) {
+    const target = await bounded(s, file, false, true); const bytes = await s.sftp.read(target);
+    if (bytes === null) return { path: file, state: 'missing', revision: null, text: '', size: 0 };
+    let text = null; try { if (!bytes.includes(0)) text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch {}
+    return { path: file, state: text === null ? 'binary' : 'text', revision: hash(bytes), text, size: bytes.length };
+  }
+  const bindingKey = scope => JSON.stringify([scope.taskId, scope.generation]);
+  function retireHostBindings(hostId) { for (const [key, binding] of agentBindings) if (binding.hostId === hostId) agentBindings.delete(key); }
+  function bindingCurrent(binding) {
+    const session = sessions.get(binding.hostId), host = hosts.get(binding.hostId);
+    return !closing && !!host && !!session && !session.sftp.closed && binding.mainInstanceId === mainInstanceId && binding.fingerprint === host.fingerprint
+      && binding.connectionId === session.connectionId && binding.root === session.root;
+  }
+  function agentStatus(scope) {
+    if (scope !== undefined) agentScope(scope);
+    return { mainInstanceId, hosts: [...hosts.values()].map(publicHost),
+      bindings: [...agentBindings.values()].filter(b => bindingCurrent(b) && (!scope || b.taskId === scope.taskId && b.generation === scope.generation)).map(b => structuredClone(b)),
+      activeCount: agentActive.size };
+  }
+  async function attachAgent(input) {
+    if (!record(input) || Object.keys(input).sort().join(',') !== 'explicitUserAction,hostId,scope' || input.explicitUserAction !== true || typeof validateAgentTask !== 'function' || typeof validateAgentIntent !== 'function') fail('AGENT', 'Explicit current remote Agent attachment is required.');
+    const captured = structuredClone(input); agentScope(captured.scope, true);
+    if (Object.keys(captured.scope).sort().join(',') !== 'familyId,generation,revision,taskId') fail('AGENT', 'Invalid exact remote Agent task scope.');
+    const key = bindingKey(captured.scope), revocation = agentRevocations.get(key) ?? 0;
+    const initial = connected(captured.hostId);
+    const connection = { connectionId: initial.connectionId, root: initial.root, fingerprint: initial.host.fingerprint };
+    const sameConnection = () => {
+      const current = connected(captured.hostId);
+      if (current.connectionId !== connection.connectionId || current.root !== connection.root || current.host.fingerprint !== connection.fingerprint) fail('AGENT', 'Remote connection changed before Agent attachment; select the current connection again.');
+      return current;
+    };
+    if (busy.has(captured.hostId)) fail('BUSY', 'Wait for the current remote owner before attaching this task.');
+    sameTask(await validateAgentTask(captured.scope), captured.scope, true);
+    return exclusive(captured.hostId, async () => {
+      sameConnection();
+      sameTask(await validateAgentTask(captured.scope), captured.scope, true);
+      const s = sameConnection(), scope = captured.scope;
+      if ((agentRevocations.get(key) ?? 0) !== revocation || scope.generation < (agentInvalidations.get(JSON.stringify([scope.taskId, scope.familyId])) ?? 0)) fail('AGENT', 'Remote Agent attachment was revoked or its generation changed.');
+      if (!agentBindings.has(key) && agentBindings.size >= AGENT_LIMITS.bindings) fail('AGENT', 'Remote Agent attachment limit reached.');
+      for (const [previous, binding] of agentBindings) if (binding.taskId === scope.taskId) agentBindings.delete(previous);
+      agentBindings.set(key, { mainInstanceId, attachmentId: randomUUID(), taskId: scope.taskId, familyId: scope.familyId, generation: scope.generation,
+        hostId: s.host.id, fingerprint: s.host.fingerprint, root: s.root, connectionId: s.connectionId,
+        hostname: s.host.config.hostname, username: s.host.config.username, port: s.host.config.port, label: s.host.config.label });
+      return agentStatus(scope);
+    }, 'agent-attach');
+  }
+  function revokeAgent(scope) {
+    agentScope(scope); const key = bindingKey(scope);
+    agentRevocations.set(key, (agentRevocations.get(key) ?? 0) + 1); agentBindings.delete(key);
+    // Revocation retires future authority; accepted commands retain their owner and receipt.
+    return agentStatus(scope);
+  }
+  function invalidateAgentTask(scope) {
+    if (!record(scope) || Object.keys(scope).sort().join(',') !== 'beforeGeneration,familyId,taskId' || typeof scope.taskId !== 'string' || !scope.taskId || scope.taskId.length > 200
+      || typeof scope.familyId !== 'string' || !scope.familyId || scope.familyId.length > 200 || !Number.isSafeInteger(scope.beforeGeneration) || scope.beforeGeneration < 1) fail('AGENT', 'Invalid committed remote Agent generation invalidation.');
+    const key = JSON.stringify([scope.taskId, scope.familyId]);
+    agentInvalidations.set(key, Math.max(agentInvalidations.get(key) ?? 0, scope.beforeGeneration));
+    for (const [key, binding] of agentBindings) if (binding.taskId === scope.taskId && binding.familyId === scope.familyId && binding.generation < scope.beforeGeneration) agentBindings.delete(key);
+    return agentStatus();
+  }
+  function boundAgent(request) {
+    const binding = agentBindings.get(bindingKey(request.scope));
+    if (!binding || !bindingCurrent(binding) || canonical(binding) !== canonical(request.arguments.binding)) fail('AGENT', 'Attach this exact connected host and root to the current Agent task generation.');
+    return binding;
+  }
+  function sameTask(actual, expected, revision = false) {
+    agentScope(actual, true);
+    if (actual.taskId !== expected.taskId || actual.familyId !== expected.familyId || actual.generation !== expected.generation || revision && actual.revision !== expected.revision) fail('AGENT', 'Current remote Agent task scope changed.');
+  }
+  async function checkAgentIntent(request) {
+    if (closing || typeof validateAgentIntent !== 'function') fail('AGENT', 'Current owned remote Agent intent validation is unavailable.');
+    const binding = boundAgent(request);
+    const actual = await validateAgentIntent(structuredClone(request));
+    sameTask(actual, binding); boundAgent(request);
+  }
+  function existingAgent(checked) {
+    const intent = toolIntents.find(item => item.idempotencyKey === checked.request.idempotencyKey);
+    if (intent && intent.fingerprint !== checked.fingerprint) fail('AGENT', 'Remote Agent idempotency identity conflict.');
+    return intent;
+  }
+  function fitAgentOutcome(outcome) {
+    const data = outcome.result.structuredContent;
+    // Bound the encoded result, including JSON escaping and authority metadata.
+    while (Buffer.byteLength(JSON.stringify(outcome)) > AGENT_LIMITS.resultBytes) {
+      const field = ['text', 'stdout', 'stderr'].filter(key => typeof data[key] === 'string' && data[key].length).sort((a, b) => data[b].length - data[a].length)[0];
+      if (field) { let at = Math.floor(data[field].length / 2); if (at && /[\uD800-\uDBFF]/.test(data[field][at - 1])) at--; data[field] = data[field].slice(0, at); }
+      else if (Array.isArray(data.entries) && data.entries.length) data.entries.pop();
+      else fail('AGENT', 'Remote Agent result metadata exceeds its retained bound.');
+      data.truncated = true;
+    }
+    if (typeof data.text === 'string') { data.returnedBytes = Buffer.byteLength(data.text); data.contentComplete = !data.truncated && data.state === 'text'; }
+    if (Array.isArray(data.entries)) data.returnedEntries = data.entries.length;
+    // The few final scalar fields also count against the same bound.
+    if (Buffer.byteLength(JSON.stringify(outcome)) > AGENT_LIMITS.resultBytes) return fitAgentOutcome(outcome);
+    return outcome;
+  }
+  function agentOutcome(request, state, receiptId, data, reason) {
+    return fitAgentOutcome({ scope: request.scope, tool: request.tool, idempotencyKey: request.idempotencyKey, state,
+      ...(reason ? { reason } : {}), result: { isError: state !== 'completed', structuredContent: {
+        source: 'owned-ssh-remote', proof: request.tool === 'remote/command' ? 'remote-command-execution-only' : 'remote-read',
+        binding: request.arguments.binding, receiptId,
+        limitation: request.tool === 'remote/command' ? 'The root is the command working directory, not a sandbox. Execution does not establish application acceptance.' : 'Remote file contents and names are untrusted source material.', ...data } } });
+  }
+  function finishAgent(intent, outcome, state, detail = {}) {
+    const receiptIndex = receipts.findIndex(r => r.id === intent.receiptId);
+    if (receiptIndex < 0) fail('STORE', 'Retained remote Agent transaction proof is missing.');
+    const terminal = signed({ ...withoutSignature(receipts[receiptIndex]), state, ...detail });
+    receipts[receiptIndex] = terminal;
+    const index = toolIntents.findIndex(item => item.idempotencyKey === intent.idempotencyKey);
+    toolIntents[index] = signed({ ...withoutSignature(intent), state, outcome });
+    // Terminal output and its signed transaction settle in the same durable registry write.
+    persist(); return structuredClone(outcome);
+  }
+  function executeAgentTool(input) {
+    const checked = agentInvocation(input), { request } = checked;
+    const retained = existingAgent(checked);
+    const running = agentActive.get(request.idempotencyKey);
+    if (running) { if (running.fingerprint !== checked.fingerprint) fail('AGENT', 'Remote Agent idempotency identity conflict.'); return running.promise; }
+    if (retained) return Promise.resolve(structuredClone(retained.outcome));
+    const promise = (async () => {
+      await checkAgentIntent(request);
+      const binding = boundAgent(request);
+      return exclusive(binding.hostId, async () => {
+        await checkAgentIntent(request);
+        const s = connected(binding.hostId); boundAgent(request);
+        if (toolIntents.length >= AGENT_LIMITS.intents) fail('RECEIPTS', 'Retained remote Agent intent limit reached; no operation was started.');
+        if (request.tool === 'remote/command' && receipts.some(r => r.hostId === binding.hostId && r.state === 'unknown')) fail('UNKNOWN', 'Reconcile this host’s uncertain transaction before another command.');
+        const operation = receipt(s.host, request.tool === 'remote/command' ? 'command' : request.tool === 'remote/list' ? 'agent-list' : 'agent-read', {
+          state: 'started', toolIdempotencyKey: request.idempotencyKey, toolFingerprint: checked.fingerprint,
+          ...(request.tool === 'remote/command' ? { command: request.arguments.command, timeoutSeconds: request.arguments.timeoutSeconds } : { path: request.arguments.path ?? '' }) }, false);
+        const initial = agentOutcome(request, 'outcome_unknown', operation.id, {}, 'Remote operation admitted without terminal proof; never replay it.');
+        const intent = signed({ idempotencyKey: request.idempotencyKey, fingerprint: checked.fingerprint, receiptId: operation.id, state: 'started', outcome: initial });
+        toolIntents.push(intent); persist();
+        let dispatched = false;
+        try {
+          let data;
+          if (request.tool === 'remote/list') data = await listRemote(s, request.arguments.path ?? '');
+          else if (request.tool === 'remote/read') data = { ...await readRemote(s, request.arguments.path), truncated: false };
+          else {
+            await bounded(s, '', true); await checkAgentIntent(request); boundAgent(request);
+            dispatched = true;
+            data = await (commandRunner ?? ((h, r) => runCommand(h, r, spawnProcess)))(s.host.config, { root: s.root, command: request.arguments.command, timeoutSeconds: request.arguments.timeoutSeconds });
+            if (!record(data) || !Number.isInteger(data.exitCode) || typeof data.stdout !== 'string' || typeof data.stderr !== 'string') fail('COMMAND', 'Invalid remote command terminal receipt.');
+            data = { exitCode: data.exitCode, stdout: data.stdout, stderr: data.stderr, capturedStdoutBytes: Buffer.byteLength(data.stdout), capturedStderrBytes: Buffer.byteLength(data.stderr), truncated: data.truncated === true, stopped: typeof data.stopped === 'string' ? data.stopped.slice(0, 100) : null };
+          }
+          return finishAgent(intent, agentOutcome(request, 'completed', operation.id, data), 'completed', request.tool === 'remote/command' ? { exitCode: data.exitCode, stopped: data.stopped } : {});
+        } catch (error) {
+          const state = dispatched ? 'outcome_unknown' : 'failed';
+          // Do not copy arbitrary transport/remote diagnostics into retained model output.
+          const reason = dispatched ? 'Remote command has no exact terminal proof; inspect retained state without replay.' : 'Remote read or pre-dispatch validation failed; no command was sent.';
+          return finishAgent(intent, agentOutcome(request, state, operation.id, {}, reason), dispatched ? 'unknown' : 'failed', { message: reason });
+        }
+      }, request.tool === 'remote/command' ? 'command' : 'agent-read');
+    })();
+    agentActive.set(request.idempotencyKey, { fingerprint: checked.fingerprint, promise });
+    void promise.then(() => agentActive.delete(request.idempotencyKey), () => agentActive.delete(request.idempotencyKey));
+    return promise;
+  }
   function validateDraft(input) { if (!input || typeof input.text !== 'string' || Buffer.byteLength(input.text) > LIMITS.bytes || (input.expectedRevision !== null && !/^[a-f0-9]{64}$/.test(input.expectedRevision))) fail('DRAFT', 'Invalid remote text draft.'); return { path: relative(input.path), text: input.text, expectedRevision: input.expectedRevision }; }
   function retain(id, input) { const host = hostOf(id); const candidate = validateDraft(input); const old = drafts.find(d => d.hostId === id && d.path === candidate.path);
     if (!old && drafts.length >= LIMITS.drafts) fail('DRAFT', 'Recovery draft limit reached.'); const draft = { id: old?.id ?? randomUUID(), hostId: id, fingerprint: host.fingerprint, ...candidate, time: new Date().toISOString() }; drafts = drafts.filter(d => d.id !== draft.id); drafts.push(draft); persist(); return draft; }
@@ -197,18 +406,19 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
     begin: (id, kind, detail) => receipt(hostOf(id), kind, detail), finish: settle,
   });
   return {
+    agentStatus, attachAgent, revokeAgent, invalidateAgentTask, executeAgentTool,
+    agentReceipt(input) { const retained = existingAgent(agentInvocation(input)); return retained ? structuredClone(retained.outcome) : null; },
     worktreeInspect: remoteWorktrees.inspect, worktreePrepare: remoteWorktrees.prepare, worktreeCreate: remoteWorktrees.create, worktreeList: remoteWorktrees.list,
     worktreeInspectOwned: remoteWorktrees.inspectOwned, worktreePrepareArchive: remoteWorktrees.prepareArchive, worktreeArchive: remoteWorktrees.archive,
     listHosts: () => [...hosts.values()].map(publicHost),
     addHost(input) { if (hosts.size >= LIMITS.hosts) fail('HOST', 'Remote host limit reached.'); const config = validateHost(input); const host = { id: randomUUID(), config, fingerprint: hash(JSON.stringify(config)) }; hosts.set(host.id, host); persist(); return publicHost(host); },
-    forgetHost(id) { hostOf(id); if (busy.has(id)) fail('BUSY', 'Wait for the remote operation to settle.'); if (worktrees.some(w => w.hostId === id)) fail('WORKTREE', 'This host retains managed worktree ownership records.'); if (drafts.some(d => d.hostId === id)) fail('DRAFT', 'Recover or discard this host’s drafts before removing it.'); sessions.get(id)?.sftp.close(); sessions.delete(id); hosts.delete(id); for (const [token, a] of approvals) if (a.hostId === id) approvals.delete(token); persist(); return { removed: true }; },
-    connect: id => exclusive(id, async () => { const host = hostOf(id); for (const [token, approval] of approvals) if (approval.hostId === id) approvals.delete(token); sessions.get(id)?.sftp.close(); sessions.delete(id); const sftp = transportFactory ? transportFactory(host.config) : new Sftp(host.config, spawnProcess); transports.add(sftp); if (sftp.exited) void sftp.exited.then(() => transports.delete(sftp));
+    forgetHost(id) { hostOf(id); if (busy.has(id)) fail('BUSY', 'Wait for the remote operation to settle.'); if (worktrees.some(w => w.hostId === id)) fail('WORKTREE', 'This host retains managed worktree ownership records.'); if (drafts.some(d => d.hostId === id)) fail('DRAFT', 'Recover or discard this host’s drafts before removing it.'); retireHostBindings(id); sessions.get(id)?.sftp.close(); sessions.delete(id); hosts.delete(id); for (const [token, a] of approvals) if (a.hostId === id) approvals.delete(token); persist(); return { removed: true }; },
+    connect: id => exclusive(id, async () => { const host = hostOf(id); retireHostBindings(id); for (const [token, approval] of approvals) if (approval.hostId === id) approvals.delete(token); sessions.get(id)?.sftp.close(); sessions.delete(id); const sftp = transportFactory ? transportFactory(host.config) : new Sftp(host.config, spawnProcess); transports.add(sftp); if (sftp.exited) void sftp.exited.then(() => transports.delete(sftp));
       try { await sftp.ready; const root = await sftp.realpath(host.config.root); if (!root.startsWith('/') || /[\0\r\n]/.test(root)) fail('ROOT', 'Invalid canonical remote root.'); const stat = await sftp.stat(root); if (!stat || (stat.mode & 0xf000) !== 0x4000) fail('ROOT', 'Remote root is not a directory.'); sessions.set(id, { sftp, root, fingerprint: host.fingerprint, connectionId: randomUUID() }); receipt(host, 'connect', { state: 'completed' }); return publicHost(host); }
       catch (error) { sftp.close(); throw error; } }, 'connect'),
-    disconnect(id) { hostOf(id); if (busy.has(id)) fail('BUSY', 'This host still owns an active operation.'); sessions.get(id)?.sftp.close(); sessions.delete(id); for (const [token, a] of approvals) if (a.hostId === id) approvals.delete(token); return { disconnected: true }; },
-    list: (id, directory = '') => exclusive(id, async () => { const s = connected(id); const target = await bounded(s, directory, true); const listing = await s.sftp.list(target); return { path: directory, truncated: listing.truncated, entries: listing.entries.map(e => ({ name: e.name, path: directory ? directory + '/' + e.name : e.name, kind: (e.mode & 0xf000) === 0x4000 ? 'directory' : (e.mode & 0xf000) === 0x8000 ? 'file' : 'blocked', size: e.size ?? null })) }; }),
-    preview: (id, file) => exclusive(id, async () => { const s = connected(id); const target = await bounded(s, file, false, true); const bytes = await s.sftp.read(target); if (bytes === null) return { path: file, state: 'missing', revision: null, text: '', size: 0 };
-      let text = null; try { if (!bytes.includes(0)) text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch {} return { path: file, state: text === null ? 'binary' : 'text', revision: hash(bytes), text, size: bytes.length }; }),
+    disconnect(id) { hostOf(id); if (busy.has(id)) fail('BUSY', 'This host still owns an active operation.'); retireHostBindings(id); sessions.get(id)?.sftp.close(); sessions.delete(id); for (const [token, a] of approvals) if (a.hostId === id) approvals.delete(token); return { disconnected: true }; },
+    list: (id, directory = '') => exclusive(id, () => listRemote(connected(id), directory)),
+    preview: (id, file) => exclusive(id, () => readRemote(connected(id), file)),
     retainDraft: (id, input) => retain(id, input),
     listDrafts(id) { hostOf(id); return drafts.filter(d => d.hostId === id); },
     discardDraft(id, draftId) { hostOf(id); const draft = drafts.find(d => d.id === draftId && d.hostId === id); if (!draft) fail('DRAFT', 'Draft not found.'); drafts = drafts.filter(d => d !== draft); persist(); return { discarded: true }; },
@@ -236,8 +446,8 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
     listReceipts(id) { hostOf(id); return receipts.filter(r => r.hostId === id); },
     reconcile(id, receiptId, note) { hostOf(id); if (busy.has(id)) fail('BUSY', 'The host operation is still active.'); const r = receipts.find(r => r.id === receiptId && r.hostId === id); if (!r || r.state !== 'unknown' || typeof note !== 'string' || note.trim().length < 8 || note.length > 2000) fail('RECONCILE', 'Provide the observed remote outcome before acknowledging an uncertain transaction.'); return settle(r.id, { state: 'reconciled', reconciliation: note, reconciledAt: new Date().toISOString() }); },
     currentOperation() { const entry = [...owners].find(([, kind]) => (['connect', 'write', 'command'].includes(kind) || kind.startsWith('worktree-'))); return entry ? `SSH ${entry[1]} · ${hostOf(entry[0]).config.label} (${hostOf(entry[0]).config.hostname})` : null; },
-    async destroy() { closing = true; await Promise.allSettled([...active.values()]); const owned = [...transports]; for (const sftp of owned) sftp.close(); await Promise.all(owned.map(sftp => sftp.exited ?? Promise.resolve())); sessions.clear(); approvals.clear(); transports.clear(); },
-    dispose() { if (busy.size) fail('BUSY', 'Remote operations still own their terminal outcomes.'); for (const session of sessions.values()) session.sftp.close(); sessions.clear(); approvals.clear(); },
+    async destroy() { closing = true; agentBindings.clear(); await Promise.allSettled([...active.values(), ...[...agentActive.values()].map(item => item.promise)]); const owned = [...transports]; for (const sftp of owned) sftp.close(); await Promise.all(owned.map(sftp => sftp.exited ?? Promise.resolve())); sessions.clear(); approvals.clear(); transports.clear(); },
+    dispose() { if (busy.size || agentActive.size) fail('BUSY', 'Remote operations still own their terminal outcomes.'); for (const session of sessions.values()) session.sftp.close(); sessions.clear(); approvals.clear(); agentBindings.clear(); },
   };
 }
 module.exports = { createRemoteWorkspaceService, Sftp, sshArgs, validateHost, relative, LIMITS };

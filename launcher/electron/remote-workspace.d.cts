@@ -1,11 +1,13 @@
 import type { RemoteWorktreeApi, RemoteWorktreeService } from './remote-worktrees.cjs';
+import type { RemoteAgentScope, RemoteAgentTaskScope, RemoteAgentInvocation, RemoteAgentOutcome, RemoteAgentStatus } from './agent-remote-types.cjs';
+export type { RemoteAgentScope, RemoteAgentTaskScope, RemoteAgentBinding, RemoteAgentInvocation, RemoteAgentOutcome, RemoteAgentStatus } from './agent-remote-types.cjs';
 export type RemoteHostInput = { label: string; hostname: string; username: string; port: number; root: string };
 export type RemoteHost = RemoteHostInput & { id: string; fingerprint: string; connected: boolean; canonicalRoot: string | null; busy: boolean };
 export type RemoteListing = { path: string; truncated: boolean; entries: { name: string; path: string; kind: 'directory' | 'file' | 'blocked'; size: number | null }[] };
 export type RemotePreview = { path: string; state: 'text' | 'binary' | 'missing'; revision: string | null; text: string | null; size: number };
 export type RemoteDraftInput = { path: string; text: string; expectedRevision: string | null };
 export type RemoteDraft = RemoteDraftInput & { id: string; hostId: string; fingerprint: string; time: string };
-export type RemoteReceipt = { id: string; hostId: string; hostFingerprint: string; root: string; kind: 'connect' | 'write' | 'command' | 'worktree-create' | 'worktree-archive'; time: string; state: 'started' | 'completed' | 'conflict' | 'failed' | 'unknown' | 'reconciled'; path?: string; command?: string; message?: string; revision?: string; exitCode?: number; temporaryPath?: string; signature: string; reconciliation?: string };
+export type RemoteReceipt = { id: string; hostId: string; hostFingerprint: string; root: string; kind: 'connect' | 'write' | 'command' | 'worktree-create' | 'worktree-archive' | 'agent-list' | 'agent-read'; time: string; state: 'started' | 'completed' | 'conflict' | 'failed' | 'unknown' | 'reconciled'; path?: string; command?: string; message?: string; revision?: string; exitCode?: number; temporaryPath?: string; signature: string; reconciliation?: string };
 export type RemoteCommandApproval = { token: string; hostId: string; fingerprint: string; hostname: string; username: string; port: number; root: string; command: string; timeoutSeconds: number };
 export type RemoteCommandResult = { exitCode: number | null; stdout: string; stderr: string; stopped?: string | null; truncated?: boolean; receipt: RemoteReceipt };
 export type RemoteSaveResult = { state: 'saved'; revision: string; draftRetained: boolean; receipt: RemoteReceipt } | { state: 'conflict' | 'failed' | 'unknown'; draftId: string; receipt: RemoteReceipt };
@@ -27,6 +29,12 @@ export interface RemoteWorkspaceApi extends RemoteWorktreeApi {
   remoteWorkspaceReconcile(id: string, receiptId: string, note: string): Promise<RemoteReceipt>;
 }
 export interface RemoteWorkspaceService extends RemoteWorktreeService {
+  agentStatus(scope?: RemoteAgentScope): RemoteAgentStatus;
+  attachAgent(input: { hostId: string; scope: RemoteAgentTaskScope; explicitUserAction: true }): Promise<RemoteAgentStatus>;
+  revokeAgent(scope: RemoteAgentScope): RemoteAgentStatus;
+  invalidateAgentTask(scope: { taskId: string; familyId: string; beforeGeneration: number }): RemoteAgentStatus;
+  executeAgentTool(request: RemoteAgentInvocation): Promise<RemoteAgentOutcome>;
+  agentReceipt(request: RemoteAgentInvocation): RemoteAgentOutcome | null;
   listHosts(): RemoteHost[];
   addHost(input: RemoteHostInput): RemoteHost;
   forgetHost(id: string): { removed: boolean };
@@ -46,4 +54,8 @@ export interface RemoteWorkspaceService extends RemoteWorktreeService {
   destroy(): Promise<void>;
   dispose(): void;
 }
-export function createRemoteWorkspaceService(options: { storagePath: string }): RemoteWorkspaceService;
+export function createRemoteWorkspaceService(options: {
+  storagePath: string; agentInstanceId?: string;
+  validateAgentTask?: (scope: RemoteAgentTaskScope) => RemoteAgentTaskScope | Promise<RemoteAgentTaskScope>;
+  validateAgentIntent?: (request: RemoteAgentInvocation) => RemoteAgentTaskScope | Promise<RemoteAgentTaskScope>;
+}): RemoteWorkspaceService;

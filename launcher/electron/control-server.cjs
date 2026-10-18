@@ -47,7 +47,8 @@ function writeJson(response, status, body) {
 
 class BrowserControlServer {
   constructor({ logger, getBrowserHost, getPreferences, resolveNativeProxy,
-    getAgentNativeBridge, getAgentNativeInstance, validateNativeInvalidation }) {
+    getAgentNativeBridge, getAgentNativeInstance, validateNativeInvalidation,
+    getAgentRemoteService, getAgentRemoteInstance, validateRemoteInvalidation }) {
     this.logger = logger;
     this.getBrowserHost = getBrowserHost;
     this.getPreferences = getPreferences;
@@ -55,6 +56,9 @@ class BrowserControlServer {
     this.getAgentNativeBridge = getAgentNativeBridge;
     this.getAgentNativeInstance = getAgentNativeInstance;
     this.validateNativeInvalidation = validateNativeInvalidation;
+    this.getAgentRemoteService = getAgentRemoteService;
+    this.getAgentRemoteInstance = getAgentRemoteInstance;
+    this.validateRemoteInvalidation = validateRemoteInvalidation;
     this.token = randomBytes(32).toString("base64url");
     this.automaticMutationReceipts = new Map();
     this.port = 0;
@@ -154,6 +158,8 @@ class BrowserControlServer {
       await this.handleAgentNative(request, response, nativeAction);
       return;
     }
+    const remoteAction = new Map(['status', 'attach', 'revoke', 'execute', 'receipt', 'invalidate'].map(action => [`/v1/agent-remote/${action}`, action])).get(request.url);
+    if (remoteAction) { await this.handleAgentRemote(request, response, remoteAction); return; }
     const isNativeProxy = request.url === "/v1/network/resolve-proxy";
     const isNativeUsage = request.url === "/v1/usage/native";
     const isTurn = request.url === "/v1/turn/start"
@@ -639,6 +645,35 @@ class BrowserControlServer {
       // RPC/config/provider messages may contain private context. Never log or return them.
       if (!response.destroyed && !response.writableEnded) writeJson(response, 409, { ok: false, error: 'native_conflict', instanceId });
     } finally { response.off('close', closed); }
+  }
+
+  /** Remote execution uses the existing SSH owner. Client disconnect ends only observation. */
+  async handleAgentRemote(request, response, action) {
+    if (request.method !== 'POST') { writeJson(response, 405, { error: 'method_not_allowed' }); return; }
+    const instanceId = this.getAgentRemoteInstance?.();
+    if (typeof instanceId !== 'string' || request.headers['x-nekodex-remote-instance'] !== instanceId) {
+      writeJson(response, 403, { error: 'remote_scope_unavailable' }); return;
+    }
+    const service = this.getAgentRemoteService?.();
+    if (!service) { writeJson(response, 503, { error: 'remote_unavailable', instanceId }); return; }
+    try {
+      const body = await readJson(request, 64 * 1024);
+      let value;
+      if (action === 'status') value = service.agentStatus(Object.keys(body).length ? body : undefined);
+      else if (action === 'attach') value = await service.attachAgent(body);
+      else if (action === 'revoke') value = service.revokeAgent(body);
+      else if (action === 'execute') value = await service.executeAgentTool(body);
+      else if (action === 'receipt') value = service.agentReceipt(body);
+      else {
+        if (typeof this.validateRemoteInvalidation !== 'function') throw new Error('Remote cleanup validation is unavailable');
+        const fence = await this.validateRemoteInvalidation(body);
+        value = service.invalidateAgentTask(fence);
+      }
+      if (!response.destroyed && !response.writableEnded) writeJson(response, 200, { ok: true, value: value ?? null, instanceId });
+    } catch {
+      // Remote content, commands and SSH diagnostics never enter control error logs.
+      if (!response.destroyed && !response.writableEnded) writeJson(response, 409, { ok: false, error: 'remote_conflict', instanceId });
+    }
   }
 
   async close() {

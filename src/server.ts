@@ -3,6 +3,10 @@ import { conversationHistoryRequest } from "./conversation-history/http";
 import { AgentModeStore, AgentModeRuntime, activeTaskEvidence, createAgentModeRoutes, createLocalResponsesExecutionPort, createOwnedNativeExecutionPort, createAgentExecutionRouter } from "./agent-mode";
 import { createLauncherNativeBridge } from "./agent-mode/launcher-native-bridge";
 import { createAgentNativeControlRoutes } from "./agent-mode/native-control";
+import { createAgentRemoteControlRoutes } from "./agent-tools/remote-control";
+import { createLauncherRemoteBridge } from "./remote-workspace/launcher-bridge";
+import { createAgentRemoteToolsProvider, type AgentRemoteToolsProvider } from "./remote-workspace/agent-tools";
+import { AGENT_REMOTE_DESCRIPTOR_FILE } from "../launcher/electron/agent-remote-descriptor.cjs";
 import { AGENT_NATIVE_DESCRIPTOR_FILE } from "../launcher/electron/agent-native-descriptor.cjs";
 import { createAgentToolsComposition, type AgentToolsComposition } from "./agent-tools/composition";
 import { browserCompanionRequest, createAgentBrowserToolsProvider, createBrowserCompanionRuntime, type AgentBrowserToolsProvider, type BrowserCompanionRuntime } from "./browser-companion";
@@ -884,10 +888,13 @@ export function startServer(
       .finally(() => { current.pending = undefined; });
   };
   const nativeControlRoutes = createAgentNativeControlRoutes({ runtime: () => { getAgentRoutes(); return agentRuntime!; }, authorize: request => controlAuthorized(request) });
+  const remoteControlRoutes = createAgentRemoteControlRoutes({ runtime: () => { getAgentRoutes(); return agentRuntime!; }, tools: () => getAgentTools(),
+    authorize: request => controlAuthorized(request), canStart: () => !stopPrepared && acceptingAgentTools() });
   let agentTools: AgentToolsComposition | undefined;
   let browserCompanion: BrowserCompanionRuntime | undefined;
   let agentBrowserTools: AgentBrowserToolsProvider | undefined;
   let agentDesktopTools: AgentDesktopToolsProvider | undefined;
+  let agentRemoteTools: AgentRemoteToolsProvider | undefined;
   let localControlRoutes: ReturnType<typeof createLocalControlApiRoutes> | undefined;
   let agentSnapshots: ReturnType<typeof createAgentWorkspaceSnapshots> | undefined;
   let agentEvidence: ReturnType<typeof createAgentWorkspaceEvidence> | undefined;
@@ -1073,7 +1080,9 @@ export function startServer(
         const status = agentBrowserTools!.status(scope);
         return isAgentScopeActive(scope) && status.available && status.bound;
       })) || Boolean(agentDesktopTools?.status().available && agentDesktopTools.status().bindings.some(binding =>
-        isAgentScopeActive({ taskId: binding.taskId, generation: binding.generation, toolCallId: 'capability-status' }))) });
+        isAgentScopeActive({ taskId: binding.taskId, generation: binding.generation, toolCallId: 'capability-status' })))
+        || Boolean(agentRemoteTools?.status().available && agentRemoteTools.status().bindings.some(binding =>
+          isAgentScopeActive({ taskId: binding.taskId, generation: binding.generation, toolCallId: 'capability-status' }))) });
     agentRoutes = createAgentModeRoutes({ runtime: agentRuntime, authorize: controlAuthorized,
       observeWorkspaceEvidence: (task, proof) => getAgentEvidence().observe(task, proof),
       resolveEvidence: (task, reference) => {
@@ -1101,9 +1110,16 @@ export function startServer(
         isScopeActive: isAgentScopeActive });
     },
   });
+  const getAgentRemoteTools = () => agentRemoteTools ??= createAgentRemoteToolsProvider({
+    bridge: createLauncherRemoteBridge({ descriptorPath: join(historyHome, 'runtime', AGENT_REMOTE_DESCRIPTOR_FILE),
+      expectedProfile: dependencies.nativeLauncherProfile ?? (process.env.CODEX_CHATGPT_WEB_LAUNCHER_PROFILE === 'development' ? 'development' : 'production') }),
+    isScopeActive: isAgentScopeActive,
+    resolveTaskScope: taskId => { try { const task = agentRuntime?.store.getTask(taskId); return task ? { taskId: task.id, familyId: task.familyId, generation: task.generation, revision: task.revision } : undefined; } catch { return undefined; } },
+  });
   const getAgentTools = () => agentTools ??= createAgentToolsComposition({ home: historyHome, authorize: controlAuthorized, canStart: acceptingAgentTools,
     browserTools: getAgentBrowserTools(),
     desktopTools: getAgentDesktopTools(),
+    remoteTools: config.browserHost === 'launcher' ? getAgentRemoteTools() : undefined,
     isScopeActive: isAgentScopeActive, resolveToolCall: scope => agentRuntime?.resolveToolCall(scope),
     onOutcome: outcome => { if (!agentRuntime) throw new Error("Agent task owner unavailable"); agentRuntime.recordToolOutcome(outcome); },
   });
@@ -1182,6 +1198,7 @@ export function startServer(
         return (await getAgentRoutes()(req))!;
       }
       if (url.pathname === "/admin/agent-native") return nativeControlRoutes(req);
+      if (url.pathname === "/admin/agent-remote") return remoteControlRoutes(req);
       const localApiRequest = url.pathname === "/v1/chat/completions" || url.pathname.startsWith("/v1/messages")
         || url.pathname.startsWith("/claude/") || req.headers.has("x-api-key")
         || /^Bearer sk-local-/i.test(req.headers.get("authorization") ?? "");
