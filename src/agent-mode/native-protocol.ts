@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
-import Ajv from "ajv";
-import addFormats from "ajv-formats";
+import { compileToolInputSchema } from "../agent-tools/schema-validator";
 import { z } from "zod";
 import type { AgentNativeToolDefinition, ExecutionRequest } from "./types";
 import type { AgentNativeHistorySource } from "../../launcher/electron/agent-native-protocol.cjs";
@@ -74,8 +73,7 @@ export function nativeToolCallId(dispatchId: string, requestId: string): string 
 export function nativeToolValidator(tool: AgentNativeToolDefinition): (value: unknown) => boolean {
   const encoded = JSON.stringify(tool.inputSchema);
   if (!tool.id || tool.id.length > 240 || Buffer.byteLength(encoded) > 64 * 1024 || encoded.includes('"$async"')) throw new Error("Unsupported Native adapter tool schema");
-  const ajv = new Ajv({ strict: true, allErrors: false }); addFormats(ajv);
-  const validate = ajv.compile(tool.inputSchema);
+  const validate = compileToolInputSchema(tool.inputSchema);
   return value => validate(value) === true;
 }
 export function parseNativeResult(text: string, catalog: AgentNativeToolDefinition[], priorRequestIds: string[]) {

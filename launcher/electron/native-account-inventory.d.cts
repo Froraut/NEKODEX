@@ -6,7 +6,7 @@ export interface NativeInventoryReceipt {
   phase: 'preflight' | 'classify' | 'bootstrap' | 'online-inventory' | 'cache-provenance' | 'complete';
   ownerHeld: boolean; createdAt: number; updatedAt: number; reasonCode?: string;
   metadata?: {
-    account: {type:'chatgpt';planType:'pro';email:string|null};
+    account: {type:'chatgpt';planType:'pro'|'prolite'|'promax';email:string|null};
     usage: NativeInventoryUsage; modelCount: number; cacheSha256: string;
     nativeIdentity: string; fetchedAt: string; etag: string|null; clientVersion: '0.163.0'; executionAvailable: false;
   };
@@ -39,6 +39,6 @@ export function createNativeAccountInventoryService(options: {
   trustedInventory(actionId:string):null|{profileId:string;epoch:string;sourceRevision:string;executableSha256:string;configSha256:string;
     authStat:{dev:number;ino:number;size:number;mtimeMs:number;ctimeMs:number};
     cacheSha256:string;identity:string;fetchedAt:string;etag:string|null;clientVersion:'0.163.0';
-    account:{type:'chatgpt';planType:'pro';email:string|null};usage:NativeInventoryUsage;picker:unknown[];catalog:{models:Array<Record<string,unknown>>}};
+    account:{type:'chatgpt';planType:'pro'|'prolite'|'promax';email:string|null};usage:NativeInventoryUsage;picker:unknown[];catalog:{models:Array<Record<string,unknown>>}};
   currentOperation():string|null;destroy():Promise<void>;
 };

@@ -4,6 +4,7 @@ const path = require('node:path');
 const { digest, canonical, fail, plain, freeze, privateDirectory, regular, fileDigest, VERSION, SOURCE,
   verifyWrapper, probeManagedPreferences, DISABLED_FEATURES, toml, contains, absent } = require('./owned-native-admission.cjs');
 const { compileAgentNativeOutputSchema } = require('./agent-native-bridge.cjs');
+const PERSONAL_PRO_PLANS = new Set(['pro', 'prolite', 'promax']);
 const HASH = /^[a-f0-9]{64}$/;
 function metadata(p) {
   const s = fs.lstatSync(path.join(p.codexHome, 'auth.json'));
@@ -28,7 +29,7 @@ function makeNativeAccountAdmission({ authority, lease, profile, inventory, inve
   if (process.platform !== 'darwin' || lease.kind !== 'execution' || original.profileId !== profile.profileId || original.epoch !== profile.epoch
     || original.sourceRevision !== SOURCE || original.clientVersion !== VERSION || original.executableSha256 !== wrapperPin.executableSha256
     || original.configSha256 !== profile.configSha256 || !HASH.test(original.cacheSha256 || '') || !HASH.test(original.identity || '')
-    || original.account?.type !== 'chatgpt' || original.account.planType !== 'pro' || original.usage?.ordinaryUsageAllowed !== true
+    || original.account?.type !== 'chatgpt' || !PERSONAL_PRO_PLANS.has(original.account.planType) || original.usage?.ordinaryUsageAllowed !== true
     || original.usage.identityConfidence !== 'native-active-account-match' || typeof original.usage.accountId !== 'string'
     || !Array.isArray(original.picker) || !Array.isArray(original.catalog?.models) || !original.catalog.models.length) throw fail('unqualified_inventory', 'Current own-profile Native inventory is required');
   const cacheBytes = regular(path.join(profile.codexHome, 'models_cache.json'), 8 * 1024 * 1024);

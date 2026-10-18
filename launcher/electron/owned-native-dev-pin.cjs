@@ -5,8 +5,8 @@ const { fileDigest, regular, verifyWrapper } = require('./owned-native-admission
 // Reviewed local development build receipt. Packaging supplies a separate manifest.
 // Another file appearing in build/ never acquires execution authority automatically.
 const PIN = Object.freeze({ target: 'aarch64-apple-darwin',
-  executableSha256: '835674dd9455f7394ee0992596ad39d03d6872a739afec4afedd7c543a039d64',
-  metadataSha256: 'c36b1fa061944512c106db652258489f12087c09f4c2fdbecdd49e91f7f3332f',
+  executableSha256: 'b1ba58f72cd46caa3d69018bbbb68c2b8afb85dfb9167bba69272dde716a30d6',
+  metadataSha256: '7ceee884e7992d369105929f646d3e71b01b1b02e5e5d545d0bfdda4e15dccc3',
   sourcePinSha256: '3b5bc45bbbd6c5170c4786b63276837d8fe1eaf4339c1a90aa13d5b2e61c3fcc' });
 function reviewedOwnedNativeDevPin(sourceRoot) {
   if (process.platform !== 'darwin' || process.arch !== 'arm64') throw new Error('No reviewed Native development build for this target');

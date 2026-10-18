@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport, DEFAULT_INHERITED_ENV_VARS } from "@modelcontextprotocol/sdk/client/stdio.js";
-import Ajv, { type ValidateFunction } from "ajv";
-import addFormats from "ajv-formats";
+import type { ValidateFunction } from "ajv";
+import { compileToolInputSchema } from "./schema-validator";
 import { sha256, validateToolsConfig, verifyRecipeFiles, type ServerRecipe, type ToolsConfig } from "./config";
 import { invocationFingerprint, ToolJournal, validateToolScope } from "./journal";
 import type { StandaloneBuiltinToolsProvider, StandaloneToolsPort, ToolDescriptor, ToolInvocation, ToolOutcome, ToolScope } from "./types";
@@ -122,8 +122,7 @@ export class StandaloneMcpHost implements StandaloneToolsPort {
           let validate: ValidateFunction | undefined;
           try {
             if (Buffer.byteLength(JSON.stringify(tool.inputSchema)) > 64 * 1024) throw new Error("Schema too large");
-            const ajv = new Ajv({ strict: true, allErrors: false }); addFormats(ajv);
-            validate = ajv.compile(tool.inputSchema);
+            validate = compileToolInputSchema(tool.inputSchema);
           } catch { descriptor.supported = false; descriptor.unsupportedReason = "Input schema is unsupported by the host validator"; }
           next.set(tool.name, { descriptor, validate }); descriptors.push(structuredClone(descriptor));
         }
@@ -145,7 +144,7 @@ export class StandaloneMcpHost implements StandaloneToolsPort {
         const descriptor = structuredClone(raw); descriptor.description = descriptor.description?.slice(0, 4000);
         descriptorBytes += Buffer.byteLength(JSON.stringify(descriptor)); if (descriptors.length >= 256 || descriptorBytes > 1024 * 1024) throw new Error("Aggregate builtin discovery limit exceeded");
         let validate: ValidateFunction | undefined;
-        try { if (Buffer.byteLength(JSON.stringify(descriptor.inputSchema)) > 64 * 1024) throw new Error("Schema too large"); const ajv = new Ajv({ strict: true, allErrors: false }); addFormats(ajv); validate = ajv.compile(descriptor.inputSchema); }
+        try { if (Buffer.byteLength(JSON.stringify(descriptor.inputSchema)) > 64 * 1024) throw new Error("Schema too large"); validate = compileToolInputSchema(descriptor.inputSchema); }
         catch { descriptor.supported = false; descriptor.unsupportedReason = "Builtin input schema is unsupported by the host validator"; }
         this.builtinEntries.set(descriptor.id, { descriptor, validate, builtin: provider }); descriptors.push(descriptor);
       }

@@ -11,6 +11,8 @@ const { uuid } = require('./owned-native-journal.cjs');
 const METHODS = new Set(['initialize', 'config/read', 'configRequirements/read', 'account/read', 'account/rateLimits/read', 'model/list']);
 const MAX_LINE = 2 * 1024 * 1024, MAX_CACHE = 8 * 1024 * 1024;
 const BOOTSTRAP_SHA = '943ca7fe1d19ed019054158303f0dbbd80b3bef43b3aa425a71aa7cb3fb52c2b';
+// Exact personal subscription variants in pinned official protocol::account::PlanType.
+const PERSONAL_PRO_PLANS = new Set(['pro', 'prolite', 'promax']);
 const CLASSIFIER_SANDBOX = '(version 1)(allow default)(deny network*)(deny process-fork)';
 const clone = value => JSON.parse(JSON.stringify(value));
 const reasonCode = error => /^[a-z][a-z0-9_]{0,79}$/.test(error?.code || '') ? error.code : 'inventory_failed';
@@ -59,9 +61,9 @@ function effective(read, requirements, expected, p) {
 }
 function accountDescriptor(response) {
   const a = response?.account;
-  if (!plain(a) || a.type !== 'chatgpt' || a.planType !== 'pro' || a.email !== null && typeof a.email !== 'string'
+  if (!plain(a) || a.type !== 'chatgpt' || !PERSONAL_PRO_PLANS.has(a.planType) || a.email !== null && typeof a.email !== 'string'
     || typeof a.email === 'string' && (a.email.length > 320 || /\p{C}/u.test(a.email))) throw fail('unsupported_account', 'Native account is not supported personal Pro');
-  return { type: 'chatgpt', planType: 'pro', email: a.email };
+  return { type: 'chatgpt', planType: a.planType, email: a.email };
 }
 function usageProjection(value) {
   if (!plain(value) || typeof value.ordinaryUsageAllowed !== 'boolean' || typeof value.accountId !== 'string' || !value.accountId
@@ -120,7 +122,7 @@ function childOwner({ executable, args, p, spawnProcess, terminateProcess, timeo
     if (fault || result.code !== 0 || result.signal) throw fault || fail('classifier_failed', 'Native classifier failed');
     let value; try { value = JSON.parse(classifierText); } catch { throw fail('classifier_invalid', 'Native classifier output is invalid'); }
     if (canonical(Object.keys(value).sort()) !== canonical(['classification','planType','schemaVersion','type','usesCodexBackend'])
-      || value.schemaVersion !== 1 || value.type !== 'chatgpt' || value.planType !== 'pro' || value.usesCodexBackend !== true
+      || value.schemaVersion !== 1 || value.type !== 'chatgpt' || !PERSONAL_PRO_PLANS.has(value.planType) || value.usesCodexBackend !== true
       || value.classification !== 'personal-pro') throw fail('unsupported_account', 'Native classifier did not establish personal Pro');
     return value;
   }

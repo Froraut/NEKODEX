@@ -152,7 +152,9 @@ async fn read_account_info() -> io::Result<()> {
     let plan = auth.as_ref().and_then(|auth| auth.account_plan_type()).map(PlanType::from);
     let classification = match (&auth, is_chatgpt, uses_codex_backend, plan) {
         (None, _, _, _) => "unauthenticated",
-        (Some(_), true, true, Some(PlanType::Pro)) => "personal-pro",
+        (Some(_), true, true, Some(PlanType::Pro | PlanType::ProLite | PlanType::ProMax)) => {
+            "personal-pro"
+        }
         _ => "unsupported",
     };
     let value = serde_json::json!({
