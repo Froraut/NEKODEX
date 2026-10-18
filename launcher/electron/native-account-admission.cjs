@@ -56,6 +56,7 @@ function makeNativeAccountAdmission({ authority, lease, profile, inventory, inve
   sealedWrite(path.join(root, 'original-models.json'), originalText); sealedWrite(paths.catalog, catalogText);
   const config = { model: chosen[0], model_provider: 'openai', model_catalog_json: paths.catalog, sqlite_home: paths.sqliteHome,
     log_dir: path.join(root, 'log'), approval_policy: 'never', approvals_reviewer: 'user', sandbox_mode: 'read-only',
+    thread_unload_delay_secs: 0,
     web_search: 'disabled', notify: [], project_root_markers: [], project_doc_max_bytes: 0,
     include_environment_context: false, include_environment_context_time: false, check_for_update_on_startup: false,
     cli_auth_credentials_store: 'file', features: Object.fromEntries([...DISABLED_FEATURES.map(key => [key, false]), ['skip_host_skill_discovery', true]]),

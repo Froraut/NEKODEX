@@ -90,7 +90,7 @@ export function NativeAccountsPanel({ language, api, disabled = false }: {
     const copy = {
       fresh: [ 'Профиль подготовлен. Вход ещё не запущен.', 'Profile prepared. Sign-in has not started.' ],
       'login-pending': [ 'Запрашиваем код входа OpenAI…', 'Requesting an OpenAI sign-in code…' ],
-      'signed-in-checking': [ 'Вход подтверждён. Каталог моделей и допуск к выполнению ещё не проверены.', 'Sign-in confirmed. Model inventory and execution admission have not been verified.' ],
+      'signed-in-checking': [ 'Вход подтверждён. Каталог моделей и допуск к выполнению проверяются отдельно.', 'Sign-in confirmed. Model inventory and execution admission are checked separately.' ],
       'auth-outcome-unknown': [ 'Результат входа неизвестен. Обновите статус перед следующим действием.', 'Sign-in outcome is unknown. Refresh status before taking another action.' ],
       'login-failed': [ 'Вход не завершён. Для новой попытки подготовьте отдельный новый профиль.', 'Sign-in did not complete. Prepare a separate new profile for another attempt.' ],
       cancelled: [ 'Вход отменён. Состояние доступа и моделей отдельно не проверено.', 'Sign-in cancelled. Account access and models have not been independently verified.' ],
@@ -123,7 +123,7 @@ export function NativeAccountsPanel({ language, api, disabled = false }: {
         <strong>{profile.label}</strong>
         <p role="status">{stateText(profile)}</p>
         {inventory ? <p role="status">{inventory.state === 'completed'
-          ? (ru ? `Аккаунт и каталог подтверждены: ${inventory.metadata?.modelCount ?? 0} моделей. Выполнение ещё не проверено.` : `Account and catalog verified: ${inventory.metadata?.modelCount ?? 0} models. Execution has not been verified.`)
+          ? (ru ? `Аккаунт и каталог подтверждены: ${inventory.metadata?.modelCount ?? 0} моделей. Результаты выполнения показаны в задачах.` : `Account and catalog verified: ${inventory.metadata?.modelCount ?? 0} models. Execution results are shown in the tasks.`)
           : inventory.ownerHeld ? (ru ? 'Проверка аккаунта и каталога ещё удерживает своего исполнителя.' : 'Account and catalog inspection still owns its worker.')
           : (ru ? 'Проверка каталога не завершилась подтверждённым результатом. Сохранена квитанция без повторной отправки.' : 'Catalog inspection has no confirmed result. Its receipt is retained without replay.')}</p> : null}
         {execution ? <p>{ru ? `Настроены Native-модели: ${execution.models.map(model => model.label || model.id).join(', ') || 'выполнение приостановлено'}.` : `Configured Native models: ${execution.models.map(model => model.label || model.id).join(', ') || 'execution held'}.`}</p> : null}

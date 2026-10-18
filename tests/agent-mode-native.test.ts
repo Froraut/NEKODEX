@@ -7,6 +7,17 @@ import { AgentModeRuntime, AgentModeStore, AGENT_NATIVE_OUTPUT_SCHEMA, AGENT_NAT
 import type { AgentNativeBridge, AgentNativeOfferEnvelope, AgentNativeReceipt, ExecutionRequest } from "../src/agent-mode";
 import { createAgentToolsComposition } from "../src/agent-tools/composition";
 import type { StandaloneBuiltinToolsProvider } from "../src/agent-tools/types";
+import { parseNativeResult } from "../src/agent-mode/native-protocol";
+
+test("Native tool proposals require null summary and one object serialization without repairing invalid branches", () => {
+  const catalog = [{ id: "fixture/write", inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"], additionalProperties: false } }];
+  const argumentsObject = { text: "line\n" };
+  const proposal = { protocol: AGENT_NATIVE_PROTOCOL, kind: "tool_request", requestId: "write-1", toolId: "fixture/write", argumentsJson: JSON.stringify(argumentsObject), summary: null };
+  expect(parseNativeResult(JSON.stringify(proposal), catalog, [])).toMatchObject({ kind: "tool_request", arguments: argumentsObject });
+  expect(() => parseNativeResult(JSON.stringify({ ...proposal, summary: "Waiting for approval" }), catalog, [])).toThrow("Invalid Native tool-request branch");
+  expect(() => parseNativeResult(JSON.stringify({ ...proposal, argumentsJson: JSON.stringify(proposal.argumentsJson) }), catalog, [])).toThrow("does not match its declared tool schema");
+  expect(() => parseNativeResult(JSON.stringify({ ...proposal, kind: "final", summary: "Done" }), catalog, [])).toThrow("Invalid Native final branch");
+});
 
 test("owned Native core keeps one claimed sender, held receipt ownership and real ToolJournal approval before protocol continuation", async () => {
   const home = mkdtempSync(join(tmpdir(), "nekodex-agent-native-core-"));

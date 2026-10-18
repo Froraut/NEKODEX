@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button, Dialog, Notice, Panel, TextField } from './design';
 import type { Language } from './types';
 import type { RemoteHost, RemoteWorkspaceApi } from './remote-workspace-types';
+import { remoteHostForRoot } from './remote-workspace-types';
 import type { RemoteGitSnapshot, RemoteManagedWorktree, RemoteWorktreePlan, RemoteWorktreeArchivePlan } from '../electron/remote-worktrees.cjs';
 
 export default function RemoteWorktreeControls({ host, api, language, disabled = false, mutationBlocked = false, onChanged, onOpen }: {
@@ -33,7 +34,20 @@ export default function RemoteWorktreeControls({ host, api, language, disabled =
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const alive = useRef(true);
-  useEffect(() => { alive.current = true; if (host.connected) void api.remoteWorktreeList(host.id).then(value => { if (alive.current) setRows(value); }).catch(reason => { if (alive.current) setError(String(reason)); }); return () => { alive.current = false; }; }, [host.id, host.connected, api]);
+  const automaticList = useRef<string | null>(null);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  useEffect(() => {
+    if (!host.connected) { automaticList.current = null; return; }
+    // Connect refreshes the host before its parent directory load finishes.
+    // Wait for that owner to become idle, then list once for this connection.
+    const identity = `${host.id}:${host.fingerprint}`;
+    if (disabled || host.busy || automaticList.current === identity) return;
+    automaticList.current = identity;
+    setBusy(true); setError('');
+    void api.remoteWorktreeList(host.id).then(value => { if (alive.current) setRows(value); })
+      .catch(reason => { if (alive.current) setError(reason instanceof Error ? reason.message : String(reason)); })
+      .finally(() => { if (alive.current) setBusy(false); });
+  }, [host.id, host.connected, host.fingerprint, host.busy, disabled, api]);
   async function act(action: () => Promise<void>) {
     setBusy(true); setError(''); try { await action(); if (alive.current) { setRows(await api.remoteWorktreeList(host.id)); await onChanged(); } }
     catch (reason) { if (alive.current) setError(reason instanceof Error ? reason.message : String(reason)); }
@@ -55,8 +69,13 @@ export default function RemoteWorktreeControls({ host, api, language, disabled =
       {row.archiveRef && <p><code>{row.archiveRef}</code></p>}
       <div className="nk-remote__actions"><Button disabled={locked || !['ready', 'archived'].includes(row.state)} onClick={() => void act(async () => {
         const verified = await api.remoteWorktreeInspectOwned(host.id, row.id); const known = await api.remoteWorkspaceHosts();
-        const existing = known.find(item => item.hostname === host.hostname && item.username === host.username && item.port === host.port && item.root === verified.path);
-        const opened = existing ?? await api.remoteWorkspaceAddHost({ label: `${host.label} · ${verified.branch}`.slice(0, 100), hostname: host.hostname, username: host.username, port: host.port, root: verified.path });
+        const input = remoteHostForRoot(host, verified.path, `${host.label} · ${verified.branch}`.slice(0, 100));
+        const existing = known.find(item => {
+          const configured = remoteHostForRoot(item, item.root, item.label);
+          return configured.hostname === input.hostname && configured.username === input.username && configured.port === input.port
+            && (configured.connectionMode ?? 'direct') === (input.connectionMode ?? 'direct') && configured.root === input.root;
+        });
+        const opened = existing ?? await api.remoteWorkspaceAddHost(input);
         if (alive.current) await onOpen(opened);
       })}>{c.open}</Button><Button disabled={locked} onClick={() => void act(async () => { await api.remoteWorktreeInspectOwned(host.id, row.id); })}>{c.inspectOwned}</Button>
       <Button disabled={locked || mutationBlocked || row.state !== 'ready'} onClick={() => void act(async () => { const value = await api.remoteWorktreePrepareArchive(host.id, row.id); if (alive.current) setArchivePlan(value); })}>{c.archive}</Button></div>

@@ -72,9 +72,10 @@ function relative(value, empty = false) {
 }
 function sshArgs(host, subsystem) {
   if (host.sshConfigSnapshot) assertSshConfigSnapshot(host.sshConfigSnapshot);
+  const connection = host.sshConfigSnapshot?.connectionOptions;
   return ['-F', process.platform === 'win32' ? 'NUL' : '/dev/null', '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
-    '-o', 'ClearAllForwardings=yes', '-o', 'PermitLocalCommand=no', '-o', 'ConnectTimeout=15', '-o', 'ConnectionAttempts=1',
-    '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', ...(host.sshConfigSnapshot?.options ?? []), '-p', String(host.port), '-l', host.username,
+    '-o', 'ClearAllForwardings=yes', '-o', 'PermitLocalCommand=no', '-o', `ConnectTimeout=${connection?.ConnectTimeout ?? 15}`, '-o', 'ConnectionAttempts=1',
+    '-o', `ServerAliveInterval=${connection?.ServerAliveInterval ?? 15}`, '-o', `ServerAliveCountMax=${connection?.ServerAliveCountMax ?? 3}`, ...(host.sshConfigSnapshot?.options ?? []), '-p', String(host.port), '-l', host.username,
     ...(subsystem ? ['-s'] : []), '--', host.hostname, ...(subsystem ? ['sftp'] : [])];
 }
 class Sftp {
@@ -233,7 +234,8 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
   }
   function publicHost(host) { const session = sessions.get(host.id), effective = session?.effectiveHost;
     return { id: host.id, ...host.config, ...(effective ? { hostname: effective.config.hostname, username: effective.config.username, port: effective.config.port } : {}),
-      ...(host.config.connectionMode === 'ssh-config-alias' ? { sshAlias: host.config.hostname, aliasResolved: Boolean(effective) } : {}), fingerprint: effective?.fingerprint ?? host.fingerprint,
+      ...(host.config.connectionMode === 'ssh-config-alias' ? { sshAlias: host.config.hostname, aliasResolved: Boolean(effective),
+        configuredEndpoint: { hostname: host.config.hostname, username: host.config.username, port: host.config.port, connectionMode: 'ssh-config-alias' } } : {}), fingerprint: effective?.fingerprint ?? host.fingerprint,
       connected: Boolean(session && !session.sftp.closed), canonicalRoot: session?.root ?? null, busy: busy.has(host.id) }; }
   async function listRemote(s, directory = '') {
     const target = await bounded(s, directory, true); const listing = await s.sftp.list(target);

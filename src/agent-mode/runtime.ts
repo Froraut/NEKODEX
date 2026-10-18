@@ -45,6 +45,8 @@ export class AgentModeRuntime {
   readonly store: AgentModeStore;
   readonly runner: AgentModeRunner;
   private readonly pending = new Map<string, Promise<unknown>>();
+  /** A durable run command authorizes only this live runtime and exact task scope. Never restored from status. */
+  private readonly automaticRuns = new Map<string, AgentActionScope & { ownerId: string }>();
   private stopping = false;
   private shutdownFinished = false;
   constructor(private readonly options: AgentModeRuntimeOptions) {
@@ -70,7 +72,7 @@ export class AgentModeRuntime {
   }
   control(taskId: string, actionId: string, control: AgentControl, scope?: AgentActionScope): AgentTask {
     const command = this.store.command(taskId, actionId, "control", scope ? { control, scope } : control, () => { this.assertScope(taskId, scope); return this.runner.control(taskId, control); });
-    if (!command.duplicate) this.options.onTaskScopeInvalidated?.(taskId);
+    if (!command.duplicate) { this.automaticRuns.delete(taskId); this.options.onTaskScopeInvalidated?.(taskId); }
     return command.result;
   }
   step(taskId: string, actionId: string, input: { explicitUserAction: boolean; workerName?: string; automatic?: boolean }, scope?: AgentActionScope): { task: AgentTask; dispatchId?: string; duplicate: boolean } {
@@ -95,7 +97,11 @@ export class AgentModeRuntime {
     }); }
     catch (error) { this.pauseAtBound(taskId); throw error; }
     if (!command.duplicate && this.store.getTask(taskId).generation !== task.generation) this.options.onTaskScopeInvalidated?.(taskId);
-    if (!command.duplicate && command.result) this.launch(command.result, input.automatic === true);
+    if (!command.duplicate) {
+      if (input.automatic) this.rememberAutomaticRun(this.store.getTask(taskId));
+      else this.automaticRuns.delete(taskId);
+      if (command.result) this.launch(command.result, input.automatic === true);
+    }
     return { task: this.store.getTask(taskId), dispatchId: command.result?.id, duplicate: command.duplicate };
   }
   private prepare(taskId: string, input: { explicitUserAction: boolean; workerName?: string }): AgentDispatch | undefined {
@@ -108,18 +114,32 @@ export class AgentModeRuntime {
   }
   private launch(dispatch: AgentDispatch, automatic: boolean): void {
     const promise = this.runner.executeDispatch(dispatch.id).then(() => {
-      const task = this.store.getTask(dispatch.taskId);
-      if (!automatic || this.stopping || this.options.canStart?.() === false || this.options.canExecute?.(task) === false || !agentModelAccepting(task, this.options.models()) || task.generation !== dispatch.generation || task.mode === "manual") return;
-      if (task.mode === "loop" && task.status === "review_required") { this.advanceLoop(task.id); return; }
-      if (task.status !== "ready") return;
-      const input = { explicitUserAction: false, workerName: this.store.listWorkers(task.id).find(row => row.id === dispatch.workerId)?.name };
-      const next = this.store.command(task.id, `auto:${dispatch.id}`, "auto_step", input, () => this.prepare(task.id, input));
-      if (!next.duplicate && next.result) this.launch(next.result, true);
+      if (automatic) this.continueAutomatic(dispatch);
     }).catch(() => {
       // Runner persisted unknown send or the bound hold. Never retry from a rejected promise.
       this.pauseAtBound(dispatch.taskId);
     }).finally(() => { this.pending.delete(dispatch.id); });
     this.pending.set(dispatch.id, promise);
+  }
+  private rememberAutomaticRun(task: AgentTask): void {
+    this.automaticRuns.set(task.id, { familyId: task.familyId, generation: task.generation, revision: task.revision, ownerId: this.runner.ownerId });
+  }
+  private hasAutomaticRun(task: AgentTask): boolean {
+    const grant = this.automaticRuns.get(task.id);
+    return Boolean(grant && grant.ownerId === this.runner.ownerId && task.ownerId === this.runner.ownerId
+      && grant.familyId === task.familyId && grant.generation === task.generation && grant.revision === task.revision && task.mode !== "manual");
+  }
+  private continueAutomatic(dispatch: AgentDispatch): void {
+    const task = this.store.getTask(dispatch.taskId);
+    if (!this.hasAutomaticRun(task) || this.stopping || this.options.canStart?.() === false || this.options.canExecute?.(task) === false
+      || !agentModelAccepting(task, this.options.models()) || task.generation !== dispatch.generation || task.revision !== dispatch.taskRevision || dispatch.ownerId !== this.runner.ownerId) return;
+    if (task.mode === "loop" && task.status === "review_required") { this.advanceLoop(task.id); return; }
+    if (task.status !== "ready") return;
+    const input = { explicitUserAction: false, workerName: this.store.listWorkers(task.id).find(row => row.id === dispatch.workerId)?.name };
+    try {
+      const next = this.store.command(task.id, `auto:${dispatch.id}`, "auto_step", input, () => this.prepare(task.id, input));
+      if (!next.duplicate && next.result) this.launch(next.result, true);
+    } catch { this.pauseAtBound(task.id); }
   }
   /** Bounded local evidence helper; no extra, unmetered model call and no auto-send. */
   review(taskId: string, actionId: string, scope?: AgentActionScope): AgentTask {
@@ -167,7 +187,18 @@ export class AgentModeRuntime {
     this.assertExecutionAvailable(task);
     return { claimId: dispatch.transportClaim.id, payloadDigest: input.payloadDigest, scope: { ...input.scope } };
   }
-  recordToolOutcome(outcome: AgentToolOutcome): AgentTask { return this.store.recordToolOutcome(outcome); }
+  recordToolOutcome(outcome: AgentToolOutcome): AgentTask {
+    const task = this.store.recordToolOutcome(outcome);
+    if (outcome.state === "outcome_unknown") this.automaticRuns.delete(task.id);
+    // Only this live callback may continue a previously authorized run. Passive receipt reads and reconciliation never send.
+    if (outcome.state !== "outcome_unknown" && task.status === "ready" && this.hasAutomaticRun(task)) {
+      const source = this.store.listDispatches(task.id).find(row => row.state === "settled" && row.result?.continuation?.pending
+        .some(call => call.toolCallId === outcome.scope.toolCallId && call.tool === outcome.tool)
+        && row.generation === outcome.scope.generation && this.store.toolCallReceiptKey(row.id, outcome.scope.toolCallId) === outcome.idempotencyKey);
+      if (source) this.continueAutomatic(source);
+    }
+    return task;
+  }
   async reconcileTool(taskId: string, actionId: string, scope: AgentActionScope, idempotencyKey: string): Promise<AgentToolReconciliationResult> {
     if (this.stopping) throw new Error("Task runtime admission is closed");
     const input = { scope, idempotencyKey };
@@ -231,12 +262,14 @@ export class AgentModeRuntime {
   private advanceLoop(taskId: string): void {
     if (this.stopping || this.options.canStart?.() === false) return;
     const current = this.store.getTask(taskId);
+    if (!this.hasAutomaticRun(current)) return;
     if (this.options.canExecute?.(current) === false || !agentModelAccepting(current, this.options.models())) return;
     const generation = current.generation;
     const next = this.store.claimNextWork(taskId, { ownerId: this.runner.ownerId, automatic: true });
     if (!next) return;
     if (next.generation !== generation) this.options.onTaskScopeInvalidated?.(taskId);
     if (next.status !== "ready") return;
+    this.rememberAutomaticRun(next);
     try {
       const dispatch = this.prepare(taskId, { explicitUserAction: false });
       if (dispatch) this.launch(dispatch, true);
@@ -269,14 +302,17 @@ export class AgentModeRuntime {
       const dispatch = this.prepare(task.id, { explicitUserAction: true });
       return { task: this.store.getTask(task.id), dispatchId: dispatch?.id };
     });
-    if (!command.duplicate && ["pause", "resume", "stop"].includes(input.operation)) this.options.onTaskScopeInvalidated?.(input.taskId);
+    if (!command.duplicate && input.operation !== "review") {
+      this.automaticRuns.delete(input.taskId);
+      if (["pause", "resume", "stop"].includes(input.operation)) this.options.onTaskScopeInvalidated?.(input.taskId);
+    }
     if (!command.duplicate && command.result.dispatchId) this.launch(this.store.getDispatch(command.result.dispatchId), false);
     return { ...command.result, duplicate: command.duplicate };
   }
   /** Fixture/shutdown observation only; no timer or repeated polling. */
   async waitForIdle(): Promise<void> { while (this.pending.size) await Promise.allSettled([...this.pending.values()]); }
-  abortLocalWork(): void { this.runner.abortLocalWork(); }
-  beginShutdown(): void { this.stopping = true; this.runner.beginShutdown(); }
+  abortLocalWork(): void { this.automaticRuns.clear(); this.runner.abortLocalWork(); }
+  beginShutdown(): void { this.stopping = true; this.automaticRuns.clear(); this.runner.beginShutdown(); }
   finishShutdown(): void {
     if (this.shutdownFinished) return;
     if (this.pending.size) throw new Error("Agent operations have not settled");

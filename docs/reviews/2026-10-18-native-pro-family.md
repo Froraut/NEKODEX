@@ -38,12 +38,12 @@ The first post-build inventory attempt correctly refused stale reviewed binary
 pins before starting an account server. Its failed receipt is retained. A new
 build is never adopted merely because it appears in the build directory.
 
-The computer then required resource recovery. Development GUI/core processes
-were closed gracefully and authorization remained saved. Qualified online
-inventory and a real model task are still pending; the sign-in and offline
-classifier are not represented as those outcomes. Resume with a new inventory
-action on the same authorized profile, without another login or replaying an old
-action. This is source/development evidence, not installed `.9` delivery.
+The computer then required resource recovery and authorization remained saved.
+After recovery, a new inventory action qualified the same profile and both
+admitted models returned real results. See the separate
+[real-model and history evidence](2026-10-18-native-real-models.md), including
+its exact task-completion and cleanup limits. This remains source/development
+evidence, not installed `.9` delivery.
 
 Primary implementation: pinned Codex `83086188ae0614bd882818ff1aa23f3194962012`,
 `codex-rs/protocol/src/account.rs`, `codex-rs/protocol/src/auth.rs` and the Pro

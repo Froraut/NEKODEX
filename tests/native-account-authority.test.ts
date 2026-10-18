@@ -189,12 +189,17 @@ test.skipIf(process.platform !== 'darwin')('journaled config publication compare
   const p = f.prepare(), login = f.login(p), child = f.children[0];
   writeFileSync(join(f.calls[0].config.env.CODEX_HOME, 'auth.json'), '', { mode: 0o600 }); child.emit('close', 0, null);
   const before = f.service.resolveProfile(p.id, p.epoch), original = readFileSync(before.config, 'utf8');
-  const configText = original + 'log_dir = "/private/owned/log"\n';
+  const configText = original + 'log_dir = "/private/owned/log"\nthread_unload_delay_secs = 0\n';
   const committed = f.service.publishProfileConfig({ profileId: p.id, epoch: p.epoch, actionId: randomUUID(), expectedConfigSha256: before.configSha256, configText });
   expect(committed.state).toBe('completed');
   expect(f.service.resolveProfile(p.id, p.epoch).configSha256).toBe(committed.configSha256);
   expect(() => f.service.publishProfileConfig({ profileId: p.id, epoch: p.epoch, actionId: randomUUID(), expectedConfigSha256: before.configSha256, configText: original })).toThrow('expectation changed');
   expect(readFileSync(before.config, 'utf8')).toBe(configText);
+  for (const value of ['1800', '-1', '"0"', '0.0']) {
+    expect(() => f.service.publishProfileConfig({ profileId: p.id, epoch: p.epoch, actionId: randomUUID(), expectedConfigSha256: committed.configSha256,
+      configText: configText.replace('thread_unload_delay_secs = 0', `thread_unload_delay_secs = ${value}`) })).toThrow('reviewed zero value');
+    expect(readFileSync(before.config, 'utf8')).toBe(configText);
+  }
   expect(() => f.service.publishProfileConfig({ profileId: p.id, epoch: p.epoch, actionId: randomUUID(), expectedConfigSha256: committed.configSha256, configText: configText + 'api_key = "never-store-this"\n' })).toThrow('unsupported fields');
   const unknownAction = randomUUID(), nextText = configText + 'web_search = "disabled"\n';
   loseWrite = true;

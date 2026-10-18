@@ -5,6 +5,11 @@ const os = require('node:os');
 const { createHash } = require('node:crypto');
 const digest = value => createHash('sha256').update(value).digest('hex');
 const invalid = message => { throw new Error(`SSH config alias: ${message}`); };
+const CONNECTION_OPTIONS = {
+  connecttimeout: { name: 'ConnectTimeout', max: 60, fallback: 15 },
+  serveraliveinterval: { name: 'ServerAliveInterval', max: 300, fallback: 15 },
+  serveralivecountmax: { name: 'ServerAliveCountMax', max: 10, fallback: 3 },
+};
 function readConfig(file) {
   if (!path.isAbsolute(file) || fs.realpathSync(file) !== file) invalid('config must be a canonical regular file without links.');
   const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
@@ -58,8 +63,12 @@ function resolveSshConfigAlias(profile, context = {}) {
     if (name === 'include' || name === 'match') invalid(`${rawName} is unsupported; use an explicit supported Host block.`);
     if (name === 'host') { if (!args.length) invalid('Host needs a pattern.'); active = hostMatch(args, profile.hostname); matchedHost ||= active; continue; }
     if (!active) continue;
-    if (!['hostname', 'user', 'port', 'identityfile', 'identitiesonly', 'hostkeyalias'].includes(name)) invalid(`directive ${rawName} is unsupported; no connection was started.`);
+    if (!['hostname', 'user', 'port', 'identityfile', 'identitiesonly', 'hostkeyalias', 'stricthostkeychecking'].includes(name) && !Object.hasOwn(CONNECTION_OPTIONS, name)) invalid(`directive ${rawName} is unsupported; no connection was started.`);
     if (args.length !== 1 || !args[0]) invalid(`${rawName} needs one value.`);
+    // The transport always enforces yes. Accept only that same policy in aliases,
+    // including every matching block, rather than silently ignoring weaker input.
+    if (name === 'stricthostkeychecking' && args[0].toLowerCase() !== 'yes') invalid('StrictHostKeyChecking must be yes; no connection was started.');
+    if (Object.hasOwn(CONNECTION_OPTIONS, name) && (!/^[0-9]{1,3}$/.test(args[0]) || Number(args[0]) < 1 || Number(args[0]) > CONNECTION_OPTIONS[name].max)) invalid(`${CONNECTION_OPTIONS[name].name} must be a decimal integer from 1 to ${CONNECTION_OPTIONS[name].max}.`);
     if (name === 'identityfile') { if (identities.length >= 8) invalid('at most eight IdentityFile values are supported.'); identities.push(args[0]); }
     else if (!Object.hasOwn(values, name)) values[name] = args[0];
   }
@@ -91,7 +100,8 @@ function resolveSshConfigAlias(profile, context = {}) {
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     identityPins.push({ path: identity, pin }); options.push('-i', identity);
   }
-  const snapshot = { version: 1, alias: profile.hostname, file, sourcePin: source.pin, sourceSha256: source.sha256, hostname, username, port, options, identityPins };
+  const connectionOptions = Object.fromEntries(Object.entries(CONNECTION_OPTIONS).map(([key, row]) => [row.name, values[key] === undefined ? row.fallback : Number(values[key])]));
+  const snapshot = { version: 1, alias: profile.hostname, file, sourcePin: source.pin, sourceSha256: source.sha256, hostname, username, port, options, identityPins, connectionOptions };
   return Object.freeze({ ...snapshot, fingerprint: digest(JSON.stringify(snapshot)) });
 }
 function assertSshConfigSnapshot(snapshot) {

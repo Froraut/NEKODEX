@@ -190,6 +190,7 @@ function makeAdmission({ executable, executableSha256, executableVariant = 'stoc
     model: catalog.modelId, model_provider: provider, model_catalog_json: paths.catalog,
     sqlite_home: paths.sqliteHome, log_dir: path.join(authorityHome, 'log'),
     approval_policy: 'never', approvals_reviewer: 'user', sandbox_mode: 'read-only',
+    thread_unload_delay_secs: 0,
     web_search: 'disabled', notify: [], project_root_markers: [], project_doc_max_bytes: 0,
     include_environment_context: false, include_environment_context_time: false,
     check_for_update_on_startup: false, cli_auth_credentials_store: 'file',

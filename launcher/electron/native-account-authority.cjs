@@ -14,7 +14,7 @@ const safeReason = value => typeof value === 'string' && /^[a-z][a-z0-9_]{0,79}$
 const CONFIG = 'model_provider = "openai"\ncli_auth_credentials_store = "file"\ncheck_for_update_on_startup = false\nproject_root_markers = []\n';
 const MAX_BYTES = 2 * 1024 * 1024;
 const CONFIG_KEYS = new Set(['model', 'model_provider', 'model_catalog_json', 'sqlite_home', 'log_dir', 'approval_policy',
-  'approvals_reviewer', 'sandbox_mode', 'web_search', 'notify', 'project_root_markers', 'project_doc_max_bytes',
+  'approvals_reviewer', 'sandbox_mode', 'thread_unload_delay_secs', 'web_search', 'notify', 'project_root_markers', 'project_doc_max_bytes',
   'include_environment_context', 'include_environment_context_time', 'check_for_update_on_startup', 'cli_auth_credentials_store',
   'features', 'tools', 'agents', 'memories', 'skills', 'cloud', 'analytics', 'feedback', 'history']);
 function validateConfigText(text) {
@@ -25,6 +25,9 @@ function validateConfigText(text) {
     const match = line.match(/^([a-z][a-z0-9_]*) = (.+)$/);
     if (!match || !CONFIG_KEYS.has(match[1]) || values.has(match[1]) || /(?:^|[\s{,])"?(?:api_key|access_token|refresh_token|id_token|password|secret|env_key|http_headers|env_http_headers)"?\s*=/i.test(match[2])) throw fail('invalid_profile_config', 'Native config contains unsupported fields or credential input');
     values.set(match[1], match[2]);
+  }
+  if (values.has('thread_unload_delay_secs') && values.get('thread_unload_delay_secs') !== '0') {
+    throw fail('invalid_profile_config', 'Native thread unload delay must retain the reviewed zero value');
   }
   if (values.get('model_provider') !== '"openai"' || values.get('cli_auth_credentials_store') !== '"file"'
     || values.get('project_root_markers') !== '[]') throw fail('invalid_profile_config', 'Native config must retain the reviewed official provider and profile closure');

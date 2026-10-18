@@ -34,6 +34,7 @@ export function AgentToolsSurface({ api, language, disabled = false }: { api: Ag
   const [pending, setPending] = useState(false); const [error, setError] = useState<string | null>(null);
   const [tasks, setTasks] = useState<{ id: string; generation: number; status: string }[]>([]);
   const [taskId, setTaskId] = useState(''); const selectedTask = tasks.find(task => task.id === taskId);
+  const selectedTaskId = useRef(''); const taskLoadRevision = useRef(0);
   const [taskDetailScope, setTaskDetailScope] = useState<RemoteAgentTaskScope | undefined>();
   const remoteScope = taskDetailScope?.taskId === selectedTask?.id && taskDetailScope?.generation === selectedTask?.generation ? taskDetailScope : undefined;
   const [calls, setCalls] = useState<{ toolCallId: string; tool: string; arguments: Record<string, unknown> }[]>([]);
@@ -69,31 +70,40 @@ export function AgentToolsSurface({ api, language, disabled = false }: { api: Ag
       const next = await transport.current.request({ action: 'remoteStatus' }) as RemoteAgentStatus;
       if (mounted.current) setRemoteStatus(next);
     } catch (cause) { if (mounted.current) setRemoteStatus(null); throw cause; }
-    if (taskId) {
-      const detail = await transport.current.getTask(taskId).catch(() => null);
-      if (mounted.current && detail) setTaskDetailScope({ taskId: detail.task.id, familyId: detail.task.familyId, generation: detail.task.generation, revision: detail.task.revision });
-    }
+  };
+  const clearPendingCalls = () => { setTaskDetailScope(undefined); setCallId(''); setCalls([]); setPendingCallsTruncated(false); };
+  const refreshTask = async (value: string, loadRevision: number, minimumGeneration = 0) => {
+    const detail = await transport.current.getTask(value);
+    if (!mounted.current || selectedTaskId.current !== value || taskLoadRevision.current !== loadRevision
+      || detail.task.id !== value || detail.task.generation < minimumGeneration) return;
+    setTaskDetailScope({ taskId: detail.task.id, familyId: detail.task.familyId, generation: detail.task.generation, revision: detail.task.revision });
+    setCalls(agentPendingCalls(detail)); setPendingCallsTruncated(detail.coverage?.pendingToolCalls?.truncated === true);
+    setTasks(previous => previous.map(task => task.id === value ? { ...task, generation: detail.task.generation } : task));
   };
   const refresh = async () => {
+    const value = selectedTaskId.current, loadRevision = ++taskLoadRevision.current;
+    clearPendingCalls();
     const [nextStatus, listing] = await Promise.all([transport.current.request({ action: 'status' }) as Promise<AgentToolsStatus>, transport.current.listTasks(), refreshRemote().catch(() => undefined)]);
-    if (!mounted.current) return; setStatus(nextStatus); setTasks(listing.tasks.filter(task => !['stopped', 'verified_complete'].includes(task.status)));
+    if (!mounted.current) return;
+    setStatus(nextStatus);
+    const available = listing.tasks.filter(task => !['stopped', 'verified_complete'].includes(task.status)); setTasks(available);
+    if (selectedTaskId.current !== value || taskLoadRevision.current !== loadRevision || !value) return;
+    const selected = available.find(task => task.id === value);
+    if (!selected) { selectedTaskId.current = ''; setTaskId(''); return; }
+    await refreshTask(value, loadRevision, selected.generation);
   };
   const act = async (operation: () => Promise<void>) => {
     if (busy.current || disabled) return; busy.current = true; setPending(true); setError(null);
     try { await operation(); } catch (cause) { if (mounted.current) setError(stripIpcErrorPrefix(cause instanceof Error ? cause.message : String(cause))); }
     finally { busy.current = false; if (mounted.current) setPending(false); }
   };
-  useEffect(() => { mounted.current = true; if (!disabled) void act(refresh); return () => { mounted.current = false; }; }, []);
+  useEffect(() => { mounted.current = true; if (!disabled) void act(refresh); return () => { mounted.current = false; taskLoadRevision.current++; }; }, []);
   useEffect(() => { if (!disabled && !status && !busy.current) void act(refresh); }, [disabled]);
   const loadTask = async (value: string) => {
-    setTaskDetailScope(undefined); setTaskId(value); setCallId(''); setCalls([]); setResult(null); setPendingCallsTruncated(false);
+    selectedTaskId.current = value; const loadRevision = ++taskLoadRevision.current;
+    clearPendingCalls(); setTaskId(value); setResult(null); setEvidenceReference(null);
     if (!value) return;
-    const detail = await transport.current.getTask(value);
-    if (mounted.current) {
-      setTaskDetailScope({ taskId: detail.task.id, familyId: detail.task.familyId, generation: detail.task.generation, revision: detail.task.revision });
-      setCalls(agentPendingCalls(detail));
-      setPendingCallsTruncated(detail.coverage?.pendingToolCalls?.truncated === true);
-    }
+    await refreshTask(value, loadRevision, tasks.find(task => task.id === value)?.generation);
   };
   const invalidateReview = (setter: (value: string) => void) => (value: string) => { setter(value); setReview(null); setTrusted(false); };
   return <Page className="agent-tools-surface">
@@ -136,7 +146,7 @@ export function AgentToolsSurface({ api, language, disabled = false }: { api: Ag
     </Panel>
     <AgentBrowserTools api={api} status={status} scope={selectedTask ? { taskId: selectedTask.id, generation: selectedTask.generation, toolCallId: 'browser-selection' } : undefined} locked={locked} choose={choose} act={act} refresh={refresh} />
     <AgentDesktopTools api={api} desktop={status?.desktopTools} scope={selectedTask ? { taskId: selectedTask.id, generation: selectedTask.generation, toolCallId: 'desktop-selection' } : undefined} locked={locked} choose={choose} act={act} refresh={refresh} />
-    <AgentRemoteTools api={api} remote={remoteStatus} scope={remoteScope} locked={locked} choose={choose} act={act} refresh={refreshRemote} />
+    <AgentRemoteTools api={api} remote={remoteStatus} scope={remoteScope} locked={locked} choose={choose} act={act} refresh={refresh} />
     <AgentSkillScripts api={api} status={status} scope={selectedTask ? { taskId: selectedTask.id, generation: selectedTask.generation, toolCallId: 'script-workspace-selection' } : undefined} locked={locked} choose={choose} act={act} onChanged={refresh} />
     <AgentManagedSkills api={api} status={status} sources={skills} scope={selectedTask ? { taskId: selectedTask.id, generation: selectedTask.generation, toolCallId: 'managed-skill-selection' } : undefined} locked={locked} choose={choose} act={act} refresh={refresh} />
   </Page>;

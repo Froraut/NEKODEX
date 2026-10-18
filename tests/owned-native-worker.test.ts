@@ -167,9 +167,16 @@ macTest('connected managed/cloud layers are rejected before any ephemeral thread
 macTest('one owner continues exact thread with durable ACK, early canonical events, fixed schema and unknown usage semantics', async () => {
   const f = fixture();
   try {
+    expect(f.admission.config.thread_unload_delay_secs).toBe(0);
+    expect(() => f.admission.checkEffective({ config: { ...f.admission.config, thread_unload_delay_secs: 1800 }, layers: [] }, { requirements: null }))
+      .toThrow('Native effective configuration differs from admission');
     expect(f.service.inspectOwnedWorker().state).toBe('disconnected'); expect(f.launches).toHaveLength(0);
     const created = await f.service.createOwnedWorker({ actionId: CREATE });
     expect(created.threadId).toBe(THREAD); expect(f.launches).toHaveLength(1);
+    const start = f.received.find(row => row.method === 'thread/start').params;
+    expect(start).toMatchObject({ approvalPolicy: 'never', approvalsReviewer: 'user', sandbox: 'read-only' });
+    expect(start).not.toHaveProperty('tools'); expect(start).not.toHaveProperty('config');
+    expect(typeof start.developerInstructions === 'string' && start.developerInstructions.trim().length > 0).toBe(true);
     expect(f.launches[0][1]).toEqual(['app-server', '--stdio', '--strict-config']);
     expect(f.launches[0][2].env).not.toHaveProperty('OPENAI_API_KEY');
     expect(f.launches[0][2].env.HOME).toBe(f.admission.paths.home);

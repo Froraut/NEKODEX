@@ -2,7 +2,7 @@ import type { RemoteWorktreeApi, RemoteWorktreeService } from './remote-worktree
 import type { RemoteAgentScope, RemoteAgentTaskScope, RemoteAgentInvocation, RemoteAgentOutcome, RemoteAgentStatus } from './agent-remote-types.cjs';
 export type { RemoteAgentScope, RemoteAgentTaskScope, RemoteAgentBinding, RemoteAgentInvocation, RemoteAgentOutcome, RemoteAgentStatus } from './agent-remote-types.cjs';
 export type RemoteHostInput = { label: string; hostname: string; username: string; port: number | null; root: string; connectionMode?: 'direct' | 'ssh-config-alias' };
-export type RemoteHost = RemoteHostInput & { id: string; fingerprint: string; connected: boolean; canonicalRoot: string | null; busy: boolean; sshAlias?: string; aliasResolved?: boolean };
+export type RemoteHost = RemoteHostInput & { id: string; fingerprint: string; connected: boolean; canonicalRoot: string | null; busy: boolean; sshAlias?: string; aliasResolved?: boolean; configuredEndpoint?: Pick<RemoteHostInput, 'hostname' | 'username' | 'port' | 'connectionMode'> };
 export type RemoteListing = { path: string; truncated: boolean; entries: { name: string; path: string; kind: 'directory' | 'file' | 'blocked'; size: number | null }[] };
 export type RemotePreview = { path: string; state: 'text' | 'binary' | 'missing'; revision: string | null; text: string | null; size: number };
 export type RemoteDraftInput = { path: string; text: string; expectedRevision: string | null };

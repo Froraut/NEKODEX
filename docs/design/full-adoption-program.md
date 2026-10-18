@@ -28,7 +28,8 @@ outbox; usage — отдельные источники и честные estima
 
 18 октября 2026,12:11 UTC пользователь явно выбрал: **«Весь набор сначала на
 macOS; затем Windows/Linux»**. Это порядок реализации всего согласованного
-набора из36 ID, а не сокращение цели до готового macOS поднабора. Этап1 доводит
+набора из 44 ID: N01–N08 и 36 расширений P/DW. Это не сокращение цели до
+готового macOS поднабора. Этап1 доводит
 все области на macOS, включая native/real-provider/Automatic Goal, remote/auth
 и skill resources; этап2 сохраняет Windows/Linux adapters, packaging и parity.
 Функциональные F0–F5 ниже — связанные batches внутри этих платформенных этапов.
@@ -39,302 +40,81 @@ macOS; затем Windows/Linux»**. Это порядок реализации 
 | Область / все ID | Этап1: уже подтверждено на macOS | Этап1: что ещё требуется до приёмки всей области | Этап2: Windows/Linux |
 | --- | --- | --- | --- |
 | Credentials P01–P02 | D01 scoped Keychain/CLI/headless и installed `.8` receipt | Сохранять exact scope/restart/rotation для новых routes; не выдавать новую source версию за installed migration | Protected backend/private ACL и поддержанные noninteractive migration routes |
-| Workspace P03–P10, DW8–DW8a | Local editor/Git/base selector/worktree/Open/snapshot/restore/PTY и exact pre-turn scope | Реальная SSH authentication/host/root, remote commands/worktree lifecycle, новая explicit Agent remote authority source связана, но actual connected UI/mutation/auth flows ещё нужны; local scopes не расширяются автоматически | Platform paths/SSH/PTY/packaging/ownership и то же сохранение пользовательской работы |
+| Workspace P03–P10, DW8–DW8a | Local editor/Git/base/snapshot/PTY; реальные SSH/SFTP read/save/command и remote worktree create/Open/archive; exact pre-turn scope | Реальный Native→remote Agent, сетевые обрывы, remote conflict/reconciliation и полный remote Git Review; local scopes не расширяются автоматически | Platform paths/SSH/PTY/packaging/ownership и то же сохранение пользовательской работы |
 | Browser/desktop P11–P14 | Chrome MV3 fixture; native capture/type/AXPress на owned fixture; bounded image projection source | Real provider/model integration, task-bound browser flow, доверенный application-outcome observer; ChatGPT companion send/Firefox и заявленные native routes остаются открыты; generic CG fallback пока не verified | Native helpers/providers/permissions и browser compatibility по каждой ОС |
-| MCP/skills/execution P15–P18 | Official frozen install/retained disabled review, MCP SDK host/Seatbelt, managed text versions, selected UTF-8 resource packages и actual UI | Real enabled requested tools, supported auth/OAuth, executable/binary skill resources и заявленный native executor contract; official/excluded distribution rules сохраняются. QuickJS остаётся условным до конкретного composition gap, а не фиктивной обязательной зависимостью | Installer/runtime/private ACL/OS sandbox/skills resource adapters и lifecycle |
-| Long work/history DW1–DW7, DW9–DW11 | Explicit requirements/claims/user-confirmed, selected-text export/search, canonical empty consent/revoke, owned final-summary consent/lease/SQLite source+fixtures, durable Agent/MCP/bounded Loop fixtures/UI | Native integration source выполнена, но official admission/models[] пусты: auth/own-profile inventory/account-server source уже связан → реальный qualified account/model → Automatic Goal/outcome; canonical nonempty native text, supported client reuse/fork/exclusive handoff и semantic review остаются; localfake не production proof | Поддержанные client/protocol/process/event/persistence adapters и те же outcome boundaries |
+| MCP/skills/execution P15–P18 | Official install и Seatbelt; реальные Native Manual/Goal с MCP write/read и file-SHA; managed text/UTF-8/PNG/JPEG/JS/MJS packages | Реальный Loop, auth/OAuth и остальные executable/binary resources; distribution rules сохраняются. QuickJS условен до конкретного composition gap | Installer/runtime/private ACL/OS sandbox/skills resource adapters и lifecycle |
+| Long work/history DW1–DW7, DW9–DW11 | Requirements/claims, selected-text export/search, durable fixtures; реальный Native-вход/каталог/две модели/история и ограниченный Goal с файловым verified_complete | Длинные semantic Goals, реальный Loop, полный transcript, supported client reuse/fork/exclusive handoff | Поддержанные client/protocol/process/event/persistence adapters и те же outcome boundaries |
 | Local API/usage P19–P22 | Scoped API/action owner, metadata-only usage и honest unknown/overlap/estimate UI | Реальный named consumer, реальные разрешённые log/pricing sources; request/receipt reconciliation, actual bill/estimate разграничение | Platform source/parser/privacy и API integration contracts |
 | Platform reliability P23–P24 | Действующие owners/целевые проверки, local offline tools+held SDK detach evidence | Закончить текущие TS/CLI gates и substantive findings; сохранить single owner/drain/cleanup и отдельные source/development/install/release receipts | Нужные target build/sign/package integrity и focused flow checks, не автоматический полный audit |
 
 ## Зафиксированное состояние
 
-- **N01–N08** реализованы в исходниках [PR #96](https://github.com/Froraut/NEKODEX/pull/96).
-  По текущему checkpoint PR не merged; исходный код, merge, выпуск и установленная
-  версия — разные результаты. Эти функции не возвращаются в backlog как отсутствующие.
-- **D01 / P01–P02 для macOS** имеют source, development и installed-migration
-  evidence в [квитанции D01](../reviews/2026-10-18-d01-implementation.md):
-  версия `6.1.32-nekodex.8`, два account/mode ключа в Keychain, архив неактивного
-  ключа, exact selector/process proof и отдельный Native response. Квитанция
-  не утверждает новый успешный ChatGPT connector/tool turn; проверка браузерной
-  сессии тогда была unavailable из-за Cloudflare. Windows/Linux protected backend
-  и публичный release этим не доказаны. Более ранний незавершённый checkpoint
-  не отменяет эту последующую квитанцию доставки.
-- **Опубликованный source baseline:** [PR #98](https://github.com/Froraut/NEKODEX/pull/98),
-  commit `137399d`, source `6.1.32-nekodex.9`; все четыре CI jobs этого baseline
-  завершились успешно. Установленная версия остаётся `6.1.32-nekodex.8`.
-  Следующие DW1/P07/DW5/P16 изменения — новая исходная партия после baseline;
-  его CI не является проверкой новых bytes и не означает installed update.
-- **Последний опубликованный baseline:** `6c91ab8`, четыре CI jobs точного source
-  [завершились успешно](https://github.com/Froraut/NEKODEX/actions/runs/39160380988).
-  Source версия остаётся `6.1.32-nekodex.9`, установленная D01 — `.8`.
-  Owned final-summary history и bounded Native images входят в этот baseline.
-  Agent remote входит в этот baseline. Новая mixedPNG/JPEG skill-resource партия идёт после него; прежний CI не проверяет её bytes
-  и не доказывает реальный SSH/model outcome.
-- **Owned Native integration теперь реализована в source:** Rust DEV wrapper на
-  public Codex app-server entrypoint собран и прошёл local fake-wire proof. Это
-  отдельный passive/build artifact, не доступный официальный account provider.
-  Bun имеет explicit `owned-native` provider/router и durable preclaim; main bridge
-  проверяет claim/exact scope/fixed schema, публикует early prepared receipt и
-  наблюдает тот же owner через read-only event-window wait. Task-generation change
-  fencing/retirement не допускает чужой binding, retry или второго sender.
-- UI различает provider identity/admission, Native ограничен maxConcurrent1,
-  finite `native-offers` и maxSpend=null; input: bounded typed images в новой source партии. Native не принимает Web continuation; pixels идут отдельно от text. JSON tool
-  request идёт через существующий ToolJournal с exact approval, не Native tools.
-  Auth owner/UI, own-profile inventory и qualified account execution теперь
-  связаны в source: explicit Inspect models → original catalog → первые два
-  nonhidden actual models → live descriptor/resolveAdmission. Один account
-  process/AuthManager/sender допускает два isolated task threads, сохраняя
-  текущий max1 внутри каждого Native task. Ни одного actual account/model пока
-  не admitted; fixture `official-openai` refusal остаётся отдельным контрактом.
-  Реальный DEV login дошёл до official browser/passkey; human step не завершён,
-  CLI завершился неуспешно. Новый login требует явного fresh epoch; profile сохранён.
-  Нет доказательства saved auth, real inventory/startup policy или model delivery.
-- Native development evidence: actual root HTTP1/20, core1/95, Node bridge1/83;
-  оба project TS и renderer прошли. Это fixtures/local wire без настоящего model
-  account. Peer P2 cleanup findings исправлены с focused receipts; inventory1/185,
-  pool1/92, rootIPC1/16+1/9 и оба TS17:30 прошли. Renderer194, CLI634/exact9
-  и map717 завершены; source641f277 опубликован с exact4CI. Это baseline до
-  новой history партии. Её оба TS18:16, renderer195/18:17, CLI635/exact9 и
-  map write/paths прошли; history source e75d073 опубликован с exact4CI. Подробные contracts:
-  [protocol](agent-native-protocol.md), [main bridge](agent-native-bridge.md),
-  [Rust wrapper build/proof](../development/owned-native-worker-build.md).
-- **Owned Native final-summary history — опубликованная source партия:** отдельный
-  default-off `owned-native-final-summary-v1` в существующем SQLite/FTS owner.
-  Global recording + exact future task-generation consent + unknown-risk ack,
-  pre-offer lease, trusted admitted source и actual Native IDs/time/digest;
-  только validated `final.summary`, без raw JSON/host input/tool content.
-  Каждый explicit revoke сохраняется task-generation-wide для всех sources,
-  включая доступный текущий source; возврат alternate source не
-  восстанавливает согласие; unavailable status не обещает enabled:false.
-  Revoke-only IPC работает при drain. Synthetic backend1/44+1/12, actual private
-  NodeHTTP/BunHistory1/24, boundaryHTTP1/14, IPC1/5 и providerfailure1/5 прошли.
-  Оба TS18:16, renderer195/18:17, CLI635/exact9 и map write/paths прошли;
-  source e75d073/exact4CI подтверждены. Real Native history/UI не заявляются;
-  новый image source/CI отдельно.
-  [Contract](owned-native-final-history.md),
-  [evidence](../reviews/2026-10-18-owned-native-final-history.md).
-- **Owned Native typed images — новая source партия:** matching approved tool
-  result → typed envelope.images → full durable claim → fixed high data URLs;
-  original ModelInfo+picker image capability, PNG/JPEG structure/CRC и exact
-  canonical typed echo. Cumulative2attachments/160KiB на binding включает unknown.
-  Leaf3/38, Bunprojection1/22; actual current wrapper once exit0/653ms,
-  1child/2localfake requests (text→2images), third refused before send, cleanup done.
-  Root wholeRuntime/ToolJournal/privateHTTP/mainbridge1/40 прошёл с fakeleaf;
-  rendererTS18:29 и rootTS18:30 passed; qualifiedpool1/95(70ms) passed,
-  peer review no material findings; renderer195/CLI638exact9/finalmap+paths
-  PASS18:32. Image source70ffe3b опубликован с exact4CI; новая remote партия отдельно;
-  no realaccount/model/UI, longer vision loops/fileupload correlation не proved.
-  [Contract](owned-native-images.md), [evidence](../reviews/2026-10-18-owned-native-images.md).
-- **Agent remote tools — новая source партия:** explicit already-connected
-  saved-host/root attach к actualtask/family/gen/revision/maininstance/connection;
-  fingerprint означает config, не SSH host key. list/read/literalcommand идут
-  через same ToolJournal approval и main per-host SSH owner; core callback
-  требует actual current task + already-begun exact intent/args/key.
-  Signed48intents/180KiB encoded outcomes/pinned receipts, lostreply→purelookup,
-  restartunknown без replay, delayedattach→settle→finalrevoke/retrycleanup.
-  Owner1/38, bridge2/74, IPC1/11, actualRuntime/ToolJournal/privateHTTP/main1/48
-  passed(fakeSFTP/runner/fakeNative), finalreview_required/noevidence.
-  NEWreconnect validation1/5, composition privacy retry1/8 и core-absent
-  direct-main-status/revokeIPC1/4 прошли; bind/approval остаются core-owned,
-  command — privateHTTP/coreintent. Peer closure no new material findings.
-  ОбаTS19:04, renderer196/CLI643exact9/map730finalcheck+paths прошли19:06.
-  Реальные SSH/auth/remoteUI/mutation и newcommit/CI пока открыты.
-  [Contract](agent-remote-tools.md), [evidence](../reviews/2026-10-18-agent-remote-tools.md).
-- **Browser/desktop source партия опубликована в `6f6b171`:** после source commit
-  `09383bb` добавлены P12 standalone browser tools через существующий host/journal,
-  P13/P14 macOS helper/provider/controller/admin UI, canonical tool images и
-  append-only late reconciliation. Все четыре CI jobs точного `6f6b171` прошли:
-  macOS, Ubuntu, Windows, actionlint. Source остаётся `.9`, installed — `.8`.
-  Реальный Chromium/MV3 composition fixture прошёл 1 / 49: observe→type→observe→click,
-  пять counted canonical model requests, duplicate без второго эффекта и restart
-  с retained receipt без rebind/replay. Это inert model adapter, не аккаунтный model
-  turn и не actual DEV UI новой browser attachment поверхности.
-- **Restricted JS/MJS + bounded SSH aliases — новая source партия:** v3script32KiB,
-  16resources512KiB/v1v2unchanged/metadata-only; explicit ephemeral taskgen/root
-  read/write grant + sameToolJournal approval, Bun sandbox_init-beforeimport,
-  denyfork/exec/networkoperations/disclosedFS. SupervisorPID/start+permit,unknown
-  no replay; fresh-instance live-owner P1fix bounded256scan+recoveryholds, pinnedBun1.4.0
-  executor3/39 PASS2.41s, peerclosure P1closed/noadditionalfindings.
-  Store101/provider83, realmacOSHTTP/script61(fakeNative), ChromeDOM58(executor0),
-  IPC10 passed; pinned1.4.0kernel3/39 passed; bothTS20:02/renderer197/CLI648exact9 passed20:04; finalmapcheck/newcommitCI pending. SSHaliases44+peer
-  nofindings: bounded config subset fixed, actualSSH/auth/UI stillopen.
-  [Contract](restricted-skill-scripts.md), [evidence](../reviews/2026-10-18-restricted-skill-scripts-and-ssh-aliases.md).
-- **P16 selected PNG/JPEG — новая source партия:** v1text identity unchanged;
-  mixedv2 raw0400/fsync/fullhash/whole-tree,16resources/text32KiB+128KiBinclSKILL,
-  images160KiB each/8images/32Mipackagepixels,mixed512KiB. Retainedbytes все,
-  selectedSkills только metadata/promptBytes. Explicit four-field skill-resource/read
-  через sameToolJournal approval и exactattached activegeneration/rootreader;
-  canonical Web/Native image ports, Native2cumulative160KiB остаётся.
-  Store1/47, legacy1/54, reader1/49, actualpublicHTTP/Runtime/ToolJournal/fakeNative1/62
-  passed89ms; image source peer no findings. UIhash-beforedecode+all-natural-load gate
-  actualChromeDOM1/31 passed1.50s: chart imported once/unattached; validCRC/SHA/zlib
-  unknowncriticalFAILchunk faileddecode→importdisabled/no2ndcommit. Header/structure
-  не fullcodec guarantee; initialbadzlibChromeaccepted. BothTS/renderer19619:39,
-  CLI644exact9/map731finalcheck+paths passed19:41; newcommitCI pending.
-  PDF/другие binary/scripts/network/officialvendor copies остаются открыты.
-  [Evidence](../reviews/2026-10-18-skill-image-resources.md).
-- **P16 selected text resources реализованы следующим source batch:** явный `SKILL.md`
-  плюс до16 UTF-8 справочных/шаблонных файлов под `references/` или `assets/`;
- 32 KiB каждый,128 KiB весь пакет. Version/review/package digest связывают все bytes,
-  quotas учитывают aggregate; retained tree проверяется перед доставкой. Peer P2 по
-  fsync промежуточных каталогов исправлен и reviewed. Resource+legacy4/97 прошли;
-  после fix focused nested-resource1/54, неизменившиеся legacy переиспользованы.
-  Root connected HTTP/composer1/19 доставил exact packet одномуFAKE provider offer.
-  Actual Russian DEV UI: native picker → full180+84byte preview/hash/package digest →
-  import-unattached → explicit task/gen1 attach → revoke-retain → detach; zero model
-  offers/dispatches/toolcalls. Оба project TS и renderer192-module build прошли;
-  private GUI/core exit0, exactPIDs/port closed, temp profile removed. Это ещё не
-  account-model execution и не исполнение script/binary ресурсов.
-- **Новые bounded image/admission contracts:** request-only projection теперь
-  явно исключает старые pixels только распознанных host tool outputs, сохраняя в
-  том же function output omission notice/hash/call/turn/attachment indices. Original
-  receipts и canonical continuation не переписываются. Human/new/unrecognized
-  images обязательны: сохраняются либо request даёт not_sent до fetch. Historical
-  omission разрешена только для `source.input`; provider `source.output` не может
-  подложить host provenance. Forged function_call_output/non-assistant message после
-  fetch ACK даёт awaiting_input без continuation; legacy tainted output блокирует
-  новый fetch с not_sent. Найденный P2 provenance gap исправлен и reviewed. Лимиты
-  прежние:2images/160 KiB и512 KiB canonical payload. Production provider+parser
-  connected fixture: четыре observe → terminal, пять FAKE requests,2cases/156asserts;
-  новых native captures, real UI/model в этом результате нет.
-- Local tools admission теперь `admission.accepting && !launcherDetached`, отдельно
-  от Web/tunnel; Agent model gate не ослаблен. Desktop inspect/list/enable(true)
-  подчинены local admission, disable/revoke/cleanup доступны при drain. Actual
-  isolated-server HTTP при Web=false без synthetic readiness и MCP off подтвердил
-  passive inventory, blocked model step, drain refusal/cleanup (1 / 26). Detach
-  учитывает active Agent turns/tools; actual held MCP SDK fixture прошёл937ms:
-  Web=false, approved counter1, только active_agent_tools удерживает detach409;
-  explicit release → terminal receipt → idle detach200; discovery закрыт до attach,
-  inert Native HTTP остаётся200. Duplicate approval сохранил counter1, exact SDK
-  PID reaped/home очищен. Pending model call подготовлен synthetic execution port,
-  не настоящим model turn; исправленный fixture exit после owned cleanup не был
-  продуктовым дефектом.
-  Provenance P2 review finding исправлен; root project TypeScript, CLI build
-  (245 modules), фактический `--version` `.9` и architecture map прошли 12:12–12:17 UTC.
-  Renderer не изменён, его passing evidence переиспользуется. CI отдельного кода
-  и установленная поставка остаются отдельными доказательствами.
-- **Actual native DEV capture/type/click подтверждены на owned fixture:** у CLI-started
-  fixture `NSRunningApplication.launchDate` оказался nil при существующем CG window;
-  owner переведён на kernel process-start identity. Root UI перечислил и привязал
-  exact fixture, inspected permissions все true; desktop discovery работал при
-  выключенном MCP. Первый actual JPEG —70027 bytes; AX literal type completed и
-  поле через CUA содержало точный ожидаемый текст; второй JPEG —78916 bytes.
-  Первый click тогда не вызывался: 128 KiB history projection исключила целый latest
-  dispatch с pending call. HTTP/UI теперь имеют отдельные compact `pendingToolCalls`
-  и coverage независимо от истории (1 / 19 HTTP, 1 / 4 UI); лимиты и retained
-  original images не расширены, outcomes не replay. Original task paused на4/6,
-  generation2; helper и owned GUI/core завершились exit0, fake child отсутствует.
-  Новый task с maxTurns3 отдельно подтвердил fresh observation `504555ac…`
-  (1120×624) → exact approved click (280,290), receipt completed/
-  `ax-press-dispatched`; CUA показал Counter1 и прежний literal text без повторного
-  typing. Третий synthetic model offer получил canonical click result, задача стала
-  `review_required`3/3, pending metadata пусты; `verified_complete` не заявлен.
-  Доказан coordinate→AX hit-test/AXPress; generic CG pixel fallback не исполнялся.
-  Старые два JPEG retained; большой two-image flow не переигрывался после fix —
-  его compact pending projection подтверждена HTTP/UI regression, actual click —
-  отдельным connected flow.
-- DEV использовал private fake supervisor с one-shot readiness, поскольку GUI DEV
-  намеренно подавляет этот автоматический путь. Это не actual Web/tunnel readiness;
-  product source gate не изменён. Новые native поля и ввод доказывают fixture OS
-  outcome, не real model/account turn и не произвольный business result. Windows
-  provider отсутствует; browser/desktop execution receipts по-прежнему fail-closed
-  для business evidence до отдельного trusted application observer.
-- Core image projection (1 / 21) и reconciliation (1 / 44) имеют focused fixtures:
-  tool images остаются canonical tool results, до двух PNG/JPEG и суммарно160 KiB
-  с учётом истории; malformed/over-budget даёт not_sent до model fetch. Late receipt
-  добавляет immutable reconciliation fact, сохраняя old unknown; old generation
-  не оживляет задачу/worker, committed generation change отзывает binding.
-- **Новая source партия и четыре actual DEV UI flow завершены:** P07
-  native-picker project показал HEAD→working и older-base→working diff с полными
-  HEAD/base OIDs без смены main. DW1 explicit requirement+consent сохранил revision1;
-  plan-step/trusted-action association и personal confirmation показали 1/1;
-  correction revision2 сбросила оба current counts до 0/1, сохранив две requirement
-  revisions и одну historical coverage. Property verification явно unavailable.
-- **DW5 DEV UI:** global opt-in → exact thread с двумя acknowledgements → scoped
-  consent → actual Codex 0.163.0 `thread/items/list` EMPTY; UI явно сообщил, что
-  canonical text не сохранён и пустой ответ не доказывает пустоту разговора.
-  Revoke выключил refresh, затем global recording выключен. Nonempty text proof
-  этим не получен. Connected RPC→SQLite fixture: 1 / 43, native producer:17 assertions.
-- **P16 DEV UI:** native picker выбрал собственный `user-skills/demo/SKILL.md`,
-  discovery показал SHA, review — 187 bytes; immutable version `2ddf3f622d4dc60f…`
-  импортирована без attachment. Explicit attach к task/generation1 выполнен отдельно;
-  revoke показал retained bytes и запретил новый attach, затем выполнен detach.
-  Ни model/MCP execution, ни external calls этот flow не выполнял.
-- P07 actual Git boundary (1 / 23), DW1 real ledger (1 / 36) и P16 5 focused cases /
-  69 assertions переиспользованы; обе полные project TS проверки от 09:55 остаются
-  passing, renderer build —188 modules, architecture update/check прошли у root.
-  Эта партия опубликована в `09383bb`; её development результаты отделены от
-  более раннего baseline CI и установленного приложения.
-- **DW5 actual native boundary:** официальный Codex 0.163.0 подтвердил
-  `thread/read` + `thread/items/list`, но inert injected history вернул пустую
-  canonical page. `--canonical-only` честно завершает этот исход кодом 2
-  `unavailable-from-injected-history`: реальные text/message IDs/turn IDs/timestamps
-  не доказаны. UI этого empty thread может доказать consent/empty/revoke, но не
-  canonical text capture; нет fallback к rollout/raw Responses или model start.
-- **Новые функции подключены в исходниках main/preload/App и lazy admin owners
-  `src/server.ts`.** Есть plan content, локальный editor/Git, worktrees,
-  snapshots/restore, xterm/PTY, SSH/SFTP/remote commands и remote worktrees,
-  selected-text history/search/export, native Codex metadata/fork journal,
-  Agent mode с MCP pending continuations и signed pre-turn snapshot grants,
-  AgentTools/skills, Chrome companion pairing, local control API и external usage.
-  «Подключено» означает source composition; отдельные строки ниже сохраняют
-  неподдержанные возможности и недостающие наблюдения.
-- **Наблюдения интеграционного владельца в изолированном DEV profile:** native
-  picker выбрал локальный проект; manual snapshot сохранил `alpha`; editor записал
-  `beta`; Git diff показал `alpha → beta`; реальный xterm keyboard input вывел
-  `NEKODEX_PTY_UI_OK`, после чего PTY закрыт. History opt-in сохранил выбранный
-  synthetic text/code, FTS нашёл точную revision, экспорт в реальный файл сохранил
-  partial marker и code; отключение записи сохранило данные. Codex CLI 0.163 на
-  отдельном пустом profile вернул пустой список с явным connection scope.
-- **Workspace и Agent DEV UI:** после нового main реальный selective restore
-  вернул `alpha`, сохранив before-image `beta`; прежний `targetFile` defect закрыт.
-  UI создал `codex/dev-ui-branch` с полным commit OID; actual Open выбрал exact
-  owned managed-worktree root и показал его `hello` в file tree. Новые lifecycle/
-  retained-archive guards имеют targeted source checks; отдельный archive UI
-  outcome этим не заявлен. Manual Agent task подписал
-  pre-turn grant для 6-byte `hello`, получил inert response, оставил sleeping worker;
-  Review с нулём evidence остался blocked, Pause сменил generation на 2, grant
-  отозван. Это DEV provider fixture, не работа реального Web аккаунта.
-- **Agent/MCP evidence:** server fixture подтвердил approval, duplicate без второго
-  эффекта и restart→known-output continuation: один эффект, два model requests.
-  Mailbox Loop core выполнил два цикла с generation/dedup/pause (16 cases / 176
-  assertions). Actual bounded Loop UI на inert adapter прошёл: maxTurns2, initial
-  stage settled1/2 → waiting_for_mailbox_work без empty Continue → substantive
-  packet `dev-mailbox-item-1` settled2/2; exact duplicate key сохранил 2 runs/2 turns;
-  Pause generation3 убрал Run consent. Это не external model/business outcome. Generic external
-  watcher не реализован. Selected-file observer и synchronous pre-Verify
-  revalidation прошли actual Manual UI: alpha SHA → passed → Review; внешняя beta
-  → Verify 409 refused; восстановленная alpha + новая observation → Review с
-  актуальным фактом → `verified_complete`. Два прежних immutable facts сохранены;
-  supersession меняет active coverage, а не переписывает историю. Доказан выбранный
-  file-SHA outcome, не произвольный бизнес-результат и не automatic Goal.
-- **P15 install receipt:** реально подготовлен и frozen-installed официальный
-  `@modelcontextprotocol/server-filesystem@1.0.0`: 104 dependency packages, 4691
-  tree entries; lifecycle scripts запрещены. Review сохранён disabled, host/server
-  выключены, MCP PID отсутствует. [JSON-квитанция](../reviews/2026-10-18-agent-tools-official-install.json)
-  доказывает installation, не запуск MCP. Full graph Bun lock v1/v2, launch-time
-  tree pins и exact pre-intent archive/reconciliation имеют focused evidence;
-  independent review исправил data/code authority overlap и archive target.
-- **P17 macOS boundary:** реальный custom Seatbelt kernel boundary запретил
-  outside-file/network доступ; C fork наследовал ограничения при живом parent;
-  Bun с private HOME и actual SDK MCP host выполнили разрешённый read/counter.
-  Глобальная metadata visibility, system-library reads, sysctls и deprecated Apple
-  interface явно раскрыты. Arbitrary native executor, cleanup после выхода parent
-  и Windows/Linux parity этим не доказаны.
-- **Companion и usage:** bundled MV3 artifact copy/resolver подтверждён отдельно
-  (1 case / 8 assertions); реальная Chrome MV3 extension прошла activeTab,
-  pair/select/observe/type/click/revoke (1 / 17) через headless popup document,
-  не видимый toolbar popup. DEV app включил/выключил настоящий listener, default
-  off, без tab grant. Usage UI прочитал synthetic metadata 100/20 tokens,
-  исключил sentinel/CWD, unknown-source aggregate и цену оставил unknown.
-  Remote UI сохранил fake profile без соединения: реальная SSH authentication
-  не проверена; real local SFTP/Python/Git protocol fixtures остаются отдельными.
-- Новая программа не установлена на основании этих source/DEV результатов.
-  Порядок платформ явно подтверждён пользователем: весь набор сначала macOS,
-  затем Windows/Linux; завершённой одновременной parity пока нет. Windows/Linux credentials/private
-  ACL/native PTY, remote OAuth, generic native executor, ChatGPT companion send
-  и поддержка других native desktop providers — отдельные gaps. QuickJS условен по
-  подтверждённому composition gap; сейчас такой gap не установлен.
+Сверено 18 октября 2026, 21:43 UTC. Исходники: `6.1.32-nekodex.9`,
+ветка `codex/full-adoption-20261018`, [PR #98](https://github.com/Froraut/NEKODEX/pull/98).
+Предыдущая опубликованная партия — `ebafab0`; её [четыре CI jobs](https://github.com/Froraut/NEKODEX/actions/runs/39165375018)
+успешны. Текущая партия фиксирует полученные после неё исправления и реальные
+результаты. Установлено `6.1.32-nekodex.8`; новая установка, merge и release не выполнены.
+
+- **D01 / P01–P02 macOS завершены:** Keychain, Electron/CLI/headless, два действующих
+  ключа, защищённый архив и миграция установленной `.8` подтверждены
+  [квитанцией D01](../reviews/2026-10-18-d01-implementation.md).
+  Эти результаты не подменяются новым Native OAuth и не доказывают Windows/Linux.
+- **N01–N08:** клиентская партия сохранена в [PR #96](https://github.com/Froraut/NEKODEX/pull/96).
+  Она не считается отсутствующей; source, merge и installed delivery учитываются раздельно.
+- **Workspace:** development UI подтвердил picker, дерево/редактор/save/conflict,
+  Git diff/base, local worktree create/Open, snapshots/selective restore с before-image
+  и PTY input/close. Remote owner, receipts, safe SSH aliases и Agent attachment
+  реализованы. На реальном SSH-хосте проверены чтение/запись/команда и
+  worktree create/Open/archive; временные remote данные затем удалены.
+  [Квитанция](../reviews/2026-10-18-real-remote-workspace.md).
+- **Реальный Native:** официальный вход сохранён в изолированном development profile.
+  Qualified inventory личного `promax` вернул десять моделей. GPT-6.1-Sol и GPT-6-Astra
+  в двух разных задачах вернули `NEKODEX_NATIVE_OK` и `NEKODEX_ASTRA_HISTORY_OK`.
+  Один account-server обслуживал два отдельных thread/turn, max1 worker в каждой задаче.
+  Canonical receipts сохранены; обе задачи остаются `review_required`, денежный расход неизвестен.
+- **Native history:** до offer Astra через UI включены global recording и согласие
+  точной task generation. Поиск нашёл одну partial assistant/agent запись с реальным
+  итогом. Затем оба согласия отключены, одна SQLite запись сохранена. Полный transcript,
+  reasoning и tool payloads этим не охвачены.
+  [Реальные модели и история](../reviews/2026-10-18-native-real-models.md);
+  [Pro-family](../reviews/2026-10-18-native-pro-family.md).
+- **Native transport:** pinned public wrapper, durable preclaim, main validation,
+  early receipt и read-only same-owner wait интегрированы. Fixed-schema requests
+  возвращаются к Bun ToolJournal; Native tools пусты. Typed images ограничены
+  двумя cumulative attachments / 160 KiB. Реальные text responses подтверждены;
+  Manual и Goal с MCP-инструментами подтверждены; real vision требует отдельного результата.
+  [Protocol](agent-native-protocol.md), [bridge](agent-native-bridge.md),
+  [build](../development/owned-native-worker-build.md),
+  [images](../reviews/2026-10-18-owned-native-images.md).
+- **MCP:** официальная frozen filesystem 1.0.0 установка сохранена отдельно.
+  Исправлен общий JSON Schema 2020-12/draft-07 validator. Реальный процесс сообщил
+  14 supported tools; одобренные write_file/read_file создали и прочитали точные
+  50 байт, SHA проверен независимо. Следующая реальная Native-проверка дала
+  Manual и Goal по три хода, по два подтверждённых MCP-вызова и отдельное
+  file-SHA/QA verified_complete. Сервер остановлен; runtime сохранён отключённым.
+  [MCP evidence](../reviews/2026-10-18-official-mcp-runtime.md).
+- **Skills:** immutable text/UTF-8, PNG/JPEG и restricted JS/MJS packages имеют
+  import/attach/revoke, digest/quota/revalidation и отдельные grants/approval.
+  Реальный macOS sandbox/script и UI fixtures проверены. Python/shell/PDF/другие
+  binary/network resources остаются открыты.
+  [Script/SSH evidence](../reviews/2026-10-18-restricted-skill-scripts-and-ssh-aliases.md).
+- **Длительная работа:** correction/coverage, property drift/review, pre-turn snapshot,
+  durable mailbox, bounded Loop и Goal owner имеют development/fixture evidence.
+  Реальные Native ответы, история, Manual и Goal с MCP/file-SHA подтверждены.
+  Длинные semantic Goals, реальный Loop и client reuse/fork/exclusive handoff
+  остаются открыты.
+- **Browser/desktop:** Chrome MV3 и owned macOS fixture capture/type/fresh-click
+  имеют receipts. Real-model сценарий, ChatGPT send, Firefox и generic CG fallback
+  остаются открыты.
+- **Cleanup:** Native account-server/tasks и временные core/GUI закрыты. Финальный
+  core-first shutdown дал exit0, новых model dispatch не было. Ранний неверный
+  порядок manual cleanup сохранён в private evidence. После отдельного перезапуска
+  ChatGPT пользователь подтвердил исчезновение зависания компьютера; причина всех
+  retained MCP cohorts не объявляется доказанной.
+
+Неизменённые passing проверки не повторяются. Новая source/copy партия прошла
+оба TypeScript targets и renderer build (198 modules). Это не приёмка установленной
+`.9`, release или всей macOS программы.
 
 ## Очередь связанных результатов
 
@@ -353,6 +133,24 @@ macOS; затем Windows/Linux»**. Это порядок реализации 
 проверяется его основной результат и существенная ошибка. Не требуется отдельный
 релиз после каждого модуля или ожидание идеальной реализации всех будущих функций.
 
+## Полная таблица реализации: исходные клиентские функции
+
+Эти восемь пунктов уже реализованы в source-партии N и не возвращаются в очередь
+как отсутствующие. Их [отдельная проверка](../reviews/2026-10-18-selective-cos-adoption.md)
+сохраняет границы DEV/fixtures. Общая приёмка новой установленной `.9` остаётся
+отдельным этапом для всей программы.
+
+| ID | Возможность | Что готово | Что проверено | Что осталось |
+| --- | --- | --- | --- | --- |
+| N01 | Единый отчёт поддержки | Bounded safe report из существующих owners, сохранение через guarded IPC | Приватный файл, redaction/границы, stale/unavailable и отсутствие скрытых probes | Приёмка отчёта в итоговой установленной версии |
+| N02 | Центр задач с приоритетом проблем | Фильтры очереди и записанных задач, точный переход к причине | Attention/recent ordering и DEV переходы/фильтры | Общая installed acceptance |
+| N03 | Подробности задачи и квитанции | Send/acceptance/unknown/cancel и capabilities без повторной отправки | Совместимость журнала, uncertainty/restart, DEV detail/cancel/focus | Общая installed acceptance; новые providers по собственным contracts |
+| N04 | Непрерывность задачи | Связи compaction/checkpoint/rebind по существующему владельцу | Exact-parent/одноразовые tokens, реальный локальный lifecycle transport | Проверка итоговой поставки; metadata не обещает full transcript |
+| N05 | Native request и связи workers | Canonical current-turn identity и parent/worker associations | Локальные SQLite/native fixtures; unsupported остаётся unavailable | Поддержанные client/live worker сценарии и installed acceptance |
+| N06 | Происхождение tools/skills | Раздельные inventory/selection/success, bounded metadata | Privacy/schema limits, content/path exclusion и digest semantics | Приёмка с итоговыми выбранными providers; digest не подпись издателя |
+| N07 | Поиск настроек | Локализация, клавиатура, exact destination/focus | Шесть языков, DEV disclosure/keyboard/draft preservation | Общая installed acceptance |
+| N08 | Иллюстрированная помощь подключения | Account/mode-bound помощь и исходные schematic SVG | DEV темы/диалог/focus, отсутствие записи readiness/ключей | Общая installed acceptance и реальная connector route отдельно |
+
 ## Полная таблица реализации: платформа
 
 «Осталось» — реальная работа, не повторное разрешение пользователя. Критерии
@@ -363,27 +161,27 @@ macOS; затем Windows/Linux»**. Это порядок реализации 
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | P01 | Точный контракт tunnel credentials | Один совместимый способ передать ключ Electron, CLI и detached child | SDK 0.0.16 `env:` selector и detached delivery подтверждены в D01; source-вопрос закрыт | Сохранить контракт при новых OS/routes и обновлениях SDK; affected-peer rotation | Существующий D01 owner; конкретно изменившийся SDK/route | Selector остаётся без raw key; новый process получает exact scoped secret; живой старый process не считается обновлённым от смены env | Сквозной, готово для подтверждённой macOS route |
 | P02 | Общий protected credential provider | Защита ключей без конкурирующих файлов и владельцев | macOS Keychain, Electron/Bun/headless и installed migration подтверждены; другие ОС явно legacy | Поддержанные Windows/Linux protected adapters и migration UI при готовом noninteractive backend | P01; OS credential facility; существующая account mutation lease | Scoped prepare/commit/discard, locked/unavailable сохраняет reference; restart читает vault; config/profile/logs без raw key; legacy не скрыт | Сквозной; macOS выполнен, Windows/Linux — этап2 |
-| P03 | SSH/SFTP дерево и preview | Удалённый проект становится полноценным workspace | SSH/SFTP owner/UI/preload подключены; UI сохранил fake profile без connect; local real SFTP protocol fixture есть | Bounded Hostalias safeconfig source/fixture44 готовы, actual SSH authentication/выбранный host/root и reconnect ещё не проверены; не выдавать fake profile за подключение | Workspace registry и capability contract; системный SSH/SFTP | Host-key mismatch не принимается автоматически; root канонизирован; потеря соединения видна и не возвращает пустой успешный каталог | F2, первый remote результат |
-| P04 | Удалённые команды и запись файлов | Работа Agent mode в выбранной remote среде | Remote save/drafts и signed receipts; новая Agent authority source DONE: explicit connected-host/task attach, list/read/literal command через same ToolJournal/core-intent validation, main exclusive owner; owner1/38, bridge2/74, IPC1/11, actualHTTP1/48 fakeSFTP/runner | Actual SSH authentication/host/root и approved mutation/reconciliation/UI/provider; command cwd не OS sandbox, source authority не live permission/result | P03; P17; единый P20 outbox для agent actions | Обрыв после send/write даёт unknown и reconciliation; нет слепого retry; результат, ошибка и partial outcome различимы; чужой host/root недоступен | F2 после P03; agent wiring F3 |
+| P03 | SSH/SFTP дерево и preview | Удалённый проект становится полноценным workspace | Реальный SSH alias, существующий отдельный ключ и known_hosts, подключение из UI, SFTP-дерево/preview проверены; ограниченные безопасные параметры config и их pinning работают. | Более широкие SSH-конфигурации, восстановление после настоящего сетевого обрыва и приёмка установленной версии; нет общей совместимости с любым config. | Workspace registry и capability contract; системный SSH/SFTP | Host-key mismatch не принимается автоматически; root канонизирован; потеря соединения видна и не возвращает пустой успешный каталог | F2, первый remote результат |
+| P04 | Удалённые команды и запись файлов | Работа Agent mode в выбранной remote среде | Реальные SFTP save/read-back и отдельно просмотренная команда с exit0/SHA проверены на временном репозитории. Agent remote authority/ToolJournal/signed receipts реализованы и имеют fixtures. | Реальный Native→remote Agent flow, живые сетевые uncertain-outcome/reconciliation сценарии и installed acceptance; командный cwd не OS sandbox. | P03; P17; единый P20 outbox для agent actions | Обрыв после send/write даёт unknown и reconciliation; нет слепого retry; результат, ошибка и partial outcome различимы; чужой host/root недоступен | F2 после P03; agent wiring F3 |
 | P05 | Управляемые локальные worktrees | Изоляция параллельной работы и безопасное возвращение к ней | DEV UI create `codex/dev-ui-branch` с full OID и Open exact owned worktree→hello file tree наблюдены; lifecycle/archive guards в source | Только новые archive/lifecycle transitions при их изменении; client-owned worktrees остаются у клиента | Workspace registry; DW3 для собственного worker; client capability для клиентского режима | Exact marker/repo/root/refs; restart не создаёт новый worktree; dirty/untracked/ignored и чужая ownership защищают от удаления | F2 |
-| P06 | Управляемые remote worktrees | Изолированные remote workers и повторное использование remote checkout | `remote-worktrees.cjs`: inspect→prepare→one-use create/archive, ownership и receipts; 7 preload methods подключены | Реальный SSH remote Git lifecycle/reconnect; server environment/required helpers должны быть доступны | P03–P05; P04 outcome reconciliation | Crash/reconnect сохраняет exact remote owner; uncertain Git mutation не повторяется; чужие refs/dirty data не удаляются; unsupported server показан явно | F2 после remote execution и local lifecycle |
+| P06 | Управляемые remote worktrees | Изолированные remote workers и повторное использование remote checkout | Реальный SSH Git worktree создан из закреплённого HEAD, открыт с исходным alias, прочитан и архивирован с сохранением папки/recovery ref. Начальная гонка list и потеря alias при Open исправлены. | Длительный remote worker lifecycle/reconnect и installed acceptance. Временные данные QA удалены отдельно после проверки; архивные квитанции сохранены. | P03–P05; P04 outcome reconciliation | Crash/reconnect сохраняет exact remote owner; uncertain Git mutation не повторяется; чужие refs/dirty data не удаляются; unsupported server показан явно | F2 после remote execution и local lifecycle |
 | P07 | Git Review рабочего дерева/веток | Оценка изменений в собственной рабочей среде | Branch/base source+actual Git1/23 и actual DEV native-picker HEAD/older-base diff/full OIDs/main unchanged подтверждены | Real remote UI по выбранной среде; unchanged local selector/diff не повторять, выбор base не fetch/checkout | Явный local workspace; remote adapter отдельно P03/P06 | Открытый diff привязан к exact HEAD/base OID; смена состояния даёт stale; просмотр не делает fetch/checkout/commit | F1; remote расширение F2 |
-| P08 | Редактор файлов | Исправления и review без ухода из NEKODEX | Local editor/drafts/save/conflict UI подключён; DEV native picker и save `alpha → beta` наблюдены; remote edit route тоже в source | Реальное remote edit/conflict evidence и targeted новые edge cases; local passing flow переиспользовать | Local workspace authority; P04 для remote, без переноса прав из prompt | Поздняя external edit сохраняет draft и блокирует stale overwrite; staging/flush/rename не обнуляет оригинал; binary/large/remote limits видимы | F1 local; F2 remote |
+| P08 | Редактор файлов | Исправления и review без ухода из NEKODEX | Local editor/save/conflict flow и реальный remote SFTP editor/save/read-back подключены и проверены. Изменение временного файла подтверждено независимой remote SHA-командой. | Реальное одновременное remote редактирование/обрыв и итоговая installed acceptance; неизменённые local checks повторять не нужно. | Local workspace authority; P04 для remote, без переноса прав из prompt | Поздняя external edit сохраняет draft и блокирует stale overwrite; staging/flush/rename не обнуляет оригинал; binary/large/remote limits видимы | F1 local; F2 remote |
 | P09 | Выборочное Git/file restore | Вернуть конкретную правку, сохранив человеческую работу | Actual DEV selective restore после нового main вернул alpha и сохранил beta recovery before-image; прежний targetFile defect закрыт | Сохранять scope/revision checks и проверить только новые substantive изменения; unchanged restore evidence переиспользовать | DW8 snapshot owner; P07; P08 save authority | Новый concurrent edit блокирует stale restore; исходные bytes доступны; остальные файлы не меняются; повтор не применяет destructive действие второй раз | F2 вместе с DW8 |
 | P10 | Native terminal docks | Человеческий shell в контексте workspace | Main/IPC/xterm связаны с real node-pty; DEV keyboard echo `NEKODEX_PTY_UI_OK` и закрытие наблюдены | Native PTY ABI/packaging и поведение Windows/Linux на этапе2; remote terminal по своему contract | Workspace identity; native PTY development proof; P03/P04 для remote | Input/resize в exact PTY; ограниченный output; close ждёт точный exit и сохраняет посторонние shells; human terminal не становится agent tool автоматически | F2 |
 | P11 | Chrome/Firefox companion transport | Альтернативный ChatGPT transport там, где нужен внешний browser | Artifact copy/bundled resolver подтверждён 1/8; actual MV3 Chrome pair/select/observe/type/click/revoke 1/17, app listener enable/disable; send:false | ChatGPT send и Firefox не реализованы; headless popup document не доказывает видимый toolbar popup; distribution отдельно | Подтверждённый transport gap; existing turn registry; P14 | Один sender/settlement owner; disconnect/version mismatch не создаёт второй send; permissions ограничены; tab/account mismatch отклонён | F4, конкретный browser сначала |
 | P12 | Browser automation provider | Веб-действия для standalone Agent mode и клиентской интеграции | Standalone browser builtin host/leaf/attachment/admin UI подключены к единому tool journal; actual Chromium/MV3 composition fixture1/49,5canonical requests, duplicate/restart без второго эффекта | Root actual DEV browser attachment/approval flow; real model/account отдельно; execution receipt не application business evidence; ChatGPT send unsupported | P14; P17; DW3/P20 для собственного executor; P11 только если выбран extension путь | Inventory и execution различимы; exact page/frame bound; unsupported action недоступен; late/partial result не приводит к replay | F4 |
 | P13 | Desktop automation macOS/Windows | Computer Use в самостоятельной среде | Actual owned-background-fixture capture/JPEG→literal AX type+Cuaexact и отдельный fresh1120×624→approved click280,290→AXPress/CuaCounter1→canonical final3/3review_required подтверждены | Real provider/account, Windows/installed delivery отдельно; generic CG pixel fallback не упражнялся, execution/application fixture outcome не general verified task | P14/P17; OS facility; DW3/P20; отдельная поддержка каждой ОС | Реальная capture→input→fresh observation в exact window/process; stale input отклонён; permission unavailable виден; успех одной ОС не объявляет поддержку другой | F4, по платформам |
-| P14 | Input связан с наблюдением | Защита от действий в старой вкладке/чужом окне | Actual native capture/type/freshclick и pendingmetadata fixes сохранены; bounded old-host-tool-pixel projection source реализована, connected provider+parser2/156 с4observe/5FAKErequests, source.input-only provenance fix reviewed | Новая bounded Native images source+leaf3/38+Bun1/22+actualwrapper2fake requests готовы; root integrated mainHTTP1/40 passed(fakeleaf), обаTS+renderer195/CLI638exact9/finalmap paths PASS, no realmodel/UI; mandatory human/new/unrecognized images remain or fail, caps unchanged | Реальный consumer P11–P13; один action owner | Refs/coordinates другого или устаревшего наблюдения отклоняются до input; partial batch не называется rollback; новая observation не даёт новых разрешений | F4, до первого provider input |
-| P15 | MCP/plugin discovery, install и runtime | Инструменты собственного Agent mode с понятным источником | Managed official npm installer + MCP host/UI подключены; filesystem 1.0.0 реально frozen-installed:104 packages/4691 entries, review disabled/MCP PID null; fullgraph/tree/archive fixes проверены | Отдельные enable/connect и real requested tool proof; OAuth пока unsupported; catalog расширять явно, не называть install успешным запуском MCP | DW3; P17/P20; credential owner; official distribution policy | Advertised tool не равен execution proof; exact server/process/account; uninstall/stop не теряет active operation; не восстановлены исключённые overlays; unsupported install явен | F3 |
-| P16 | Skill discovery/import/update/routing | Явно выбранные инструкции для собственного composer | Immutable local text + до16 явно выбранных UTF-8 reference/template файлов; package digest/quota/revalidation; actual264-byte package UI import/attach/revoke/detach; HTTP/composer1case19asserts → одинFAKE offer | SelectedPNG/JPEG binary sourceDONE: store1/47,reader1/49,actualHTTP1/62 fakeNative; ActualChromeDOM1/31 и bothTS/renderer196/CLI644exact9/map731finalcheck+paths passed; newcommitCI pending. SelectedJS/MJS v3 source added with separate grants/approval, restartfix/pinned3/39passed, bothTS/renderer197/CLI648 passed, finalmapcheck/commitCI pending; Python/shell/PDF/otherbinary/network/officialvendor/OAuth/physical cleanup и real model остаются; update не auto-attach | DW3/P15; разрешённые roots; официальный plugin источник | Выбранный skill соответствует canonical identity/digest; scan только разрешённых roots; metadata не даёт файловых прав; update сохраняет нужные local adaptations | F3 |
+| P14 | Input связан с наблюдением | Защита от действий в старой вкладке/чужом окне | Actual native capture/type/freshclick и pendingmetadata fixes сохранены; bounded old-host-tool-pixel projection source реализована, connected provider+parser2/156 с4observe/5FAKErequests, source.input-only provenance fix reviewed | Реальные text Native ответы уже получены; bounded images source/fixtures сохранены. Следующий шаг — real-model vision и связанный UI/provider outcome; caps и fresh-observation проверки остаются. | Реальный consumer P11–P13; один action owner | Refs/coordinates другого или устаревшего наблюдения отклоняются до input; partial batch не называется rollback; новая observation не даёт новых разрешений | F4, до первого provider input |
+| P15 | MCP/plugin discovery, install и runtime | Инструменты собственного Agent mode с понятным источником | Official frozen filesystem 1.0.0 runtime сохранён; реальные 14 схем и macOS sandbox. Ручная Native-задача и Goal выполнили write/read через отдельные подтверждения, file-SHA и QA verified_complete; установка/учётные данные разделены. | OAuth/секреты, расширение поддержанного каталога и итоговая installed acceptance; общий P15 ещё не объявлен завершённым. | DW3; P17/P20; credential owner; official distribution policy | Advertised tool не равен execution proof; exact server/process/account; uninstall/stop не теряет active operation; не восстановлены исключённые overlays; unsupported install явен | F3 |
+| P16 | Skill discovery/import/update/routing | Явно выбранные инструкции для собственного composer | Immutable text/UTF-8, PNG/JPEG и restricted JS/MJS packages реализованы: exact import/attach/revoke, digest/quota и отдельные script grants/approval. Source63ab32f и ebafab0 опубликованы с успешным exact CI; macOS kernel/script и UI fixtures пройдены. | Python/shell/PDF/другие binary/network resources, поддержанные auth/OAuth и real-model skill flow; update не auto-attach. Неизменённые passing import/sandbox проверки переиспользовать. | DW3/P15; разрешённые roots; официальный plugin источник | Выбранный skill соответствует canonical identity/digest; scan только разрешённых roots; metadata не даёт файловых прав; update сохраняет нужные local adaptations | F3 |
 | P17 | Command sandbox и filesystem policy | Настоящие ограничения собственного tool host | Custom macOS Seatbelt для MCP реально kernel-blocked outside FS/network; C fork inheritance при живом parent, Bun private HOME/SDK read+counter подтверждены; restrictedJS/MJS executor source+realmacOS61 added; freshinstanceownerP1/pinnedkernel3/39passed/peerP1closed/nofindings; arbitrary executor unsupported | Win/Linux sandbox; post-parent lifecycle proof; раскрытые metadata/systemlib/sysctl grants и deprecated interface учитывать; native command executor не заявлять | DW3; workspace registry; platform-specific sandbox facility | Denied действие не исполняется; symlink/root escape закрыт; native exec не назван изолированным без OS proof; unavailable sandbox блокирует соответствующую route | F3; необходимый контракт для F2 mutations |
 | P18 | QuickJS/WASM composition | Меньше round trips у клиента без подходящей composition | Gateway/native composition существуют; конкретный дополнительный interpreter не реализован | При измеримом gap — один bounded interpreter и allowlisted tool callback; без собственной FS/network authority | Конкретный consumer/сравнение; P17/P20 для callback; поддержанный runtime | CPU/memory/call/output limits реально останавливают JS; callback перепроверяет authority; timeout не отменяет уже accepted external operation | F5, условно по gap |
 | P19 | Поддержанный локальный read-only API | Внешний monitor/integration получает правдивый status | Versioned local-control-api routes/policy, separate credential, passive bounded sources и UI подключены | Наблюдение реального named consumer; unknown/unopened sources не запускать ради чтения; history content только отдельным scope | Existing passive owners; отделение от P20 | Host/origin/auth checks; unavailable/stale сохраняются; reads не repair/start/send; stalled reads ограничены; секреты и raw transcript не выходят | F3; возможно раньше executor |
 | P20 | Action API и automatic sender | Один управляемый вход действий UI, Goal и внешней интеграции | Scoped Agent actions используют существующий Agent owner/store.command и durable dispatch; API не создаёт второго sender | Реальная external integration и reconciliation evidence; action scope/current generation mandatory, read-only default сохранить | DW3/DW4; exact client/provider capabilities; P19 отдельный read contract | Duplicate request возвращает прежний receipt; unknown acceptance не пересылается; auth не даёт лишнего scope; cancel/stop/restart сохраняют outcomes; нет второго sender внутри status API | F3 |
 | P21 | Cross-client usage dashboard | Обзор разных локальных клиентов без потери происхождения | Opt-in import/UI реализованы; DEV synthetic metadata 100/20 tokens прочитаны без sentinel/CWD, unknown-source вне aggregate | Реальные выбранные client logs/parser-version scope; fixture tokens не доказательство аккаунтного provider usage | Supported parser contracts; explicit log access; existing usage store projection | Нет chat content; observedAt/coverage/unknown видимы; rotated log не удваивает числа; bridge и client totals не складываются дважды | F5 |
 | P22 | Cost estimates и сравнение экономии | Понятная оценка альтернативной стоимости | Pricing catalog/estimated-api-equivalent views подключены; DEV unknown price и excluded unknown-source показаны честно | Real selected catalog/consumer; actual bill/savings не заявлять; overlapping/unknown sources не суммировать | P21; actual provider usage и versioned pricing там, где доступны | Estimated context × calls подписано estimate, не bill; unknown не ноль; alternative comparison не называется фактической экономией; пересечения исключены либо показаны отдельно | F5 |
-| P23 | Compaction, updater, accounts и routing | Сохранение контекста, обновлений и account isolation при расширении | Существующие owners сохранены; localtools offlineHTTP1/26 + real heldMCP SDK: counter1/activeTool-only detach409→release→idle200, NativeHTTP200; duplicate без второго эффекта | ОбаTS, renderer195/CLI638exact9/finalmap+paths прошли18:32; image70ffe3b/exact4CI опубликованы; remote finalgates/newcommitCI pending, synthetic setup не realmodel | Архитектура текущих compaction/update/account modules; новые routes по scope | Observability без replay authority; checkpoint публикуется после durable write; update signature/commit/rollback сохранены; чужой account/runtime не заимствуется | Сквозной |
+| P23 | Compaction, updater, accounts и routing | Сохранение контекста, обновлений и account isolation при расширении | Существующие owners сохранены; localtools offlineHTTP1/26 + real heldMCP SDK: counter1/activeTool-only detach409→release→idle200, NativeHTTP200; duplicate без второго эффекта | Сохранить эти contracts при новых изменениях; source ebafab0/exact4CI успешен, реальные Native ответы/история подтверждены. Финальная installed .9 acceptance остаётся отдельным этапом. | Архитектура текущих compaction/update/account modules; новые routes по scope | Observability без replay authority; checkpoint публикуется после durable write; update signature/commit/rollback сохранены; чужой account/runtime не заимствуется | Сквозной |
 | P24 | Пропорциональный CI и delivery | Быстрое развитие с доказанным нужным результатом | Существующие focused checks/CI и architecture map; чужой full audit не переносится | Checks новых изменённых contracts и нужных release targets; архитектурные docs/map вместе с изменением; один integrated verification owner | Связанный законченный batch; development proof перед release | Неизменённые passing checks переиспользованы; failure до fault boundary не считается rollback proof; build/source/merge/install/live результат разделены; broad suite не запускается по умолчанию | Сквозной |
 
 ## Полная таблица реализации: длительная работа и история
@@ -392,19 +190,19 @@ macOS; затем Windows/Linux»**. Это порядок реализации 
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | DW1 | План и checklist покрытия | Видно, какая часть исходного запроса выполнена и чем подтверждена | Real ledger1/36 + actual UI requirement consent rev1→step/action/user-confirmed1/1→correctionrev2 counts0/1, history retained; propertyverification unavailable | Native machine property verification здесь не заявляется; добавлять конкретные observers по реальной потребности, personal confirmation не machine proof | N03–N06; supported native events; отдельная content policy | Lookalike tool/prompt не становится plan; completed модели не verified; correction инвалидирует старое coverage; source/build/release свойства различимы | F1 |
 | DW2 | Дерево workers, status и reuse | Возврат к контекстному исполнителю без создания лишнего | NativeThreadsSurface, metadata projection и supported app-server read/fork wired; CLI 0.163 DEV empty-profile list/scope наблюдены | Fresh worker reuse/continue лишь при поддержанной capability; отдельная connection не доказывает общий live status | DW1 identity; exact thread/family; supported app-server/client contract | Две семьи с одинаковым name не смешиваются; tab close не завершает worker; restart не запускает; disconnected status unknown; follow-up revalidates identity | F1 |
-| DW3 | Persistent Agent workers/mailboxes | Самостоятельная параллельная работа и reusable sleeping workers | Durable Agent runtime + explicit owned-native router/preclaim/main bridge/early receipt/read-only same-owner wait/invalidation интегрированы; Rustpublicwrapper actualbuild/localfake proof; HTTP1/20/core1/95/node1/83 | Qualified auth/inventory/admission/account pool уже wired source; fake pool1/92, inventory1/185, cleanup findings fixed. Actual auth/account/models/startup policy и real model task ещё не proved; max1 внутри task, pool2 across tasks; typed images2/160KiB cumulative в новой source партии | P17/P20; workspace/P05 по сценарию; один top-level task owner | Crash до/после accept/ACK не теряет и не дублирует инструкцию; late result сохраняется; unknown send не replay; concurrency соблюдена; at-least-once не назван exactly-once эффектом | F3 |
-| DW4 | Staged task-plan executor | Длинная задача движется по содержательным этапам | Stages/dependencies/correction/control единым owner; Web и owned-native provider routes/continuations строго разделены, Native fixed-schema JSON requests идут в existing ToolJournal | Реальный admitted Native/Web multi-stage outcome и generation/retirement UI; source bridge integration уже есть, production model admission пока отсутствует | DW3/P20; исходные requirements с первой инструкции | Duplicate finish не запускает следующий этап дважды; correction важнее auto-step; restart не переигрывает uncertain dispatch; unchanged passing check не повторяется | F3 |
-| DW5 | Opt-in transcript и Markdown export | Переносимый результат и восстановление контекста | Selected-text/canonical RPC→SQLite1/43/native17 и actual empty-page consent/revoke UI. Owned final-summary source связан с provider/main receipts/oneSQLite/HTTP/IPC/UI: defaultOFF, global+task-generation future consent+risk ack, pre-offer lease, actual IDs/time/source/digest, persistent all-source task-generation revoke; backend1/44+P1 1/12, actualHTTP1/24 | Actual owned-history UI и real account/model final с provenance; full supported transcript/background subscription отдельно. Explicit canonical refresh не background capture; unknown-secret risk не устранён known-pattern filter | Native/client event adapter; content opt-in отдельно от metadata ledger | Stream/edit/reload не дублируют; authored human/automatic различены; partial history явна; quota не удаляет активную историю молча; отменённый save не saved | F1 |
-| DW6 | Локальный поиск истории | Найти exact сохранённое сообщение без полного сканирования | FTS/query/exact revision UI подключены; DEV selected synthetic answer найден и открыт | Сохранять incremental edit/delete/retention ownership; поиск не обещает несохранённый transcript | DW5 storage/retention owner | Indexed/total/partial видны; edit/delete обновляют результаты; exact message переход; raw tool/credentials вне индекса; несохранённая история не обещается | F1 вместе с history |
+| DW3 | Persistent Agent workers/mailboxes | Самостоятельная параллельная работа и reusable sleeping workers | Durable runtime/claims/receipt/Native bridge интегрированы. Реальный личный Pro (Max), 10 моделей, GPT-6.1-Sol/GPT-6-Astra, отдельные threads и реальные Native+MCP Manual/Goal подтверждены. | Длительная multi-worker работа и real Loop; max1 внутри задачи, pool2 между задачами, cumulative typed images2/160КиБ. | P17/P20; workspace/P05 по сценарию; один top-level task owner | Crash до/после accept/ACK не теряет и не дублирует инструкцию; late result сохраняется; unknown send не replay; concurrency соблюдена; at-least-once не назван exactly-once эффектом | F3 |
+| DW4 | Staged task-plan executor | Длинная задача движется по содержательным этапам | Этапы/dependencies/correction и один владелец; real Manual и Goal прошли по3 Native offers с2 отдельно одобренными MCP исходами и проверенным файловым результатом. | Более длинный план с несколькими смысловыми этапами и его correction/retirement UI; текущий реальный пример содержит один этап с tool continuations. | DW3/P20; исходные requirements с первой инструкции | Duplicate finish не запускает следующий этап дважды; correction важнее auto-step; restart не переигрывает uncertain dispatch; unchanged passing check не повторяется | F3 |
+| DW5 | Opt-in transcript и Markdown export | Переносимый результат и восстановление контекста | Selected-text/canonical RPC→SQLite1/43/native17 и actual empty-page consent/revoke UI. Owned final-summary source связан с provider/main receipts/oneSQLite/HTTP/IPC/UI: defaultOFF, global+task-generation future consent+risk ack, pre-offer lease, actual IDs/time/source/digest, persistent all-source task-generation revoke; backend1/44+P1 1/12, actualHTTP1/24 | Actual owned-history UI, real GPT-6-Astra final с provenance, поиск и отключение согласия проверены; full supported transcript/background subscription остаются отдельно. Explicit canonical refresh не background capture; unknown-secret risk не устранён known-pattern filter | Native/client event adapter; content opt-in отдельно от metadata ledger | Stream/edit/reload не дублируют; authored human/automatic различены; partial history явна; quota не удаляет активную историю молча; отменённый save не saved | F1 |
+| DW6 | Локальный поиск истории | Найти exact сохранённое сообщение без полного сканирования | FTS/query/exact revision UI подключены; DEV selected synthetic answer и real Native final найдены; exact partial запись и сохранение после отключения проверены | Сохранять incremental edit/delete/retention ownership; поиск не обещает несохранённый transcript | DW5 storage/retention owner | Indexed/total/partial видны; edit/delete обновляют результаты; exact message переход; raw tool/credentials вне индекса; несохранённая история не обещается | F1 вместе с history |
 | DW7 | Fork истории через клиент | Продолжить отдельную линию от выбранной точки | Native user-click fork route/UI и private durable fork journal с uncertain reconciliation подключены | Реальный supported fork результата; DEV empty list не доказывает live fork или attachments parity | DW5 context; supported fork method; P20 для action receipt | Исходная ветка сохранена; duplicate action не создаёт второй fork; exact point/partial seed видны; replay всего prompt не маскируется под fork | F1; standalone branch F3 |
 | DW8 | Ручные code snapshots | Сохранить рабочее состояние и вернуть выбранные файлы | Actual DEV snapshot alpha→beta→restore alpha с beta before-image и managed-worktree Open завершены | Новые archive/lifecycle UI изменения проверять отдельно; passing snapshot/restore/Open переиспользовать | Явный workspace owner; P07/P09; history link полезен, но не обязательный блокер | Dirty/untracked сохранены; ignored/binary/submodule scope объявлен; exact root/path/hash; concurrent edit вызывает conflict; failed test не запускает auto rollback | F2, первый checkpoint результат |
 | DW8a | Автоматические per-turn checkpoints | Действительно восстановимое состояние до agent writes | Actual Manual DEV task подписал exact grant и pre-turn snapshot 6-byte hello; Pause gen2 и revoke выполнены; immutable receipt store подключён | Расширения snapshot-only scope не обещать; native-client generic pre-write hook и весь machine filesystem не охвачены | DW8; supported exact boundary hook; P17 execution owner | Пропущенный hook даёт unavailable; человеческие concurrent edits сохранены; post-turn diff не назван pre-turn snapshot или полным rollback | F2 после DW8; собственный hook F3 |
 | DW9 | Ручной Goal helper | Найти оставшуюся работу по требованиям и наблюдённым исходам | Actual Manual UI: SHA passed/Review → external drift → Verify409; restore+new observation → current Review → verified_complete; immutable facts сохранены | Semantic independent helper/provider отдельно; выбранное file property не сертификат всего deliverable; unchanged SHA drift/recovery не повторять | DW1/DW5; evidence adapter; provider contract; отправка через существующего owner | Missing/failed/unknown не done; incomplete input виден; correction инвалидирует review; recommendation не самосертификат; тот же revision без новых facts не проверяется снова | F3, до автоматического Goal |
-| DW10 | Автоматический Goal для конечного результата | Доведение разрешённой задачи без ручного повторения follow-up | Goal/runtime/UI/one outbox и explicit Web/owned-native provider identity реализованы; Manual evidence flows подтверждены, Native source max1/no money quote, bounded typed images в новой партии | Automatic Goal с настоящим admitted provider/outcome ещё не доказан; source auth/inventory/pool/admission есть, но actual Native login/models/startup-policy proof отсутствует, Manual/localfake не закрывает этот scope | DW9; DW3/P20 для Agent mode либо supported client follow-up; существующие approvals | Goal/Loop/Off не оживляют старую generation; user input/approval/active workers первичны; unknown send не replay; завершение по наблюдённому coverage; unknown spend не объявлен нулём | F3 после ручного helper |
+| DW10 | Автоматический Goal для конечного результата | Доведение разрешённой задачи без ручного повторения follow-up | Явный Goal Run, процессное exact-scope разрешение продолжения после tool result и один durable auto_step. Реальный Goal:3 предложения/2 подтверждённых инструмента, файл23байта, SHA и QA verified_complete без ручных Step. | Более длинные Goals/semantic review и installed acceptance. Процессное разрешение не восстанавливается после перезапуска; требуется новое явное Run. | DW9; DW3/P20 для Agent mode либо supported client follow-up; существующие approvals | Goal/Loop/Off не оживляют старую generation; user input/approval/active workers первичны; unknown send не replay; завершение по наблюдённому coverage; unknown spend не объявлен нулём | F3 после ручного helper |
 | DW11 | Непрерывный Loop | Явно заказанная повторяющаяся работа | Mailbox Loop core16/176 и actual bounded fake-adapter UI:2 turns/2 runs, waiting mailbox, substantive packet, duplicate без третьего run, Pause gen3/consent removed; externalWatchers:false | Configured real provider и отдельно запрошенные recurring inputs; generic continuous watcher не реализован, fake-adapter UI не business proof | DW3/DW10; explicit recurring instruction; P20 | Нет пустого Continue; unchanged state ставит на паузу с причиной; stop не теряет late results; approval/unknown не перескакиваются; расход/параллельность ограничены | F3 после конечного Goal |
 
-Таблица содержит **24 строки P01–P24 и 12 строк DW1–DW11 с отдельной DW8a,
-всего 36**. P09 — интерфейс выборочного restore, DW8 — владелец snapshot;
+Таблицы содержат **8 строк N01–N08, 24 строки P01–P24 и 12 строк DW1–DW11
+с отдельной DW8a, всего 44**. P09 — интерфейс выборочного restore, DW8 — владелец snapshot;
 DW8a — автоматическая связь с реальной execution boundary. Это связанные части,
 а не три независимых механизма записи. Аналогично P20 обслуживает все actions,
 а DW3/DW4/DW10/DW11 не получают каждый свой sender.
@@ -442,44 +240,23 @@ signing, installed replacement и release. Source commit/PR может сохр�
 
 ## Текущий checkpoint программы
 
-D01 macOS installed receipt и N01–N08 source остаются отдельным baseline.
-Новые owners подключены в source; canonical DEV подтвердил picker/editor/Git,
-manual snapshot/selective restore с recovery before-image, worktree create/Open,
-xterm input/close, selected history/search/export, native empty-profile list,
-Manual Agent signed pre-turn/result/sleeping worker/blocked Review/Pause/revoke
-и selected SHA drift→Verify refusal→new observation→verified_complete,
-listener enable/disable и metadata-only usage. MCP continuation, two-cycle mailbox
-Loop core/UI и SDK sandbox effect имеют свои fixture boundaries; actual extension flow
-проверен через headless popup document. Official installer receipt оставил server
-и host disabled, PID null. Это не установленный новый release и не real Web result.
+Порядок платформ остаётся прежним: **весь macOS набор, затем Windows/Linux**.
+N01–N08 source и D01 installed-migration сохранены. Текущая исходная версия `.9`
+имеет настоящие Native text/model/history и official MCP runtime результаты,
+описанные выше; установленная версия пока `.8`. Все оставшиеся строки программы
+сохраняются в объёме работы.
 
-Bounded mailbox Loop UI завершён на fake adapter: начальный stage, ожидание без
-пустого Continue, substantive packet, exact duplicate без нового run и Pause с
-отзывом Run consent. Новая source партия requirements/branch-base/canonical-recorder/managed-skills
-завершила четыре root DEV UI flow; canonical actual nonempty text пока не доказан. Следующее
-implementation направление — official Native account/server/model admission и
-реальный provider Automatic Goal; Native bridge/router/preclaim source уже есть.
-Далее — explicit client execution handoff и оставшиеся capability gaps; разрешить
-substantive findings текущей партии и выполнить source publication. Новая browser/desktop source партия ждёт отдельного root DEV
-flow: actual fixture capture/type и separate fresh observe/click/final уже
-подтверждены; compact pending-call fix имеет focused HTTP/UI evidence. Root
-проверил обе project TS11:34 и CLI245/renderer192 rebuild11:35 для предыдущего
-native flow; новая image/admission source партия имеет отдельные focused fixtures
-и ожидает своих review/TS/CLI результатов. Source publication и installed delivery
-фиксируются отдельными квитанциями. Root владеет
-map, source commit/PR и отдельной delivery.
-Unchanged passing restore/Open/SHA flows не повторяются. Порядок платформ
-подтверждён: этап1 — весь macOS набор, этап2 — Windows/Linux. Открытые macOS
-native/provider/Goal/remote/auth/skill-resource пункты продолжают входить в цель;
-unsupported capability и чужая платформенная parity не объявляются готовыми.
-
-Ближайшие implementation priorities после текущей партии:
-
-| Порядок | ID | Конкретный следующий результат |
+| Порядок | ID | Следующий проверяемый результат |
 | --- | --- | --- |
-| 1 | DW3–DW5, DW9–DW10 | После source auth/inventory/pool и исправлений cleanup завершить явный fresh login, actual qualified account/model inventory/startup policy, real Native task и Automatic Goal/outcome. Pool source2 threads across tasks не снимает per-task max1. Final-summary history source/fixtures уже есть; далее actual UI consent/revoke и real account/model final с provenance. Full transcript/background subscriptions не заявляются. |
-| 2 | DW2, DW7 | Supported existing-client worker continue/reuse и explicit exclusive execution handoff; owned inference Native binding не означает adoption чужих threads. Exact fork по настоящей supported capability. |
-| 3 | P03–P08 | Подключить выбранную реальную SSH среду и actual connected UI/mutation при уже связанной explicit Agent remote authority; branch/base source и actual local UI уже готовы. |
-| 4 | DW3–DW4, DW9–DW11 | Реальный configured provider и automatic Goal; bounded mailbox Loop UI уже проверен на fake adapter. Semantic review отличать от selected-file observer; external watcher отдельно. |
-| 5 | P11–P16 | Actual native capture/type/fresh click/final уже наблюдены. Bounded old-tool image-history source уже реализована с прежними caps; далее real model и trusted application outcome observer, generic CG fallback по заявленному scope. ChatGPT send/Firefox, executable/binary skill resources и auth/OAuth остаются macOS этапом1; Windows/Linux — этап2. |
-| 6 | P02, P10, P17–P22 | Этап1: реальные external API/log/pricing consumers и оставшиеся macOS adapters; этап2: Windows/Linux parity. QuickJS только при установленном gap. |
+| 1 | DW3–DW4, DW9–DW11 | Расширить уже проверенный ограниченный Native/MCP Goal на несколько смысловых этапов, длительные задачи и реальный Loop; сохранить отдельную проверку конечного результата. |
+| 2 | DW2, DW7 | Supported client reuse/continue, настоящий fork и explicit exclusive handoff. Owned Native inference не означает adoption чужих threads. |
+| 3 | P03–P08 | После проверенных реальных SSH/SFTP/UI/worktrees — Native→remote Agent, сетевые обрывы/conflict и полный remote Git Review. Пройденные локальные и удалённые сценарии повторно не запускаются без изменений. |
+| 4 | DW10–DW11 | Длинный Goal и bounded Loop на реальном provider; semantic review и явно запрошенные recurring inputs. |
+| 5 | P11–P16 | Real-model browser/desktop/vision, trusted application outcome, ChatGPT send/Firefox, remaining skill resource types и auth/OAuth. |
+| 6 | P19–P22 | Реальный named API consumer, выбранные log/pricing sources и честное разделение usage/estimate/bill. |
+| 7 | P23–P24 | Связанный финальный macOS acceptance и только после него необходимая packaging/installation. Затем Windows/Linux adapters и parity. |
+
+Сейчас один root владеет интеграцией и запуском development target. Вспомогательные
+read-only проверки не запускают свои GUI, серверы или модельные задачи. Каждая
+новая проверка использует сохранённый профиль и текущего owner; история и credentials
+не копируются между инсталляциями.

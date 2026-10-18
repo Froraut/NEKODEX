@@ -104,6 +104,7 @@ test.skipIf(process.platform !== 'darwin')('one qualified account generation own
     const admitted = await service.admit({ actionId: randomUUID(), inventoryActionId, profileId, epoch });
     expect(launches).toBe(0); expect(admitted.models).toHaveLength(1); expect(leases).toBe(1);
     expect(admitted.models[0]!.imageInput).toBe(true);
+    expect(config.thread_unload_delay_secs).toBe(0);
     const sealed = JSON.parse(readFileSync(config.model_catalog_json, 'utf8'));
     expect(sealed.models[0].model_messages ?? sealed.models[0].base_instructions).toEqual(originalCatalog.models[0].model_messages ?? originalCatalog.models[0].base_instructions);
     expect(sealed.models[0]).toMatchObject({ shell_type: 'disabled', apply_patch_tool_type: null, experimental_supported_tools: [], node_repl_disabled: true });

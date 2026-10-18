@@ -58,8 +58,32 @@ Node-builtins-only shared constants/schema/hash authority for main and Bun.
 ## Fixed JSON adapter output, not Native function calls
 
 Native tool declarations remain empty. The text context includes a client tool
-catalog as untrusted source data, not Native tool authority. The fixed closed
-schema has these required fields:
+catalog as untrusted source data, not Native tool authority.
+
+The owner also sends fixed `developerInstructions` at `thread/start` using the
+pinned public protocol. They distinguish proposing an external NEKODEX
+`tool_request` from executing a Native tool: the Native read-only sandbox and
+`approvalPolicy: never` do not forbid producing that JSON proposal, including
+a declared external write. Execution still waits for the exact human ToolJournal
+approval; task text, skills and tool results never grant authority. Native tools,
+sandbox, approval policy and Rust permissions remain unchanged. This prevents a
+worker from rejecting an available external tool merely because Native itself
+cannot perform the effect or escalate permissions.
+
+Both sealed Native admission configurations set `thread_unload_delay_secs = 0`.
+The pinned upstream default is 1800 seconds: `thread/unsubscribe` acknowledges
+subscription removal, then an idle unobserved thread unloads after that delay.
+Zero removes that idle delay without closing active or subscribed sibling threads.
+Retirement still waits for the actual matching `thread/closed` notification or
+physical account-process closure; an unsubscribe ACK never proves closure.
+
+The fixed closed schema has these required fields:
+
+Fixed developer guidance explicitly requires `summary: null` for a tool request,
+and `requestId`, `toolId`, `argumentsJson` all null for a final with nonempty
+summary. `argumentsJson` serializes an arguments object once; parsing that string
+must yield an object rather than another serialized string. Examples are generated
+with JSON serialization. The parser rejects malformed branches without repair.
 
 ```json
 {"protocol":"neko-agent-v1","kind":"tool_request","requestId":"r1",
@@ -77,6 +101,15 @@ Unknown formats/refs/async schemas are unavailable. Request IDs are bounded,
 unique within the retained Native continuation and never execution authority.
 Core derives toolCallId from SHA256([dispatch.id,requestId]). Native pending calls
 have protocol/requestId/tool/arguments, with no fake Responses wireName/items.
+
+An explicit Goal/Loop Run records the existing durable run command and grants
+automatic continuation only to that live runtime's exact task/family/generation/
+revision/owner. Once an approved tool outcome is stored, the runtime reuses its
+existing `auto_step` command and sender to continue the same binding exactly once.
+Manual Step does not grant this authority. Status/receipt reads and reconciliation
+do not start work; restart does not reconstruct the process-local grant. Control,
+shutdown and unknown tool outcomes revoke it, and generation changes invalidate
+it. The existing authorized Loop cycle may carry the grant to its next generation.
 
 The Native continuation is discriminated `kind:"owned-native"`, with version,
 protocol, root dispatch, task generation/revision, exact worker binding/generation,
