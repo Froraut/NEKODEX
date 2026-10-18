@@ -12,13 +12,14 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { VERSION } from "../src/version";
 import { createRequire } from "node:module";
 const { beginDirectoryBuild } = createRequire(import.meta.url)("./build-output.cjs");
 const { compileCredentialHelper } = createRequire(import.meta.url)("./build-credential-helper.cjs");
 const { compileDesktopHelper } = createRequire(import.meta.url)("./build-desktop-helper.cjs");
-const { signEmbeddedRuntime, signDesktopHelper } = createRequire(import.meta.url)("../launcher/scripts/release-signing.cjs");
+const { compileSkillPdfHelper } = createRequire(import.meta.url)("./build-skill-pdf-helper.cjs");
+const { signingConfiguration, signEmbeddedRuntime, signDesktopHelper, signSkillPdfHelper } = createRequire(import.meta.url)("../launcher/scripts/release-signing.cjs");
 
 const root = resolve(import.meta.dir, "..");
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
@@ -127,6 +128,16 @@ if (desktopHelper.supported) {
   mkdirSync(helperDirectory, { recursive: true });
   copyFileSync(desktopHelper.executable, join(helperDirectory, "nekodex-desktop-helper"));
   chmodSync(join(helperDirectory, "nekodex-desktop-helper"), 0o755);
+}
+const pdfPublisher = process.platform === "darwin" && (signingConfiguration(process.platform).release || Boolean(process.env.NEKODEX_LOCAL_APP_SIGNING_IDENTITY));
+const pdfHelper = compileSkillPdfHelper({ repositoryRoot: root, development: !pdfPublisher,
+  ...(pdfPublisher ? { sign: (candidate: string) => signSkillPdfHelper(candidate, process.platform, process.env, { development: false }) } : {}) });
+if (pdfHelper.supported) {
+  const helperDirectory = join(appDir, "skill-pdf-helper", `${process.platform}-${process.arch}`);
+  mkdirSync(helperDirectory, { recursive: true });
+  copyFileSync(pdfHelper.executable, join(helperDirectory, "nekodex-skill-pdf-helper"));
+  copyFileSync(join(dirname(pdfHelper.executable), "manifest.json"), join(helperDirectory, "manifest.json"));
+  chmodSync(join(helperDirectory, "nekodex-skill-pdf-helper"), 0o755);
 }
 
 

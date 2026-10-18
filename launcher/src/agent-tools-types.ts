@@ -47,7 +47,19 @@ export type ManagedSkillScriptResourceView = {
   digest: string; bytes: number; content: string;
   role?: 'selected-skill-source-material';
 } & ({ mediaType: 'text/javascript'; runtime?: never } | { mediaType: 'text/x-python'; runtime: 'python' });
-export type ManagedSkillResourceView = ManagedSkillTextResourceView | ManagedSkillImageResourceView | ManagedSkillScriptResourceView;
+export interface ManagedSkillDocumentPreview {
+  state: 'completed' | 'failed' | 'unknown' | 'unavailable';
+  sourceSha256: string; sourceBytes: number; coverage: 'text-layer-only';
+  text?: string; pageCount?: number; pagesWithText?: number; pagesWithoutText?: number; reason?: string;
+  extractor: { provider: 'macos-pdfkit'; version: 1; executableSha256?: string; sourceSha256?: string };
+  owner?: unknown;
+}
+export interface ManagedSkillDocumentResourceView {
+  kind: 'document'; mediaType: 'application/pdf'; format: 'pdf'; relativePath: string; digest: string; bytes: number;
+  preview: ManagedSkillDocumentPreview;
+  role?: 'selected-skill-source-material';
+}
+export type ManagedSkillResourceView = ManagedSkillTextResourceView | ManagedSkillImageResourceView | ManagedSkillScriptResourceView | ManagedSkillDocumentResourceView;
 export interface ManagedSkillReviewView {
   action: { actionId: string; state: string; versionId: string; lineageId: string; label: string; reviewDigest: string; manifestDigest: string; manifest: unknown };
   content?: string;

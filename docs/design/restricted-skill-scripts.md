@@ -44,7 +44,7 @@ preserve privacy during drain while new picker/grant admission is refused. Real
 component evidence and real macOS execution evidence are separate, as recorded in
 [review](../reviews/2026-10-18-restricted-skill-scripts-and-ssh-aliases.md).
 
-PDF/other binary formats, shell/other executables, network resources,
+Other binary formats, shell/other executables, network resources,
 automatic dependencies and official/vendor copies remain unsupported. Native's
 separate image binding budget is unchanged; execution does not prove real-model
 success, external business outcome or installed delivery.
@@ -97,6 +97,12 @@ code can interpret data it is allowed to read, so this is not a guarantee that
 every interpreted byte originated in an immutable package. stdout/stderr remains
 untrusted output, and a successful script does not verify a task result.
 
-Other Python distributions/versions, third-party dependencies, shell, PDF/OCR,
+Other Python distributions/versions, third-party dependencies, shell, PDF OCR/full visual interpretation,
 network resources and Windows/Linux execution remain separate work. This source
 contract is not installed-app acceptance or a real-model result.
+
+
+Selected PDF v5 packages retain bounded raw PDF files as immutable dependencies,
+without expanding non-PDF/code limits. Their separate approved text reader and
+isolated PDFKit process are described in the [PDF contract](selected-pdf-skill-resources.md);
+script execution never autoloads a PDF parser or receives new network authority.

@@ -63,6 +63,7 @@
       "dist/**",
       "electron/**",
       "!electron/desktop-helper/**",
+      "!electron/skill-pdf-helper/**",
       "assets/icon.png",
       "assets/linux-appimage-runner.sh",
       "package.json",
@@ -87,7 +88,8 @@
         "[/\\\\]Contents[/\\\\]Resources[/\\\\]app\\.asar\\.unpacked[/\\\\]electron[/\\\\]credential-helper[/\\\\]darwin-(?:arm64|x64)[/\\\\]nekodex-credential-helper$",
         "[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]app[/\\\\]credential-helper[/\\\\]darwin-(?:arm64|x64)[/\\\\]nekodex-credential-helper$",
         "[/\\\\]Resources[/\\\\].*\\.(?:pak|ttf|woff2?|png|mp4|icns)$",
-        "[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]app[/\\\\]desktop-helper[/\\\\]darwin-(?:arm64|x64)[/\\\\]nekodex-desktop-helper$"
+        "[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]app[/\\\\]desktop-helper[/\\\\]darwin-(?:arm64|x64)[/\\\\]nekodex-desktop-helper$",
+        "[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]app[/\\\\]skill-pdf-helper[/\\\\]darwin-(?:arm64|x64)[/\\\\]nekodex-skill-pdf-helper$"
       ],
       "target": [
         "dmg",

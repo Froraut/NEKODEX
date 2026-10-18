@@ -94,10 +94,10 @@ export function createAgentToolsRoutes(composition: AgentToolsComposition, path 
         case "skillsDiscover": value = composition.discoverSkills(body.grantId); break;
         case "removeSkillRoot": value = composition.removeSkillRoot(body.grantId, body.explicitUserAction); break;
         case "skillsSelect": value = composition.selectSkill(body.scope, body.identity, body.explicitUserAction); break;
-        case "reviewSkillImport": value = composition.reviewSkillImport(body.actionId, body.identity, body.label, body.updateLineageId, body.explicitUserAction); break;
-        case "reviewSkillPackageImport": value = composition.reviewSkillPackageImport(body.actionId, body.selection, body.label, body.updateLineageId, body.explicitUserAction); break;
+        case "reviewSkillImport": value = await composition.presentSkillReview(composition.reviewSkillImport(body.actionId, body.identity, body.label, body.updateLineageId, body.explicitUserAction)); break;
+        case "reviewSkillPackageImport": value = await composition.presentSkillReview(composition.reviewSkillPackageImport(body.actionId, body.selection, body.label, body.updateLineageId, body.explicitUserAction)); break;
         case "commitSkillImport": value = composition.commitSkillImport(body.actionId, body.reviewDigest, body.explicitUserAction); break;
-        case "managedSkillAction": value = composition.managedSkillAction(body.actionId) ?? null; break;
+        case "managedSkillAction": value = await composition.presentSkillReview(composition.managedSkillAction(body.actionId) ?? null); break;
         case "attachManagedSkill": value = composition.attachManagedSkill(body.scope, body.versionId, body.explicitUserAction); break;
         case "detachManagedSkill": await composition.detachManagedSkill(body.scope, body.versionId, body.explicitUserAction); value = { detached: true }; break;
         case "revokeManagedSkill": value = await composition.revokeManagedSkill(body.versionId, body.forget, body.explicitUserAction); break;

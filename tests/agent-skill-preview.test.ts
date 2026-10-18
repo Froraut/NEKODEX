@@ -101,7 +101,7 @@ test('actual Chrome skill review requires exact image bytes and successful decod
     });
     await page.goto(`http://127.0.0.1:${server.port}/`);
     await page.getByRole('combobox', { name: 'Discovered local source' }).selectOption(sources[0]!.id);
-    await page.getByRole('textbox', { name: 'Supporting text, PNG/JPEG and JS/MJS files' }).fill(imagePath);
+    await page.getByRole('textbox', { name: 'Supporting files' }).fill(imagePath);
     await page.getByRole('button', { name: reviewLabel, exact: true }).click();
     const image = page.getByRole('img', { name: `Selected local image: ${imagePath}`, exact: true });
     await image.scrollIntoViewIfNeeded();
@@ -122,7 +122,7 @@ test('actual Chrome skill review requires exact image bytes and successful decod
     expect(readFileSync(join(imported.target, 'resources', imagePath))).toEqual(png);
     expect(tools.status().managedSkills?.attachments).toEqual([]);
     await page.getByRole('button', { name: 'Start a new review', exact: true }).click();
-    await page.getByRole('textbox', { name: 'Supporting text, PNG/JPEG and JS/MJS files' }).fill(invalidPath);
+    await page.getByRole('textbox', { name: 'Supporting files' }).fill(invalidPath);
     await page.getByRole('button', { name: reviewLabel, exact: true }).click();
     const failedImage = page.getByRole('img', { name: `Selected local image: ${invalidPath}`, exact: true });
     await failedImage.scrollIntoViewIfNeeded();

@@ -78,7 +78,7 @@ test('actual Chrome Python source import with unavailable runtime keeps acknowle
     expect(await page.getByRole('button', { name: grantLabel, exact: true }).isDisabled()).toBe(true);
     expect(await page.getByRole('button', { name: 'Select workspace directory', exact: true }).isDisabled()).toBe(true);
     await page.getByRole('combobox', { name: 'Discovered local source' }).selectOption(sources[0]!.id);
-    await page.getByRole('textbox', { name: 'Supporting text, PNG/JPEG and JS/MJS/Python files' }).fill(scriptPath);
+    await page.getByRole('textbox', { name: 'Supporting files' }).fill(scriptPath);
     await page.getByRole('button', { name: 'Review the source and every selected file', exact: true }).click();
     await page.getByText('Reviewed source; separate run approval required', { exact: true }).waitFor();
     expect(await page.locator('pre').filter({ hasText: 'REVIEW_ONLY_NO_EXECUTION' }).first().textContent()).toBe(script);

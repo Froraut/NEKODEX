@@ -89,6 +89,24 @@ function signDesktopHelper(target, platform = process.platform, env = process.en
   if (!development) throw new Error("Desktop helper requires an explicit publisher identity outside development");
   run("codesign", ["--force", "--identifier", identifier, "--sign", "-", target], { env });
 }
+// PDF parsing has its own identity; it must never borrow the desktop/TCC identity.
+function signSkillPdfHelper(target, platform = process.platform, env = process.env, { development = false } = {}) {
+  if (platform !== "darwin") return;
+  const identifier = "dev.nekodex.skill-pdf-reader.v1";
+  const release = signingConfiguration(platform, env).release;
+  const identity = release ? env.CSC_NAME : env.NEKODEX_LOCAL_APP_SIGNING_IDENTITY;
+  const keychain = release ? env.CODEX_WEB_GPT_SIGNING_KEYCHAIN : env.NEKODEX_LOCAL_APP_SIGNING_KEYCHAIN;
+  if (identity) {
+    if (!identity.startsWith("Developer ID Application:")) throw new Error("PDF helper requires a Developer ID Application identity");
+    run("codesign", ["--force", "--options", "runtime", "--timestamp", "--identifier", identifier,
+      ...(keychain ? ["--keychain", keychain] : []), "--sign", identity, target], { env });
+    run("codesign", ["--verify", "--strict", target], { env });
+    if (release) verifyMacPublisher(target, env);
+    return;
+  }
+  if (!development) throw new Error("PDF helper requires an explicit publisher identity outside development");
+  run("codesign", ["--force", "--identifier", identifier, "--sign", "-", target], { env });
+}
 function verifyWindowsTree(directory, env = process.env) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
     const file = path.join(directory, entry.name);
@@ -96,4 +114,4 @@ function verifyWindowsTree(directory, env = process.env) {
     else if (entry.isFile() && /\.exe$/i.test(entry.name)) verifyWindowsPublisher(file, env);
   }
 }
-module.exports = { signingConfiguration, assertMacPublisher, verifyMacPublisher, verifyWindowsPublisher, verifyWindowsTree, signEmbeddedRuntime, signCredentialHelper, signDesktopHelper };
+module.exports = { signingConfiguration, assertMacPublisher, verifyMacPublisher, verifyWindowsPublisher, verifyWindowsTree, signEmbeddedRuntime, signCredentialHelper, signDesktopHelper, signSkillPdfHelper };

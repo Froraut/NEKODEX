@@ -677,7 +677,7 @@ actualHTTP/runtime/ToolJournal/fakeNative1/62 and actualChromeDOM1/31 passed.
 The DOM flow imported one valid chart/unattached and blocked a structurally/hash
 valid unknown-critical-chunk PNG after decode failure; header/CRC validation is
 not a full-codec guarantee. BothTS/renderer19619:39,CLI644exact `.9`19:41 and
-map731/finalcheck/paths passed; source commit/CI remain pending. Official/vendor copies, PDF/other binaries/network remain unsupported; selected
+map731/finalcheck/paths passed for that image batch. Official/vendor copies, other binaries/network remain unsupported; later PDF v5 is described below. Selected
 restricted JS/MJS execution is described below. See [contract](docs/design/standalone-skills-resources.md)
 and [evidence](docs/reviews/2026-10-18-skill-image-resources.md).
 
@@ -718,6 +718,23 @@ replay behavior. JS v3 identities stay unchanged. Actual kernel containment,
 rendered import/grants and a two-offer real Native invoice CSV task with one
 approved effect and independent SHA verification passed; see the
 [Python acceptance report](docs/reviews/2026-10-18-real-python-skill.md).
+
+Selected PDF resources add v5 descriptors and immutable raw files to the same
+store without changing v1–v4 identities. `skill-pdf-extractor.ts` owns shared
+preview/read parsing with a trusted Bun supervisor and fixed native PDFKit helper;
+Seatbelt and the sealed control FD precede PDF bytes and PDFKit loading. The
+resolver pins source/manifest/executable; the builder compiles an exact reviewed
+byte snapshot. Status is passive, while dispatch, retained-owner recovery,
+cancellation/EOF/reap and unknown/no-replay preserve physical ownership. HTTP
+review strips raw bytes; model selectedSkills contains metadata only. The same
+ToolJournal approves an exact requested text read. Invalidation/revoke suppress
+late text; composition activity includes held parser recovery. Limits are2 MiB
+per PDF, four documents,4 MiB package,512 KiB non-PDF part,32 pages and32 KiB text
+per document. UI shows escaped text/provenance/no-OCR limits with fresh import
+acknowledgement. Real GPT-6.1-Sol read/arithmetic acceptance passed in two offers
+and one approved read; it remains review_required without a generic business observer.
+See the [PDF contract](docs/design/selected-pdf-skill-resources.md) and
+[acceptance](docs/reviews/2026-10-19-pdf-skill-resources.md).
 
 **Additional surfaces:** standalone MCP host and read-only skill library are
 composed lazily in the daemon, with guarded main IPC and mounted UI. Only explicitly

@@ -174,7 +174,8 @@ export class SkillScriptExecutor {
           || /(^|\/)(package\.json|bunfig\.toml|\.env(?:\..*)?)$/.test(item.relativePath)) throw new Error("Invalid reviewed script resource");
         paths.add(item.relativePath); total += item.bytes.length;
       }
-      if (!paths.has(input.entryRelativePath) || total > 512 * 1024) throw new Error("Reviewed script closure missing entry or exceeds bounds");
+      const closureLimit = input.resources.some(item => /^(?:assets|references)\/.+\.pdf$/i.test(item.relativePath)) ? 4 * 1024 * 1024 : 512 * 1024;
+      if (!paths.has(input.entryRelativePath) || total > closureLimit) throw new Error("Reviewed script closure missing entry or exceeds bounds");
       input.assertCurrent?.();
       if (input.signal?.aborted || run.cancelRequested) return failed("cancelled-before-dispatch");
       assertPinnedBun(this.options.bunPath, this.options.bunSha256);

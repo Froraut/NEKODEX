@@ -132,7 +132,7 @@ export class ManagedSkillStore {
       for (const resource of snapshot.resources) {
         const path = join(resourceRoot, resource.relativePath); mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
         for (let directory = dirname(path); directory !== resourceRoot; directory = dirname(directory)) directories.add(directory);
-        const fd = openSync(path, "wx", 0o400); try { writeFileSync(fd, resource.kind === "image" ? Buffer.from(resource.data, "base64") : resource.content); fsyncSync(fd); } finally { closeSync(fd); }
+        const fd = openSync(path, "wx", 0o400); try { writeFileSync(fd, resource.kind === "image" || resource.kind === "document" ? Buffer.from(resource.data, "base64") : resource.content); fsyncSync(fd); } finally { closeSync(fd); }
       }
       for (const directory of [...directories].sort((a, b) => b.length - a.length)) { const fd = openSync(directory, "r"); try { fsyncSync(fd); } finally { closeSync(fd); } }
     }
@@ -181,7 +181,7 @@ export class ManagedSkillStore {
     const { version, action, packet } = this.retainedVersion(versionId);
     const resources = skillResourceDescriptors(packet.resources);
     return { id: `managed:${versionId}`, grantId: `managed:${version.lineageId}`, relativePath: `${versionId}/SKILL.md`, source: "user", digest: version.contentDigest, bytes: version.bytes, versionId,
-      ...(packet.resources.some(resource => resource.kind === "image" || resource.kind === "script") ? { promptBytes: selectedSkillPromptBytes(action.manifest.identity.bytes, resources) } : {}),
+      ...(packet.resources.some(resource => resource.kind === "image" || resource.kind === "script" || resource.kind === "document") ? { promptBytes: selectedSkillPromptBytes(action.manifest.identity.bytes, resources) } : {}),
       content: packet.content, role: "selected-skill-instructions", precedence: "below-system-developer-user",
       ...(action.manifest.package ? { packageDigest: action.manifest.package.packageDigest, resources, unsupportedResources: UNSUPPORTED_SKILL_RESOURCES } : {}) };
   }

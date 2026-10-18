@@ -14,6 +14,7 @@ import type { ToolScope } from "./agent-tools/types";
 import { createAgentDesktopToolsProvider, type AgentDesktopToolsProvider } from "./browser-companion/agent-desktop-tools";
 import { createMacosDesktopProvider } from "./browser-companion/macos-desktop";
 import { resolveDesktopHelper, type PinnedDesktopHelper } from "./browser-companion/desktop-helper-path";
+import { resolveSkillPdfHelper, type PinnedSkillPdfHelper } from "./agent-tools/skill-pdf-helper-path";
 import { release as osRelease } from "node:os";
 import { createLocalControlApiRoutes } from "./local-control-api";
 import { createAgentWorkspaceSnapshots } from "./agent-workspace/store";
@@ -850,6 +851,7 @@ export function startServer(
     readAccountCapabilities?: () => AccountCapabilityFields;
     /** Trusted DEV harness pin. Packaged CLI resolves its own sibling native helper. */
     desktopHelper?: PinnedDesktopHelper;
+    pdfHelper?: PinnedSkillPdfHelper;
     /** Trusted launcher/fixture profile identity, independent of browser readiness. */
     nativeLauncherProfile?: "production" | "development";
   } = {},
@@ -1121,6 +1123,7 @@ export function startServer(
     browserTools: getAgentBrowserTools(),
     desktopTools: getAgentDesktopTools(),
     remoteTools: config.browserHost === 'launcher' ? getAgentRemoteTools() : undefined,
+    pdfHelper: resolveSkillPdfHelper({ explicit: dependencies.pdfHelper }),
     isScopeActive: isAgentScopeActive, resolveToolCall: scope => agentRuntime?.resolveToolCall(scope),
     onOutcome: outcome => { if (!agentRuntime) throw new Error("Agent task owner unavailable"); agentRuntime.recordToolOutcome(outcome); },
   });

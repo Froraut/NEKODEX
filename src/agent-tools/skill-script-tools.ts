@@ -5,6 +5,7 @@ import { sha256 } from "./config";
 import { invocationFingerprint, validateToolScope } from "./journal";
 import { reviewTrustedSandboxConfig, validateTrustedSandboxConfig, type SandboxRootGrant } from "./sandbox";
 import { scriptWithin } from "./skill-script-sandbox";
+import { selectedPdfBytes } from "./skill-pdf-resources";
 import { classifySkillResourcePath, SKILL_PACKAGE_LIMITS, type SkillResource } from "./skill-resources";
 import type { AttachedSkillResource, SkillResourceToolsOptions } from "./skill-resource-tools";
 import type { StandaloneBuiltinToolsProvider, ToolInvocation, ToolOutcome, ToolScope } from "./types";
@@ -65,6 +66,7 @@ function identity(resource: AttachedSkillResource) {
   return { versionId: resource.versionId, packageDigest: resource.packageDigest, relativePath: resource.relativePath, digest: resource.digest,
     bytes: resource.bytes, mediaType: resource.mediaType, kind: "kind" in resource ? resource.kind : "text",
     ...("runtime" in resource ? { runtime: resource.runtime } : {}),
+    ...("kind" in resource && resource.kind === "document" ? { format: resource.format } : {}),
     ...("kind" in resource && resource.kind === "image" ? { width: resource.width, height: resource.height } : {}) };
 }
 function scriptRuntime(resource: { mediaType: string; kind?: string; runtime?: unknown }): "javascript" | "python" | undefined {
@@ -77,6 +79,7 @@ function bytesOf(resource: SkillResource): Buffer {
   const path = classifySkillResourcePath(resource.relativePath);
   if (!path.supported || path.mediaType !== resource.mediaType || resource.role !== "selected-skill-source-material" || !hash.test(resource.digest)
     || !Number.isSafeInteger(resource.bytes) || resource.bytes < 0) throw new Error(failed.reason);
+  if (resource.kind === "document") return selectedPdfBytes(resource);
   if (resource.kind === "image") {
     if (resource.bytes > SKILL_PACKAGE_LIMITS.maxImageBytes || typeof resource.data !== "string" || resource.data.length !== 4 * Math.ceil(resource.bytes / 3)) throw new Error(failed.reason);
     const bytes = Buffer.from(resource.data, "base64");
@@ -216,7 +219,9 @@ export function createSkillScriptToolsProvider(options: SkillScriptToolsOptions)
             if (JSON.stringify(identity({ ...resource, versionId: row.versionId, packageDigest: row.packageDigest })) !== JSON.stringify(identity(row))) throw new Error(failed.reason);
             resources.push({ relativePath: row.relativePath, bytes: bytesOf(resource) });
           }
-          if (resources.reduce((sum, row) => sum + row.bytes.length, 0) > SKILL_PACKAGE_LIMITS.maxMixedBytes) throw new Error(failed.reason);
+          const hasDocument = selected.some(row => "kind" in row && row.kind === "document");
+          if (resources.reduce((sum, row) => sum + row.bytes.length, 0) > (hasDocument ? SKILL_PACKAGE_LIMITS.maxDocumentPackageBytes : SKILL_PACKAGE_LIMITS.maxMixedBytes)
+            || resources.reduce((sum, row) => sum + (selected.some(item => item.relativePath === row.relativePath && "kind" in item && item.kind === "document") ? 0 : row.bytes.length), 0) > SKILL_PACKAGE_LIMITS.maxMixedBytes) throw new Error(failed.reason);
           assertCurrent(); const pin = { path: grant.root, dev: grant.dev, ino: grant.ino }; handedOff = true;
           const receipt = await options.executor.execute({ scope: { ...request.scope }, operationId, runtime, entryRelativePath: args.relativePath, resources,
             argv: [...args.argv], readRoots: [pin], writeRoots: grant.access === "read-write" ? [pin] : [], cwd: grant.root, assertCurrent, signal: settings.signal });

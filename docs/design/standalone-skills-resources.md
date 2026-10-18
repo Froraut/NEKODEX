@@ -152,7 +152,7 @@ core both closed with exit 0, exact PIDs/port were checked absent and the privat
 temporary profile was removed. No OS permission inspection/grant was requested.
 Leaf success alone does not
 prove model use or a completed task outcome. Broader executables, unsupported Python distributions/dependencies and shell,
-other binary/multimedia assets such as PDF, remote resources and automatic dependency discovery
+other binary/multimedia assets, remote resources and automatic dependency discovery
 remain unsupported and require separate authority and executor design.
 
 ## Mixed image package batch
@@ -162,7 +162,7 @@ first validates every descriptor, size, canonical base64 and SHA-256 via SubtleC
 then renders local previews. Import remains disabled until every image reports a
 successful natural-dimension-matching onLoad. Decode errors are sticky for the
 review; callbacks from replaced reviews cannot unlock it. No auto-attach follows
-import. Official/vendor plugin copies, unselected scripts/other executables, PDFs/other binaries,
+import. Official/vendor plugin copies, unselected scripts/other executables, other binaries,
 network resources and automatic linked discovery remain unsupported. Existing
 selected UTF-8 templates remain supported; broader template/binary execution work
 is not completed by image support.
@@ -187,7 +187,15 @@ Code is32 KiB each within16 resources/512 KiB. SelectedSkill contains only scrip
 metadata; exact code remains human-reviewed/retained and is consumed only by the
 separate approved `skill-script/run` executor. Import/attachment grants no root
 access: explicit ephemeral task-generation workspace grants and each run's same
-ToolJournal approval are separate. This is bounded macOS JS/MJS only; Python,
-shell, network, PDF/other binaries and vendor copies remain unsupported. See
+ToolJournal approval are separate. That v3 batch is bounded macOS JS/MJS; later Python v4 and PDF v5 use separate
+admission. Shell, network, other binaries and vendor copies remain unsupported. See
 [restricted execution](restricted-skill-scripts.md) and
 [evidence](../reviews/2026-10-18-restricted-skill-scripts-and-ssh-aliases.md).
+
+
+## Selected PDF package v5
+
+Explicit PDF resources now use the same immutable store with separate bounded
+macOS parsing, human preview and exact approved model text read. No raw bytes/text
+enter selectedSkills. See [PDF contract](selected-pdf-skill-resources.md) and
+[real Native acceptance](../reviews/2026-10-19-pdf-skill-resources.md).

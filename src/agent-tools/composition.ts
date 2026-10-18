@@ -19,10 +19,14 @@ import { readPrivateMetadata, writePrivateMetadata } from "./private-metadata";
 import { ManagedMcpInstaller, OFFICIAL_MCP_CATALOG } from "./installer";
 import { reviewTrustedSandboxConfig, sandboxProviderAvailable } from "./sandbox";
 import { ManagedSkillStore } from "./managed-skills";
-import { createSkillResourceToolsProvider, type AttachedSkillResource } from "./skill-resource-tools";
+import { createSkillResourceToolsProvider, type AttachedSkillResource, type SkillResourceToolsProvider } from "./skill-resource-tools";
 import { SkillScriptExecutor } from "./skill-script-executor";
 import { admitApplePythonRuntime, type AdmittedPythonRuntime } from "./skill-python-runtime";
 import { createSkillScriptToolsProvider, type SkillScriptExecutorPort, type SkillScriptToolsProvider } from "./skill-script-tools";
+import { SkillPdfExtractor, type SkillPdfExtractorPort } from "./skill-pdf-extractor";
+import type { PinnedSkillPdfHelper } from "./skill-pdf-helper-path";
+import { selectedPdfBytes, projectPdfExtraction, unavailablePdfProjection } from "./skill-pdf-resources";
+import type { SkillResource } from "./skill-resources";
 
 export interface AgentToolsCompositionOptions {
   home: string;
@@ -41,6 +45,27 @@ export interface AgentToolsCompositionOptions {
   builtins?: readonly StandaloneBuiltinToolsProvider[];
   /** Trusted test/platform port; never supplied through HTTP or model arguments. */
   scriptExecutor?: SkillScriptExecutorPort;
+  /** Trusted process/helper pin or injected platform port; never accepted from HTTP/model input. */
+  pdfHelper?: PinnedSkillPdfHelper;
+  pdfExtractor?: SkillPdfExtractorPort;
+}
+function ownedPdfExtractor(home: string, helper?: PinnedSkillPdfHelper): SkillPdfExtractorPort {
+  let extractor: SkillPdfExtractor | undefined;
+  const get = () => {
+    if (!extractor) {
+      const command = realpathSync(process.execPath);
+      if (process.platform !== "darwin" || !/^bun(?:\.exe)?$/.test(basename(command))) throw new Error("Owned PDF extraction runtime is unavailable");
+      extractor = new SkillPdfExtractor({ home, bunPath: command, bunSha256: pinnedFile(command, 512 * 1024 * 1024).sha256, helper });
+    }
+    return extractor;
+  };
+  return {
+    capabilities() { try { return get().capabilities(); } catch { return { supported: false, provider: "macos-pdfkit", recoveryRequired: existsSync(join(home, "skill-pdf-runs")), extractor: { provider: "macos-pdfkit", version: 1 }, reason: "Owned PDF extraction runtime is unavailable" }; } },
+    extract: input => get().extract(input),
+    cancel: id => extractor?.cancel(id),
+    reconcile: id => { try { return get().reconcile(id); } catch { return undefined; } },
+    close: () => extractor ? extractor.close() : existsSync(join(home, "skill-pdf-runs")) ? get().close() : Promise.resolve(),
+  };
 }
 /** Passive lazy binding to the owned Bun and an optional fixed, pinned Apple Python closure. */
 function ownedScriptExecutor(home: string): SkillScriptExecutorPort {
@@ -89,18 +114,21 @@ export class AgentToolsComposition {
   private journalPath: string;
   private skillStatePath: string;
   private managedSkillStore?: ManagedSkillStore;
-  private readonly skillResourceTools: StandaloneBuiltinToolsProvider;
+  private readonly skillResourceTools: SkillResourceToolsProvider;
   private readonly skillScriptTools: SkillScriptToolsProvider;
+  private readonly pdfExtractor: SkillPdfExtractorPort;
   readonly installer: ManagedMcpInstaller;
   readonly toolsPort: StandaloneToolsPort;
   readonly handle: (request: Request) => Promise<Response | undefined>;
   constructor(readonly options: AgentToolsCompositionOptions) {
     this.configPath = join(options.home, "agent-tools.json"); this.journalPath = join(options.home, "agent-tool-calls.sqlite");
     this.skillStatePath = join(options.home, "agent-skills.json");
+    this.pdfExtractor = options.pdfExtractor ?? ownedPdfExtractor(options.home, options.pdfHelper);
     this.skillResourceTools = createSkillResourceToolsProvider({
       isScopeActive: scope => !this.closing && !this.changing && this.options.canStart?.() !== false && this.options.isScopeActive(scope),
       resources: scope => this.attachedSkillResources(scope),
       readResource: (scope, versionId, packageDigest, path, digest) => this.managedSkills().readResource(scope, versionId, packageDigest, path, digest),
+      pdfExtractor: this.pdfExtractor,
     });
     this.skillScriptTools = createSkillScriptToolsProvider({
       isScopeActive: scope => !this.closing && !this.changing && this.options.canStart?.() !== false && this.options.isScopeActive(scope),
@@ -142,7 +170,13 @@ export class AgentToolsComposition {
     const pending = operation(); this.pending.add(pending);
     void pending.then(() => this.pending.delete(pending), () => this.pending.delete(pending)); return pending;
   }
-  get activeCount(): number { return Math.max(this.pending.size, this.host?.pendingBuiltinCount ?? 0, this.options.desktopTools?.status().activeCount ?? 0, this.options.remoteTools?.status().activeCount ?? 0, this.skillScriptTools.status().activeOperations.length) + (this.changing ? 1 : 0) + this.installer.activeCount; }
+  get activeCount(): number {
+    const pdf = this.pdfExtractor.capabilities();
+    const heldPdf = Number.isSafeInteger(pdf.activeCount) && Number(pdf.activeCount) >= 0 ? Number(pdf.activeCount) : 0;
+    return Math.max(this.pending.size, this.host?.pendingBuiltinCount ?? 0, this.options.desktopTools?.status().activeCount ?? 0,
+      this.options.remoteTools?.status().activeCount ?? 0, this.skillScriptTools.status().activeOperations.length,
+      this.skillResourceTools.activeCount, heldPdf, pdf.recoveryRequired ? 1 : 0) + (this.changing ? 1 : 0) + this.installer.activeCount;
+  }
   private managedSkills() { if (this.closing) throw new Error("Managed skill store is closing"); return this.managedSkillStore ??= new ManagedSkillStore(this.options.home); }
   private managedSkillStatus() {
     if (this.managedSkillStore) return this.managedSkillStore.list();
@@ -158,7 +192,7 @@ export class AgentToolsComposition {
       if (!versionId || !skill.packageDigest) return [];
       return (skill.resources ?? []).map(resource => {
         const { role: _role, ...metadata } = resource;
-        if (metadata.kind !== 'image') { const { content: _content, ...identity } = metadata; return { ...identity, versionId, packageDigest: skill.packageDigest! }; }
+        if (metadata.kind !== 'image' && metadata.kind !== 'document') { const { content: _content, ...identity } = metadata; return { ...identity, versionId, packageDigest: skill.packageDigest! }; }
         return { ...metadata, versionId, packageDigest: skill.packageDigest! };
       });
     });
@@ -310,6 +344,7 @@ export class AgentToolsComposition {
     this.options.desktopTools?.invalidate(taskId);
     this.options.remoteTools?.invalidate(taskId);
     this.skillScriptTools.invalidate?.(taskId);
+    this.skillResourceTools.invalidate?.(taskId);
     for (const provider of this.options.builtins ?? []) provider.invalidate?.(taskId);
   }
   private desktopControl(explicitUserAction: boolean, newWork = false) {
@@ -409,6 +444,33 @@ export class AgentToolsComposition {
     return store.commit(actionId, reviewDigest, grant);
   }
   managedSkillAction(actionId: string) { return this.managedSkills().inspect(actionId); }
+  /** Admin-only local preview. Raw PDFs stay in the private store; parsing is owned out of process. */
+  presentSkillReview(value: unknown): Promise<unknown> {
+    return this.track(async () => {
+      if (this.closing) throw new Error("Managed skill preview is unavailable while closing");
+      if (!value || typeof value !== "object" || !Array.isArray((value as { resources?: unknown }).resources)) return value;
+      const packet = value as { action?: { actionId?: unknown }; actionId?: unknown; resources: SkillResource[] };
+      const actionId = packet.action?.actionId ?? packet.actionId;
+      if (typeof actionId !== "string") throw new Error("Managed skill preview has no retained review identity");
+      const resources = [];
+      for (const resource of packet.resources) {
+        if (resource.kind !== "document") { resources.push(resource); continue; }
+        const bytes = selectedPdfBytes(resource);
+        let preview = unavailablePdfProjection(resource, "PDF text extractor is unavailable");
+        if (this.pdfExtractor.capabilities().supported) {
+          const operationId = sha256(JSON.stringify(["selected-pdf-preview-v1", actionId, resource.relativePath, resource.digest]));
+          try { preview = projectPdfExtraction(await this.pdfExtractor.extract({ operationId, bytes, sha256: resource.digest }), resource); }
+          catch { preview = { ...unavailablePdfProjection(resource, "PDF preview outcome is unknown; inspect its retained owner before another request"), state: "unknown" }; }
+        }
+        if (this.closing) throw new Error("Managed skill preview was closed before delivery");
+        const { data: _data, ...metadata } = resource;
+        resources.push({ ...metadata, preview });
+      }
+      const projected = { ...packet, resources };
+      if (Buffer.byteLength(JSON.stringify(projected)) > 768 * 1024) throw new Error("Managed skill review projection exceeds transport bounds; choose fewer or smaller supporting files");
+      return projected;
+    });
+  }
   attachManagedSkill(scope: ToolScope, versionId: string, explicitUserAction: boolean) {
     if (!explicitUserAction) throw new Error("Explicit managed skill attachment required"); this.scope(scope);
     const local = this.selections.get(JSON.stringify([scope.taskId, scope.generation]))?.skills ?? [];
@@ -419,12 +481,12 @@ export class AgentToolsComposition {
   }
   detachManagedSkill(scope: ToolScope, versionId: string, explicitUserAction: boolean) {
     if (!explicitUserAction) throw new Error("Explicit managed skill detachment required"); this.scope(scope); this.managedSkills().detach(scope, versionId);
-    return this.skillScriptTools.revokePackage(versionId, scope);
+    return Promise.all([this.skillScriptTools.revokePackage(versionId, scope), this.skillResourceTools.revokePackage(versionId, scope)]).then(() => undefined);
   }
   revokeManagedSkill(versionId: string, forget: boolean, explicitUserAction: boolean) {
     if (!explicitUserAction || this.closing) throw new Error("Explicit managed skill revoke/forget required");
     const receipt = this.managedSkills().revoke(versionId, forget);
-    return this.skillScriptTools.revokePackage(versionId).then(() => receipt);
+    return Promise.all([this.skillScriptTools.revokePackage(versionId), this.skillResourceTools.revokePackage(versionId)]).then(() => receipt);
   }
   resolveEvidence(task: AgentTask, reference: AgentEvidenceReference) { return this.getHost().resolveTerminalEvidence(task, reference); }
   close(): Promise<void> {
@@ -434,6 +496,7 @@ export class AgentToolsComposition {
       this.options.browserTools?.invalidate();
       this.options.desktopTools?.invalidate();
       this.skillScriptTools.invalidate?.();
+      this.skillResourceTools.invalidate?.();
       for (const provider of this.options.builtins ?? []) provider.invalidate?.();
     }
     this.closingPromise = (async () => {
@@ -443,6 +506,7 @@ export class AgentToolsComposition {
       await this.options.desktopTools?.close();
       await this.options.remoteTools?.close();
       await this.skillScriptTools.close();
+      await Promise.all([this.skillResourceTools.close(), this.pdfExtractor.close()]);
       await this.host?.close(); await Promise.allSettled([...this.pending]); this.host = undefined;
       this.managedSkillStore?.close(); this.managedSkillStore = undefined;
     })().catch(error => { this.closingPromise = undefined; throw error; });

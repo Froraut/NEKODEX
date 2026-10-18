@@ -15,7 +15,8 @@ const { compileCredentialHelper } = require("../../scripts/build-credential-help
 compileCredentialHelper({ repositoryRoot: path.resolve(root, ".."), development: true });
 const { compileDesktopHelper } = require("../../scripts/build-desktop-helper.cjs");
 compileDesktopHelper({ repositoryRoot: path.resolve(root, ".."), development: true });
-
+const { compileSkillPdfHelper } = require("../../scripts/build-skill-pdf-helper.cjs");
+compileSkillPdfHelper({ repositoryRoot: path.resolve(root, ".."), development: true });
 
 const helperBuild = spawnSync(bun, ["run", "scripts/build-browser-helper.ts"], {
   cwd: path.resolve(root, ".."),
