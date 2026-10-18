@@ -2,7 +2,12 @@ import { ConversationHistoryStore } from "./conversation-history";
 import { conversationHistoryRequest } from "./conversation-history/http";
 import { AgentModeStore, AgentModeRuntime, activeTaskEvidence, createAgentModeRoutes, createLocalResponsesExecutionPort } from "./agent-mode";
 import { createAgentToolsComposition, type AgentToolsComposition } from "./agent-tools/composition";
-import { browserCompanionRequest, createBrowserCompanionRuntime, type BrowserCompanionRuntime } from "./browser-companion";
+import { browserCompanionRequest, createAgentBrowserToolsProvider, createBrowserCompanionRuntime, type AgentBrowserToolsProvider, type BrowserCompanionRuntime } from "./browser-companion";
+import type { ToolScope } from "./agent-tools/types";
+import { createAgentDesktopToolsProvider, type AgentDesktopToolsProvider } from "./browser-companion/agent-desktop-tools";
+import { createMacosDesktopProvider } from "./browser-companion/macos-desktop";
+import { resolveDesktopHelper, type PinnedDesktopHelper } from "./browser-companion/desktop-helper-path";
+import { release as osRelease } from "node:os";
 import { createLocalControlApiRoutes } from "./local-control-api";
 import { createAgentWorkspaceSnapshots } from "./agent-workspace/store";
 import { createAgentWorkspaceEvidence } from "./agent-workspace/evidence";
@@ -836,6 +841,8 @@ export function startServer(
     readCompactionModel?: () => ChatGptWebCompactionModel | undefined;
     /** The account's current ChatGPT capability evidence, which the launcher refreshes while running. */
     readAccountCapabilities?: () => AccountCapabilityFields;
+    /** Trusted DEV harness pin. Packaged CLI resolves its own sibling native helper. */
+    desktopHelper?: PinnedDesktopHelper;
   } = {},
 ): Bun.Server<undefined> & { disposeSignalHandlers(): void } {
   if (config.purpose === "dev-harness") {
@@ -849,6 +856,8 @@ export function startServer(
   let agentRoutes: ReturnType<typeof createAgentModeRoutes> | undefined;
   let agentTools: AgentToolsComposition | undefined;
   let browserCompanion: BrowserCompanionRuntime | undefined;
+  let agentBrowserTools: AgentBrowserToolsProvider | undefined;
+  let agentDesktopTools: AgentDesktopToolsProvider | undefined;
   let localControlRoutes: ReturnType<typeof createLocalControlApiRoutes> | undefined;
   let agentSnapshots: ReturnType<typeof createAgentWorkspaceSnapshots> | undefined;
   let agentEvidence: ReturnType<typeof createAgentWorkspaceEvidence> | undefined;
@@ -1005,25 +1014,48 @@ export function startServer(
         await getAgentSnapshots().beforeTurn({ task, generation: dispatch.generation, dispatchId: dispatch.id });
       }, snapshotReceipts: task => task.workspaceSnapshotGrant === undefined ? [] : getAgentSnapshots().listTask(task.id),
       lookupToolOutcome: key => getAgentTools().receipt(key),
+      reconcileToolReceipt: request => getAgentTools().reconcileReceipt(request),
+      onTaskScopeInvalidated: taskId => agentTools?.invalidateTaskTools(taskId),
       beforeVerify: task => {
         for (const evidence of activeTaskEvidence(task)) if (evidence.observer === "workspace-file-observer-v1") getAgentEvidence().assertCurrent(task, evidence);
       }, workspaceEvidenceReferences: task => task.evidence.some(evidence => evidence.observer === "workspace-file-observer-v1") ? getAgentEvidence().listTask(task.id) : [],
-      toolsAvailable: () => getAgentTools().status().config.enabled });
+      toolsAvailable: () => getAgentTools().status().config.enabled || Boolean(agentBrowserTools?.status().bindings.some(binding => {
+        const scope = { taskId: binding.taskId, generation: binding.generation, toolCallId: 'capability-status' };
+        const status = agentBrowserTools!.status(scope);
+        return isAgentScopeActive(scope) && status.available && status.bound;
+      })) || Boolean(agentDesktopTools?.status().available && agentDesktopTools.status().bindings.some(binding =>
+        isAgentScopeActive({ taskId: binding.taskId, generation: binding.generation, toolCallId: 'capability-status' }))) });
     agentRoutes = createAgentModeRoutes({ runtime: agentRuntime, authorize: controlAuthorized,
       observeWorkspaceEvidence: (task, proof) => getAgentEvidence().observe(task, proof),
       resolveEvidence: (task, reference) => {
         if (reference.sourceEventId.startsWith("workspace-file:")) return getAgentEvidence().resolve(task, reference);
-        if (reference.sourceEventId.startsWith("mcp:")) return getAgentTools().resolveEvidence(task, reference);
+        if (["mcp:", "browser:", "desktop:"].some(prefix => reference.sourceEventId.startsWith(prefix))) return getAgentTools().resolveEvidence(task, reference);
         throw new Error("Unsupported observed evidence source");
       } });
     return agentRoutes;
   };
+  const isAgentScopeActive = (scope: ToolScope) => {
+    if (!agentRuntime) return false;
+    try { const task = agentRuntime.store.getTask(scope.taskId); return task.generation === scope.generation && ["ready", "running", "awaiting_input"].includes(task.status); }
+    catch { return false; }
+  };
+  const getAgentBrowserTools = () => agentBrowserTools ??= createAgentBrowserToolsProvider({
+    provider: () => browserCompanion?.browserProvider(), isScopeActive: isAgentScopeActive,
+  });
+  const getAgentDesktopTools = () => agentDesktopTools ??= createAgentDesktopToolsProvider({
+    isScopeActive: isAgentScopeActive,
+    createProvider: () => {
+      if (process.platform !== 'darwin' || Number(osRelease().split('.')[0]) < 23) throw new Error('Native desktop tools require macOS 14 or newer');
+      const helper = resolveDesktopHelper({ explicit: dependencies.desktopHelper });
+      if (!helper) throw new Error('The native desktop helper is unavailable in this runtime layout');
+      return createMacosDesktopProvider({ helperExecutable: helper.executable, helperSha256: helper.sha256,
+        isScopeActive: isAgentScopeActive });
+    },
+  });
   const getAgentTools = () => agentTools ??= createAgentToolsComposition({ home: historyHome, authorize: controlAuthorized, canStart: acceptingTurns,
-    isScopeActive: scope => {
-      if (!agentRuntime) return false;
-      try { const task = agentRuntime.store.getTask(scope.taskId); return task.generation === scope.generation && ["ready", "running", "awaiting_input"].includes(task.status); }
-      catch { return false; }
-    }, resolveToolCall: scope => agentRuntime?.resolveToolCall(scope),
+    browserTools: getAgentBrowserTools(),
+    desktopTools: getAgentDesktopTools(),
+    isScopeActive: isAgentScopeActive, resolveToolCall: scope => agentRuntime?.resolveToolCall(scope),
     onOutcome: outcome => { if (!agentRuntime) throw new Error("Agent task owner unavailable"); agentRuntime.recordToolOutcome(outcome); },
   });
   const getAgentSnapshots = () => agentSnapshots ??= createAgentWorkspaceSnapshots({ storagePath: join(historyHome, "agent-workspace", "task-snapshots.sqlite"), keyPath: join(historyHome, "agent-workspace", "grant-key") });

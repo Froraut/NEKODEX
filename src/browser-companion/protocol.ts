@@ -27,6 +27,8 @@ export interface CompanionReceipt {
   cancelRequested: boolean;
   /** True means the extension reported execution, not that a website accepted a submission. */
   executed?: boolean;
+  /** Added by the host from the dispatched command, never accepted from extension result JSON. */
+  binding?: BrowserBinding;
   reason?: string;
   observation?: BrowserObservation;
 }

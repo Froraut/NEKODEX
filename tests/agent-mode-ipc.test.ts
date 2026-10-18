@@ -40,6 +40,16 @@ test('Agent IPC preserves explicit mailbox work and cycle scope without adding a
   expect(fixture.calls).toEqual([[fixture.config, 'agent-mode', { body: packet, returnErrorReceipt: true }], [fixture.config, 'agent-mode', { body: cycle, returnErrorReceipt: true }]]);
 });
 
+test('Agent IPC restricts retained tool reconciliation to scoped receipt identity without caller outcomes', async () => {
+  const fixture = registrar(true);
+  const body = { action: 'reconcile-tool', taskId: 'task', actionId: 'reconciliation', scope: { familyId: 'family', generation: 5, revision: 3 }, idempotencyKey: 'agent-tool:exact-original-receipt' };
+  await fixture.call(body);
+  expect(fixture.calls).toEqual([[fixture.config, 'agent-mode', { body, returnErrorReceipt: true }]]);
+  await expect(fixture.call({ ...body, outcome: { state: 'completed' } })).rejects.toThrow('owned tool journal');
+  await expect(fixture.call({ ...body, arguments: { command: 'caller supplied command' } })).rejects.toThrow('Invalid retained tool outcome lookup');
+  expect(fixture.calls).toHaveLength(1);
+});
+
 test('Agent IPC refuses malformed/oversized commands and propagates a failed receipt', async () => {
   const fixture = registrar(true);
   for (const body of [null, [], { action: 'execute-shell' }, { action: 'create', input: 'a'.repeat(600001) }]) {

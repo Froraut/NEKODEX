@@ -1,4 +1,4 @@
-const ACTIONS = new Set(['status', 'list', 'get', 'create', 'control', 'step', 'run', 'review', 'verify', 'evidence', 'workspace-grant', 'resume-continuation', 'enqueue-work', 'cycle', 'workspace-evidence']);
+const ACTIONS = new Set(['status', 'list', 'get', 'create', 'control', 'step', 'run', 'review', 'verify', 'evidence', 'workspace-grant', 'resume-continuation', 'enqueue-work', 'cycle', 'workspace-evidence', 'reconcile-tool']);
 const UUID = /^[a-f0-9-]{36}$/;
 const record = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 const owns = (value, name) => Object.prototype.hasOwnProperty.call(value, name);
@@ -17,7 +17,9 @@ function registerAgentMode({ handle, runtimeHost, workspaceService, workspaceEvi
     if (owns(body, 'grant') || owns(body, 'workspaceSnapshotGrant') || (record(body.input) && owns(body.input, 'workspaceSnapshotGrant'))) {
       throw new Error('Workspace snapshot authority must be prepared by the main process');
     }
-    if (owns(body, 'proof') || owns(body, 'observation') || owns(body, 'outcome')) throw new Error('Artifact evidence must be observed by the main process');
+    if (owns(body, 'proof') || owns(body, 'observation') || owns(body, 'outcome')) throw new Error(body.action === 'reconcile-tool' ? 'Retained tool outcomes must come from the owned tool journal' : 'Artifact evidence must be observed by the main process');
+    if (body.action === 'reconcile-tool' && (Object.keys(body).some(key => !['action', 'taskId', 'actionId', 'scope', 'idempotencyKey'].includes(key))
+        || typeof body.idempotencyKey !== 'string' || !body.idempotencyKey.trim() || body.idempotencyKey.length > 128)) throw new Error('Invalid retained tool outcome lookup');
     if (owns(body, 'workspaceSelection') && !['create', 'workspace-grant'].includes(body.action)) throw new Error('Invalid Agent workspace action');
     if (owns(body, 'evidenceSelection') && body.action !== 'workspace-evidence') throw new Error('Invalid Agent evidence action');
     const supervisor = runtimeHost.supervisor;

@@ -13,6 +13,8 @@ if (terminalBuild.status !== 0) process.exit(terminalBuild.status ?? 1);
 const { compileCredentialHelper } = require("../../scripts/build-credential-helper.cjs");
 // Native compilation/development signing must settle before either UI process starts.
 compileCredentialHelper({ repositoryRoot: path.resolve(root, ".."), development: true });
+const { compileDesktopHelper } = require("../../scripts/build-desktop-helper.cjs");
+compileDesktopHelper({ repositoryRoot: path.resolve(root, ".."), development: true });
 
 
 const helperBuild = spawnSync(bun, ["run", "scripts/build-browser-helper.ts"], {

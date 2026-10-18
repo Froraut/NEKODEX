@@ -50,7 +50,7 @@ export class AgentModeRunner {
       .map(row => ({ dispatchId: row.id, workerId: row.workerId, stageId: row.stageId, summary: row.result!.summary }));
     const sourceDispatch = dispatch.continuationOf ? this.store.getDispatch(dispatch.continuationOf) : undefined;
     const source = sourceDispatch?.result?.continuation;
-    const outcomes = source ? this.store.listToolOutcomes(taskId).filter(row => row.scope.generation === sourceDispatch!.generation && source.pending.some(call => call.toolCallId === row.scope.toolCallId)) : [];
+    const outcomes = source ? this.store.effectiveToolOutcomes(taskId).filter(row => row.scope.generation === sourceDispatch!.generation && source.pending.some(call => call.toolCallId === row.scope.toolCallId)) : [];
     if (source && (outcomes.length !== source.pending.length || outcomes.some(row => row.state === "outcome_unknown"))) { this.store.markUnknown(dispatchId, "tool_continuation_results_missing"); throw new Error("Unknown send requires complete owned tool results"); }
     const abort = new AbortController(); this.live.set(dispatch.id, { taskId, abort });
     try {

@@ -8,6 +8,23 @@ export interface AgentArtifactObservation {
   evidence: AgentTask['evidence'][number];
   reference: { observedAt?: string; actualSha256?: string | null; exists?: boolean };
 }
+/** Current actionable metadata from the task owner, independent of capped history. */
+export interface AgentPendingToolCall {
+  toolCallId: string;
+  tool: string;
+  arguments: Record<string, unknown>;
+  wireName?: string;
+}
+export interface AgentToolReconciliationView {
+  id: string;
+  idempotencyKey: string;
+  sourceDispatchId: string;
+  originalScope: AgentToolOutcome['scope'];
+  observedTaskGeneration: number;
+  outcome: AgentToolOutcome;
+  late: boolean;
+  createdAt: number;
+}
 export interface AgentModeApi {
   request(body: Record<string, unknown>): Promise<unknown>;
   workspaceRoots?(): Promise<AgentWorkspaceRoot[]>;
@@ -31,8 +48,11 @@ export interface AgentModeDetail {
   messages: MailMessage[];
   receipts: { id: string; kind: string; body: unknown }[];
   toolOutcomes?: AgentToolOutcome[];
+  pendingToolCalls?: AgentPendingToolCall[];
+  toolReconciliations?: AgentToolReconciliationView[];
+  effectiveToolOutcomes?: AgentToolOutcome[];
   workPackets?: AgentWorkPacket[];
   loopSource?: 'mailbox';
   snapshotReceipts?: Array<{ dispatchId: string; state: string; failure: string | null; receipt: { id: string; snapshotId: string; grantId: string; generation: number; totalBytes: number; files: Array<{ path: string; revision: string | null; missing: boolean; size: number }> } | null }>;
-  coverage?: Record<'dispatches' | 'messages' | 'receipts', { total: number; truncated: boolean }>;
+  coverage?: Record<'dispatches' | 'messages' | 'receipts', { total: number; truncated: boolean }> & { pendingToolCalls?: { total: number; truncated: boolean } };
 }

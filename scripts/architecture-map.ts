@@ -2,7 +2,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileS
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 
 const roots = ["src", "launcher/src", "launcher/electron", "launcher/native", "scripts", "launcher/scripts", "launcher/assets", ".github"];
-const ignored = new Set(["node_modules", "dist", "build", "release", "artifacts", "output", "credential-helper", ".git", ".DS_Store", ".env"]);
+const ignored = new Set(["node_modules", "dist", "build", "release", "artifacts", "output", "credential-helper", "desktop-helper", ".git", ".DS_Store", ".env"]);
 const codeExtensions = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs"]);
 const metadata = ["package.json", "bun.lock", "tsconfig.json", "launcher/package.json", "launcher/bun.lock",
   "launcher/tsconfig.json", "launcher/vite.config.ts", "launcher/release-trust.json"];

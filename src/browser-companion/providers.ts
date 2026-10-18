@@ -6,14 +6,19 @@ import { browserBindingOf, type BrowserAction, type BrowserBinding, type Browser
 
 export interface BrowserProviderPort {
   capabilities(): { providerId: string; available: boolean; actions: readonly string[]; reason?: string };
+  /** Selected document anchor survives consumed input; it permits a fresh read, never stale input. */
+  selected(): BrowserBinding | undefined;
+  receipt(operationId: string): CompanionReceipt | undefined;
   current(): BrowserObservation | undefined;
-  observe(binding: BrowserBinding, signal?: AbortSignal): Promise<CompanionReceipt>;
-  act(binding: BrowserBinding, action: BrowserAction, signal?: AbortSignal): Promise<CompanionReceipt>;
+  observe(binding: BrowserBinding, signal?: AbortSignal, operationId?: string): Promise<CompanionReceipt>;
+  act(binding: BrowserBinding, action: BrowserAction, signal?: AbortSignal, operationId?: string): Promise<CompanionReceipt>;
 }
 export function createCompanionBrowserProvider(host: BrowserCompanionHost): BrowserProviderPort {
   return {
     capabilities: () => ({ providerId: "chrome-companion-v1", available: host.status().paired && host.status().connected && !!host.status().selected,
       actions: ["observe", "click", "type"], ...(!host.status().paired ? { reason: "Pair the extension explicitly" } : !host.status().selected ? { reason: "Select a tab in the extension popup" } : !host.status().connected ? { reason: "Keep the selected tab's extension popup open" } : {}) }),
+    selected: () => host.status().selected ?? undefined,
+    receipt: host.receipt,
     current: host.observation, observe: host.observe, act: host.act,
   };
 }

@@ -2,7 +2,7 @@ import { z } from "zod";
 import { NativeRequestBodyError, readJsonRequestBody } from "../http-body";
 import { AgentModeRuntime } from "./runtime";
 import { activeTaskEvidence } from "./evidence";
-import type { AgentTask, OutcomeEvidence } from "./types";
+import type { AgentDispatch, AgentTask, AgentToolRequest, OutcomeEvidence } from "./types";
 
 const identity = z.string().min(1).max(128);
 const boundedText = z.string().trim().min(1).max(16_384);
@@ -46,6 +46,23 @@ function listing(runtime: AgentModeRuntime) {
   const result = boundedRows(runtime.store.listTasks(), 50, 512 * 1024);
   return { tasks: result.rows, total: result.total, truncated: result.truncated };
 }
+/** Approval metadata must survive exclusion of large, immutable canonical history rows. */
+function pendingToolCalls(runtime: AgentModeRuntime, task: AgentTask, dispatches: AgentDispatch[]) {
+  const recorded = new Set(runtime.store.listToolOutcomes(task.id).map(row => row.idempotencyKey));
+  const seen = new Set<string>();
+  const pending: AgentToolRequest[] = [];
+  for (const dispatch of dispatches) {
+    if (dispatch.generation !== task.generation || dispatch.taskRevision !== task.revision || dispatch.state !== "settled") continue;
+    for (const call of dispatch.result?.continuation?.pending ?? []) {
+      const key = runtime.store.toolCallReceiptKey(dispatch.id, call.toolCallId);
+      if (recorded.has(key) || seen.has(key)) continue;
+      const owned = runtime.resolveToolCall({ taskId: task.id, generation: task.generation, toolCallId: call.toolCallId });
+      if (!owned || owned.idempotencyKey !== key || owned.tool !== call.tool || JSON.stringify(owned.arguments) !== JSON.stringify(call.arguments)) continue;
+      seen.add(key); pending.push(structuredClone(call));
+    }
+  }
+  return boundedRows(pending, 16, 128 * 1024);
+}
 function success(value: unknown, status = 200): Response { return Response.json({ ok: true, value }, { status }); }
 
 /** Mount after localHttpRequestRejection; every read and mutation also checks control auth. */
@@ -57,7 +74,7 @@ export function createAgentModeRoutes(options: AgentModeRouteOptions): (request:
     if (!options.authorize(request)) return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
     if (request.method !== "POST") return Response.json({ ok: false, error: "method_not_allowed" }, { status: 405, headers: { allow: "POST" } });
     try {
-      const envelope = z.object({ action: z.enum(["status", "list", "get", "create", "control", "step", "run", "review", "evidence", "verify", "workspace-grant", "resume-continuation", "enqueue-work", "cycle", "workspace-evidence"]), taskId: identity.optional(), actionId: identity.optional(), dispatchId: identity.optional(), workId: identity.optional(), work: z.unknown().optional(), input: z.unknown().optional(), control: z.unknown().optional(), scope: taskScope.optional(), grant: z.unknown().optional(), proof: z.unknown().optional(), explicitUserAction: z.boolean().optional(), workerName: identity.optional(), reviewId: identity.optional(), evidence: z.unknown().optional() }).strict().parse(await readJsonRequestBody(request, 128 * 1024, 128 * 1024));
+      const envelope = z.object({ action: z.enum(["status", "list", "get", "create", "control", "step", "run", "review", "evidence", "verify", "workspace-grant", "resume-continuation", "enqueue-work", "cycle", "workspace-evidence", "reconcile-tool"]), taskId: identity.optional(), actionId: identity.optional(), idempotencyKey: identity.optional(), dispatchId: identity.optional(), workId: identity.optional(), work: z.unknown().optional(), input: z.unknown().optional(), control: z.unknown().optional(), scope: taskScope.optional(), grant: z.unknown().optional(), proof: z.unknown().optional(), explicitUserAction: z.boolean().optional(), workerName: identity.optional(), reviewId: identity.optional(), evidence: z.unknown().optional() }).strict().parse(await readJsonRequestBody(request, 128 * 1024, 128 * 1024));
       const runtime = options.runtime;
       if (envelope.action === "status") return success({ ...runtime.status(), ...listing(runtime), capabilities: { ...runtime.status().capabilities, observedEvidence: Boolean(options.resolveEvidence || options.observeWorkspaceEvidence) } });
       if (envelope.action === "list") return success(listing(runtime));
@@ -69,16 +86,21 @@ export function createAgentModeRoutes(options: AgentModeRouteOptions): (request:
       if (envelope.action === "get") {
         runtime.reconcileToolReceipts(taskId);
         const task = runtime.store.getTask(taskId);
-        const dispatches = boundedRows(runtime.store.listDispatches(taskId));
+        const allDispatches = runtime.store.listDispatches(taskId);
+        const dispatches = boundedRows(allDispatches);
+        const pendingCalls = pendingToolCalls(runtime, task, allDispatches);
         const messages = boundedRows(runtime.store.listMessages(taskId));
         const receipts = boundedRows(runtime.store.listReceipts(taskId), 100, 64 * 1024);
         const toolOutcomes = boundedRows(runtime.store.listToolOutcomes(taskId));
+        const effectiveToolOutcomes = boundedRows(runtime.store.effectiveToolOutcomes(taskId));
+        const toolReconciliations = boundedRows(runtime.store.listToolReconciliations(taskId));
         const workPackets = boundedRows(runtime.store.listWork(taskId));
         const workspaceEvidence = boundedRows(runtime.workspaceEvidenceReferences(taskId));
-        return success({ task, activeEvidence: activeTaskEvidence(task), workspaceEvidence: workspaceEvidence.rows, workers: runtime.store.listWorkers(taskId), dispatches: dispatches.rows, messages: messages.rows, receipts: receipts.rows, toolOutcomes: toolOutcomes.rows, workPackets: workPackets.rows, loopSource: "mailbox", snapshotReceipts: runtime.snapshotReceipts(taskId),
-          coverage: { dispatches: { total: dispatches.total, truncated: dispatches.truncated }, messages: { total: messages.total, truncated: messages.truncated }, receipts: { total: receipts.total, truncated: receipts.truncated }, workspaceEvidence: { total: workspaceEvidence.total, truncated: workspaceEvidence.truncated } } });
+        return success({ task, activeEvidence: activeTaskEvidence(task), workspaceEvidence: workspaceEvidence.rows, workers: runtime.store.listWorkers(taskId), pendingToolCalls: pendingCalls.rows, dispatches: dispatches.rows, messages: messages.rows, receipts: receipts.rows, toolOutcomes: toolOutcomes.rows, effectiveToolOutcomes: effectiveToolOutcomes.rows, toolReconciliations: toolReconciliations.rows, workPackets: workPackets.rows, loopSource: "mailbox", snapshotReceipts: runtime.snapshotReceipts(taskId),
+          coverage: { pendingToolCalls: { total: pendingCalls.total, truncated: pendingCalls.truncated }, dispatches: { total: dispatches.total, truncated: dispatches.truncated }, messages: { total: messages.total, truncated: messages.truncated }, receipts: { total: receipts.total, truncated: receipts.truncated }, workspaceEvidence: { total: workspaceEvidence.total, truncated: workspaceEvidence.truncated }, toolReconciliations: { total: toolReconciliations.total, truncated: toolReconciliations.truncated }, effectiveToolOutcomes: { total: effectiveToolOutcomes.total, truncated: effectiveToolOutcomes.truncated } } });
       }
       const actionId = identity.parse(envelope.actionId);
+      if (envelope.action === "reconcile-tool") return success(await runtime.reconcileTool(taskId, actionId, taskScope.parse(envelope.scope), identity.parse(envelope.idempotencyKey)));
       if (envelope.action === "workspace-evidence") {
         if (!options.observeWorkspaceEvidence) return Response.json({ ok: false, error: "workspace_observer_unavailable" }, { status: 503 });
         const scope = taskScope.parse(envelope.scope);
@@ -110,7 +132,7 @@ export function createAgentModeRoutes(options: AgentModeRouteOptions): (request:
       if (error instanceof z.ZodError) return Response.json({ ok: false, error: "invalid_request", message: "The Agent action does not match its bounded schema." }, { status: 400 });
       // Domain errors are fixed internal strings; do not echo unknown exceptions or SQL/filesystem details.
       const message = (error as { code?: unknown })?.code === "EVIDENCE_STALE" ? "The workspace file changed after observation. Inspect its current revision and observe it again before verification."
-        : error instanceof Error && /^(?:Task |Manual |Unknown send|Agent provider|Select a configured|This provider|Loop requires|Stopped task|Current complete|Requirement outcome|Stale |Execution owner|Action identity|Stage is|Worker |Empty Continue)/.test(error.message) ? error.message : "The Agent action could not be completed; inspect its current durable state before retrying.";
+        : error instanceof Error && /^(?:Task |Manual |Unknown send|Agent provider|Select a configured|This provider|Loop requires|Stopped task|Current complete|Requirement outcome|Stale |Execution owner|Action identity|Stage is|Worker |Empty Continue|Tool receipt|Tool reconciliation)/.test(error.message) ? error.message : "The Agent action could not be completed; inspect its current durable state before retrying.";
       return Response.json({ ok: false, error: "agent_action_conflict", message }, { status: 409 });
     }
   };

@@ -20,3 +20,4 @@ notes.md
 
 # Generated native helper; Swift source remains tracked under launcher/native/.
 launcher/electron/credential-helper/
+launcher/electron/desktop-helper/

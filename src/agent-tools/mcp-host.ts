@@ -4,7 +4,7 @@ import Ajv, { type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 import { sha256, validateToolsConfig, verifyRecipeFiles, type ServerRecipe, type ToolsConfig } from "./config";
 import { invocationFingerprint, ToolJournal, validateToolScope } from "./journal";
-import type { StandaloneToolsPort, ToolDescriptor, ToolInvocation, ToolOutcome, ToolScope } from "./types";
+import type { StandaloneBuiltinToolsProvider, StandaloneToolsPort, ToolDescriptor, ToolInvocation, ToolOutcome, ToolScope } from "./types";
 import { mcpTerminalReference, resolveMcpTerminalEvidence } from "./evidence";
 import type { AgentTask } from "../agent-mode/types";
 import type { AgentEvidenceReference } from "../agent-mode/http";
@@ -12,7 +12,8 @@ import { mkdirSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { buildTrustedMcpSandboxLaunch, type McpSandboxBoundary } from "./sandbox";
 
-interface Session { client: Client; transport: StdioClientTransport; tools: Map<string, { descriptor: ToolDescriptor; validate?: ValidateFunction }>; boundary?: McpSandboxBoundary }
+interface ToolEntry { descriptor: ToolDescriptor; validate?: ValidateFunction; builtin?: StandaloneBuiltinToolsProvider }
+interface Session { client: Client; transport: StdioClientTransport; tools: Map<string, ToolEntry>; boundary?: McpSandboxBoundary }
 export interface McpHostOptions {
   config: ToolsConfig;
   journalPath: string;
@@ -21,6 +22,8 @@ export interface McpHostOptions {
   /** Trusted task owner must reject stale generations and stopped tasks on every call. */
   isScopeActive: (scope: ToolScope) => boolean;
   requestTimeoutMs?: number;
+  /** Pure built-ins share this exact approval and durable execution owner. */
+  builtins?: readonly StandaloneBuiltinToolsProvider[];
 }
 /** One session/owned stdio child per configured server. No client registry is read or modified. */
 export class StandaloneMcpHost implements StandaloneToolsPort {
@@ -28,7 +31,11 @@ export class StandaloneMcpHost implements StandaloneToolsPort {
   private sessions = new Map<string, Session>();
   private starting = new Map<string, Promise<Session>>();
   private grants = new Map<string, string>();
-  private activeCalls = new Set<Promise<ToolOutcome>>();
+  private activeCalls = new Set<Promise<unknown>>();
+  private pendingBuiltinWork = new Set<Promise<ToolOutcome>>();
+  private builtinProviders = new Map<string, StandaloneBuiltinToolsProvider>();
+  private builtinEntries = new Map<string, ToolEntry>();
+  private abort = new AbortController();
   private journal: ToolJournal;
   private closed = false;
   private timeout: number;
@@ -37,10 +44,14 @@ export class StandaloneMcpHost implements StandaloneToolsPort {
     this.journal = new ToolJournal(options.journalPath);
     this.timeout = options.requestTimeoutMs ?? 15_000;
     if (!Number.isInteger(this.timeout) || this.timeout < 10 || this.timeout > 120_000) throw new Error("Invalid MCP request timeout");
+    for (const provider of options.builtins ?? []) {
+      if (!/^[a-z][a-z0-9_-]{0,39}$/.test(provider.serverId) || provider.serverId === "mcp" || this.builtinProviders.has(provider.serverId)) throw new Error("Invalid or duplicate trusted builtin tool namespace");
+      this.builtinProviders.set(provider.serverId, provider);
+    }
   }
   private active(scope: ToolScope): void {
     validateToolScope(scope);
-    if (this.closed || !this.config.enabled || !this.options.isScopeActive(scope)) throw new Error("Standalone tool scope is unavailable");
+    if (this.closed || !this.options.isScopeActive(scope)) throw new Error("Standalone tool scope is unavailable");
   }
   private async start(recipe: ServerRecipe): Promise<Session> {
     const existing = this.sessions.get(recipe.id); if (existing) return existing;
@@ -90,7 +101,9 @@ export class StandaloneMcpHost implements StandaloneToolsPort {
     const signal = AbortSignal.any([AbortSignal.timeout(this.timeout), ...(options.signal ? [options.signal] : [])]);
     const descriptors: ToolDescriptor[] = [];
     let descriptorBytes = 0;
-    for (const recipe of this.config.servers.filter(server => server.enabled)) {
+    this.builtinEntries.clear();
+    for (const recipe of this.config.servers.filter(server => this.config.enabled && server.enabled)) {
+      if (this.builtinProviders.has(recipe.id)) continue; // Never replace a configured source with a builtin alias.
       signal.throwIfAborted();
       const session = await this.start(recipe);
       session.tools.clear();
@@ -119,6 +132,24 @@ export class StandaloneMcpHost implements StandaloneToolsPort {
       } while (cursor);
       session.tools = next;
     }
+    for (const provider of this.builtinProviders.values()) {
+      this.active(scope); signal.throwIfAborted();
+      if (this.config.servers.some(server => server.id === provider.serverId)) {
+        descriptors.push({ id: `${provider.serverId}/namespace_conflict`, serverId: provider.serverId, name: "namespace_conflict", inputSchema: { type: "object", properties: {}, additionalProperties: false }, supported: false, unsupportedReason: "Reserved builtin namespace conflicts with a configured MCP server; no source was substituted" });
+        continue;
+      }
+      const discovered = await provider.discover(scope, { signal });
+      if (discovered.length > 64) throw new Error("Builtin discovery tool limit exceeded");
+      for (const raw of discovered) {
+        if (raw.serverId !== provider.serverId || raw.id !== `${provider.serverId}/${raw.name}` || !/^[a-zA-Z0-9_.-]{1,120}$/.test(raw.name) || this.builtinEntries.has(raw.id)) throw new Error("Builtin tool identity mismatch");
+        const descriptor = structuredClone(raw); descriptor.description = descriptor.description?.slice(0, 4000);
+        descriptorBytes += Buffer.byteLength(JSON.stringify(descriptor)); if (descriptors.length >= 256 || descriptorBytes > 1024 * 1024) throw new Error("Aggregate builtin discovery limit exceeded");
+        let validate: ValidateFunction | undefined;
+        try { if (Buffer.byteLength(JSON.stringify(descriptor.inputSchema)) > 64 * 1024) throw new Error("Schema too large"); const ajv = new Ajv({ strict: true, allErrors: false }); addFormats(ajv); validate = ajv.compile(descriptor.inputSchema); }
+        catch { descriptor.supported = false; descriptor.unsupportedReason = "Builtin input schema is unsupported by the host validator"; }
+        this.builtinEntries.set(descriptor.id, { descriptor, validate, builtin: provider }); descriptors.push(descriptor);
+      }
+    }
     this.active(scope);
     return descriptors;
   }
@@ -131,9 +162,11 @@ export class StandaloneMcpHost implements StandaloneToolsPort {
     if (this.grants.size >= 1024) throw new Error("Outstanding tool approval limit reached");
     const grantId = crypto.randomUUID(); this.grants.set(grantId, `${fingerprint}:${JSON.stringify(entry.descriptor.inputSchema)}`); return grantId;
   }
-  private entry(tool: string): Session["tools"] extends Map<string, infer Entry> ? Entry | undefined : never {
+  private entry(tool: string): ToolEntry | undefined {
     const [serverId, name, extra] = tool.split("/");
-    return extra ? undefined : this.sessions.get(serverId!)?.tools.get(name!);
+    if (extra) return undefined;
+    if (this.builtinProviders.has(serverId!)) return this.builtinEntries.get(tool);
+    return this.config.enabled ? this.sessions.get(serverId!)?.tools.get(name!) : undefined;
   }
   invoke(request: ToolInvocation, options: { signal?: AbortSignal } = {}): Promise<ToolOutcome> {
     const operation = this.invokeOnce(request, options); this.activeCalls.add(operation);
@@ -144,18 +177,32 @@ export class StandaloneMcpHost implements StandaloneToolsPort {
     this.active(request.scope); options.signal?.throwIfAborted();
     const fingerprint = invocationFingerprint(request);
     // Receipt reads do not authorize new execution and may be performed after grant consumption.
-    const prior = this.journal.get(request.idempotencyKey);
-    if (prior) return this.journal.begin(request).outcome;
+    const prior = this.journal.existing(request); if (prior) return prior;
     const [serverId, name, extra] = request.tool.split("/");
-    const session = this.sessions.get(serverId!); const entry = session?.tools.get(name!);
-    if (extra || !session || !entry?.descriptor.supported || !entry.validate) throw new Error("Tool is undiscovered or unsupported");
+    const session = this.sessions.get(serverId!); const entry = this.entry(request.tool);
+    if (extra || (!session && !entry?.builtin) || !entry?.descriptor.supported || !entry.validate) throw new Error("Tool is undiscovered or unsupported");
     if (this.grants.get(request.grantId) !== `${fingerprint}:${JSON.stringify(entry.descriptor.inputSchema)}`) throw new Error("Exact tool invocation approval required");
     if (!entry.validate(request.arguments)) throw new Error("Tool arguments do not match the discovered schema");
     this.grants.delete(request.grantId);
-    const admitted = this.journal.begin(request); if (!admitted.inserted) return admitted.outcome;
+    const admitted = this.journal.begin(request, entry.builtin?.serverId ?? "mcp"); if (!admitted.inserted) return admitted.outcome;
     try {
       this.active(request.scope);
-      const result = await session.client.callTool({ name: name!, arguments: request.arguments }, undefined, { signal: options.signal, timeout: this.timeout, maxTotalTimeout: this.timeout });
+      if (entry.builtin) {
+        // A transport observation wait must never become a cancellation signal for accepted input.
+        const signal = AbortSignal.any([this.abort.signal, ...(options.signal ? [options.signal] : [])]);
+        const work = (async () => {
+          try {
+            const result = await entry.builtin!.execute({ scope: request.scope, tool: request.tool, arguments: request.arguments, idempotencyKey: request.idempotencyKey }, { signal });
+            if (!["completed", "failed", "outcome_unknown"].includes(result.state)) throw new Error("Builtin outcome state mismatch");
+            return this.journal.settle({ idempotencyKey: request.idempotencyKey, scope: request.scope, tool: request.tool, state: result.state, result: result.result, reason: result.reason });
+          } catch { return this.journal.get(request.idempotencyKey)!; }
+        })();
+        this.pendingBuiltinWork.add(work); void work.then(() => this.pendingBuiltinWork.delete(work), () => this.pendingBuiltinWork.delete(work));
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try { return await Promise.race([work, new Promise<ToolOutcome>(resolve => { timer = setTimeout(() => resolve(this.journal.get(request.idempotencyKey)!), this.timeout); })]); }
+        finally { if (timer) clearTimeout(timer); }
+      }
+      const result = await session!.client.callTool({ name: name!, arguments: request.arguments }, undefined, { signal: options.signal, timeout: this.timeout, maxTotalTimeout: this.timeout });
       return this.journal.settle({ idempotencyKey: request.idempotencyKey, scope: request.scope, tool: request.tool, state: result.isError ? "failed" : "completed", result });
     } catch {
       // Timeout/cancel/connection loss does not prove that an external mutation did not occur.
@@ -163,8 +210,22 @@ export class StandaloneMcpHost implements StandaloneToolsPort {
     }
   }
   getOutcome(idempotencyKey: string): ToolOutcome | undefined { return this.journal.get(idempotencyKey); }
+  get pendingBuiltinCount(): number { return this.pendingBuiltinWork.size; }
+  async waitForIdle(): Promise<void> { await Promise.allSettled([...this.activeCalls, ...this.pendingBuiltinWork]); }
+  existingOutcome(request: Omit<ToolInvocation, "grantId">): ToolOutcome | undefined { return this.journal.existing(request); }
+  reconcileExisting(request: Omit<ToolInvocation, "grantId">, options: { signal?: AbortSignal } = {}): Promise<ToolOutcome | undefined> {
+    const operation = (async () => {
+      const prior = this.journal.existing(request); if (!prior || prior.state !== "outcome_unknown") return prior;
+      const provider = this.builtinProviders.get(request.tool.split("/")[0]!); if (!provider?.reconcile || this.closed) return prior;
+      const terminal = await provider.reconcile(request, options);
+      if (!terminal || terminal.state === "outcome_unknown") return prior;
+      if (!["completed", "failed"].includes(terminal.state)) throw new Error("Builtin reconciliation outcome mismatch");
+      return this.journal.settle({ idempotencyKey: prior.idempotencyKey, scope: prior.scope, tool: prior.tool, state: terminal.state, result: terminal.result, reason: terminal.reason });
+    })(); this.activeCalls.add(operation); void operation.then(() => this.activeCalls.delete(operation), () => this.activeCalls.delete(operation)); return operation;
+  }
   terminalReference(idempotencyKey: string, requirementId: string): AgentEvidenceReference {
     const outcome = this.journal.get(idempotencyKey); if (!outcome) throw new Error("MCP result receipt missing");
+    if (this.builtinProviders.has(outcome.tool.split("/")[0]!)) throw new Error("Unsupported MCP terminal evidence source");
     return mcpTerminalReference(outcome, requirementId);
   }
   resolveTerminalEvidence(task: AgentTask, reference: AgentEvidenceReference) {
@@ -174,10 +235,10 @@ export class StandaloneMcpHost implements StandaloneToolsPort {
     return { enabled: this.config.enabled && !this.closed, servers: this.config.servers.map(server => ({ id: server.id, connected: this.sessions.has(server.id), pid: this.sessions.get(server.id)?.transport.pid ?? null, sandbox: this.sessions.get(server.id)?.boundary?.provider ?? (server.trustedSandbox ? "requested-unverified" : "user-privileged"), boundary: this.sessions.get(server.id)?.boundary })), sandbox: "external-server-process" };
   }
   async close(): Promise<void> {
-    if (this.closed) return; this.closed = true; this.grants.clear();
+    if (this.closed) return; this.closed = true; this.grants.clear(); this.abort.abort();
     await Promise.allSettled([...this.starting.values()]);
     await Promise.allSettled([...this.sessions.values()].map(session => session.client.close()));
-    await Promise.allSettled([...this.activeCalls]);
-    this.sessions.clear(); this.journal.close();
+    await this.waitForIdle();
+    this.sessions.clear(); this.builtinEntries.clear(); this.journal.close();
   }
 }

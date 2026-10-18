@@ -31,6 +31,7 @@ import { runChatGptMcpMain } from "./adapters/chatgpt-web/mcp-main";
 import { setChatGptMcpCliTunnelId } from "./adapters/chatgpt-web/mcp-server";
 import { runCommand } from "./process";
 import { startServer } from "./server";
+import { resolveDevelopmentDesktopHelper } from "./browser-companion/desktop-helper-path";
 import { assertServiceIdle, cancelActiveTurns, getServiceStatus, installService, interruptActiveTurn, restartService, startService, stopService, uninstallService } from "./service";
 import { existingFullSetupCredentials, preflightSetup, setup, type SetupOptions } from "./setup";
 import { runTunnelCredentialProcess, installTunnelClient, managedRuntimeKeyPath, stopTunnel, tunnelStatus, waitForTunnelReady } from "./tunnel";
@@ -710,6 +711,7 @@ async function main(): Promise<void> {
     assertNoArgs(args);
     const config = loadConfig();
     const server = startServer(config, {
+      desktopHelper: resolveDevelopmentDesktopHelper(import.meta.url),
       readProModelVersion: () => loadConfig().proModelVersion,
       readCompactionModel: () => loadConfig().compactionModel,
       readAccountCapabilities: readAccountCapabilityFields,

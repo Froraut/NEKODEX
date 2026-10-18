@@ -1,6 +1,9 @@
 import type { ServerRecipe } from '../../src/agent-tools/config';
 import type { ToolDescriptor, ToolScope, ToolOutcome } from '../../src/agent-tools/types';
 import type { SkillIdentity, SkillRootGrant, SelectedSkill } from '../../src/agent-tools/skills';
+import type { BrowserBinding } from '../../src/browser-companion/protocol';
+import type { AgentDesktopStatus } from './agent-desktop-types';
+import type { AgentPendingToolCall } from './agent-mode-types';
 export type { ServerRecipe, ToolDescriptor, ToolScope, ToolOutcome, SkillIdentity, SkillRootGrant, SelectedSkill };
 export interface AgentToolsApi {
   request(body: Record<string, unknown>): Promise<unknown>;
@@ -8,7 +11,7 @@ export interface AgentToolsApi {
   pickInstallRoot?(): Promise<{ cancelled: boolean; root?: string }>;
   /** Exact private pending calls come from the owned Agent-mode store through its guarded API. */
   listTasks(): Promise<{ tasks: { id: string; generation: number; status: string }[] }>;
-  getTask(taskId: string): Promise<{ task: { id: string; generation: number }; dispatches: { id: string; generation: number; result?: { continuation?: { pending: { toolCallId: string; tool: string; arguments: Record<string, unknown> }[] } } }[]; toolOutcomes?: ToolOutcome[] }>;
+  getTask(taskId: string): Promise<{ task: { id: string; generation: number }; dispatches: { id: string; generation: number; result?: { continuation?: { pending: AgentPendingToolCall[] } } }[]; toolOutcomes?: ToolOutcome[]; pendingToolCalls?: AgentPendingToolCall[]; coverage?: { pendingToolCalls?: { total: number; truncated: boolean } } }>;
   attachEvidence?(taskId: string, reference: { sourceEventId: string; requirementId: string; subject: string; subjectRevision: string; property: string }): Promise<unknown>;
 }
 export interface ManagedInstallReceipt {
@@ -36,4 +39,6 @@ export interface AgentToolsStatus {
   installations: { rows: { actionId: string; catalogId: string; state: string; allowedRoot: string; graphSha256?: string; childPid?: number }[]; truncated: boolean };
   serverConfigDigests: Record<string, string>;
   managedSkills?: { versions: ManagedSkillVersionView[]; retainedVersions: number; forgottenVersions: number; cleanup: string; attachments: { scope: ToolScope; versionIds: string[] }[]; actions: { actionId: string; label: string; state: string; versionId: string; lineageId: string; reviewDigest: string }[] };
+  browserTools?: { providerId: string; available: boolean; selected: BrowserBinding | null; bound: boolean; reason: string | null; bindings: { taskId: string; generation: number; binding: BrowserBinding; observed: boolean; active: boolean }[] } | null;
+  desktopTools?: AgentDesktopStatus | null;
 }

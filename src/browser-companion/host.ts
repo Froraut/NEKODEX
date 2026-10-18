@@ -45,7 +45,7 @@ export function createBrowserCompanionHost(options: BrowserCompanionHostOptions)
   function uncertain(reason: string) {
     if (!pending) return;
     const current = pending;
-    const receipt = retain({ operationId: current.command.operationId, outcome: current.phase === "queued" ? "not_sent" : "unknown", cancelRequested: true, reason });
+    const receipt = retain({ operationId: current.command.operationId, outcome: current.phase === "queued" ? "not_sent" : "unknown", cancelRequested: true, binding: structuredClone(current.command.binding), reason });
     current.detach(); current.resolve(receipt);
     if (current.phase === "queued") pending = undefined;
     else current.phase = "unknown";
@@ -70,14 +70,15 @@ export function createBrowserCompanionHost(options: BrowserCompanionHostOptions)
     if (!anchor || !sameBrowserBinding(anchor, binding) || binding.sessionId !== sessionId) throw new Error("Stale or foreign observation; select or observe the exact tab again");
     return binding;
   }
-  function dispatch(kind: CompanionCommand["kind"], bindingValue: unknown, actionValue?: unknown, signal?: AbortSignal): Promise<CompanionReceipt> {
+  function dispatch(kind: CompanionCommand["kind"], bindingValue: unknown, actionValue?: unknown, signal?: AbortSignal, requestedOperationId?: string): Promise<CompanionReceipt> {
     if (closed || !token) throw new Error("Companion is not paired");
     if (pending) throw new Error("A companion operation is active or has an uncertain outcome; reconcile its receipt first");
     const binding = assertBinding(bindingValue, kind);
     const action = kind === "act" ? browserActionSchema.parse(actionValue) : undefined;
     if (action && !observation!.refs.some(row => row.ref === action.ref && (action.kind !== "type" || row.role === "textbox"))) throw new Error("Unknown or incompatible observation reference");
     signal?.throwIfAborted();
-    const operationId = randomUUID();
+    const operationId = requestedOperationId ?? randomUUID();
+    if (!/^[A-Za-z0-9:_-]{1,160}$/.test(operationId) || receipts.has(operationId)) throw new Error("Companion operation identity is invalid or already consumed; reconcile its receipt without replay");
     return new Promise(resolve => {
       const abort = () => uncertain("Caller cancelled; a dispatched input may already have occurred");
       pending = { command: { operationId, kind, binding: structuredClone(binding), ...(action ? { action } : {}) }, phase: "queued", resolve,
@@ -131,7 +132,7 @@ export function createBrowserCompanionHost(options: BrowserCompanionHostOptions)
           if (candidate.sessionId !== previous.sessionId || candidate.scopeId !== previous.scopeId || candidate.tabId !== previous.tabId || candidate.windowId !== previous.windowId || candidate.frameId !== previous.frameId || candidate.documentId !== previous.documentId || candidate.documentEpoch !== previous.documentEpoch || candidate.observationId === previous.observationId) throw new Error("Observation changed owner or document");
           if (current.phase !== "unknown") { observation = candidate; setSelected(candidate); }
         } else observation = undefined;
-        const receipt = retain({ ...result, cancelRequested: current.phase === "unknown" });
+        const receipt = retain({ ...result, cancelRequested: current.phase === "unknown", binding: structuredClone(current.command.binding) });
         current.detach(); current.resolve(receipt);
         if (result.outcome === "unknown") current.phase = "unknown";
         else pending = undefined;
@@ -169,8 +170,8 @@ export function createBrowserCompanionHost(options: BrowserCompanionHostOptions)
       selected: selected ? structuredClone(selected) : null,
       operation: pending ? { operationId: pending.command.operationId, phase: pending.phase } : null }),
     observation: () => observation ? structuredClone(observation) : undefined,
-    observe: (binding: BrowserBinding, signal?: AbortSignal) => dispatch("observe", binding, undefined, signal),
-    act: (binding: BrowserBinding, action: unknown, signal?: AbortSignal) => dispatch("act", binding, action, signal),
+    observe: (binding: BrowserBinding, signal?: AbortSignal, operationId?: string) => dispatch("observe", binding, undefined, signal, operationId),
+    act: (binding: BrowserBinding, action: unknown, signal?: AbortSignal, operationId?: string) => dispatch("act", binding, action, signal, operationId),
     receipt: (operationId: string) => receipts.has(operationId) ? structuredClone(receipts.get(operationId)) : undefined,
     revoke,
     close() { revoke(); pairingCode = undefined; closed = true; },

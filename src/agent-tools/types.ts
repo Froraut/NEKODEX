@@ -29,3 +29,13 @@ export interface StandaloneToolsPort {
   discover(scope: ToolScope, options?: { signal?: AbortSignal }): Promise<ToolDescriptor[]>;
   invoke(request: ToolInvocation, options?: { signal?: AbortSignal }): Promise<ToolOutcome>;
 }
+/** A trusted built-in implementation. The tool host remains the approval/journal owner. */
+export interface StandaloneBuiltinToolsProvider {
+  serverId: string;
+  discover(scope: ToolScope, options?: { signal?: AbortSignal }): Promise<ToolDescriptor[]>;
+  execute(request: Omit<ToolInvocation, "grantId">, options?: { signal?: AbortSignal }): Promise<Pick<ToolOutcome, "state" | "result" | "reason">>;
+  /** Reads an exact owned late receipt. It must never dispatch/observe/input during reconciliation. */
+  reconcile?(request: Omit<ToolInvocation, "grantId">, options?: { signal?: AbortSignal }): Promise<Pick<ToolOutcome, "state" | "result" | "reason"> | undefined>;
+  /** Trusted task-owner generation change; revoke only retained observations/owned pending work. */
+  invalidate?(taskId?: string): void;
+}

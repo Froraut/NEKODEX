@@ -64,7 +64,9 @@ separate facts.
 | Remote project workspace | [SSH/SFTP owner](launcher/electron/remote-workspace.cjs), [remote worktrees](launcher/electron/remote-worktrees.cjs), [IPC](launcher/electron/ipc/remote-workspace.cjs), [surface](launcher/src/RemoteWorkspaceSurface.tsx) | System SSH owns authentication/known-host policy; selected host/root identity binds reads, drafts, commands and remote Git. One-use approvals and signed durable receipts distinguish completed/unknown; reconnect does not replay mutations. |
 | Agent snapshot authority | [main grant signer](launcher/electron/agent-workspace-grant.cjs), [Bun snapshot store](src/agent-workspace/store.ts) | Picker-authorized exact paths are signed for task/family/generation, scope `pre-turn-snapshot-only`. The Bun before-offer hook persists one immutable dispatch baseline before execution; this grants no executor filesystem access. |
 | Standalone MCP and skills | [composition](src/agent-tools/composition.ts), [MCP host](src/agent-tools/mcp-host.ts), [journal](src/agent-tools/journal.ts), [skills](src/agent-tools/skills.ts), [managed text versions](src/agent-tools/managed-skills.ts), [installer](src/agent-tools/installer.ts), [package tree](src/agent-tools/package-tree.ts), [macOS MCP sandbox](src/agent-tools/sandbox.ts), [native policy](src/agent-tools/native-policy.ts) | Managed official package graph/tree receipts, pinned server recipes, schema validation and exact approval remain separate install/enable/connect/effect transitions. Reviewed MCP recipes can use the custom macOS Seatbelt boundary; OAuth, Windows/Linux sandbox and arbitrary native executor remain unsupported. Skills use granted roots/digest identity; explicitly reviewed local text imports/updates become immutable managed versions with current task-generation attachments and retained revoke/forget state. |
-| Browser companion/providers | [host](src/browser-companion/host.ts), [runtime](src/browser-companion/runtime.ts), [protocol/providers](src/browser-companion/providers.ts), [extension](browser-companion/manifest.json), [IPC](launcher/electron/ipc/browser-companion.cjs) | Explicit Chrome extension ID/pair/revoke and exact observation-bound browser actions; restart policy off, ChatGPT send unsupported. Desktop MCP binding is a provider contract, not an installed real OS capture/input implementation. |
+| Browser companion/providers | [host](src/browser-companion/host.ts), [runtime](src/browser-companion/runtime.ts), [protocol/providers](src/browser-companion/providers.ts), [extension](browser-companion/manifest.json), [IPC](launcher/electron/ipc/browser-companion.cjs) | Explicit Chrome extension ID/pair/revoke and exact observation-bound browser actions; restart policy off, ChatGPT send unsupported. Standalone browser tools use the existing builtin tool host/journal and exact task-generation attachments. A macOS native desktop helper/provider/controller now exists in source; actual owned-fixture capture/type/fresh AXPress click and exact selected-window UI are observed. Generic CG pixel fallback and real model/account remain unverified; ChatGPT send unsupported. |
+| Native desktop tools | [Swift helper](launcher/native/desktop-provider.swift), [pinned helper resolver](src/browser-companion/desktop-helper-path.ts), [native provider](src/browser-companion/macos-desktop.ts), [task controller](src/browser-companion/agent-desktop-tools.ts), [builder](scripts/build-desktop-helper.cjs) | macOS 14+ lazy helper, explicit enable/permission inspection/window selection and task-generation attachment. Default off; one exact selected-window/observation owner, bounded model screenshot and late receipts. Kernel process-start identity handles valid CLI-launched GUI apps without LaunchServices launchDate. Actual DEV window/permission selection, capture, literal AX typing and a separately approved fresh click via AX hit-test/AXPress were observed; generic CG pixel fallback was not exercised. |
+| Builtin tool continuation | [tool contract](src/agent-tools/types.ts), [browser leaf](src/browser-companion/agent-tools.ts), [host](src/agent-tools/mcp-host.ts), [image projection](src/agent-mode/tool-images.ts), [Agent runtime/store](src/agent-mode/runtime.ts) | MCP and builtin browser/desktop calls share one approval/journal/outbox; reconciliation reads exact retained receipts without executing. Canonical result images remain tool-call outputs; immutable late facts preserve prior unknown outcomes. |
 | Local control API | [routes](src/local-control-api/http.ts), [policy](src/local-control-api/policy.ts), [IPC](launcher/electron/ipc/local-control-api.cjs) | Separate revocable bearer, versioned bounded passive reads and explicit history-content scope. Opt-in scoped Agent actions reuse the existing task owner/command receipts; default reads never start work. |
 | Cross-client usage | [import/projection](launcher/electron/external-usage.cjs), [IPC](launcher/electron/ipc/external-usage.cjs), [surface](launcher/src/ExternalUsageSurface.tsx) | Explicitly picked Codex/Claude roots, incremental bounded source-scoped imports and optional versioned pricing. Estimates are API-equivalent comparisons, never bills or provider savings; overlapping/unknown sources stay outside the aggregate. |
 | Browser ownership | [host](launcher/electron/browser-host.cjs), [turn lifecycle](launcher/electron/browser-turn-lifecycle.cjs), [Manual turns](launcher/electron/browser-manual-turns.cjs), [artifact transfers](launcher/electron/browser-artifact-transfers.cjs), [workspaces](launcher/electron/browser-workspace-windows.cjs), [navigation policy](launcher/electron/browser-navigation-policy.cjs), [session probe script](launcher/electron/browser-auth-probe.cjs), [in-page session check](launcher/electron/browser-session-observation.cjs), [app user agent](launcher/electron/browser-user-agent.cjs), [network egress check](launcher/electron/network-egress-check.cjs), [announcement dismissal](launcher/electron/browser-announcements.cjs) | One shared tab map. Ledger settlement precedes removal receipts. Concrete task auth redirects retire cached identity and emit an authentication-required release receipt; a false completion becomes a retained failure, while explicit cancellation keeps its own outcome. Manual policy uses explicit ports; artifact delivery rechecks exact ownership after awaiting download. URL policy (including the toolbar address resolution), the page probe, the in-page session check and the automatic-surface announcement dismissal are stateless leaves; a typed ChatGPT address always loads in the ChatGPT tab so retained task tabs keep their conversation. The app presents one stable Chromium user agent on every view and cross-site frame because Cloudflare binds its clearance to it. After a Cloudflare challenge the host checks, at most every ten minutes and in a throwaway session with the account's network settings, whether the public address changes between connections, and publishes only the verdict; the host owns probe sequencing, dismissal enablement and published authentication state. |
@@ -318,7 +320,11 @@ prove a released or installed feature. Source baseline [PR #98](https://github.c
 (`137399d`, `6.1.32-nekodex.9`) passed all four baseline CI jobs; installed D01
 remains `6.1.32-nekodex.8`. The later requirements/base-selection/canonical-history/
 managed-skills batch has its own fixture evidence and four completed DEV UI flows,
-while its source publication remains separate from the earlier baseline CI. The
+while its source publication remains separate from the earlier baseline CI. Source commit
+`09383bb` contains that follow-up; the newer builtin browser/native desktop batch
+is uncommitted and has no real model/account turn; actual fixture capture/type is
+observed, including a separate fresh observe→click→canonical-final flow. Real
+model/account and generic CG pixel fallback remain unverified. The
 [full adoption program](docs/design/full-adoption-program.md) records the broader
 36-capability scope. Keep composition evidence separate from contract fixtures,
 development UI, live provider results and installed delivery.
@@ -499,11 +505,72 @@ Archive/uninstall records an exact pre-intent source/target before rename and
 reconciles interrupted outcomes; changed targets are not overwritten. The
 [official install receipt](docs/reviews/2026-10-18-agent-tools-official-install.json)
 records filesystem server 1.0.0, 104 packages/4691 tree entries and disabled
-host/server with no MCP PID. OAuth and a real installed desktop provider remain gaps.
+host/server with no MCP PID. OAuth remains unsupported; native desktop source
+is described below, with observed fixture capture/input separated from installed
+delivery and real model/account execution.
 Chrome companion has explicit pair/revoke UI and an owned loopback listener; its
 selected tab/document/frame/observation contracts do not imply ChatGPT transport
-send support (`chatGptSendSupported: false`). The desktop MCP adapter requires a
-real provider implementing the pinned observation-input protocol.
+send support (`chatGptSendSupported: false`). The optional desktop MCP adapter still requires a provider implementing its
+pinned protocol; the new native macOS route is a separate implementation.
+
+**Builtin browser/desktop actions:** `StandaloneBuiltinToolsProvider` defines
+trusted `serverId/discover/execute/reconcile?/invalidate?` ports. `agent-tools.ts`
+attaches the selected Chrome binding to one current task generation; the same
+`StandaloneMcpHost` validates pending-call arguments, exact approval and durable
+unknown-before-effect before invoking browser or desktop. MCP enablement and
+browser/desktop attachment gates are independent. Generation changes invalidate
+task bindings only after commit; a duplicate command does not revoke again. The
+actual Chromium/MV3 composition fixture proves five inert model requests and one
+each intended effect across duplicate/restart, not a real account turn.
+
+The macOS controller lazily resolves a pinned helper, requires macOS14+, explicit
+enable, actual permission inspection and exact listed-window attachment. It owns
+one serialized native resource and rechecks window/process/epoch/screenshot
+identity before input. Model JPEG output is bounded and matches screenshot identity;
+execution-only receipts do not prove application acceptance. Source compilation/passive evidence is now supplemented by actual DEV window
+selection, inspected permissions, JPEG capture (70027/78916 bytes) and exact literal
+AX typing confirmed in the CUA field. A valid CLI-launched app can lack
+`NSRunningApplication.launchDate`; the helper uses kernel PID start identity.
+A separate new task then captured a fresh1120×624 image, approved exact click
+coordinates(280,290), received completed/`ax-press-dispatched`, and CUA showed the
+fixture counter at1 with literal text unchanged. Its third synthetic model offer
+received canonical click output and ended `review_required`3/3 with no pending
+calls; it did not become `verified_complete`. This proves coordinate→AX hit-test/
+AXPress on the owned background fixture, not generic CG pixel fallback, real
+account/model execution or arbitrary business completion. Helper build/copy uses sibling manifest layout
+with no fallback to another checkout. Source `src/cli.ts` alone passes the pin
+from `resolveDevelopmentDesktopHelper(import.meta.url)`: exact canonical source
+entry and package identity bind its own checkout helper, with byte/mode checks.
+Packaged `cli.js` returns no development pin and retains installed sibling lookup;
+renderer/config/environment cannot select a helper path. Resolver fixture: two
+cases /14 assertions. Windows native provider is absent.
+
+`buildAgentToolContinuationInput` preserves source input/output/call order and
+puts standard PNG/JPEG image results into `function_call_output.output` beside
+metadata, never a fabricated human message. Limits include earlier canonical
+images: at most two and 160 KiB combined; malformed/unsupported/over-budget image
+returns confirmed not_sent before fetch. Existing result/canonical byte limits
+remain in force. `reconcileToolReceipt` reads only an exact original retained
+receipt; `agent_tool_reconciliations` appends immutable facts and preserves old
+unknown. Effective current-generation matching continuation may become ready;
+old-generation late result never reactivates a task/worker or replays input.
+The admin `get` projection now returns compact `pendingToolCalls` and independent
+coverage alongside bounded dispatch history. Latest pending-call controls must
+not disappear merely because retained screenshot-bearing history exceeds 128 KiB.
+HTTP owns selection/current-scope filtering; renderer consumes that explicit list
+instead of reconstructing pending authority from a possibly omitted dispatch.
+Original images, canonical/result limits and journal outcomes are unchanged; this
+projection correction does not replay an operation. Original DEV task stayed paused generation2 at4/6, with no typing replay. The
+new click-only flow independently exercised current pending-call UI and canonical
+continuation; the earlier large two-image UI case was not rerun after the metadata
+fix. Focused HTTP/UI regressions cover that projection. Old raw JPEGs remain in
+private evidence; the two-image/160 KiB canonical limit remains meaningful for
+future image-history strategy, not permission to enlarge budgets silently.
+Private fake-supervisor one-shot readiness belongs only to that DEV harness;
+actual Web/tunnel readiness and the production admission gate are separate.
+
+Browser/desktop tool receipts remain excluded from task business-evidence
+projection until a separate trusted application observer establishes its outcome.
 
 Local control routes use a separate policy/bearer and bounded passive snapshots;
 unopened sources remain unavailable rather than being started by a read. Explicit

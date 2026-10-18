@@ -4,6 +4,7 @@ export { activeTaskEvidence } from "./evidence";
 export { AgentModeRuntime } from "./runtime";
 export { createAgentModeRoutes } from "./http";
 export { createLocalResponsesExecutionPort } from "./provider";
+export { buildAgentToolContinuationInput, AgentToolImageProjectionError } from "./tool-images";
 export type { AgentModeRuntimeOptions, ScopedAgentAction, AgentActionScope } from "./runtime";
 export type { AgentModeRouteOptions, AgentEvidenceReference } from "./http";
 export type { LocalResponsesProviderOptions, AgentModelOption } from "./provider";

@@ -157,7 +157,103 @@ unavailable or `not_sent`; a call offered to the MCP host without a matching
 terminal provider receipt stays `unknown` and blocks that adapter. Invalidation
 cannot clear unknown delivery. Reconciliation belongs to the existing durable MCP
 call journal; replacing an adapter is not authorization to repeat its old input.
-No actual desktop OS provider is bundled or claimed tested by the contract fixture.
+The generic MCP contract fixture does not prove OS capture/input. Concrete macOS
+source and its separate consumer are described below; Windows remains unavailable.
+
+## Standalone native desktop consumer (P13)
+
+`agent-desktop-tools.ts` exports a controller/built-in around the trusted
+`MacosDesktopProvider` factory. One lazily created native provider owns its helper,
+selected window, raw image and input receipts. The controller starts off, stores
+no enablement or task attachment across restart, and never accepts a model or
+renderer helper path, command or unverified process identity. Its synchronous
+`status()` and model `discover()` read cached state only; they do not instantiate
+the provider, start its child, inspect windows, capture the OS or request consent.
+
+Trusted explicit controls separately inspect permissions, list window metadata,
+enable capture/input, select-and-bind one exact list row, revoke task attachment,
+disable or close. Selection pins window ID, process-start identity and window
+epoch from both the explicitly inspected list and a fresh native list before
+selection. The global selected window is separate from task ID/generation
+attachment. Replacing a selection clears prior cached authority before native
+selection can commit, so a failed following status read cannot let an old task
+capture the newly chosen window. OS permission prompts/settings remain external
+human actions; the controller only reports preflight results.
+
+The existing shared tool host declares `desktop/observe`, `desktop/click` and
+`desktop/type` together and retains the same per-call approval, grant fingerprint,
+durable journal and canonical continuation owner. An approved observe captures
+only the attached exact window and emits its `DesktopObservation`/binding with
+standard MCP image content. The model JPEG is bounded to 160 KiB, has the same
+pixel dimensions as its source PNG, and carries its own hash and the source
+screenshot ID; the full result is bounded to 256 KiB. The raw PNG, allowed up to
+8 MiB by its private native resource, is never copied into this model/tool result.
+The native provider validates the JPEG codec dimensions/source binding, and the
+controller validates its identity and result size again. Observing discloses this
+selected screenshot to the task's model and private saved tool results; it is not
+permission for input.
+
+Click/type need this task generation's exact latest window/process/frame/epoch/
+screenshot binding. Coordinates are integer screenshot pixels with no scaling or
+implicit window switch. Input consumes that observation and uses a stable native
+UUID derived from the shared execution owner's idempotency key. Cancellation or a
+soft wait without a terminal receipt retains unknown delivery and its physical
+native owner. Passive `activeCount` includes that pending owner after the JavaScript
+call returns; `waitForIdle` uses native owner notifications, not another request or
+timer that aborts accepted input. Explicit revoke/invalidation/close abort only
+their owned work. Shutdown closes the native provider before waiting for the
+shared tool host to drain.
+
+Read-only reconciliation checks the old exact operation, screenshot binding,
+task scope and original action against retained native receipts. It neither starts
+a helper nor observes, sends input or reactivates revoked attachments. A terminal
+receipt is native input execution proof only; actual application acceptance still
+requires a later observation. macOS helper source and this controller do not
+establish Windows support, installed system permissions or live OS behavior from
+an injected fixture.
+
+## Standalone Agent browser consumer (P12)
+
+`agent-tools.ts` is a built-in leaf for the existing standalone tool host. It
+exports `createAgentBrowserToolsProvider({ provider, isScopeActive })` with
+`serverId: "browser"`, `discover`, `execute`, read-only late `reconcile`, and trusted
+task attachment controls `bind`, `revoke`, `status` and `invalidate`. It owns no
+second grant store, tool journal, browser resource or model sender. The existing
+host alone resolves the exact pending Agent call, obtains the human's per-call
+approval, consumes its fingerprinted grant, journals unknown-before-effect, and
+settles the terminal result used by canonical Responses continuation.
+
+User selection in the extension does not attach a page to every task. Attachment
+defaults off, is explicit for one task ID/generation and exact selected
+session/tab/window/main-frame/document/epoch/user scope, and is held only in
+memory. A correction/generation change or new user selection cannot inherit old
+authority. The trusted composition supplies the runtime provider callback and
+checks active task scope; no renderer-supplied URL, provider, ownership or grant
+reaches execution. A tool call still needs its separate exact approval.
+
+All three tools (`browser/observe`, `browser/click`, `browser/type`) are declared
+together so the same Responses continuation retains the available tool contract.
+Discovery supplies opaque selection IDs but does not disclose page URL, title or
+text before an approved observation. Observe requires an exact full binding and
+returns the fresh observation plus its binding. Input requires that same binding
+and a returned ref; the leaf checks both the task's approved observation and the
+current provider observation before delegating. Every input consumes refs, so
+further input requires another approved observe. There is no arbitrary selector,
+script, navigation, account selection or ChatGPT submission API.
+An approved observe discloses that selected page snapshot to this task's model
+context and private saved tool results; the tool description makes that boundary
+explicit. Task revocation removes future input authority, without deleting the
+existing execution owner's historical receipts or rewriting model context.
+
+The execution owner passes its idempotency key through as a stable opaque
+`agent_browser:<sha256>` extension operation ID. The host refuses consumed IDs
+and adds the original command binding to its receipts rather than trusting a
+binding supplied in extension result JSON. Cancellation after delivery remains
+unknown. Reconciliation only reads a retained exact operation/binding receipt;
+it works without reviving the old task attachment and never calls observe/act.
+Missing receipt after runtime loss remains unknown. A terminal click/type result
+is explicitly browser-input execution proof, with no website acceptance or
+model-send claim.
 
 ## ChatGPT transport boundary
 
@@ -204,6 +300,18 @@ host grants. The popup HTML runs as an extension test tab, as documented by
 Playwright; headless Chromium's toolbar popup is not exposed as a Playwright page.
 This verifies the extension permission/transport flow, not a visible toolbar
 popup, a user's Chrome profile installation, account sign-in or provider send.
+Its reusable owned setup is `tests/fixtures/browser-companion-extension.ts`, so a
+connected Agent/model approval fixture can use the same actual extension boundary
+without inventing another browser owner or broad test matrix.
+`tests/agent-browser-tools.test.ts` checks default-off task attachment, exact
+generation/document/ref ownership, no pre-observe content disclosure, consumed
+input, stable wire operation IDs and cancellation/late receipt reconciliation
+against the real host protocol with an inert extension protocol fixture.
+`tests/agent-desktop-tools.test.ts` is one pure injected native-transport fixture
+covering passive/default-off state, explicit controls, exact list-row attachment,
+bounded standard model image, consumed and out-of-bounds input, physical owner
+retention/late action-specific reconciliation, and post-selection read failure.
+It creates no native child and captures or inputs nothing on the actual OS.
 
 Actual user-profile extension installation, visible toolbar-popup UX, composed app pairing UI,
 selected account/turn integration and native desktop providers still require

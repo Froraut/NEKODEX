@@ -43,18 +43,22 @@ export class ToolJournal {
     const row = this.db.query("SELECT receipt FROM tool_calls WHERE event_id=?").get(sourceEventId) as { receipt: string } | null;
     return row ? JSON.parse(row.receipt) : undefined;
   }
-  begin(request: ToolInvocation): { inserted: boolean; outcome: ToolOutcome } {
+  existing(request: Pick<ToolInvocation, "scope" | "tool" | "arguments" | "idempotencyKey">): ToolOutcome | undefined {
     if (typeof request.idempotencyKey !== "string" || !request.idempotencyKey || request.idempotencyKey.length > 240) throw new Error("Invalid tool idempotency key");
     const fingerprint = invocationFingerprint(request);
     const scopeKey = canonical(request.scope);
+    const row = (this.db.query("SELECT fingerprint,receipt FROM tool_calls WHERE id=?").get(request.idempotencyKey) ?? this.db.query("SELECT fingerprint,receipt FROM tool_calls WHERE scope_key=?").get(scopeKey)) as { fingerprint: string; receipt: string } | null;
+    if (!row) return undefined;
+    if (row.fingerprint !== fingerprint) throw new Error("Tool idempotency identity conflict");
+    return JSON.parse(row.receipt);
+  }
+  begin(request: ToolInvocation, sourcePrefix = "mcp"): { inserted: boolean; outcome: ToolOutcome } {
+    if (!/^[a-z][a-z0-9_-]{0,39}$/.test(sourcePrefix)) throw new Error("Invalid trusted tool source namespace");
+    const fingerprint = invocationFingerprint(request); const scopeKey = canonical(request.scope);
     const outcome: ToolOutcome = { idempotencyKey: request.idempotencyKey, scope: request.scope, tool: request.tool, state: "outcome_unknown", reason: "Dispatch admitted; terminal server receipt not established" };
     return this.db.transaction(() => {
-      const existing = (this.db.query("SELECT fingerprint,receipt FROM tool_calls WHERE id=?").get(request.idempotencyKey) ?? this.db.query("SELECT fingerprint,receipt FROM tool_calls WHERE scope_key=?").get(scopeKey)) as { fingerprint: string; receipt: string } | null;
-      if (existing) {
-        if (existing.fingerprint !== fingerprint) throw new Error("Tool idempotency identity conflict");
-        return { inserted: false, outcome: JSON.parse(existing.receipt) as ToolOutcome };
-      }
-      this.db.query("INSERT INTO tool_calls VALUES (?,?,?,?,?)").run(request.idempotencyKey, `mcp:${sha256(request.idempotencyKey)}`, scopeKey, fingerprint, JSON.stringify(outcome));
+      const existing = this.existing(request); if (existing) return { inserted: false, outcome: existing };
+      this.db.query("INSERT INTO tool_calls VALUES (?,?,?,?,?)").run(request.idempotencyKey, `${sourcePrefix}:${sha256(request.idempotencyKey)}`, scopeKey, fingerprint, JSON.stringify(outcome));
       return { inserted: true, outcome };
     })();
   }

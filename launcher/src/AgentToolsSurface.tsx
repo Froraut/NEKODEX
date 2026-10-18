@@ -6,6 +6,18 @@ import { stripIpcErrorPrefix } from './ipc-error';
 import './surfaces/agent-tools.css';
 import { AgentToolsInstaller } from './AgentToolsInstaller';
 import { AgentManagedSkills } from './AgentManagedSkills';
+import { AgentBrowserTools } from './AgentBrowserTools';
+import { AgentDesktopTools } from './AgentDesktopTools';
+import { AgentToolOutcomeView } from './AgentToolOutcomeView';
+
+/** The current owner supplies actionable calls separately from bounded image/history rows.
+ * An explicitly empty projection must never resurrect old dispatch calls. */
+export function agentPendingCalls(detail: Awaited<ReturnType<AgentToolsApi['getTask']>>) {
+  if (detail.pendingToolCalls !== undefined) return detail.pendingToolCalls;
+  return detail.dispatches.filter(dispatch => dispatch.generation === detail.task.generation)
+    .flatMap(dispatch => dispatch.result?.continuation?.pending ?? [])
+    .filter(call => !detail.toolOutcomes?.some(outcome => outcome.scope.generation === detail.task.generation && outcome.scope.toolCallId === call.toolCallId));
+}
 
 function Area({ label, value, onChange, hint }: { label: string; value: string; onChange: (value: string) => void; hint?: string }) {
   const id = useId(); return <div className="nk-field"><label htmlFor={id}>{label}</label><textarea id={id} className="nk-input" rows={3} value={value} onChange={event => onChange(event.target.value)} maxLength={32768} aria-describedby={hint ? `${id}-hint` : undefined} />{hint ? <p className="nk-field__hint" id={`${id}-hint`}>{hint}</p> : null}</div>;
@@ -20,6 +32,7 @@ export function AgentToolsSurface({ api, language, disabled = false }: { api: Ag
   const [tasks, setTasks] = useState<{ id: string; generation: number; status: string }[]>([]);
   const [taskId, setTaskId] = useState(''); const selectedTask = tasks.find(task => task.id === taskId);
   const [calls, setCalls] = useState<{ toolCallId: string; tool: string; arguments: Record<string, unknown> }[]>([]);
+  const [pendingCallsTruncated, setPendingCallsTruncated] = useState(false);
   const [callId, setCallId] = useState(''); const selectedCall = calls.find(call => call.toolCallId === callId);
   const [result, setResult] = useState<ToolOutcome | null>(null);
   const [receiptKey, setReceiptKey] = useState(''); const [requirementId, setRequirementId] = useState('r1');
@@ -30,6 +43,9 @@ export function AgentToolsSurface({ api, language, disabled = false }: { api: Ag
   const [review, setReview] = useState<{ reviewId: string; recipe: ServerRecipe; trust: string } | null>(null); const [trusted, setTrusted] = useState(false);
   const [skills, setSkills] = useState<SkillIdentity[]>([]); const [preview, setPreview] = useState('');
   const locked = disabled || pending;
+  const browserEnabledForTask = !!selectedTask && status?.browserTools?.available === true && !!status.browserTools.selected && status.browserTools.bindings.some(row => row.taskId === selectedTask.id && row.generation === selectedTask.generation && Object.keys(row.binding).filter(key => key !== 'observationId').every(key => row.binding[key as keyof typeof row.binding] === status.browserTools!.selected![key as keyof typeof row.binding]));
+  const desktopEnabledForTask = !!selectedTask && status?.desktopTools?.enabled === true && !!status.desktopTools.selected && status.desktopTools.bindings.some(row => row.taskId === selectedTask.id && row.generation === selectedTask.generation && row.selection.windowId === status.desktopTools!.selected!.windowId && row.selection.processId === status.desktopTools!.selected!.processId && row.selection.windowEpoch === status.desktopTools!.selected!.windowEpoch);
+  const discoveryEnabled = status?.config.enabled || browserEnabledForTask || desktopEnabledForTask;
   const scope = (toolCallId = `discovery:${taskId}`): ToolScope => { if (!selectedTask) throw new Error(choose('Select an owned Agent task.', 'Выберите существующую Agent-задачу.')); return { taskId: selectedTask.id, generation: selectedTask.generation, toolCallId }; };
   const refresh = async () => {
     const [nextStatus, listing] = await Promise.all([transport.current.request({ action: 'status' }) as Promise<AgentToolsStatus>, transport.current.listTasks()]);
@@ -43,10 +59,13 @@ export function AgentToolsSurface({ api, language, disabled = false }: { api: Ag
   useEffect(() => { mounted.current = true; if (!disabled) void act(refresh); return () => { mounted.current = false; }; }, []);
   useEffect(() => { if (!disabled && !status && !busy.current) void act(refresh); }, [disabled]);
   const loadTask = async (value: string) => {
-    setTaskId(value); setCallId(''); setCalls([]); setResult(null);
+    setTaskId(value); setCallId(''); setCalls([]); setResult(null); setPendingCallsTruncated(false);
     if (!value) return;
     const detail = await transport.current.getTask(value);
-    if (mounted.current) setCalls(detail.dispatches.filter(dispatch => dispatch.generation === detail.task.generation).flatMap(dispatch => dispatch.result?.continuation?.pending ?? []).filter(call => !detail.toolOutcomes?.some(outcome => outcome.scope.generation === detail.task.generation && outcome.scope.toolCallId === call.toolCallId)));
+    if (mounted.current) {
+      setCalls(agentPendingCalls(detail));
+      setPendingCallsTruncated(detail.coverage?.pendingToolCalls?.truncated === true);
+    }
   };
   const invalidateReview = (setter: (value: string) => void) => (value: string) => { setter(value); setReview(null); setTrusted(false); };
   return <Page className="agent-tools-surface">
@@ -67,15 +86,17 @@ export function AgentToolsSurface({ api, language, disabled = false }: { api: Ag
     </Panel>
     <Panel title={choose('Owned task and pending tool call', 'Задача и ожидающий вызов инструмента')}>
       <Select label={choose('Agent task', 'Agent-задача')} value={taskId} disabled={locked} onChange={value => void act(() => loadTask(value))} options={[{ value: '', label: choose('Choose a task', 'Выберите задачу') }, ...tasks.map(task => ({ value: task.id, label: `${task.id} · ${task.status} · gen ${task.generation}` }))]} />
-      <Button variant="secondary" disabled={locked || !selectedTask || !status?.config.enabled} onClick={() => void act(async () => { await transport.current.request({ action: 'discover', scope: scope(), explicitUserAction: true }); await refresh(); })}>{choose('Connect and discover tools', 'Подключить и найти инструменты')}</Button>
+      <Button variant="secondary" disabled={locked || !selectedTask || !discoveryEnabled} onClick={() => void act(async () => { await transport.current.request({ action: 'discover', scope: scope(), explicitUserAction: true }); await refresh(); })}>{choose('Connect and discover tools', 'Подключить и найти инструменты')}</Button>
       {status?.descriptors.length ? <ul className="agent-tools-records">{status.descriptors.map(tool => <li key={tool.id}><strong>{tool.id}</strong><Badge tone={tool.supported ? 'neutral' : 'warning'}>{tool.supported ? choose('Schema available; approval required', 'Схема доступна; требуется подтверждение') : choose('Unsupported schema', 'Схема не поддерживается')}</Badge><span>{tool.description ?? tool.unsupportedReason}</span></li>)}</ul> : null}
       <Select label={choose('Saved model tool request', 'Сохранённый запрос инструмента модели')} value={callId} disabled={locked || !calls.length} onChange={value => { setCallId(value); setResult(null); }} options={[{ value: '', label: choose('Select an exact pending call', 'Выберите точный ожидающий вызов') }, ...calls.map(call => ({ value: call.toolCallId, label: `${call.tool} · ${call.toolCallId}` }))]} />
-      {selectedCall ? <><pre className="agent-tools-call">{JSON.stringify(selectedCall, null, 2)}</pre><Button disabled={locked || !status?.config.enabled} onClick={() => void act(async () => { const outcome = await transport.current.request({ action: 'approveInvoke', scope: scope(selectedCall.toolCallId), explicitUserAction: true }) as ToolOutcome; if (mounted.current) setResult(outcome); await refresh(); })}>{choose('Approve and invoke this exact call', 'Подтвердить и выполнить этот вызов')}</Button></> : <p className="agent-tools-muted">{choose('The model must first return a tool call in this task. The host resolves arguments from its saved dispatch; this panel cannot invent a call.', 'Сначала модель должна вернуть вызов инструмента в этой задаче. Host берёт аргументы из сохранённого dispatch; панель не создаёт произвольные вызовы.')}</p>}
-      {result ? <div aria-live="polite"><Badge tone={result.state === 'completed' ? 'success' : 'warning'}>{result.state}</Badge><pre>{JSON.stringify(result, null, 2)}</pre>{result.state === 'outcome_unknown' ? <Notice tone="warning">{choose('The effect may already have occurred. The retained receipt blocks automatic replay.', 'Действие могло уже произойти. Сохранённая квитанция блокирует автоматический повтор.')}</Notice> : null}</div> : null}
+      {pendingCallsTruncated ? <Notice tone="warning">{choose('The current pending-call projection is bounded. Additional retained calls are outside this view; the saved task history is preserved.', 'Список текущих вызовов ограничен. Дополнительные сохранённые вызовы не входят в эту выборку; история задачи сохранена.')}</Notice> : null}
+      {selectedCall ? <><pre className="agent-tools-call">{JSON.stringify(selectedCall, null, 2)}</pre><Button disabled={locked || !(selectedCall.tool.startsWith('browser/') ? browserEnabledForTask : selectedCall.tool.startsWith('desktop/') ? desktopEnabledForTask : status?.config.enabled)} onClick={() => void act(async () => { const outcome = await transport.current.request({ action: 'approveInvoke', scope: scope(selectedCall.toolCallId), explicitUserAction: true }) as ToolOutcome; if (mounted.current) setResult(outcome); await refresh(); })}>{choose('Approve and invoke this exact call', 'Подтвердить и выполнить этот вызов')}</Button></> : <p className="agent-tools-muted">{choose('The model must first return a tool call in this task. The host resolves arguments from its saved dispatch; this panel cannot invent a call.', 'Сначала модель должна вернуть вызов инструмента в этой задаче. Host берёт аргументы из сохранённого dispatch; панель не создаёт произвольные вызовы.')}</p>}
+      {result ? <div aria-live="polite"><Badge tone={result.state === 'completed' ? 'success' : 'warning'}>{result.state}</Badge><AgentToolOutcomeView outcome={result} choose={choose} />{result.state === 'outcome_unknown' ? <Notice tone="warning">{choose('The effect may already have occurred. The retained receipt blocks automatic replay.', 'Действие могло уже произойти. Сохранённая квитанция блокирует автоматический повтор.')}</Notice> : null}</div> : null}
       <TextField label={choose('Retained receipt key', 'Ключ сохранённой квитанции')} value={receiptKey} onChange={event => { setReceiptKey(event.target.value); setEvidenceReference(null); }} />
       <Button disabled={locked || !receiptKey} onClick={() => void act(async () => { const receipt = await transport.current.request({ action: 'receipt', idempotencyKey: receiptKey }) as ToolOutcome | null; if (mounted.current) setResult(receipt); })}>{choose('Inspect saved receipt', 'Посмотреть сохранённую квитанцию')}</Button>
+      {result && (result.tool.startsWith('browser/') || result.tool.startsWith('desktop/')) ? <p className="agent-tools-muted">{choose('Browser/desktop receipts are available for execution inspection and reconciliation. Attaching them as task outcome evidence is unsupported here; application acceptance needs a separate trusted observer.', 'Квитанции браузера и рабочего стола доступны для просмотра и сверки исполнения. Их прикрепление как доказательства результата задачи здесь не поддерживается; результат в приложении требует отдельного доверенного наблюдения.')}</p> : null}
       <TextField label={choose('Explicit terminal-result requirement ID', 'ID явного требования к terminal result')} value={requirementId} onChange={event => { setRequirementId(event.target.value); setEvidenceReference(null); }} />
-      <Button disabled={locked || !result || result.state === 'outcome_unknown' || !requirementId} onClick={() => void act(async () => { const reference = await transport.current.request({ action: 'terminalReference', idempotencyKey: result!.idempotencyKey, requirementId }) as typeof evidenceReference; if (mounted.current) setEvidenceReference(reference); })}>{choose('Inspect exact terminal evidence reference', 'Посмотреть точную ссылку на terminal evidence')}</Button>
+      <Button disabled={locked || !result || result.state === 'outcome_unknown' || !requirementId || result.tool.startsWith('browser/') || result.tool.startsWith('desktop/')} onClick={() => void act(async () => { const reference = await transport.current.request({ action: 'terminalReference', idempotencyKey: result!.idempotencyKey, requirementId }) as typeof evidenceReference; if (mounted.current) setEvidenceReference(reference); })}>{choose('Inspect exact terminal evidence reference', 'Посмотреть точную ссылку на terminal evidence')}</Button>
       {evidenceReference ? <div><pre>{JSON.stringify(evidenceReference, null, 2)}</pre><p>{choose('This proves only the immutable protocol result. To request this exact historical observation, the current task requirement must explicitly be:', 'Это доказывает только неизменяемый результат протокола. Для наблюдения этой исторической квитанции текущее требование задачи должно явно содержать:')}</p><pre>{`Observe the terminal MCP tool result for ${evidenceReference.subject}; property mcp.tool-terminal-result.`}</pre><Button disabled={locked || !selectedTask || !api.attachEvidence} onClick={() => void act(async () => { await transport.current.attachEvidence!(selectedTask!.id, evidenceReference); await refresh(); })}>{choose('Attach observed terminal evidence', 'Приложить наблюдение terminal result')}</Button></div> : null}
     </Panel>
     <Panel title={choose('Selected read-only skills', 'Выбранные skills только для чтения')} actions={<Button variant="secondary" disabled={locked} onClick={() => void act(async () => { await transport.current.pickSkillRoot(); await refresh(); })}>{choose('Choose skill root', 'Выбрать каталог skills')}</Button>}>
@@ -84,6 +105,8 @@ export function AgentToolsSurface({ api, language, disabled = false }: { api: Ag
       {skills.length ? <ul className="agent-tools-records">{skills.map(skill => <li key={skill.id}><strong>{skill.relativePath}</strong><small>{skill.source} · SHA-256 {skill.digest}</small><Button size="sm" disabled={locked || !selectedTask} onClick={() => void act(async () => { const selected = await transport.current.request({ action: 'skillsSelect', scope: scope(`skill:${skill.id}`), identity: skill, explicitUserAction: true }) as { content: string }; if (mounted.current) setPreview(selected.content); await refresh(); })}>{choose('Select for this task and preview', 'Выбрать для задачи и просмотреть')}</Button></li>)}</ul> : null}
       {preview ? <pre className="agent-tools-skill-preview">{preview}</pre> : null}
     </Panel>
+    <AgentBrowserTools api={api} status={status} scope={selectedTask ? { taskId: selectedTask.id, generation: selectedTask.generation, toolCallId: 'browser-selection' } : undefined} locked={locked} choose={choose} act={act} refresh={refresh} />
+    <AgentDesktopTools api={api} desktop={status?.desktopTools} scope={selectedTask ? { taskId: selectedTask.id, generation: selectedTask.generation, toolCallId: 'desktop-selection' } : undefined} locked={locked} choose={choose} act={act} refresh={refresh} />
     <AgentManagedSkills api={api} status={status} sources={skills} scope={selectedTask ? { taskId: selectedTask.id, generation: selectedTask.generation, toolCallId: 'managed-skill-selection' } : undefined} locked={locked} choose={choose} act={act} refresh={refresh} />
   </Page>;
 }

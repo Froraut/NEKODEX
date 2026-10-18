@@ -17,7 +17,8 @@ import { VERSION } from "../src/version";
 import { createRequire } from "node:module";
 const { beginDirectoryBuild } = createRequire(import.meta.url)("./build-output.cjs");
 const { compileCredentialHelper } = createRequire(import.meta.url)("./build-credential-helper.cjs");
-const { signEmbeddedRuntime } = createRequire(import.meta.url)("../launcher/scripts/release-signing.cjs");
+const { compileDesktopHelper } = createRequire(import.meta.url)("./build-desktop-helper.cjs");
+const { signEmbeddedRuntime, signDesktopHelper } = createRequire(import.meta.url)("../launcher/scripts/release-signing.cjs");
 
 const root = resolve(import.meta.dir, "..");
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
@@ -118,6 +119,14 @@ if (credentialHelper.supported) {
   mkdirSync(helperDirectory, { recursive: true });
   copyFileSync(credentialHelper.executable, join(helperDirectory, "nekodex-credential-helper"));
   chmodSync(join(helperDirectory, "nekodex-credential-helper"), 0o755);
+}
+const desktopHelper = compileDesktopHelper({ repositoryRoot: root, development: true,
+  sign: (candidate: string) => signDesktopHelper(candidate, process.platform, process.env, { development: true }) });
+if (desktopHelper.supported) {
+  const helperDirectory = join(appDir, "desktop-helper", `${process.platform}-${process.arch}`);
+  mkdirSync(helperDirectory, { recursive: true });
+  copyFileSync(desktopHelper.executable, join(helperDirectory, "nekodex-desktop-helper"));
+  chmodSync(join(helperDirectory, "nekodex-desktop-helper"), 0o755);
 }
 
 

@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { readJsonRequestBody } from "../http-body";
 import type { AgentToolsComposition } from "./composition";
+import { browserBindingSchema } from "../browser-companion/protocol";
+import { macosWindowSelectionSchema } from "../browser-companion/macos-desktop";
 
 const scope = z.object({ taskId: z.string().min(1).max(200), generation: z.number().int().positive(), toolCallId: z.string().min(1).max(200) }).strict();
 const identity = z.object({ id: z.string().min(1).max(8192), grantId: z.string().min(1).max(80), relativePath: z.string().min(1).max(4096), source: z.enum(["user", "workspace", "official-plugin", "vendor-plugin"]), digest: z.string().regex(/^[a-f0-9]{64}$/), bytes: z.number().int().nonnegative().max(512 * 1024) }).strict();
@@ -21,6 +23,14 @@ const requestBody = z.discriminatedUnion("action", [
   z.object({ action: z.literal("approveInvoke"), scope, explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("receipt"), idempotencyKey: z.string().min(1).max(240) }).strict(),
   z.object({ action: z.literal("terminalReference"), idempotencyKey: z.string().min(1).max(240), requirementId: z.string().min(1).max(128) }).strict(),
+  z.object({ action: z.literal("browserStatus"), scope: scope.optional() }).strict(),
+  z.object({ action: z.literal("bindBrowserTools"), scope, expectedBinding: browserBindingSchema, explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("revokeBrowserTools"), scope, explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("inspectDesktopPermissions"), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("listDesktopWindows"), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("setDesktopEnabled"), enabled: z.boolean(), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("selectDesktopWindow"), scope, expectedSelection: macosWindowSelectionSchema, explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("revokeDesktopTools"), scope, explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("skillRoot"), input: z.object({ root: z.string().min(1).max(4096), label: z.string().min(1).max(200) }).strict(), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("skillsDiscover"), grantId: z.string().min(1).max(80) }).strict(),
   z.object({ action: z.literal("removeSkillRoot"), grantId: z.string().min(1).max(80), explicitUserAction: z.literal(true) }).strict(),
@@ -58,6 +68,14 @@ export function createAgentToolsRoutes(composition: AgentToolsComposition, path 
         case "approveInvoke": value = await composition.approveInvoke(body.scope, body.explicitUserAction); break;
         case "receipt": value = composition.receipt(body.idempotencyKey) ?? null; break;
         case "terminalReference": value = composition.terminalReference(body.idempotencyKey, body.requirementId); break;
+        case "browserStatus": value = composition.browserStatus(body.scope); break;
+        case "bindBrowserTools": value = composition.bindBrowserTools(body.scope, body.expectedBinding, body.explicitUserAction); break;
+        case "revokeBrowserTools": value = composition.revokeBrowserTools(body.scope, body.explicitUserAction); break;
+        case "inspectDesktopPermissions": value = await composition.inspectDesktopPermissions(body.explicitUserAction); break;
+        case "listDesktopWindows": value = await composition.listDesktopWindows(body.explicitUserAction); break;
+        case "setDesktopEnabled": value = await composition.setDesktopEnabled(body.enabled, body.explicitUserAction); break;
+        case "selectDesktopWindow": value = await composition.selectDesktopWindow(body.scope, body.expectedSelection, body.explicitUserAction); break;
+        case "revokeDesktopTools": value = await composition.revokeDesktopTools(body.scope, body.explicitUserAction); break;
         case "skillRoot": value = composition.addSkillRoot(body.input, body.explicitUserAction); break;
         case "skillsDiscover": value = composition.discoverSkills(body.grantId); break;
         case "removeSkillRoot": value = composition.removeSkillRoot(body.grantId, body.explicitUserAction); break;
@@ -73,7 +91,7 @@ export function createAgentToolsRoutes(composition: AgentToolsComposition, path 
     } catch (error) {
       const invalid = error instanceof z.ZodError;
       // Fixed domain strings are safe; arbitrary filesystem/SDK errors can contain private paths.
-      const message = error instanceof Error && /^(?:Explicit |Current owned|No exact |Pending Agent|Wait for owned|Configuration review|Installers,|Interpreter recipes|Pinned server|Tools host|Standalone tool|Tool |Selected skill|Skill root|Skill source|Managed skill|Exact reviewed managed|Official\/vendor plugin|Native OS|Invalid secret|Unsupported server)/.test(error.message) ? error.message : "The tools action could not be completed. Inspect the current saved configuration and receipt before retrying.";
+      const message = error instanceof Error && /^(?:Explicit |Current owned|No exact |Pending Agent|Wait for owned|Configuration review|Reserved (?:builtin|browser|desktop)|Installers,|Interpreter recipes|Pinned server|Tools host|Standalone tool|Tool |Selected skill|Skill root|Skill source|Managed skill|Exact reviewed managed|Official\/vendor plugin|Native OS|Invalid secret|Unsupported server)/.test(error.message) ? error.message : "The tools action could not be completed. Inspect the current saved configuration and receipt before retrying.";
       return Response.json({ ok: false, error: invalid ? "invalid_request" : "agent_tools_conflict", message }, { status: invalid ? 400 : 409 });
     }
   };

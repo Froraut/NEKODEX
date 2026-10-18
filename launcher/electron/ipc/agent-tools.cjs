@@ -1,5 +1,7 @@
 const ACTIONS = new Set(['status', 'reviewServer', 'saveServer', 'setEnabled', 'removeServer', 'setServerEnabled', 'prepareInstall', 'installReviewed', 'installReceipt', 'cancelInstall', 'uninstallManaged', 'reviewInstalled', 'discover', 'approveInvoke', 'receipt', 'terminalReference', 'skillRoot', 'skillsDiscover', 'skillsSelect', 'removeSkillRoot']);
 for (const action of ['reviewSkillImport', 'commitSkillImport', 'managedSkillAction', 'attachManagedSkill', 'detachManagedSkill', 'revokeManagedSkill']) ACTIONS.add(action);
+for (const action of ['browserStatus', 'bindBrowserTools', 'revokeBrowserTools']) ACTIONS.add(action);
+for (const action of ['inspectDesktopPermissions', 'listDesktopWindows', 'setDesktopEnabled', 'selectDesktopWindow', 'revokeDesktopTools']) ACTIONS.add(action);
 /** Existing IPC sender guard and owned supervisor remain the sole authority. */
 function registerAgentTools({ handle, runtimeHost, dialog, getWindow }) {
   const request = async body => {

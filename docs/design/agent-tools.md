@@ -61,6 +61,95 @@ grant resolver belong to the trusted host, not model arguments. A successful
 SDK result is evidence of that exact protocol result. It does not independently
 prove an artifact, delivery, browser action or requested business outcome.
 
+### Trusted built-in execution and selected browser calls
+
+`StandaloneBuiltinToolsProvider` is a small trusted registration contract:
+`serverId`, `discover(scope, options)`, `execute(originalRequest, options)`,
+optional read-only `reconcile(originalRequest, options)`, and optional
+`invalidate(taskId)`. It owns no approval or journal. The existing standalone
+host owns supported schema validation, exact one-use grants, durable
+unknown-before-effect admission, terminal settlement and cancellation for both
+MCP and built-in tools. Built-in journal events use their namespace (for example
+`browser:`); MCP events remain `mcp:`. The `mcp` built-in namespace is reserved.
+A configured MCP/built-in namespace conflict fails explicitly without replacing
+or deleting the configured server or dispatching either source by alias.
+
+Composition accepts trusted `builtins` and an optional `browserTools` control
+port created by `createAgentBrowserToolsProvider`. The root supplies its current
+companion runtime through a callback; status/discovery does not start a browser,
+listener or pairing. MCP enablement gates MCP servers only. Browser tools remain
+off until a human explicitly attaches the exact currently selected companion
+binding to an owned task generation. Browser authority is not persisted across
+restart. The existing generic tool admin route supports `browserStatus`,
+`bindBrowserTools` (scope plus exact expected binding) and `revokeBrowserTools`;
+there is no raw observe/click/type admin execution route.
+
+The model receives fixed `browser/observe`, `browser/click`, `browser/type`
+descriptors mapped by the existing Responses provider. An approved observe
+returns bounded page text/refs to that task/model and its saved private tool
+result. Each input requires the exact returned tab/window/session/document/
+epoch/observation/ref, and consumes the usable observation. Changed selection,
+stale refs or foreign task/generation fail without input. A fresh observe is
+required before another input. The task's dispatcher and provider continuation
+still own every separately admitted model turn; the browser leaf adds no sender,
+model loop, scheduler or ChatGPT-send capability.
+
+Built-in observation waiting is distinct from cancellation. The host forwards
+only explicit caller/host shutdown signals to a built-in executor. Its bounded
+response wait may return the already retained unknown receipt, while the original
+execute promise remains owned until a terminal result or explicit cancellation;
+it can then settle the same journal without resending or resuming a task. An
+expired observation wait never supplies an input-cancellation signal. The
+composition also observes passive native physical-owner counts after a native
+controller returns an early unknown result, preventing a false idle handoff.
+
+`approveInvoke` resolves arguments from the immutable pending model call, checks
+for an exact retained journal receipt first, and only then discovers/authorizes
+new execution. A known old receipt can therefore be restored after host restart
+without reattaching the page or repeating an effect. `reconcileReceipt(exactRequest)`
+is the trusted core callback: it validates the original journal fingerprint and
+only reads a retained exact late built-in receipt. It never calls discovery,
+authorization, startup, observation or input. Missing late proof stays unknown.
+Core keeps its original unknown row and explicitly appends a reconciliation fact;
+known terminal projections do not rewrite history or reactivate an older task
+generation. `invalidateTaskTools(taskId)` lets the committed task-generation owner
+revoke only that task's observations/owned pending work without lazy startup.
+
+The Tools UI has a separate selected-document attachment panel and reuses the
+existing exact pending-call approval view. Revocation/stop can cancel queued
+work; input already accepted by the extension may still finish and must remain
+unknown until its exact receipt is reconciled. Input completion proves browser
+execution only, not website acceptance or business success. There is no arbitrary
+page selection, navigation, new-tab creation, cross-frame provider or account
+identity inference in this bounded route.
+
+The one connected `tests/agent-browser-composition.test.ts` case loads the actual
+MV3 extension in a disposable Chromium profile against an inert local page. It
+verifies pairing is not page permission, independent task attachment with MCP
+disabled, approved observe/type/fresh-observe/click, canonical function-call-output
+continuation across five counted model requests, no duplicate click effect,
+browser-prefixed receipt provenance, and known-result recovery after closing and
+reopening the host without browser reattachment. It closes its profile/listener
+and uses no real model account or ChatGPT sender. Separate focused built-in
+fixtures check exact unknown-to-late-terminal reconciliation without executing
+again; browser peer fixtures own lower-level stale/ref/cancel contracts.
+
+The native desktop controller plugs into the same host through the optional
+`desktopTools` composition port, which auto-registers its pure built-in executor.
+Do not register that same object a second time through `builtins`. Its status is
+passive; explicit `inspectDesktopPermissions`, `listDesktopWindows`,
+`setDesktopEnabled`, `selectDesktopWindow`, `revokeDesktopTools` admin actions
+use trusted controller methods. Root constructs the controller from the exact
+pinned helper factory; renderer/model arguments cannot name executables or
+native commands. Metadata inspection, enabling, exact window/task attachment
+and model-requested capture/input remain separate actions. Selected-window
+pending calls reuse the same approval view. On shutdown composition first
+invalidates task scopes and closes/drains the native resource controller, then
+waits for host calls and closes its journal. Browser/desktop receipts are not
+mislabelled as MCP or offered as business evidence; the MCP-only terminal
+evidence button is disabled for those namespaces in this batch. Their model
+image codec and OS provider tests remain with the provider/core owners.
+
 ## Server recipes and ownership
 
 Manual setup requires a trusted user-installed recipe with an absolute canonical

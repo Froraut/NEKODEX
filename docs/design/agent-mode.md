@@ -56,6 +56,29 @@ Agent result ledger; a missing copy after a crash is reconciled by reading the
 existing host receipt, without invoking the tool. Unknown tool outcomes block
 continuation and are never retried silently.
 
+An explicit `reconcile-tool` action may ask that same tool host to inspect an
+existing retained provider receipt. The core derives the original scope, tool,
+arguments and receipt key from its immutable model dispatch; the caller supplies
+neither arguments nor an outcome. The shared ToolJournal checks the exact
+request fingerprint. Reconciliation cannot discover, authorize, start or execute
+a tool. A missing or still-unknown receipt leaves the task blocked.
+
+When a terminal receipt exists, the core appends an `agent_tool_reconciliations`
+fact containing its source dispatch, original scope, request fingerprint,
+terminal digest, observation generation/revision and late flag. The original
+unknown row remains unchanged. Task details expose both histories and a separate
+effective-outcome projection for continuations. A matching current-generation
+paused continuation can become ready; a late old-generation fact cannot revive
+the task or worker. It requires a separate current-scope user action to adopt a
+known historical continuation. Action receipts deduplicate transport retries.
+
+Committed generation changes notify a generic trusted tool-invalidation hook
+before any replacement launch. The hook aborts only already-owned queued or
+in-flight input and does not start a browser/native host. Duplicate action
+receipts do not invalidate the same scope twice. A late effect remains uncertain
+until an exact retained terminal receipt resolves it; cancellation is never
+treated as proof that no effect occurred.
+
 A subsequent explicit Run/Step appends the exact `function_call_output` to the
 canonical Responses history, preserving the same logical model turn while
 admitting/counting a separate model request. There is no hidden model/tool loop
@@ -65,10 +88,24 @@ terminal outputs from an unchanged task revision; it invokes neither model nor
 tool. The next Run/Step can continue from those exact outputs. Missing/unknown
 outputs remain blocked. This transition does not revive a previous approval.
 
+Standard MCP image content is projected into Responses tool-result content, not
+JSON base64 text and not a newly authored user instruction. The function output
+keeps its exact call ID and turn binding; an `input_text` block carries receipt
+and non-image metadata, and `input_image` blocks carry validated inline PNG/JPEG
+data. The original retained ToolOutcome is immutable. Canonical base64, image
+signature/dimension headers, at most two images and 160 KiB of combined image
+bytes are checked before sending, including images already in canonical history.
+Unsupported or malformed image content and oversized continuations produce a
+confirmed not-sent outcome. The 256 KiB tool-result and 512 KiB continuation caps
+are unchanged. Frame dimensions and original screenshot-hash metadata remain
+available beside the actual image; projection does not certify screenshot
+contents as a verified business result.
+
 ## Durable schema and owner
 
 Schema version 1 uses `agent_tasks`, `agent_workers`, `agent_dispatches`,
-`agent_mail`, `agent_work`, `agent_tool_outcomes` and `agent_receipts`. Each row has its own immutable identity;
+`agent_mail`, `agent_work`, `agent_tool_outcomes`, `agent_tool_reconciliations`
+and `agent_receipts`. Each row has its own immutable identity;
 coupled updates run in an immediate SQLite transaction with full synchronous
 durability and SQLite rollback journalling. The directory is owner only and the
 database is a private regular file. A newer schema is refused. Storage quotas
@@ -228,7 +265,7 @@ separately from the explicit `verify` transition.
 
 `POST /admin/agent-mode` accepts `status`, `list`, `get`, `create`, `control`,
 `step`, `run`, `review`, `evidence`, `verify`, `workspace-grant`,
-`resume-continuation`, `enqueue-work`, `cycle` and `workspace-evidence`.
+`resume-continuation`, `reconcile-tool`, `enqueue-work`, `cycle` and `workspace-evidence`.
 Successful payloads use
 `{ ok: true, value }`; failures are sanitized `{ ok: false, error, message? }`.
 Reads and mutations both require the service control authority. Envelopes and
@@ -307,3 +344,19 @@ supersession without hiding an unrelated failure, drift after passing review,
 fresh proof after restoring bytes, retained history/active projection and a
 verified result without an additional model request. No live workspace/account
 or provider is used by that fixture.
+
+`tests/agent-mode-tool-reconciliation.test.ts` connects the core admin actions,
+the shared tool host/ToolJournal and an isolated builtin fixture. It proves an
+actual fixture effect before uncertainty, no transition on a missing receipt,
+exact-fingerprint refusal, a separately retained terminal fact, current-scope
+continuation, correction while a receipt read is in flight, one scope invalidation
+for a committed correction, late-result retention without reactivation, immutable
+unknown rows across reopen and no effect replay. It uses no real provider, app
+window or browser input.
+
+`tests/agent-mode-tool-images.test.ts` exercises the canonical projection and the
+production Responses parser without any model request. It checks actual tool
+image parts, exact call/order/turn identity, one base64 copy outside text,
+immutable original results and frame/hash metadata, rejected unsupported or
+malformed images, image-count bounds and two individually bounded receipts that
+exceed the combined image budget.

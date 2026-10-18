@@ -206,6 +206,15 @@ export function AgentModeSurface({ language, api, disabled = false }: {
       await refresh(taskId); if (mounted.current) setNotice(text.adoptToolsHint);
     });
   };
+  const reconcileTool = (idempotencyKey: string) => {
+    const taskId = selectedRef.current;
+    if (!detail?.toolOutcomes?.some(row => row.idempotencyKey === idempotencyKey && row.state === 'outcome_unknown')) return;
+    void act(`reconcile:${idempotencyKey}`, async () => {
+      const result = await mutate({ action: 'reconcile-tool', taskId, idempotencyKey }) as { unchanged: boolean };
+      await refresh(taskId);
+      if (mounted.current) setNotice(result.unchanged ? text.reconcileUnchanged : text.toolReconciled);
+    });
+  };
   const enqueueWork = () => {
     const taskId = selectedRef.current;
     void act('enqueue-work', async () => {
@@ -428,7 +437,15 @@ export function AgentModeSurface({ language, api, disabled = false }: {
               {row.result?.continuation && row.generation !== task.generation && task.stages.some(stage => stage.continuationFrom === row.id && stage.continuationGeneration !== task.generation) ? <div><p className="agent-mode-muted">{text.adoptToolsHint}</p><Button size="sm" disabled={locked || terminal(task)} busy={pending === `adopt:${row.id}`} onClick={() => adoptContinuation(row.id)}>{text.adoptTools}</Button></div> : null}</li>)}</RecordList>
           </Panel>
           <Panel title={text.toolReceipts}>
-            <RecordList empty={text.none}>{(detail.toolOutcomes ?? []).map(row => <li key={row.idempotencyKey}><strong>{row.tool}</strong> · {row.state}<p><code>{row.idempotencyKey}</code></p><small>{text.generation}: {row.scope.generation} · {row.scope.toolCallId}</small>{row.reason ? <p>{row.reason}</p> : null}</li>)}</RecordList>
+            <p className="agent-mode-muted">{text.reconcileToolHint}</p>
+            <RecordList empty={text.none}>{(detail.toolOutcomes ?? []).map(row => <li key={row.idempotencyKey}><strong>{row.tool}</strong> · {row.state}
+              {row.state === 'outcome_unknown' ? <p><Badge tone="warning">{text.originalUnknown}</Badge></p> : null}<p><code>{row.idempotencyKey}</code></p><small>{text.generation}: {row.scope.generation} · {row.scope.toolCallId}</small>{row.reason ? <p>{row.reason}</p> : null}
+              {row.state === 'outcome_unknown' && !(detail.effectiveToolOutcomes ?? []).some(effective => effective.idempotencyKey === row.idempotencyKey && effective.state !== 'outcome_unknown') && !(detail.toolReconciliations ?? []).some(event => event.idempotencyKey === row.idempotencyKey) ? <div><Button size="sm" disabled={locked} busy={pending === `reconcile:${row.idempotencyKey}`} onClick={() => reconcileTool(row.idempotencyKey)}>{text.reconcileTool}</Button></div> : null}
+            </li>)}</RecordList>
+            {(detail.toolReconciliations ?? []).length ? <><h3>{text.lateToolOutcome}</h3><RecordList empty={text.none}>{(detail.toolReconciliations ?? []).map(event => <li key={event.id}>
+              <Badge tone={event.outcome.state === 'completed' ? 'success' : 'error'}>{event.outcome.state}</Badge> <strong>{event.outcome.tool}</strong>
+              {event.late ? <p>{text.lateReceipt}</p> : null}<p><code>{event.idempotencyKey}</code></p><small>{text.generation}: {event.originalScope.generation} · {text.observedGeneration}: {event.observedTaskGeneration} · {date(event.createdAt)}</small><p><code>{event.sourceDispatchId}</code> · <code>{event.id}</code></p>
+            </li>)}</RecordList></> : null}
           </Panel>
           <Panel title={text.evidence}>
             <RecordList empty={text.none}>{task.evidence.map(row => <li key={row.id}><Badge tone={row.outcome === 'passed' ? 'success' : row.outcome === 'failed' ? 'error' : 'warning'}>{row.outcome}</Badge> <strong>{row.requirementId}</strong>

@@ -1,6 +1,7 @@
 import { readRequestBodyBytes } from "../http-body";
 import type { StandaloneToolsPort } from "../agent-tools/types";
 import type { AgentContinuation, AgentExecutionPort, AgentTask, AgentToolRequest, ExecutionRequest, ExecutionResult } from "./types";
+import { AgentToolImageProjectionError, buildAgentToolContinuationInput } from "./tool-images";
 
 export interface AgentModelOption { id: string; label?: string }
 export interface LocalResponsesProviderOptions {
@@ -54,11 +55,11 @@ export function createLocalResponsesExecutionPort(options: LocalResponsesProvide
       if (request.continuation) {
         const source = request.continuation.source;
         tools = source.tools; toolMap = source.toolMap;
-        input = [...source.input, ...source.output, ...source.pending.map(call => {
-          const result = request.continuation!.outcomes.find(result => result.scope.toolCallId === call.toolCallId && result.tool === call.tool);
-          if (!result || result.state === "outcome_unknown") throw new Error("Owned tool result is unavailable; continuation cannot be sent");
-          return { type: "function_call_output", call_id: call.toolCallId, output: JSON.stringify({ state: result.state, result: result.result ?? null, receipt: result.idempotencyKey }), internal_chat_message_metadata_passthrough: { turn_id: turnId } };
-        })];
+        try { input = buildAgentToolContinuationInput(source, request.continuation.outcomes); }
+        catch (error) {
+          if (!(error instanceof AgentToolImageProjectionError)) throw error;
+          return { receiptId: `not-sent:${request.dispatch.id}`, outcome: "not_sent", summary: "The retained tool image is invalid, unsupported or exceeds the bounded image budget; no model request was sent.", actualSpend: 0 };
+        }
       } else {
         const descriptors = options.tools ? await options.tools.discover({ taskId: task.id, generation: task.generation, toolCallId: request.dispatch.id }, { signal: request.signal }) : [];
         for (const descriptor of descriptors.filter(row => row.supported).slice(0, 64)) {

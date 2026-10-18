@@ -141,6 +141,34 @@ export interface AgentToolOutcome {
   result?: unknown;
   reason?: string;
 }
+export interface AgentToolReceiptRequest {
+  scope: AgentToolOutcome["scope"];
+  tool: string;
+  arguments: Record<string, unknown>;
+  idempotencyKey: string;
+}
+/** A trusted retained provider receipt resolves uncertainty without rewriting its original record. */
+export interface AgentToolReconciliation {
+  id: string;
+  taskId: string;
+  idempotencyKey: string;
+  sourceDispatchId: string;
+  originalScope: AgentToolOutcome["scope"];
+  sourceTaskRevision: number;
+  observedTaskGeneration: number;
+  observedTaskRevision: number;
+  requestFingerprint: string;
+  terminalReceiptDigest: string;
+  outcome: AgentToolOutcome;
+  late: boolean;
+  createdAt: number;
+}
+export interface AgentToolReconciliationResult {
+  task: AgentTask;
+  reconciliation?: AgentToolReconciliation;
+  outcome?: AgentToolOutcome;
+  unchanged: boolean;
+}
 export interface AgentDispatch {
   id: string;
   taskId: string;

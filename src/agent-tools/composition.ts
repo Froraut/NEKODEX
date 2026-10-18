@@ -5,7 +5,11 @@ import { defaultToolsConfig, readToolsConfig, sha256, verifyRecipeFiles, writeTo
 import { StandaloneMcpHost } from "./mcp-host";
 import { ReadOnlySkillLibrary, type SelectedSkill, type SkillIdentity, type SkillRootGrant } from "./skills";
 import { validateToolScope } from "./journal";
-import type { StandaloneToolsPort, ToolDescriptor, ToolOutcome, ToolScope } from "./types";
+import type { StandaloneBuiltinToolsProvider, StandaloneToolsPort, ToolDescriptor, ToolInvocation, ToolOutcome, ToolScope } from "./types";
+import type { AgentBrowserToolsProvider } from "../browser-companion/agent-tools";
+import type { BrowserBinding } from "../browser-companion/protocol";
+import type { AgentDesktopToolsProvider } from "../browser-companion/agent-desktop-tools";
+import type { MacosWindowSelection } from "../browser-companion/macos-desktop";
 import type { AgentTask } from "../agent-mode/types";
 import type { AgentEvidenceReference } from "../agent-mode/http";
 import { createAgentToolsRoutes } from "./http";
@@ -21,6 +25,12 @@ export interface AgentToolsCompositionOptions {
   isScopeActive: (scope: ToolScope) => boolean;
   resolveToolCall?: (scope: ToolScope) => { tool: string; arguments: Record<string, unknown>; idempotencyKey: string } | undefined;
   onOutcome?: (outcome: ToolOutcome) => void | Promise<void>;
+  /** Pure browser leaf; root owns companion runtime, while this host owns approval/journal. */
+  browserTools?: AgentBrowserToolsProvider;
+  /** Explicit native controller; status is passive and registration never creates its helper. */
+  desktopTools?: AgentDesktopToolsProvider;
+  /** Other trusted pure executors (for example an independently configured desktop provider). */
+  builtins?: readonly StandaloneBuiltinToolsProvider[];
 }
 const recipeInput = z.object({ id: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/), label: z.string().min(1).max(200), version: z.string().min(1).max(100), command: z.string().min(1).max(4096), args: z.array(z.string().max(8192)).max(128), cwd: z.string().min(1).max(4096), pinnedFiles: z.array(z.string().min(1).max(4096)).max(32), sandbox: z.boolean().optional() }).strict();
 const savedScope = z.object({ taskId: z.string().min(1).max(200), generation: z.number().int().positive(), toolCallId: z.string().min(1).max(200) }).strict();
@@ -60,7 +70,7 @@ export class AgentToolsComposition {
     this.toolsPort = {
       discover: (scope, opts) => this.track(async () => {
         this.scope(scope);
-        if (!readToolsConfig(this.configPath).enabled) return [];
+        if (!readToolsConfig(this.configPath).enabled && !this.options.browserTools && !this.options.desktopTools && !this.options.builtins?.length) return [];
         this.descriptors = await this.getHost().discover(scope, opts); return structuredClone(this.descriptors);
       }),
       invoke: (request, opts) => this.track(() => this.getHost().invoke(request, opts)),
@@ -72,14 +82,14 @@ export class AgentToolsComposition {
   }
   private getHost(): StandaloneMcpHost {
     if (this.closing || this.changing) throw new Error("Tools host is unavailable");
-    if (!this.host) this.host = new StandaloneMcpHost({ config: readToolsConfig(this.configPath), journalPath: this.journalPath, isScopeActive: scope => !this.closing && !this.changing && this.options.canStart?.() !== false && this.options.isScopeActive(scope) });
+    if (!this.host) this.host = new StandaloneMcpHost({ config: readToolsConfig(this.configPath), journalPath: this.journalPath, isScopeActive: scope => !this.closing && !this.changing && this.options.canStart?.() !== false && this.options.isScopeActive(scope), builtins: [...(this.options.builtins ?? []), ...(this.options.browserTools ? [this.options.browserTools] : []), ...(this.options.desktopTools ? [this.options.desktopTools] : [])] });
     return this.host;
   }
   private track<T>(operation: () => Promise<T>): Promise<T> {
     const pending = operation(); this.pending.add(pending);
     void pending.then(() => this.pending.delete(pending), () => this.pending.delete(pending)); return pending;
   }
-  get activeCount(): number { return this.pending.size + (this.changing ? 1 : 0) + this.installer.activeCount; }
+  get activeCount(): number { return Math.max(this.pending.size, this.host?.pendingBuiltinCount ?? 0, this.options.desktopTools?.status().activeCount ?? 0) + (this.changing ? 1 : 0) + this.installer.activeCount; }
   private managedSkills() { if (this.closing) throw new Error("Managed skill store is closing"); return this.managedSkillStore ??= new ManagedSkillStore(this.options.home); }
   private managedSkillStatus() {
     if (this.managedSkillStore) return this.managedSkillStore.list();
@@ -92,6 +102,8 @@ export class AgentToolsComposition {
       activeCount: this.activeCount, descriptors: structuredClone(this.descriptors), skillRoots: structuredClone(this.skillRoots), selections: [...this.selections.values()].map(row => structuredClone(row)),
       installCatalog: OFFICIAL_MCP_CATALOG, installations: this.installer.list(), serverConfigDigests: Object.fromEntries(config.servers.map(server => [server.id, sha256(JSON.stringify(server))])),
       managedSkills: this.managedSkillStatus(),
+      browserTools: this.options.browserTools?.status() ?? null,
+      desktopTools: this.options.desktopTools?.status() ?? null,
       capabilities: { stdio: process.platform !== "win32", install: process.platform !== "win32", oauth: false, secrets: false, nativeSandbox: false, mcpSandboxAvailable: sandboxProviderAvailable(), skillWrites: false, managedSkillImports: process.platform !== "win32", pendingToolCalls: Boolean(this.options.resolveToolCall) } };
   }
   private reviewedSandbox(input: { codeRoots: string[]; readRoots: string[]; writeRoots: string[] }, ownedReadRoots: string[] = [], ownedCodeRoots: string[] = []) {
@@ -104,6 +116,7 @@ export class AgentToolsComposition {
   reviewServer(input: unknown, explicitUserAction: boolean) {
     if (!explicitUserAction || this.closing || this.changing) throw new Error("Explicit trusted configuration review required");
     const value = recipeInput.parse(input);
+    if (value.id === this.options.browserTools?.serverId || value.id === this.options.desktopTools?.serverId || this.options.builtins?.some(provider => provider.serverId === value.id)) throw new Error("Reserved builtin tool namespace cannot be used by an MCP server");
     const command = realpathSync(value.command); const cwd = realpathSync(value.cwd);
     if (["sh", "bash", "zsh", "fish", "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "npx", "bunx", "uvx", "npm", "pnpm", "yarn", "pip", "pip3"].includes(basename(command).toLowerCase()) || value.args.some(arg => ["-e", "--eval", "-c", "--command"].includes(arg))) throw new Error("Installers, shell commands and inline evaluation are unsupported server recipes");
     const recipe: ServerRecipe = { id: value.id, enabled: false, transport: "stdio", source: { kind: "user-installed", label: value.label, version: value.version }, command, commandSha256: pinnedFile(command, 512 * 1024 * 1024).sha256, args: value.args, pinnedFiles: value.pinnedFiles.map(path => pinnedFile(path, 32 * 1024 * 1024)), cwd, envSecretRefs: {} };
@@ -119,7 +132,7 @@ export class AgentToolsComposition {
     return { reviewId, recipe, trust: "This explicitly configured server runs with your OS user permissions; tool approval does not sandbox the server process." };
   }
   private async changeConfig(make: (current: ToolsConfig) => ToolsConfig): Promise<ReturnType<AgentToolsComposition["status"]>> {
-    if (this.closing || this.changing || this.pending.size || this.installer.activeCount) throw new Error("Wait for owned tool operations before changing configuration");
+    if (this.closing || this.changing || this.pending.size || this.host?.pendingBuiltinCount || this.options.desktopTools?.status().activeCount || this.installer.activeCount) throw new Error("Wait for owned tool operations before changing configuration");
     this.changing = true;
     let settled!: () => void; this.configSettling = new Promise<void>(resolve => { settled = resolve; });
     try {
@@ -155,10 +168,13 @@ export class AgentToolsComposition {
     return this.changeConfig(current => ({ ...current, servers: current.servers.filter(server => server.id !== serverId) }));
   }
   async approveInvoke(scope: ToolScope, explicitUserAction: boolean): Promise<ToolOutcome> {
-    if (!explicitUserAction) throw new Error("Explicit exact tool invocation approval required"); this.scope(scope);
+    if (!explicitUserAction) throw new Error("Explicit exact tool invocation approval required"); validateToolScope(scope);
     const call = this.options.resolveToolCall?.(scope); if (!call) throw new Error("No exact pending owned Agent tool call is available");
     return this.track(async () => {
       const host = this.getHost();
+      const prior = host.existingOutcome({ scope, ...call });
+      if (prior) { await this.options.onOutcome?.(prior); return prior; }
+      this.scope(scope);
       await host.discover(scope);
       this.scope(scope);
       const current = this.options.resolveToolCall?.(scope);
@@ -169,6 +185,33 @@ export class AgentToolsComposition {
     });
   }
   receipt(idempotencyKey: string): ToolOutcome | undefined { return this.getHost().getOutcome(idempotencyKey); }
+  /** Trusted core callback derives request from immutable dispatch; no user/model result accepted. */
+  reconcileReceipt(request: Omit<ToolInvocation, "grantId">): Promise<ToolOutcome | undefined> { return this.track(() => this.getHost().reconcileExisting(request)); }
+  browserStatus(scope?: ToolScope) { return this.options.browserTools?.status(scope) ?? null; }
+  bindBrowserTools(scope: ToolScope, expectedBinding: BrowserBinding, explicitUserAction: boolean) {
+    if (!explicitUserAction || !this.options.browserTools) throw new Error("Explicit selected browser attachment is unavailable"); this.scope(scope);
+    if (readToolsConfig(this.configPath).servers.some(server => server.id === this.options.browserTools!.serverId)) throw new Error("Reserved browser namespace conflicts with an existing MCP server; no source was replaced");
+    return this.options.browserTools.bind(scope, expectedBinding);
+  }
+  revokeBrowserTools(scope: ToolScope, explicitUserAction: boolean) {
+    if (!explicitUserAction || !this.options.browserTools) throw new Error("Explicit browser attachment revocation required"); validateToolScope(scope); return this.options.browserTools.revoke(scope);
+  }
+  invalidateBrowserTask(taskId: string): void { this.options.browserTools?.invalidate(taskId); }
+  invalidateTaskTools(taskId: string): void {
+    this.options.browserTools?.invalidate(taskId);
+    this.options.desktopTools?.invalidate(taskId);
+    for (const provider of this.options.builtins ?? []) provider.invalidate?.(taskId);
+  }
+  private desktopControl(explicitUserAction: boolean) { if (!explicitUserAction || this.closing || !this.options.desktopTools) throw new Error("Explicit native desktop controller action is unavailable"); return this.options.desktopTools; }
+  inspectDesktopPermissions(explicitUserAction: boolean) { return this.track(async () => { await this.desktopControl(explicitUserAction).inspectPermissions(explicitUserAction); return this.status().desktopTools; }); }
+  listDesktopWindows(explicitUserAction: boolean) { return this.track(async () => { await this.desktopControl(explicitUserAction).listWindows(explicitUserAction); return this.status().desktopTools; }); }
+  setDesktopEnabled(enabled: boolean, explicitUserAction: boolean) { return this.track(async () => { await this.desktopControl(explicitUserAction).setEnabled(enabled, explicitUserAction); return this.status().desktopTools; }); }
+  selectDesktopWindow(scope: ToolScope, expectedSelection: MacosWindowSelection, explicitUserAction: boolean) {
+    this.scope(scope);
+    if (readToolsConfig(this.configPath).servers.some(server => server.id === this.options.desktopTools?.serverId)) throw new Error("Reserved desktop namespace conflicts with an existing MCP server; no source was replaced");
+    return this.track(async () => { await this.desktopControl(explicitUserAction).selectAndBind(scope, expectedSelection, explicitUserAction); return this.status().desktopTools; });
+  }
+  revokeDesktopTools(scope: ToolScope, explicitUserAction: boolean) { validateToolScope(scope); return this.desktopControl(explicitUserAction).revoke(scope); }
   terminalReference(idempotencyKey: string, requirementId: string) { return this.getHost().terminalReference(idempotencyKey, requirementId); }
   prepareInstall(actionId: string, catalogId: string, allowedRoot: string, explicitUserAction: boolean) {
     if (!explicitUserAction || this.closing || this.changing) throw new Error("Explicit managed package preparation required");
@@ -263,8 +306,13 @@ export class AgentToolsComposition {
   resolveEvidence(task: AgentTask, reference: AgentEvidenceReference) { return this.getHost().resolveTerminalEvidence(task, reference); }
   async close(): Promise<void> {
     if (this.closing) return; this.closing = true;
+    this.options.browserTools?.invalidate();
+    this.options.desktopTools?.invalidate();
+    for (const provider of this.options.builtins ?? []) provider.invalidate?.();
     await this.configSettling;
     await this.installer.close();
+    // A native input may outlive its soft observation wait; release its actual owner first.
+    await this.options.desktopTools?.close();
     await this.host?.close(); await Promise.allSettled([...this.pending]); this.host = undefined;
     this.managedSkillStore?.close(); this.managedSkillStore = undefined;
   }

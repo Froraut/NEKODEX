@@ -3,7 +3,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, lstatSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { activeTaskEvidence } from "./evidence";
-import type { AgentControl, AgentDispatch, AgentTask, AgentToolOutcome, AgentWorker, AgentWorkPacket, CreateAgentTask, ExecutionResult, MailMessage, OutcomeEvidence, OutcomeReview, Requirement, StageInput } from "./types";
+import { invocationFingerprint } from "../agent-tools/journal";
+import type { AgentControl, AgentDispatch, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliation, AgentWorker, AgentWorkPacket, CreateAgentTask, ExecutionResult, MailMessage, OutcomeEvidence, OutcomeReview, Requirement, StageInput } from "./types";
 
 function text(value: string, name: string, max = 16_384): void {
   if (typeof value !== "string" || !value.trim() || Buffer.byteLength(value) > max) throw new Error(`Invalid ${name}`);
@@ -55,6 +56,8 @@ export class AgentModeStore {
           CREATE TABLE IF NOT EXISTS agent_receipts (id TEXT PRIMARY KEY, taskId TEXT NOT NULL REFERENCES agent_tasks(id), kind TEXT NOT NULL, body TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS agent_tool_outcomes (id TEXT PRIMARY KEY, taskId TEXT NOT NULL REFERENCES agent_tasks(id), body TEXT NOT NULL);
           CREATE INDEX IF NOT EXISTS agent_tool_outcomes_task ON agent_tool_outcomes(taskId);
+          CREATE TABLE IF NOT EXISTS agent_tool_reconciliations (id TEXT PRIMARY KEY, taskId TEXT NOT NULL REFERENCES agent_tasks(id), receiptKey TEXT NOT NULL UNIQUE, body TEXT NOT NULL);
+          CREATE INDEX IF NOT EXISTS agent_tool_reconciliations_task ON agent_tool_reconciliations(taskId);
           CREATE TABLE IF NOT EXISTS agent_work (id TEXT PRIMARY KEY, taskId TEXT NOT NULL REFERENCES agent_tasks(id), workKey TEXT NOT NULL, body TEXT NOT NULL, UNIQUE(taskId,workKey));
           CREATE INDEX IF NOT EXISTS agent_work_task ON agent_work(taskId);
           PRAGMA user_version=1`);
@@ -114,6 +117,14 @@ export class AgentModeStore {
       }
       const result = apply(); this.receipt(key, taskId, kind, { input, result }); return { result, duplicate: false };
     });
+  }
+  readCommandResult<T>(taskId: string, actionId: string, kind: string, input: unknown): { result: T } | undefined {
+    id(actionId); id(kind);
+    const old = this.db.query("SELECT taskId, kind, body FROM agent_receipts WHERE id=?").get(`action:${actionId}`) as { taskId: string; kind: string; body: string } | null;
+    if (!old) return undefined;
+    const body = JSON.parse(old.body) as { input: unknown; result: T };
+    if (old.taskId !== taskId || old.kind !== kind || !same(body.input, input)) throw new Error("Action identity conflict");
+    return { result: body.result };
   }
   createTask(input: CreateAgentTask): AgentTask {
     if (input.ownerMode !== "agent") throw new Error("Client-owned tasks cannot acquire an Agent scheduler");
@@ -230,6 +241,11 @@ export class AgentModeStore {
   }
   listMessages(taskId: string): MailMessage[] { return this.rows("agent_mail", taskId); }
   listToolOutcomes(taskId: string): AgentToolOutcome[] { return this.rows("agent_tool_outcomes", taskId); }
+  listToolReconciliations(taskId: string): AgentToolReconciliation[] { return this.rows("agent_tool_reconciliations", taskId); }
+  effectiveToolOutcomes(taskId: string): AgentToolOutcome[] {
+    const resolved = new Map(this.listToolReconciliations(taskId).map(fact => [fact.idempotencyKey, fact.outcome]));
+    return this.listToolOutcomes(taskId).map(outcome => resolved.get(outcome.idempotencyKey) ?? outcome);
+  }
   attachWorkspaceSnapshotGrant(taskId: string, grant: unknown): AgentTask {
     if (grant === undefined || Buffer.byteLength(JSON.stringify(grant)) > 32 * 1024) throw new Error("Invalid bounded workspace snapshot grant");
     return this.atomic(() => {
@@ -265,7 +281,7 @@ export class AgentModeStore {
       const task = this.getTask(taskId); this.assertOwner(task, ownerId, generation);
       const rows = this.listDispatches(taskId);
       if (rows.some(row => row.state === "unknown")) throw new Error("Unknown send requires reconciliation; replay forbidden");
-      if (this.listToolOutcomes(taskId).some(row => row.state === "outcome_unknown")) throw new Error("Unknown send requires tool reconciliation; replay forbidden");
+      if (this.effectiveToolOutcomes(taskId).some(row => row.state === "outcome_unknown")) throw new Error("Unknown send requires tool reconciliation; replay forbidden");
       if (rows.some(row => row.generation !== generation && unsettled.has(row.state))) throw new Error("Prior generation still owns unsettled work");
       if (rows.filter(row => unsettled.has(row.state)).length >= task.bounds.maxConcurrent) throw new Error("Concurrency bound");
       if ((task.bounds.maxSpend !== null && reservedSpend < 1) || task.turns + rows.filter(row => row.state === "admitted").length >= task.bounds.maxTurns || (task.bounds.maxSpend !== null && task.spent + task.reserved + reservedSpend > task.bounds.maxSpend)) throw new Error("Task turn/spend bound");
@@ -273,7 +289,7 @@ export class AgentModeStore {
       if (!stage || stage.status !== "pending" || (stage.dependsOn ?? []).some(key => task.stages.find(row => row.id === key)?.status !== "completed")) throw new Error("Stage is not ready");
       if (stage.continuationFrom) {
         const source = this.getDispatch(stage.continuationFrom);
-        const outcomes = this.listToolOutcomes(taskId);
+        const outcomes = this.effectiveToolOutcomes(taskId);
         if ((source.generation !== generation && stage.continuationGeneration !== generation) || source.taskRevision !== task.revision || !source.result?.continuation || source.result.continuation.pending.some(call => !outcomes.some(row => row.scope.generation === source.generation && row.scope.toolCallId === call.toolCallId && row.state !== "outcome_unknown"))) throw new Error("Unknown send requires current exact tool continuation results");
       }
       const worker = this.row<AgentWorker>("agent_workers", workerId);
@@ -414,19 +430,59 @@ export class AgentModeStore {
     return this.atomic(() => {
       const task = this.getTask(outcome.scope.taskId);
       const old = this.row<AgentToolOutcome>("agent_tool_outcomes", outcome.idempotencyKey);
-      if (old) { if (same(old, outcome)) return task; throw new Error("Tool terminal receipt conflict"); }
+      if (old) {
+        if (same(old, outcome)) return task;
+        const reconciled = this.listToolReconciliations(task.id).find(fact => fact.idempotencyKey === outcome.idempotencyKey);
+        if (old.state === "outcome_unknown" && reconciled && same(reconciled.outcome, outcome)) return task;
+        throw new Error("Tool terminal receipt conflict");
+      }
       const source = this.listDispatches(task.id).find(row => row.generation === outcome.scope.generation && row.result?.continuation?.pending.some(call => call.toolCallId === outcome.scope.toolCallId));
       const call = source?.result?.continuation?.pending.find(call => call.toolCallId === outcome.scope.toolCallId);
       if (!source || !call || call.tool !== outcome.tool || outcome.idempotencyKey !== this.toolKey(source.id, call.toolCallId)) throw new Error("Tool outcome has no exact owned call");
       this.db.query("INSERT INTO agent_tool_outcomes VALUES (?, ?, ?)").run(outcome.idempotencyKey, task.id, JSON.stringify(outcome));
       if (task.generation === outcome.scope.generation && task.revision === source.taskRevision && task.status !== "stopped") {
         if (outcome.state === "outcome_unknown") { task.status = "paused"; task.reason = "tool_outcome_unknown"; }
-        else if (source.result!.continuation!.pending.every(pending => this.listToolOutcomes(task.id).some(result => result.scope.generation === outcome.scope.generation && result.scope.toolCallId === pending.toolCallId && result.state !== "outcome_unknown"))) {
+        else if (source.result!.continuation!.pending.every(pending => this.effectiveToolOutcomes(task.id).some(result => result.scope.generation === outcome.scope.generation && result.scope.toolCallId === pending.toolCallId && result.state !== "outcome_unknown"))) {
           task.status = "ready"; task.reason = "tool_results_ready";
         }
         this.saveTask(task);
       }
       return task;
+    });
+  }
+  toolReceiptRequest(taskId: string, idempotencyKey: string): AgentToolReceiptRequest {
+    id(idempotencyKey); this.getTask(taskId);
+    for (const source of this.listDispatches(taskId)) if (source.state === "settled") for (const call of source.result?.continuation?.pending ?? []) {
+      if (this.toolKey(source.id, call.toolCallId) === idempotencyKey) return { scope: { taskId, generation: source.generation, toolCallId: call.toolCallId }, tool: call.tool, arguments: structuredClone(call.arguments), idempotencyKey };
+    }
+    throw new Error("Tool receipt has no exact owned request");
+  }
+  recordToolReconciliation(taskId: string, request: AgentToolReceiptRequest, outcome: AgentToolOutcome, executionOwnerId?: string): { task: AgentTask; reconciliation: AgentToolReconciliation } {
+    if (outcome.state === "outcome_unknown" || !["completed", "failed"].includes(outcome.state) || Buffer.byteLength(JSON.stringify(outcome)) > 256 * 1024) throw new Error("Tool reconciliation requires a bounded terminal receipt");
+    return this.atomic(() => {
+      const exact = this.toolReceiptRequest(taskId, request.idempotencyKey);
+      const fingerprint = invocationFingerprint(exact);
+      if (invocationFingerprint(request) !== fingerprint || outcome.idempotencyKey !== exact.idempotencyKey || outcome.tool !== exact.tool
+        || outcome.scope.taskId !== exact.scope.taskId || outcome.scope.generation !== exact.scope.generation || outcome.scope.toolCallId !== exact.scope.toolCallId) throw new Error("Tool reconciliation receipt scope mismatch");
+      const task = this.getTask(taskId);
+      const original = this.listToolOutcomes(taskId).find(row => row.idempotencyKey === exact.idempotencyKey);
+      if (!original || original.state !== "outcome_unknown" || original.tool !== exact.tool || !same(original.scope, exact.scope)) throw new Error("Tool reconciliation has no original unknown outcome");
+      const previous = this.listToolReconciliations(taskId).find(row => row.idempotencyKey === exact.idempotencyKey);
+      if (previous) { if (previous.requestFingerprint !== fingerprint || !same(previous.outcome, outcome)) throw new Error("Tool reconciliation terminal receipt conflict"); return { task, reconciliation: previous }; }
+      const source = this.listDispatches(taskId).find(row => row.generation === exact.scope.generation && row.result?.continuation?.pending.some(call => call.toolCallId === exact.scope.toolCallId && this.toolKey(row.id, call.toolCallId) === exact.idempotencyKey))!;
+      const digest = createHash("sha256").update(JSON.stringify(outcome)).digest("hex");
+      const fact: AgentToolReconciliation = { id: `tool-reconciliation:${createHash("sha256").update(JSON.stringify([exact.idempotencyKey, fingerprint, digest])).digest("hex")}`, taskId,
+        idempotencyKey: exact.idempotencyKey, sourceDispatchId: source.id, originalScope: structuredClone(exact.scope), sourceTaskRevision: source.taskRevision,
+        observedTaskGeneration: task.generation, observedTaskRevision: task.revision, requestFingerprint: fingerprint, terminalReceiptDigest: digest,
+        outcome: structuredClone(outcome), late: task.generation !== source.generation || task.revision !== source.taskRevision, createdAt: this.now() };
+      this.db.query("INSERT INTO agent_tool_reconciliations VALUES (?, ?, ?, ?)").run(fact.id, taskId, exact.idempotencyKey, JSON.stringify(fact));
+      const stage = task.stages.find(stage => stage.continuationFrom === source.id);
+      if (!fact.late && task.ownerId === executionOwnerId && source.ownerId === executionOwnerId && stage && task.status === "paused" && task.reason === "tool_outcome_unknown"
+        && !this.effectiveToolOutcomes(taskId).some(row => row.state === "outcome_unknown")
+        && source.result!.continuation!.pending.every(call => this.effectiveToolOutcomes(taskId).some(row => row.scope.generation === source.generation && row.scope.toolCallId === call.toolCallId && row.tool === call.tool && row.state !== "outcome_unknown"))) {
+        task.status = "ready"; task.reason = "tool_receipt_reconciled"; this.saveTask(task);
+      }
+      return { task, reconciliation: fact };
     });
   }
   private toolKey(dispatchId: string, callId: string): string { return `tool:${createHash("sha256").update(JSON.stringify([dispatchId, callId])).digest("hex")}`; }
@@ -435,7 +491,7 @@ export class AgentModeStore {
     return this.atomic(() => {
       const task = this.getTask(taskId); const source = this.getDispatch(sourceId);
       const stage = task.stages.find(stage => stage.continuationFrom === sourceId);
-      const outcomes = this.listToolOutcomes(taskId);
+      const outcomes = this.effectiveToolOutcomes(taskId);
       if (source.taskId !== taskId || source.taskRevision !== task.revision || !source.result?.continuation || !stage || ["stopped", "verified_complete"].includes(task.status)
         || this.listDispatches(taskId).some(row => unsettled.has(row.state)) || outcomes.some(row => row.state === "outcome_unknown")
         || source.result.continuation.pending.some(call => !outcomes.some(row => row.scope.generation === source.generation && row.scope.toolCallId === call.toolCallId && row.tool === call.tool && row.state !== "outcome_unknown"))) throw new Error("Current complete tool receipts required to resume this continuation");

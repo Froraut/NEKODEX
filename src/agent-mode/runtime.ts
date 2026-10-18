@@ -3,7 +3,7 @@ import { AgentModeRunner } from "./runner";
 import { AgentModeStore } from "./store";
 import { activeTaskEvidence } from "./evidence";
 import { agentModelConfigured, type AgentModelOption } from "./provider";
-import type { AgentControl, AgentDispatch, AgentExecutionPort, AgentTask, AgentToolOutcome, AgentWorkPacket, CreateAgentTask, OutcomeEvidence, OutcomeReview } from "./types";
+import type { AgentControl, AgentDispatch, AgentExecutionPort, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliationResult, AgentWorkPacket, CreateAgentTask, OutcomeEvidence, OutcomeReview } from "./types";
 
 export interface AgentModeRuntimeOptions {
   store: AgentModeStore;
@@ -17,9 +17,13 @@ export interface AgentModeRuntimeOptions {
   toolsAvailable?: () => boolean;
   snapshotReceipts?: (task: AgentTask) => unknown[];
   lookupToolOutcome?: (idempotencyKey: string) => AgentToolOutcome | undefined;
+  /** Reads/reconciles an exact retained provider receipt. This port must never authorize, start or execute a tool. */
+  reconcileToolReceipt?: (request: AgentToolReceiptRequest) => Promise<AgentToolOutcome | undefined> | AgentToolOutcome | undefined;
   /** Trusted synchronous host observation immediately before final verification, including receipt retries. */
   beforeVerify?: (task: AgentTask) => void;
   workspaceEvidenceReferences?: (task: AgentTask) => unknown[];
+  /** Invalidates already queued/in-flight tool input after a committed generation change; never starts a host. */
+  onTaskScopeInvalidated?: (taskId: string) => void;
   /** Real monetary upper bound. Omit for subscription providers with no monetary quotes. */
   reserveSpend?: (task: AgentTask) => number;
 }
@@ -50,7 +54,7 @@ export class AgentModeRuntime {
   }
   status() {
     return { configured: this.options.configured?.() ?? this.options.models().length > 0,
-      models: this.options.models(), capabilities: { tools: this.options.toolsAvailable?.() ?? false, workspace: false, autoSchedule: true, monetaryQuotes: Boolean(this.options.reserveSpend), loopSource: "mailbox", externalWatchers: false },
+      models: this.options.models(), capabilities: { tools: this.options.toolsAvailable?.() ?? false, workspace: false, autoSchedule: true, monetaryQuotes: Boolean(this.options.reserveSpend), loopSource: "mailbox", externalWatchers: false, toolReconciliation: Boolean(this.options.reconcileToolReceipt) },
       ownerId: this.runner.ownerId, activeDispatchIds: this.runner.liveDispatchIds, accepting: !this.stopping && (this.options.canStart?.() ?? true) };
   }
   create(actionId: string, input: CreateAgentTask): AgentTask {
@@ -59,7 +63,9 @@ export class AgentModeRuntime {
     return this.store.command(input.id, actionId, "create", input, () => this.store.createTask(input)).result;
   }
   control(taskId: string, actionId: string, control: AgentControl, scope?: AgentActionScope): AgentTask {
-    return this.store.command(taskId, actionId, "control", scope ? { control, scope } : control, () => { this.assertScope(taskId, scope); return this.runner.control(taskId, control); }).result;
+    const command = this.store.command(taskId, actionId, "control", scope ? { control, scope } : control, () => { this.assertScope(taskId, scope); return this.runner.control(taskId, control); });
+    if (!command.duplicate) this.options.onTaskScopeInvalidated?.(taskId);
+    return command.result;
   }
   step(taskId: string, actionId: string, input: { explicitUserAction: boolean; workerName?: string; automatic?: boolean }, scope?: AgentActionScope): { task: AgentTask; dispatchId?: string; duplicate: boolean } {
     if (input.explicitUserAction !== true) throw new Error("A user action is required to start Agent execution");
@@ -81,6 +87,7 @@ export class AgentModeRuntime {
       return this.prepare(taskId, input);
     }); }
     catch (error) { this.pauseAtBound(taskId); throw error; }
+    if (!command.duplicate && this.store.getTask(taskId).generation !== task.generation) this.options.onTaskScopeInvalidated?.(taskId);
     if (!command.duplicate && command.result) this.launch(command.result, input.automatic === true);
     return { task: this.store.getTask(taskId), dispatchId: command.result?.id, duplicate: command.duplicate };
   }
@@ -128,6 +135,30 @@ export class AgentModeRuntime {
   }
   resolveToolCall(scope: AgentToolOutcome["scope"]) { return this.store.resolveToolCall(scope); }
   recordToolOutcome(outcome: AgentToolOutcome): AgentTask { return this.store.recordToolOutcome(outcome); }
+  async reconcileTool(taskId: string, actionId: string, scope: AgentActionScope, idempotencyKey: string): Promise<AgentToolReconciliationResult> {
+    if (this.stopping) throw new Error("Task runtime admission is closed");
+    const input = { scope, idempotencyKey };
+    const prior = this.store.readCommandResult<AgentToolReconciliationResult>(taskId, actionId, "reconcile_tool", input);
+    if (prior) return prior.result;
+    this.assertScope(taskId, scope);
+    const original = this.store.listToolOutcomes(taskId).find(outcome => outcome.idempotencyKey === idempotencyKey);
+    if (!original || original.state !== "outcome_unknown") throw new Error("Tool receipt has no retained unknown outcome");
+    const previous = this.store.listToolReconciliations(taskId).find(fact => fact.idempotencyKey === idempotencyKey);
+    if (previous) return this.store.command(taskId, actionId, "reconcile_tool", input, () => ({ task: this.store.getTask(taskId), reconciliation: previous, outcome: previous.outcome, unchanged: true })).result;
+    if (!this.options.reconcileToolReceipt) throw new Error("Tool receipt reconciliation is unavailable");
+    const request = this.store.toolReceiptRequest(taskId, idempotencyKey);
+    const operationId = `reconcile:${actionId}:${randomUUID()}`;
+    const operation = (async (): Promise<AgentToolReconciliationResult> => {
+      const outcome = await this.options.reconcileToolReceipt!(structuredClone(request));
+      return this.store.command<AgentToolReconciliationResult>(taskId, actionId, "reconcile_tool", input, () => {
+        if (!outcome || outcome.state === "outcome_unknown") return { task: this.store.getTask(taskId), outcome: original, unchanged: true };
+        const reconciled = this.store.recordToolReconciliation(taskId, request, outcome, this.stopping ? undefined : this.runner.ownerId);
+        return { ...reconciled, outcome: reconciled.reconciliation.outcome, unchanged: false };
+      }).result;
+    })();
+    this.pending.set(operationId, operation);
+    try { return await operation; } finally { this.pending.delete(operationId); }
+  }
   snapshotReceipts(taskId: string): unknown[] { return this.options.snapshotReceipts?.(this.store.getTask(taskId)) ?? []; }
   workspaceEvidenceReferences(taskId: string): unknown[] { return this.options.workspaceEvidenceReferences?.(this.store.getTask(taskId)) ?? []; }
   reconcileToolReceipts(taskId: string): void {
@@ -157,15 +188,20 @@ export class AgentModeRuntime {
     return { ...command.result, task: this.store.getTask(taskId) };
   }
   cycle(taskId: string, actionId: string, scope: AgentActionScope, workId?: string): AgentTask {
-    return this.store.command(taskId, actionId, "mailbox_cycle", { scope, workId }, () => {
+    const command = this.store.command(taskId, actionId, "mailbox_cycle", { scope, workId }, () => {
       this.assertScope(taskId, scope);
       return this.store.claimNextWork(taskId, { ownerId: this.runner.ownerId, automatic: false, workId }) ?? this.store.getTask(taskId);
-    }).result;
+    });
+    if (!command.duplicate && command.result.generation !== scope.generation) this.options.onTaskScopeInvalidated?.(taskId);
+    return command.result;
   }
   private advanceLoop(taskId: string): void {
     if (this.stopping || this.options.canStart?.() === false) return;
+    const generation = this.store.getTask(taskId).generation;
     const next = this.store.claimNextWork(taskId, { ownerId: this.runner.ownerId, automatic: true });
-    if (!next || next.status !== "ready") return;
+    if (!next) return;
+    if (next.generation !== generation) this.options.onTaskScopeInvalidated?.(taskId);
+    if (next.status !== "ready") return;
     try {
       const dispatch = this.prepare(taskId, { explicitUserAction: false });
       if (dispatch) this.launch(dispatch, true);
@@ -198,6 +234,7 @@ export class AgentModeRuntime {
       const dispatch = this.prepare(task.id, { explicitUserAction: true });
       return { task: this.store.getTask(task.id), dispatchId: dispatch?.id };
     });
+    if (!command.duplicate && ["pause", "resume", "stop"].includes(input.operation)) this.options.onTaskScopeInvalidated?.(input.taskId);
     if (!command.duplicate && command.result.dispatchId) this.launch(this.store.getDispatch(command.result.dispatchId), false);
     return { ...command.result, duplicate: command.duplicate };
   }
@@ -209,7 +246,8 @@ export class AgentModeRuntime {
     if (this.shutdownFinished) return;
     if (this.pending.size) throw new Error("Agent operations have not settled");
     for (const task of this.store.listTasks()) if (task.ownerId === this.runner.ownerId) {
-      this.store.recoverOwner(task.id, { ownerId: this.runner.ownerId, stopped: true, receiptId: `shutdown:${randomUUID()}` });
+      const recovered = this.store.recoverOwner(task.id, { ownerId: this.runner.ownerId, stopped: true, receiptId: `shutdown:${randomUUID()}` });
+      if (recovered.generation !== task.generation) this.options.onTaskScopeInvalidated?.(task.id);
     }
     this.shutdownFinished = true;
   }
