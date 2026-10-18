@@ -1,4 +1,4 @@
-{"schemaVersion":1,"roots":["src","launcher/src","launcher/electron","scripts","launcher/scripts","launcher/assets",".github"],"modules":[
+{"schemaVersion":1,"roots":["src","launcher/src","launcher/electron","launcher/native","scripts","launcher/scripts","launcher/assets",".github"],"modules":[
   {"path":".github/ISSUE_TEMPLATE/bug-report.yml","dependencies":[]},
   {"path":".github/ISSUE_TEMPLATE/config.yml","dependencies":[]},
   {"path":".github/ISSUE_TEMPLATE/feature-request.yml","dependencies":[]},
@@ -72,7 +72,6 @@
   {"path":"launcher/electron/context-change-queue.cjs","dependencies":[]},
   {"path":"launcher/electron/control-server.cjs","dependencies":["launcher/electron/admission-failure-copy.cjs","launcher/electron/browser-task-ledger.cjs","launcher/electron/task-observation.cjs","launcher/electron/usage-store.cjs","node:crypto","node:http"]},
   {"path":"launcher/electron/conversation-preferences.cjs","dependencies":[]},
-  {"path":"launcher/electron/credential-helper/darwin-arm64/nekodex-credential-helper","dependencies":[]},
   {"path":"launcher/electron/existing-chrome-consent.cjs","dependencies":[]},
   {"path":"launcher/electron/existing-chrome-errors.cjs","dependencies":[]},
   {"path":"launcher/electron/existing-chrome-file-access.cjs","dependencies":["launcher/electron/existing-chrome-errors.cjs","node:fs","node:path"]},
@@ -143,6 +142,7 @@
   {"path":"launcher/electron/usage-schema.cjs","dependencies":[]},
   {"path":"launcher/electron/usage-store.cjs","dependencies":["launcher/electron/atomic-file.cjs","launcher/electron/usage-report.cjs","launcher/electron/usage-schema.cjs","node:crypto","node:fs","node:path"]},
   {"path":"launcher/electron/window-state.cjs","dependencies":["launcher/electron/atomic-file.cjs","node:fs"]},
+  {"path":"launcher/native/tunnel-credential-helper.swift","dependencies":[]},
   {"path":"launcher/package.json","dependencies":[]},
   {"path":"launcher/release-trust.json","dependencies":[]},
   {"path":"launcher/scripts/check-renderer-shell.cjs","dependencies":["electron","launcher/electron/browser-host.cjs","node:assert/strict","node:events","node:fs","node:os","node:path"]},
