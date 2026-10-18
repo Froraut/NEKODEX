@@ -1298,6 +1298,7 @@ function registerIpc({ logger, stateStore }) {
       runtimeKey: typeof input?.runtimeKey === "string" ? input.runtimeKey : "",
       replace: input?.replace === true,
       interactionMode,
+      credentialStorage: input?.credentialStorage,
     }, afterRuntimeReady);
     if (!interactionModeChange && interactionMode === "automatic") await browserHost.reveal();
     const result = interactionModeChange
@@ -1333,6 +1334,7 @@ function registerIpc({ logger, stateStore }) {
       { tunnelId: typeof input.tunnelId === 'string' ? input.tunnelId.trim() : '',
         runtimeKey: typeof input.runtimeKey === 'string' ? input.runtimeKey : '',
         reuseSavedCredentials: input.reuseSavedCredentials === true, interactionMode: mode,
+        credentialStorage: input.credentialStorage,
         principalFingerprint: browserHost.getHost(id).authPrincipalFingerprint ?? undefined }));
     const state = stateStore.update({ mcpRuntimeInstalled: true, mcpSetupComplete: false, mcpGuideStep: 2 });
     send('launcher:state-changed', state);
@@ -1341,6 +1343,12 @@ function registerIpc({ logger, stateStore }) {
   handle('launcher:account-tunnel-remove', async (_event, id, requestedMode) => {
     const mode = requestedMode === undefined ? stateStore.read().browserInteractionMode : validateBrowserInteractionMode(requestedMode);
     return browserHost.withAccountTunnelMutation(id, () => runtimeHost.removeAccountTunnel(id, mode));
+  });
+  handle('launcher:account-tunnel-credential-migrate', async (_event, id, input) => {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Account tunnel migration settings are invalid');
+    const mode = input.interactionMode === undefined ? stateStore.read().browserInteractionMode : validateBrowserInteractionMode(input.interactionMode);
+    return browserHost.withAccountTunnelMutation(id, () => runtimeHost.migrateAccountTunnelCredential(id,
+      { interactionMode: mode, principalFingerprint: browserHost.getHost(id).authPrincipalFingerprint ?? undefined }));
   });
   handle("launcher:set-mcp-step", (_event, step) => {
     if (!Number.isInteger(step) || step < 0 || step > 2) throw new Error("Invalid MCP guide step");

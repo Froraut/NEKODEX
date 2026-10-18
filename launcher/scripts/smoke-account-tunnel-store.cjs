@@ -9,7 +9,7 @@ try {
     subagentProtocol: 'native', marker: 'preserve-route-and-settings' }));
   fs.symlinkSync(actual, configPath);
   const prepare = (accountId, tunnelId, runtimeKey, extra = {}) => store.prepareAccountTunnel({
-    coreHome: root, configPath, accountId, tunnelId, runtimeKey, ...extra });
+    coreHome: root, configPath, accountId, tunnelId, runtimeKey, credentialStorage: 'legacy-file', ...extra });
   const a = prepare('default', idA, 'synthetic-a', { principalFingerprint: '1'.repeat(64) });
   assert.equal(store.accountTunnelConfigSnapshot(configPath).config.accountTunnels, undefined);
   store.commitAccountTunnel(a);
@@ -27,7 +27,7 @@ try {
   const devConfig = path.join(devRoot, 'config.json');
   fs.writeFileSync(devConfig, JSON.stringify({ mode: 'browser-only', browserInteractionMode: 'automatic' }));
   const dev = store.prepareAccountTunnel({ coreHome: devRoot, configPath: devConfig,
-    accountId: 'default', tunnelId: idA, runtimeKey: 'synthetic-dev' });
+    accountId: 'default', tunnelId: idA, runtimeKey: 'synthetic-dev', credentialStorage: 'legacy-file' });
   assert.notEqual(dev.binding.tunnel.alias, ownA.tunnel.alias,
     'global tunnel-client aliases must not collide between application profiles');
   assert.notEqual(dev.binding.tunnel.profileName, ownA.tunnel.profileName);

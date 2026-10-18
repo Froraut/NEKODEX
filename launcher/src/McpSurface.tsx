@@ -1,13 +1,15 @@
 import { accountToolsCopy, accountToolsStep, accountTunnelFor } from "./account-tools-onboarding";
 import { useAccountPoolSnapshot } from "./useAccountPoolSnapshot";
 import { ConnectorSetupHelp } from './ConnectorSetupHelp';
+import { AccountTunnelCredentialStatus } from './AccountTunnelCredentialStatus';
+import { accountTunnelCredentialCopy } from './account-tunnel-credential-copy';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { connectorAttachCopyFor, connectorAttachNotice, native6CopyFor, localizeRuntimeMessage, type Copy } from "./i18n";
 import { modelsTabConnection, type ConnectionStatus, type WorkspaceReadiness } from "./workspace-readiness";
 import { connectionTabStatus, connectionsCopy, connectionsSubtitle } from "./connections-copy";
 import { workflowCopy } from "./workflow-copy";
 import type { BrowserInteractionMode, DoctorReport, Language, LauncherSnapshot, LauncherState, OperationState } from "./types";
-import { Button, Disclosure, Icon, Notice, Page, Panel, PhaseSteps, StateDot, SurfaceHeader, TextField, cx } from "./design";
+import { Button, Disclosure, Icon, Notice, Page, Panel, PhaseSteps, Select, StateDot, SurfaceHeader, TextField, cx } from "./design";
 import { ConnectionsTabs, connectionsTabPanelProps, messageOf, TutorialVideo, DoctorSummary } from './launcher-ui';
 import { connectorProofMismatch, runtimeCapabilities, currentToolProof } from './launcher-readiness';
 import "./surfaces/connections.css";
@@ -63,6 +65,7 @@ export function McpSurface({
   );
   const [tunnelId, setTunnelId] = useState("");
   const [runtimeKey, setRuntimeKey] = useState("");
+  const [credentialStorage, setCredentialStorage] = useState<'os-vault' | 'legacy-file'>('os-vault');
   const [legacyCredentialsConfigured, setLegacyCredentialsConfigured] = useState(
     interactionMode === snapshot.state.browserInteractionMode
       ? snapshot.mcpCredentialsConfigured
@@ -82,12 +85,14 @@ export function McpSurface({
   const [repairOutcomeRevision, setRepairOutcomeRevision] = useState<number | null>(null);
   const workflow = workflowCopy(language);
   const words = connectionsCopy(language);
+  const credentialText = accountTunnelCredentialCopy(language);
   const currentRuntime = runtimeCapabilities(snapshot);
   const busy = localBusy || operation?.status === "running";
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const wizardHeading = useRef<HTMLHeadingElement>(null);
   const tunnelFieldId = useId();
   const runtimeKeyFieldId = useId();
+  const credentialStorageFieldId = useId();
   const replaceCredentialsId = useId();
   // Replace / Keep saved credentials swap the controls: focus moves to the control that takes the removed one's place.
   const credentialsFocus = useRef<string | null>(null);
@@ -106,6 +111,7 @@ export function McpSurface({
   currentScope.current = { accountId: pageAccountId, interactionMode };
   useEffect(() => {
     setRuntimeKey(""); setTunnelId(""); setReplacingCredentials(false);
+    setCredentialStorage('os-vault');
     if (pageAccountId) setStep(1);
   }, [pageAccountId, interactionMode]);
   const sameScope = (accountId: string | null, mode: BrowserInteractionMode) =>
@@ -273,6 +279,7 @@ export function McpSurface({
     const accountId = pageAccountId;
     const mode = interactionMode;
     const submittedKey = runtimeKey;
+    const submittedStorage = credentialStorage;
     setRuntimeKey("");
     setLocalBusy(true);
     setError(null);
@@ -283,17 +290,18 @@ export function McpSurface({
           tunnelId: credentialsConfigured && !replacingCredentials ? accountTunnel?.tunnelId ?? "" : tunnelId.trim(),
           interactionMode: mode,
           ...(credentialsConfigured && !replacingCredentials
-            ? { reuseSavedCredentials: true } : { runtimeKey: submittedKey }),
+            ? { reuseSavedCredentials: true } : { runtimeKey: submittedKey, credentialStorage: submittedStorage }),
         });
         if (!receipt.ok) throw new Error(accountToolsCopy(language).tunnelError);
         transportReady = receipt.ready !== false;
       } else {
         await api!.setupMcp({ interactionMode: mode,
           ...(credentialsConfigured && !replacingCredentials ? { replace: false }
-            : { tunnelId, runtimeKey: submittedKey, replace: true }) });
+            : { tunnelId, runtimeKey: submittedKey, credentialStorage: submittedStorage, replace: true }) });
       }
       if (!sameScope(accountId, mode)) return;
       setTunnelId("");
+      setCredentialStorage('os-vault');
       setLegacyCredentialsConfigured(true);
       setReplacingCredentials(false);
       if (accountId) refreshPool();
@@ -489,6 +497,9 @@ export function McpSurface({
             ) : null}
             {step === 1 ? (
               <div className="nk-connections__step-body">
+                {pageAccountId ? <AccountTunnelCredentialStatus accountId={pageAccountId} interactionMode={interactionMode}
+                  language={language} tunnel={accountTunnel} disabled={busy || !targetAccount || (targetAccount.activeTurns ?? 0) > 0}
+                  onChanged={refreshPool} /> : null}
                 {returnedFromPlatform && pageAccountId ? <Notice tone="info" role="status">
                   {accountToolsCopy(language).returned.replaceAll("{account}", () => tunnelAccountLabel ?? pageAccountId)}</Notice> : null}
                 {credentialsConfigured && !replacingCredentials ? (
@@ -504,6 +515,18 @@ export function McpSurface({
                   </Notice>
                 ) : (
                   <div className="nk-connections__fields">
+                    <div>
+                      <p><label htmlFor={credentialStorageFieldId}>{credentialText.storageChoice}</label></p>
+                      <Select id={credentialStorageFieldId} label={credentialText.storageChoice} disabled={busy}
+                        aria-describedby={`${credentialStorageFieldId}-hint`} value={credentialStorage}
+                        onChange={value => setCredentialStorage(value as 'os-vault' | 'legacy-file')}
+                        options={[
+                          { value: 'os-vault', label: credentialText.protectedOption },
+                          { value: 'legacy-file', label: credentialText.legacyOption },
+                        ]} />
+                      <p className="nk-connections__hint" id={`${credentialStorageFieldId}-hint`}>{credentialText.storageChoiceHint}</p>
+                      {credentialStorage === 'legacy-file' ? <Notice tone="warning">{credentialText.legacyWarning}</Notice> : null}
+                    </div>
                     <TextField
                       // The kit wires the error (id `${id}-hint`); the shared hint stays in the description.
                       aria-describedby={tunnelInvalid ? `${tunnelFieldId}-hint mcp-credentials-hint` : "mcp-credentials-hint"}

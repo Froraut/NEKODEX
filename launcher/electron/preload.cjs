@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   setupMcp: (input) => ipcRenderer.invoke("launcher:setup-mcp", input),
   configureAccountTunnel: (id, input) => ipcRenderer.invoke('launcher:account-tunnel-configure', id, input),
   removeAccountTunnel: (id, mode) => ipcRenderer.invoke('launcher:account-tunnel-remove', id, mode),
+  migrateAccountTunnelCredential: (id, input) => ipcRenderer.invoke('launcher:account-tunnel-credential-migrate', id, input),
   setMcpStep: (step) => ipcRenderer.invoke("launcher:set-mcp-step", step),
   setAutostart: (enabled) => ipcRenderer.invoke("launcher:autostart", enabled),
   setBiggerContext: (enabled) => ipcRenderer.invoke("launcher:bigger-context", enabled),

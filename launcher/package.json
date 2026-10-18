@@ -1,8 +1,8 @@
 {
   "name": "codex-web-gpt-launcher",
-  "version": "6.1.32-nekodex.7",
+  "version": "6.1.32-nekodex.8",
   "private": true,
-  "description": "NEKODEX — a desktop workspace for ChatGPT accounts, coding agents, and local tools.",
+  "description": "NEKODEX \u2014 a desktop workspace for ChatGPT accounts, coding agents, and local tools.",
   "author": "FroRaut",
   "updateRepository": "Froraut/NEKODEX",
   "type": "module",
@@ -12,14 +12,15 @@
     "audit": "bun audit",
     "typecheck": "tsc --noEmit",
     "build:renderer": "vite build",
-    "build": "bun run typecheck && bun run build:renderer",
+    "build": "bun run typecheck && bun run build:renderer && bun run build:credential-helper",
     "build:runtime": "bun run scripts/prepare-runtime.cjs",
     "package": "bun run build && bun run build:runtime && bun run scripts/package.cjs",
     "package:mac": "bun run build && bun run build:runtime && bun run scripts/package.cjs --mac",
     "package:win": "bun run build && bun run build:runtime && bun run scripts/package.cjs --win",
     "package:linux": "bun run build && bun run build:runtime && bun run scripts/package.cjs --linux",
     "smoke:package": "bun run scripts/smoke-package.cjs",
-    "start": "electron ."
+    "start": "electron .",
+    "build:credential-helper": "node ../scripts/build-credential-helper.cjs --development"
   },
   "dependencies": {
     "motion": "^12.42.2",
@@ -47,7 +48,8 @@
     "artifactName": "codex-web-gpt-${version}-${os}-${arch}.${ext}",
     "asar": true,
     "asarUnpack": [
-      "assets/linux-appimage-runner.sh"
+      "assets/linux-appimage-runner.sh",
+      "electron/credential-helper/**"
     ],
     "directories": {
       "output": "release"
@@ -76,6 +78,8 @@
       "hardenedRuntime": true,
       "signIgnore": [
         "[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]runtime[/\\\\]bun$",
+        "[/\\\\]Contents[/\\\\]Resources[/\\\\]app\\.asar\\.unpacked[/\\\\]electron[/\\\\]credential-helper[/\\\\]darwin-(?:arm64|x64)[/\\\\]nekodex-credential-helper$",
+        "[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]app[/\\\\]credential-helper[/\\\\]darwin-(?:arm64|x64)[/\\\\]nekodex-credential-helper$",
         "[/\\\\]Resources[/\\\\].*\\.(?:pak|ttf|woff2?|png|mp4|icns)$"
       ],
       "target": [
@@ -118,7 +122,7 @@
       "createStartMenuShortcut": true,
       "runAfterFinish": true
     },
-    "copyright": "Copyright © FroRaut and upstream contributors",
+    "copyright": "Copyright \u00a9 FroRaut and upstream contributors",
     "dmg": {
       "artifactName": "NEKODEX-${version}-mac-${arch}.${ext}",
       "title": "NEKODEX ${version}"

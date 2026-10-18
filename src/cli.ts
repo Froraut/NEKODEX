@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { clearTunnelRuntimeKeyEnvironment, importSavedTunnelCredential, readRuntimeKeyInput } from "./tunnel-credential";
 import { clientConnectionsCommand } from "./client-connections";
 import { claudeIntegrationCommand } from "./claude-integration";
 import { localApiCommand } from "./local-api-access";
@@ -12,7 +13,7 @@ import { captureSystemBrowserLoginToFile, checkBrowserEngine, loginToChatGpt } f
 import { createPasskeyLoginControl } from "./passkey-login-control";
 import { createExistingChromeLoginControl } from "./existing-chrome-login-control";
 import { captureExistingChromeLoginToFile, ExistingChromeLoginError } from "./existing-chrome-login";
-import { defaultConfig, getConfigDir, getConfigPath, loadConfig, loadConfigForSetup, readAccountCapabilityFields } from "./config";
+import { defaultConfig, getConfigDir, getConfigPath, loadConfig, loadConfigForSetup, readConfigForSetup, readAccountCapabilityFields } from "./config";
 import {
   inspectLauncherBrowserHost,
   inspectLauncherBrowserHostLiveness,
@@ -32,8 +33,8 @@ import { runCommand } from "./process";
 import { startServer } from "./server";
 import { assertServiceIdle, cancelActiveTurns, getServiceStatus, installService, interruptActiveTurn, restartService, startService, stopService, uninstallService } from "./service";
 import { existingFullSetupCredentials, preflightSetup, setup, type SetupOptions } from "./setup";
-import { installRuntimeKeyBytes, installTunnelClient, managedRuntimeKeyPath, stopTunnel, tunnelStatus, waitForTunnelReady } from "./tunnel";
-import { getTunnelServiceStatus, restartTunnelService, startTunnelService, stopTunnelService, uninstallTunnelService } from "./tunnel-service";
+import { runTunnelCredentialProcess, installTunnelClient, managedRuntimeKeyPath, stopTunnel, tunnelStatus, waitForTunnelReady } from "./tunnel";
+import { finalizeTunnelCredentialMigration, getTunnelServiceStatus, restartTunnelService, startTunnelService, stopTunnelService, uninstallTunnelService } from "./tunnel-service";
 import { VERSION } from "./version";
 import { inspectCodexIntegrationWithChain } from "./codex-chained-route";
 import { runDevCommand } from "./dev-chat/cli";
@@ -69,7 +70,7 @@ Usage:
   codex-chatgpt-web serve
   codex-chatgpt-web mcp [--broker-socket PATH] [--tunnel-id ID]
   codex-chatgpt-web service <status|install|start|restart|stop|cancel-turns>
-  codex-chatgpt-web tunnel <status|start|restart|stop|key-import>
+  codex-chatgpt-web tunnel <status|start|restart|stop|key-import|credential-run|credential-finalize>
   codex-chatgpt-web open <tunnels|runtime-keys|connectors>
   codex-chatgpt-web uninstall --yes
 
@@ -88,6 +89,8 @@ Setup options:
                                Use the embedded launcher browser described by this owner-only file
   --refresh-account-capabilities
                                Re-read the authenticated account's available Web models
+  --runtime-key-stdin          Read at most 64KiB UTF-8 runtime key directly from stdin, without a staging file
+  --credential-storage MODE    os-vault (default); explicit legacy-file stores plaintext for compatibility
   --tunnel-id ID               Existing OpenAI tunnel id (full mode)
   --runtime-key-file PATH      File containing a Tunnels Read+Use runtime key
   --replace-codex-route        Reversibly replace existing Responses or Voice route settings
@@ -271,6 +274,12 @@ async function setupCommand(args: string[]): Promise<void> {
   }
   const tunnelId = takeOption(args, "--tunnel-id");
   const runtimeKeyFile = takeOption(args, "--runtime-key-file");
+  const runtimeKeyStdin = takeFlag(args, "--runtime-key-stdin");
+  if (runtimeKeyFile && runtimeKeyStdin) throw new Error("Choose --runtime-key-file or --runtime-key-stdin");
+  const credentialStorage = takeOption(args, "--credential-storage");
+  if (credentialStorage !== undefined && credentialStorage !== "os-vault" && credentialStorage !== "legacy-file") {
+    throw new Error("--credential-storage must be os-vault or legacy-file");
+  }
   const chrome = takeOption(args, "--chrome");
   const browserHostDescriptorPath = takeOption(args, "--browser-host-descriptor");
   if (chrome) options.chromeExecutablePath = chrome;
@@ -278,6 +287,8 @@ async function setupCommand(args: string[]): Promise<void> {
   options.refreshAccountCapabilities = takeFlag(args, "--refresh-account-capabilities");
   if (tunnelId) options.tunnelId = tunnelId;
   if (runtimeKeyFile) options.runtimeKeyFile = runtimeKeyFile;
+  if (runtimeKeyStdin) options.runtimeKeyValue = await readRuntimeKeyInput(stdin);
+  if (credentialStorage) options.credentialStorage = credentialStorage;
   options.forceLogin = takeFlag(args, "--login");
   options.autoApproveToolCalls = takeFlag(args, "--auto-approve-tool-calls");
   const freshConversation = takeFlag(args, "--fresh-conversation");
@@ -339,7 +350,7 @@ async function setupCommand(args: string[]): Promise<void> {
   const interactionMode = options.browserInteractionMode ?? existing?.browserInteractionMode ?? "automatic";
   const reusableCredentials = existingFullSetupCredentials(existing, interactionMode);
   const needsTunnelId = !options.tunnelId && !reusableCredentials.tunnelId;
-  const needsRuntimeKey = !options.runtimeKeyFile
+  const needsRuntimeKey = !options.runtimeKeyValue && !options.runtimeKeyFile
     && !reusableCredentials.runtimeKey
     && !existsSync(managedRuntimeKeyPath(interactionMode));
 
@@ -527,14 +538,25 @@ async function tunnelCommand(args: string[]): Promise<void> {
     return;
   }
   if (action === "key-import") {
-    const key = await secretPrompt("Runtime key (hidden): ");
+    const read = readConfigForSetup();
+    if (!read.config?.tunnel?.credential || read.config.accountTunnelMode) throw new Error("Use Full setup to migrate a legacy key, or selected account setup for an account-owned key");
+    const key = await secretPrompt(`Runtime key for ${read.config.browserInteractionMode} mode (hidden): `);
     if (!key) throw new Error("A non-empty runtime key is required");
-    const config = loadConfig();
-    installRuntimeKeyBytes(key, config.browserInteractionMode);
-    stdout.write(`Runtime key stored privately at ${managedRuntimeKeyPath(config.browserInteractionMode)}\n`);
+    importSavedTunnelCredential(key, undefined, read.snapshot);
+    stdout.write("Protected runtime credential reference saved. Restart the configured tunnel runtime to apply it; the existing process has not been rotated.\n");
     return;
   }
+  if (action === "credential-finalize") {
+    const result = await finalizeTunnelCredentialMigration();
+    stdout.write(`${JSON.stringify(result)}\n`); return;
+  }
   const config = loadConfig();
+  if (action === "credential-run") {
+    const outcome = await runTunnelCredentialProcess(config);
+    if (outcome.signal && process.platform !== "win32") process.kill(process.pid, outcome.signal);
+    else process.exitCode = outcome.code ?? (outcome.signal === "SIGINT" ? 130 : 143);
+    return;
+  }
   if (action === "start") startTunnelService();
   else if (action === "restart") {
     await assertServiceIdle(config);
@@ -634,6 +656,8 @@ async function uninstallCommand(args: string[]): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // The SDK inherits its launch secret into MCP. No NEKODEX command forwards that ambient key.
+  clearTunnelRuntimeKeyEnvironment();
   const args = process.argv.slice(2);
   const home = takeOption(args, "--home");
   if (home) process.env.CODEX_CHATGPT_WEB_HOME = home;

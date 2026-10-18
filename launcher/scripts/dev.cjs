@@ -4,6 +4,10 @@ const path = require("node:path");
 const root = path.resolve(__dirname, "..");
 const electronBin = require("electron");
 const bun = process.env.CODEX_WEB_GPT_BUN || process.execPath;
+const { compileCredentialHelper } = require("../../scripts/build-credential-helper.cjs");
+// Native compilation/development signing must settle before either UI process starts.
+compileCredentialHelper({ repositoryRoot: path.resolve(root, ".."), development: true });
+
 
 const helperBuild = spawnSync(bun, ["run", "scripts/build-browser-helper.ts"], {
   cwd: path.resolve(root, ".."),

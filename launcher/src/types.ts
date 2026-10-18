@@ -472,6 +472,18 @@ export interface AccountTunnelView {
   /** Machine-readable cause while not ready, e.g. "openai_unreachable". */
   reason?: string;
   detail?: string;
+  /** Saved storage form only; this does not probe vault unlock or runtime readiness. */
+  credentialStorage?: 'legacy' | 'protected' | 'unavailable';
+  credentialMigrationPending?: boolean;
+}
+
+export interface AccountTunnelCredentialMigrationResult {
+  ok: boolean;
+  saved: boolean;
+  ready: boolean;
+  migrated: boolean;
+  legacyRetired: boolean;
+  recoveryRequired?: boolean;
 }
 
 export interface BrowserCapacitySettings {
@@ -633,16 +645,22 @@ export interface LauncherApi {
   setupMcp(input: {
     tunnelId?: string;
     runtimeKey?: string;
+    credentialStorage?: 'os-vault' | 'legacy-file';
     replace?: boolean;
     interactionMode?: BrowserInteractionMode;
   }): Promise<{ ok: boolean; stdout: string }>;
   configureAccountTunnel(accountId: string, input: {
     tunnelId: string;
     runtimeKey?: string;
+    credentialStorage?: 'os-vault' | 'legacy-file';
     interactionMode?: BrowserInteractionMode;
     reuseSavedCredentials?: boolean;
   }): Promise<{ ok: boolean; saved?: boolean; ready?: boolean; recoveryRequired?: boolean }>;
   removeAccountTunnel(accountId: string, interactionMode?: BrowserInteractionMode): Promise<{ ok: boolean; saved?: boolean; recoveryRequired?: boolean }>;
+  migrateAccountTunnelCredential(accountId: string, input: {
+    interactionMode?: BrowserInteractionMode;
+    principalFingerprint?: string;
+  }): Promise<AccountTunnelCredentialMigrationResult>;
   setMcpStep(step: number): Promise<LauncherState>;
   setAutostart(enabled: boolean): Promise<{ state: LauncherState; supported: boolean; enabled: boolean }>;
   setBiggerContext(enabled: boolean): Promise<LauncherState>;

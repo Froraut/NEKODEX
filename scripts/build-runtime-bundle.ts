@@ -16,6 +16,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { VERSION } from "../src/version";
 import { createRequire } from "node:module";
 const { beginDirectoryBuild } = createRequire(import.meta.url)("./build-output.cjs");
+const { compileCredentialHelper } = createRequire(import.meta.url)("./build-credential-helper.cjs");
 const { signEmbeddedRuntime } = createRequire(import.meta.url)("../launcher/scripts/release-signing.cjs");
 
 const root = resolve(import.meta.dir, "..");
@@ -100,6 +101,17 @@ cpSync(embeddedBunExecutable(), join(runtimeDir, bunName));
 if (process.platform !== "win32") chmodSync(join(runtimeDir, bunName), 0o755);
 // Sign before recording manifest hashes; packaging preserves this exact Bun signature.
 signEmbeddedRuntime(join(runtimeDir, bunName));
+
+// Build/sign the fixed helper before copying it into the immutable manifest tree.
+// Release/local identities take precedence over the source-build development exception.
+const credentialHelper = compileCredentialHelper({ repositoryRoot: root, development: true });
+if (credentialHelper.supported) {
+  const helperDirectory = join(appDir, "credential-helper", `${process.platform}-${process.arch}`);
+  mkdirSync(helperDirectory, { recursive: true });
+  copyFileSync(credentialHelper.executable, join(helperDirectory, "nekodex-credential-helper"));
+  chmodSync(join(helperDirectory, "nekodex-credential-helper"), 0o755);
+}
+
 
 const launcherName = process.platform === "win32" ? "codex-chatgpt-web.cmd" : "codex-chatgpt-web";
 const launcher = process.platform === "win32" ? `@echo off

@@ -36,15 +36,40 @@ function verifyWindowsPublisher(target, env = process.env) {
     path.join(__dirname, "verify-windows-publisher.ps1"), "-Path", target, "-ExpectedThumbprint", env.CODEX_WEB_GPT_WINDOWS_CERT_SHA1], { env });
 }
 function signEmbeddedRuntime(target, platform = process.platform, env = process.env) {
-  if (!signingConfiguration(platform, env).release) return;
+  const release = signingConfiguration(platform, env).release;
+  const localMacIdentity = platform === "darwin" && env.NEKODEX_LOCAL_APP_SIGNING_IDENTITY;
+  if (!release && !localMacIdentity) return;
   if (platform === "darwin") {
+    const identity = release ? env.CSC_NAME : localMacIdentity;
+    const keychain = release ? env.CODEX_WEB_GPT_SIGNING_KEYCHAIN : env.NEKODEX_LOCAL_APP_SIGNING_KEYCHAIN;
+    if (!identity.startsWith("Developer ID Application:")) throw new Error("Local application update requires a Developer ID Application identity");
     run("codesign", ["--force", "--options", "runtime", "--timestamp", "--entitlements",
-      path.resolve(__dirname, "../assets/entitlements.bun.plist"), "--keychain", env.CODEX_WEB_GPT_SIGNING_KEYCHAIN, "--sign", env.CSC_NAME, target], { env });
-    verifyMacPublisher(target, env);
+      path.resolve(__dirname, "../assets/entitlements.bun.plist"), ...(keychain ? ["--keychain", keychain] : []), "--sign", identity, target], { env });
+    if (release) verifyMacPublisher(target, env);
+    else run("codesign", ["--verify", "--strict", target], { env });
   } else if (platform === "win32") {
     run(env.CODEX_WEB_GPT_SIGNTOOL, ["sign", "/sha1", env.CODEX_WEB_GPT_WINDOWS_CERT_SHA1, "/s", "My", "/fd", "SHA256", "/tr", "https://timestamp.digicert.com", "/td", "SHA256", target], { env });
     verifyWindowsPublisher(target, env);
   }
+}
+// The Keychain ACL follows this helper's stable designated requirement. Sign
+// before copying it into either bundle and before sealing runtime file hashes.
+function signCredentialHelper(target, platform = process.platform, env = process.env, { development = false } = {}) {
+  if (platform !== "darwin") return;
+  const identifier = "dev.nekodex.tunnel-credential-helper.v1";
+  const release = signingConfiguration(platform, env).release;
+  const identity = release ? env.CSC_NAME : env.NEKODEX_LOCAL_APP_SIGNING_IDENTITY;
+  const keychain = release ? env.CODEX_WEB_GPT_SIGNING_KEYCHAIN : env.NEKODEX_LOCAL_APP_SIGNING_KEYCHAIN;
+  if (identity) {
+    if (!identity.startsWith("Developer ID Application:")) throw new Error("Protected credential helper requires a Developer ID Application identity");
+    run("codesign", ["--force", "--options", "runtime", "--timestamp", "--identifier", identifier,
+      ...(keychain ? ["--keychain", keychain] : []), "--sign", identity, target], { env });
+    run("codesign", ["--verify", "--strict", target], { env });
+    if (release) verifyMacPublisher(target, env);
+    return;
+  }
+  if (!development) throw new Error("Protected credential helper requires an explicit publisher identity outside development");
+  run("codesign", ["--force", "--identifier", identifier, "--sign", "-", target], { env });
 }
 function verifyWindowsTree(directory, env = process.env) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -53,4 +78,4 @@ function verifyWindowsTree(directory, env = process.env) {
     else if (entry.isFile() && /\.exe$/i.test(entry.name)) verifyWindowsPublisher(file, env);
   }
 }
-module.exports = { signingConfiguration, assertMacPublisher, verifyMacPublisher, verifyWindowsPublisher, verifyWindowsTree, signEmbeddedRuntime };
+module.exports = { signingConfiguration, assertMacPublisher, verifyMacPublisher, verifyWindowsPublisher, verifyWindowsTree, signEmbeddedRuntime, signCredentialHelper };

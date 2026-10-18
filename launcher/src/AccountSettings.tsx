@@ -767,6 +767,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
                   <AccountToolsOnboarding account={account} copy={copy} language={language} headingId={`${ids.details}-tools`}
                     interactionMode={interactionMode} connectorName={toolsSetup.connectorName} urls={toolsSetup.urls}
                     manual={manual} disabled={toolsDisabled} onError={setError}
+                    onTunnelCredentialChanged={retryPool}
                     onSetup={() => onSetupTools(account.id, account.accountLabel ? `${account.label} · ${account.accountLabel}` : account.label)} />
                   <AccountCodexLogin copy={codexCopy} headingId={`${ids.details}-login`} idPrefix={ids.codex}
                     transitionBusy={transitionBusy}

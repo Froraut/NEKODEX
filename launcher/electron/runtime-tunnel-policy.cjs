@@ -1,4 +1,18 @@
 const { redactText } = require("./logging.cjs");
+const { isCredentialReference } = require('./tunnel-credentials.cjs');
+
+const TUNNEL_RUNTIME_KEY_ENV = 'NEKODEX_TUNNEL_RUNTIME_KEY';
+function tunnelCredentialScope(config, binding) {
+  return { accountId: binding?.accountId ?? 'legacy',
+    interactionMode: binding?.interactionMode ?? config.browserInteractionMode ?? 'automatic',
+    tunnelId: config.tunnel.tunnelId };
+}
+function tunnelCredentialEnvironment(config, args, provider, binding) {
+  // Cleanup/list/stop and healthy local supervision must never unlock a vault.
+  if (args[0] !== 'runtimes' || !['connect', 'status'].includes(args[1]) || !config.tunnel?.credential) return {};
+  if (!isCredentialReference(config.tunnel.credential)) throw new Error('Invalid saved tunnel credential reference');
+  return { [TUNNEL_RUNTIME_KEY_ENV]: provider.resolve(config.tunnel.credential, tunnelCredentialScope(config, binding)) };
+}
 
 function conciseTunnelLog(value) {
   if (typeof value !== "string" || !value.trim()) return undefined;
@@ -91,7 +105,7 @@ function managedTunnelConnectArgs(config, invocation) {
     "--profile-dir", tunnel.profileDir,
     "--tunnel-client-bin", tunnel.binaryPath,
     "--tunnel-id", tunnel.tunnelId,
-    "--runtime-api-key", `file:${tunnel.runtimeKeyFile}`,
+    "--runtime-api-key", tunnel.credential ? `env:${TUNNEL_RUNTIME_KEY_ENV}` : `file:${tunnel.runtimeKeyFile}`,
     "--mcp-command", managedTunnelMcpCommand(invocation, config.accountTunnelBinding ? tunnel.tunnelId : undefined),
     "--json",
   ];
@@ -115,4 +129,5 @@ function tunnelObservationInconclusive(error) {
 }
 
 module.exports = { conciseTunnelLog, tunnelConnectCanContinue, tunnelControlDiagnostic, managedTunnelConnectArgs,
-  RECOVERY_BACKOFF_INITIAL_MS, RECOVERY_BACKOFF_MAX_MS, recoveryBackoffDelay, tunnelObservationInconclusive };
+  RECOVERY_BACKOFF_INITIAL_MS, RECOVERY_BACKOFF_MAX_MS, recoveryBackoffDelay, tunnelObservationInconclusive,
+  TUNNEL_RUNTIME_KEY_ENV, tunnelCredentialScope, tunnelCredentialEnvironment };

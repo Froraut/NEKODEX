@@ -1,6 +1,6 @@
 {
   "name": "codex-chatgpt-web",
-  "version": "6.1.32-nekodex.7",
+  "version": "6.1.32-nekodex.8",
   "publishedReleaseVersion": "6.1.28-nekodex.1",
   "publishedLinuxReleaseVersion": "6.1.12-nekodex.1",
   "private": true,
@@ -57,7 +57,8 @@
     "launcher:build": "bun run --cwd launcher build",
     "verify": "bun run scripts/verify.ts",
     "test:regressions": "bun test tests/account-tunnel-supervision.test.ts tests/account-tunnel-dead-marker.test.ts tests/codex-chained-route.test.ts tests/reasoning-replay.test.ts tests/response-rebinding.test.ts tests/account-not-ready-replay.test.ts tests/tool-proof.test.ts tests/api-panel-google.test.ts tests/reply-alignment.test.ts tests/update-recheck.test.ts tests/boot-recovery.test.ts tests/unsent-turn-retry.test.ts",
-    "test:selective-adoption": "bun test tests/support-report.test.ts tests/support-report-sources.test.ts tests/task-observation.test.ts tests/task-center-overview.test.ts tests/settings-search.test.ts tests/update-authenticated-staging.test.ts"
+    "test:selective-adoption": "bun test tests/support-report.test.ts tests/support-report-sources.test.ts tests/task-observation.test.ts tests/task-center-overview.test.ts tests/settings-search.test.ts tests/update-authenticated-staging.test.ts",
+    "test:tunnel-credentials": "bun test tests/tunnel-credentials.test.ts tests/tunnel-credential-cli.test.ts tests/electron-tunnel-credentials.test.ts"
   },
   "dependencies": {
     "@mixmark-io/domino": "2.2.0",

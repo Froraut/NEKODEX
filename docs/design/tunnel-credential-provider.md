@@ -1,184 +1,131 @@
 # D01: shared tunnel credential provider
 
-Status: approved design scope for selective CoS adoption; **no credential format,
-startup route or saved credential migration is implemented by this document**.
-The source baseline is `f1016ab5cc82ad3a12f74d147cf6daff9c97345b`.
+Status: implemented for macOS Keychain in `6.1.32-nekodex.8`. Electron, Bun CLI
+and the headless entry point share one provider. The real development UI migration
+and native Keychain roundtrip passed. Installed-app migration is a separate
+delivery step; this design document alone does not prove a live credential moved.
 
-## Outcome and constraint
+Windows and Linux retain legacy configuration compatibility and an **explicit**
+`legacy-file` setup choice. Their OS-vault backends are unavailable. New keys
+default to protected storage; locked/unsupported storage never silently falls
+back to files. The native build supports macOS Intel, but this task's native
+execution evidence is Apple Silicon.
 
-Save tunnel runtime credentials using an OS-backed provider while retaining
-Electron startup, Bun CLI setup, native headless service restart, account/mode
-isolation and exact rollback ownership. Successful encrypted persistence is a
-different result from a working tunnel or accepted ChatGPT connector.
+## Owners and saved contract
 
-Electron `safeStorage` is a useful reference for store serialization and recovery,
-but is insufficient as the sole runtime API: the Bun CLI and native launchd
-service do not run inside Electron. Do not encrypt the existing `.key` bytes and
-leave a native `file:` selector pointing to ciphertext, or leave a permanent
-plaintext mirror and label the result encrypted saved credentials.
-
-## Checked facts and unresolved SDK contract
-
-| Checked source fact | Consequence |
+| Boundary | Owner |
 | --- | --- |
-| [`src/tunnel.ts`](../../src/tunnel.ts), line 18, pins official tunnel-client `0.0.16`. Lines 553–570 call `runtimes connect --runtime-api-key file:<runtimeKeyFile>` from Bun. | The existing CLI needs a non-Electron provider and an adapter preserving managed startup. |
-| [`runtime-tunnel-policy.cjs`](../../launcher/electron/runtime-tunnel-policy.cjs), lines 84–97, builds the same file selector. [`runtime-supervisor.cjs`](../../launcher/electron/runtime-supervisor.cjs), lines 577–584 and 1482–1505, require that saved file and own managed startup. | Both producers must change under one contract; renderer state cannot resolve secrets or start another tunnel. |
-| [`account-tunnel-supervisor.cjs`](../../launcher/electron/account-tunnel-supervisor.cjs), lines 178–193, projects one account/mode into the shared supervisor. | The provider scope must include application home, account, mode and tunnel; one account may never borrow another's credential. |
-| [`src/tunnel-service.ts`](../../src/tunnel-service.ts), lines 53–78, starts `tunnel-client run --profile-dir … --profile …` directly through launchd, with `RunAtLoad` and `KeepAlive`. | Native service startup currently bypasses Electron and Bun. Supporting it requires a headless provider entry point or verified native SDK credential support. |
-| [`src/setup.ts`](../../src/setup.ts), lines 532–548 and 797–830, snapshots config, key, client, profile and service, refusing unsafe rollback when ownership or status is unresolved. | Replace raw-key file receipts with versioned provider receipts without losing transaction semantics. |
-| [`account-tunnels.cjs`](../../launcher/electron/account-tunnels.cjs), lines 96–135 and 146–156, prepares a new immutable key then commits config, and discards only its own unreferenced file. [`runtime.cjs`](../../launcher/electron/runtime.cjs), lines 640–652, preserves a committed binding even if readiness fails. | Encrypted storage must retain prepare/commit/discard and the saved-but-not-ready result. |
-
-The reviewed NEKODEX call sites do **not** establish what SDK `0.0.16` serializes
-in its generated profile, which key selectors it supports, when it reopens a key
-file, or what its detached runtime inherits on recovery. CoS passes a key in the
-environment to its direct `run` route; that does not prove equivalent behavior
-for NEKODEX's managed `runtimes connect` route. Resolve these questions from the
-exact official SDK revision and a disposable fixture with a synthetic credential,
-not by reading installed profiles or testing with a real key.
-
-## One provider contract
-
-Introduce a runtime-independent credential service with a small typed protocol.
-Electron main and Bun call the same service; a native headless startup adapter
-uses the same scope and version rules. A native OS-backed helper is the preferred
-candidate when it avoids loading Electron to access storage. Platform adapters
-must support the actual supported login/service contexts; a backend label alone
-is not proof that protection or noninteractive access is available.
-
-Proposed saved configuration representation:
+| Protected storage | `launcher/electron/tunnel-credentials.cjs`, `launcher/native/tunnel-credential-helper.swift` |
+| Bun/config port | `src/tunnel-credential.ts`, `src/config.ts` |
+| Account migration | `account-tunnels.cjs`, `RuntimeHost.configureAccountTunnel`, existing account mutation lease |
+| SDK process and readiness | `runtime-supervisor.cjs`, account peer supervisor, `runtime-tunnel-policy.cjs` |
+| Global setup/compensation | `src/setup.ts`, file transaction and credential recovery receipts |
+| Headless restart | `tunnel credential-run`, invoked by `src/tunnel-service.ts` |
+| UI | Guarded main/preload IPC and `AccountTunnelCredentialStatus` |
+| Native build | `scripts/build-credential-helper.cjs`, runtime bundler |
 
 ```json
-{
-  "credential": {
-    "version": 1,
-    "provider": "os-vault",
-    "id": "opaque-random-credential-id",
-    "revision": "immutable-random-revision"
-  }
-}
+{"credential":{"version":1,"provider":"os-vault","id":"random-uuid","revision":"random-uuid"}}
 ```
 
-The reference contains no secret, raw key hash or user-selected executable path.
-The provider record binds that reference to canonical application home, account
-ID, Automatic/Manual mode and tunnel ID. Include the application home so DEV and
-production cannot collide. Provider lookup validates the expected scope rather
-than accepting arbitrary renderer-supplied vault IDs. Keep the existing alias,
-profile, process ownership and account binding owners.
+Configuration accepts exactly one immutable credential reference or legacy
+`runtimeKeyFile`. The reference contains no key, key-derived hash or executable
+path. The native record binds it to canonical application home, distinct
+`legacy`/`default`/UUID account, Automatic/Manual mode and tunnel ID. Lookup checks
+expected scope before returning secret bytes. DEV and production cannot collide.
 
-The versioned config schema should initially accept either the existing
-`runtimeKeyFile` or the new credential reference, never both as competing active
-authorities. Older configs remain readable; migration is an explicit durable
-operation, not a side effect of reading a status snapshot. Unknown versions fail
-with an actionable compatibility error and preserve the record.
+## Pinned SDK decision
 
-Suggested operations:
+Official SDK `0.0.16`, commit `5f99daabd4aa4a77049e6d81d54a0d8c18335397`, accepts
+`--runtime-api-key env:NEKODEX_TUNNEL_RUNTIME_KEY` through managed connect,
+serializes only that selector and explicitly forwards the variable to detached
+`run`. Every fresh process needs injection. Same-alias connect may reuse an old
+process, so migration still settles the exact affected peer and verifies a new
+generation. See [source and actual offline SDK evidence](../reviews/2026-10-18-d01-sdk-contract.md).
 
-- `capabilities(context)` returns protected-storage and noninteractive-read
-  availability without returning credentials or showing an unlock prompt.
-- `prepare(scope, secret)` writes a new immutable revision and returns a receipt
-  naming only its reference, scope and transaction ID. Secret input travels over
-  a private pipe/native call; command arguments and JSON diagnostics contain none.
-- `resolveForLaunch(ref, expectedScope, owner)` resolves only for the captured
-  launch operation. It yields a private launch adapter/lease, not plaintext IPC
-  to the renderer or a general HTTP credential endpoint.
-- `discardPrepared(receipt, currentReferences)` removes only that transaction's
-  uncommitted, unreferenced revision. `retire(ref)` schedules exact old revision
-  cleanup only after config, profiles and live owners no longer depend on it.
+The launch owner resolves immediately before connect or remote status and injects
+only the selected child environment. New Electron setup keys reach Bun through
+captured stdin. The SDK's MCP child inherits its environment; NEKODEX removes the
+injected key at the CLI entry before running tools. SDK diagnostics scrub the
+exact value across chunks and truncated capture tails. No plaintext mirror is
+needed. Local PID/start-identity/healthy-tunnel observation never unlocks a vault.
 
-References can be logged only through bounded identifiers consistent with other
-runtime diagnostics. Avoid keeping credential-derived hashes in diagnostics.
-Secrets remain readable by authorized same-user runtime code at use time; this
-design protects durable storage, not a compromised OS account.
+The headless wrapper reloads saved config, validates the actual profile selector
+and tunnel ID, resolves scope, launches the SDK and forwards SIGINT/SIGTERM plus
+exit outcomes. Its LaunchAgent plist contains only durable command/config
+metadata. Native helper locations are fixed source or bundle paths; config and
+renderer input cannot select a helper executable.
 
-## Locked or unavailable storage
+## Provider transaction
 
-Distinguish `locked`, `unavailable`, `not-found`, `scope-mismatch`, `unsupported`
-and `corrupt` from invalid credentials or remote tunnel failure. None is a reason
-to write an empty store, generate a replacement key, borrow another account's
-key, erase ciphertext, or silently downgrade encryption.
+```js
+const provider = createCredentialProvider({ coreHome });
+const receipt = provider.prepare(scope, secret);
+// { version: 1, reference, scope, scopeHash, owner }
+provider.resolve(reference, expectedScope); // internal launch port only
+provider.discardPrepared(receipt, currentReferences);
+provider.retire(reference, scope, { ownerProof: true, currentReferences });
+provider.capabilities();
+```
 
-Interactive setup may offer the platform's normal unlock flow after an explicit
-user action. Headless startup reports a bounded actionable unavailable/locked
-state and waits for a supported retry; it cannot depend on a hidden desktop
-prompt or an invented approval expiry. A currently healthy tunnel need not be
-restarted merely because a later store availability probe is inconclusive.
-The provider must report whether unattended restart is possible in the selected
-OS context before enabling encrypted credentials for that route.
+Native JSON is bounded to 24 KiB, secrets to 8 KiB. Prepare inserts an immutable
+record and checks exact scoped readback. Discard recomputes the home-bound scope
+and deletes only a matching, unreferenced transaction owner. Retirement requires
+explicit runtime-owner proof and observed current references. An uncertain put
+or readback carries a secret-free `preparedReceipt`; consumers retain it under
+`runtime/credential-recovery` and block blind same-scope prepare retries.
 
-## Native launch adapter decision
-
-Prefer a native SDK selector/provider supported by the pinned version if it can
-resolve this reference noninteractively and does not copy raw keys into profiles.
-Otherwise use a small NEKODEX credential launch adapter as the headless service
-entry point. It resolves one exact reference, injects the key through an SDK
-mechanism whose inheritance and persistence have been verified, and transfers
-process/cleanup ownership through the existing runtime owner.
-
-Private IPC/anonymous handles or process environment are candidates only after
-checking the SDK contract. Secrets must not be part of the persisted launchd
-plist, SDK profile, command arguments, public descriptors, generated logs or
-recovery journals. A change from direct native service launch to an adapter is
-an explicit service definition change with the existing unload/rollback rules.
-
-If the only compatible selector is `file:`, a temporary private file requires
-an exact lease and proven SDK reopen/restart semantics. It may remain necessary
-for the lifetime of an owned runtime; then the product must disclose that runtime
-plaintext artifact and avoid claiming that no plaintext remains on disk. Do not
-delete it simply because the control command returned or a readiness deadline
-elapsed. If this cannot meet the agreed storage outcome, retain legacy storage
-and keep encrypted mode unavailable until the adapter or SDK is ready.
+macOS uses a Security generic-password item and disables process/query
+interaction. Fixed locked/unavailable/not-found/scope-mismatch/unsupported/corrupt
+states never erase or replace a record. The helper requires a stable signing
+requirement: installed builds keep the publisher identity and identifier.
+Ad-hoc development recompilation can change access to an earlier development
+item; disposable records are cleaned before changing the signing identity.
+Helper bytes are signed before runtime manifest hashes and remain outside ASAR.
 
 ## Migration, commit and recovery
 
-1. Capture the exact config generation/link target, old credential reference or
-   legacy file receipt, affected account/mode, service/profile receipts and current
-   live owners. Reading a snapshot grants no new key access.
-2. Prepare and read back a new protected immutable provider revision using a
-   synthetic check of the record contract. Record only its opaque receipt in the
-   existing setup transaction. Do not delete the old key/profile yet.
-3. Prove that the selected native startup adapter can use the new reference. Stop
-   only an affected owned peer when replacement requires it; active tasks retain
-   the existing idle/admission rules. Do not race an unresolved prior connect.
-4. Commit the candidate config with its new reference using the captured config
-   generation. A newer writer wins; compensation cannot overwrite it.
-5. Publish `saved` independently from `ready`. A post-commit readiness failure
-   preserves the committed revision and uses normal recovery. It does not discard
-   that credential or repeatedly provision replacements.
-6. Retire the legacy file/old revision only after durable config/profile migration,
-   successful matching runtime startup and exact owner settlement. A rollback
-   window may intentionally preserve the prior credential; cleanup then belongs
-   to this one migration transaction, never a general secret/cache sweep.
+1. Capture exact config bytes/link target, account/mode and private regular-file
+   identity. Reject a changed sign-in or unsafe legacy file.
+2. Prepare and read back protected storage before disturbing the old runtime.
+   Keep a nonsecret legacy retirement receipt with path/inode/content identity.
+3. Settle only the affected owned peer under existing idle/admission rules.
+4. Commit against the original config generation; preserve a newer writer.
+5. Publish saved independently from ready. A committed-but-not-ready result keeps
+   its reference and old file; retry uses that revision rather than preparing one.
+6. Retire the exact old file after fresh process/start-identity, readiness and
+   actual SDK selector/tunnel proof. Immediately recheck config references and
+   file identity. Keep the nonsecret receipt so housekeeping does not change the
+   identity of an already-running peer.
 
-A crash journal records phases and opaque receipts (`prepared`, `config-committed`,
-`runtime-verified`, `retired`) plus expected config hashes; it stores no secret
-bytes. On recovery, classify the durable config as previous, candidate or
-concurrent before acting. Preserve uncertain state for recovery rather than
-deleting referenced credentials. Provider writes and config commits are separate
-resources, so a single semantic coordinator must own compensation across them.
+Global/DEV setup retains pending retirement metadata and reports it through
+setup/Doctor. Explicit `tunnel credential-finalize` owns vault preflight, captured
+config revalidation, exact stopped proof, fresh connect/readiness/profile proof
+and exact file retirement. Account mode uses its own owner and rejects this
+global action. External user import files are preserved. An outer Electron
+checkpoint rollback must preserve newly published protected references before
+restoring older config; it cannot orphan the candidate record or guess settlement.
 
-## Technical exit criteria before implementation is called complete
+The UI reports saved legacy/protected/missing state, progress and saved-but-not-
+ready recovery. Protected storage alone proves neither unlock nor a working
+ChatGPT connector. Explicit legacy choice states that the private file is
+unencrypted. No secret, vault reference or raw provider error reaches the UI.
 
-- Establish exact SDK `0.0.16` selector, profile persistence, inherited-secret and
-  restart behavior from its source and focused synthetic-credential fixtures.
-  Record the exact version and evidence; do not assume current upstream matches.
-- Select a protected backend callable from Electron, Bun CLI and native headless
-  restart for every platform/route that claims support. Unsupported combinations
-  stay explicitly on the legacy route rather than silently falling back.
-- Exercise one coherent focused flow: migrate one account/mode, restart it through
-  the normal owner, restart its headless entry point without Electron, then restore
-  the prior generation after an injected pre-commit failure. Include a locked-store
-  observation and a concurrent config change. Use synthetic keys, no provider calls.
-- Demonstrate post-commit saved-but-not-ready retention, exact revision cleanup,
-  account/DEV separation and no raw secret in generated config/profile/plist/logs.
-  Deleting a temporary file requires observed owner settlement, not a timer.
-- Update the config/runtime schema consumers, service definition, architecture and
-  extension-guide rows together when implementing. Add native helper packaging
-  only after the supported development path works; it is separate release work.
+## Focused evidence and limits
 
-These are targeted implementation acceptance conditions, not authorization for
-a broad repository suite, account mutation or speculative packaging. D01 is
-complete as a design when the unresolved SDK/backend decisions and their exit
-criteria are explicit; encrypted credential implementation remains a later
-coherent feature. Fresh page/screenshot-bound extension control and a QuickJS
-composition runtime also remain deferred from this selective batch: neither is
-needed to implement the approved diagnostics and workflow improvements.
+- Provider checks: immutable writes, exact scope/canonical home, referenced-entry
+  protection, locked/unavailable states and uncertain receipts.
+- CLI checks: private stdin, explicit legacy compatibility, rollback, fresh
+  headless resolution, split-value redaction, exit/signals and global finalization.
+- Electron checks: child-only injection, vault-free local health, migration order,
+  saved-not-ready retention, concurrent writers, recovery and process/profile proof.
+- Actual SDK: synthetic loopback connect/detach/stop; selector-only profile and no
+  persisted synthetic key.
+- Actual DEV UI: Migrate used native Keychain and a fresh real SDK process against
+  a fake local control plane, reached ready and removed the old synthetic file.
+  All polls used the expected credential. App/peer/server/vault fixture cleanup
+  settled before removal.
+
+These are focused credential-flow proofs. They do not establish Windows/Linux
+protected backends, a real ChatGPT connector, Apple notarization or public release.
+The local installed update and actual key migration require their own final receipt.
