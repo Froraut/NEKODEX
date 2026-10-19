@@ -9,10 +9,11 @@ export interface OAuthMcpPin {
   metadataDigest: string; accountId: string; epoch: string; serverId: string;
 }
 export interface OAuthMcpStatus {
+  closed?: boolean; unavailable?: boolean;
   providers: Array<Omit<OAuthMcpPin, 'endpoint'> & { label: string }>;
   bindings: Array<{ scope: OAuthMcpScope; pin: OAuthMcpPin; binding: string }>;
   receipts: Array<{ binding: string; providerId: string; serverId: string; stopped: boolean; activeCount: number;
-    receiptCount: number; heldUnknownCount: number; ownerHeld: boolean;
+    receiptCount: number; heldUnknownCount: number; ownerHeld: boolean; ownerCurrent?: boolean;
     receipts: Array<{ invocationHash: string; tool: string; state: 'completed' | 'failed' | 'outcome_unknown'; createdAt: number; updatedAt: number }> }>;
 }
 export interface OAuthMcpReview {
@@ -26,19 +27,52 @@ export type OAuthMcpRequest = { action: 'oauthMcpStatus' }
 export type OAuthMcpResponse = OAuthMcpStatus | OAuthMcpReview;
 export type OAuthMcpTransport = (body: OAuthMcpRequest) => Promise<OAuthMcpResponse>;
 const sameScope = (a: OAuthMcpScope, b: OAuthMcpScope) => a.taskId === b.taskId && a.generation === b.generation && a.toolCallId === b.toolCallId;
+export interface OAuthMcpTaskConnection {
+  accountScopeKey: string; refreshRevision: number; taskId: string; generation: number;
+  bindings: Array<{ binding: string; serverId: string }>;
+}
+/** Presentation availability only. Main still validates the exact binding and saved call. */
+export function oauthMcpTaskConnection(status: OAuthMcpStatus | null, scope: OAuthMcpScope | undefined, accountScopeKey: string, refreshRevision = 0): OAuthMcpTaskConnection | null {
+  if (!status || status.closed !== false || status.unavailable !== false || !scope || !accountScopeKey) return null;
+  let account: unknown;
+  try { account = JSON.parse(accountScopeKey); } catch { return null; }
+  if (!Array.isArray(account) || account.length !== 2 || typeof account[0] !== 'string') return null;
+  const pinKeys = ['providerId', 'resource', 'issuer', 'clientId', 'metadataDigest', 'accountId', 'epoch', 'serverId'] as const;
+  const bindings = status.bindings.filter(row => row?.scope?.taskId === scope.taskId && row.scope.generation === scope.generation
+    && /^[a-f0-9]{64}$/.test(row.binding) && row.pin?.serverId === 'oauth_mcp_tools'
+    && row.pin.accountId === account[0] && String(row.pin.epoch) === String(account[1])
+    && status.providers.some(provider => pinKeys.every(key => provider?.[key] === row.pin[key]))
+    && status.receipts.some(receipt => receipt?.binding === row.binding && receipt.providerId === row.pin.providerId
+      && receipt.serverId === row.pin.serverId && receipt.stopped === false && (receipt.ownerHeld === false || receipt.ownerCurrent === true)
+      && receipt.activeCount === 0 && receipt.heldUnknownCount === 0))
+    .map(row => ({ binding: row.binding, serverId: row.pin.serverId }));
+  return bindings.length ? { accountScopeKey, refreshRevision, taskId: scope.taskId, generation: scope.generation, bindings } : null;
+}
+export function oauthMcpCallMatches(connection: OAuthMcpTaskConnection | null, call: { tool: string; arguments: Record<string, unknown> } | undefined): boolean {
+  return !!call && !!connection?.bindings.some(binding => binding.binding === call.arguments.binding
+    && call.tool.startsWith(`${binding.serverId}/${binding.binding.slice(0, 16)}__`));
+}
+export function oauthMcpConnectionMatches(connection: OAuthMcpTaskConnection | null, scope: Pick<OAuthMcpScope, 'taskId' | 'generation'> | undefined, accountScopeKey: string, refreshRevision: number): boolean {
+  return !!scope && !!connection && connection.accountScopeKey === accountScopeKey && connection.refreshRevision === refreshRevision
+    && connection.taskId === scope.taskId && connection.generation === scope.generation;
+}
 
 /** Presents only public registration pins and task attachments. The main owner
  * resolves protected authorization; each actual tool call needs its own approval. */
-export function AgentOAuthMcpPanel({ request, scope, accountScopeKey = '', language, disabled = false }: {
+export function AgentOAuthMcpPanel({ request, scope, accountScopeKey = '', refreshRevision = 0, language, disabled = false, onConnectionChange }: {
   request?: OAuthMcpTransport; scope?: OAuthMcpScope; accountScopeKey?: string; language: Language; disabled?: boolean;
+  refreshRevision?: number;
+  onConnectionChange?: (connection: OAuthMcpTaskConnection | null) => void;
 }) {
   const ru = language === 'ru';
   const t = (en: string, russian: string) => ru ? russian : en;
   const transport = useRef(request); transport.current = request;
+  const connectionChange = useRef(onConnectionChange); connectionChange.current = onConnectionChange;
   const mounted = useRef(false), inFlight = useRef(false), sequence = useRef(0);
-  const scopeKey = JSON.stringify([accountScopeKey, scope ?? null]);
+  const scopeKey = JSON.stringify([accountScopeKey, scope ?? null, refreshRevision]);
   const selectedScope = useRef(scopeKey); selectedScope.current = scopeKey;
-  const [status, setStatus] = useState<OAuthMcpStatus | null>(null);
+  const [snapshot, setSnapshot] = useState<{ scopeKey: string; status: OAuthMcpStatus } | null>(null);
+  const status = snapshot?.scopeKey === scopeKey ? snapshot.status : null;
   const [review, setReview] = useState<OAuthMcpReview | null>(null);
   const [provider, setProvider] = useState('');
   const [acknowledged, setAcknowledged] = useState(false);
@@ -47,16 +81,25 @@ export function AgentOAuthMcpPanel({ request, scope, accountScopeKey = '', langu
   const providerId = status?.providers.some(row => row.providerId === provider) ? provider : status?.providers[0]?.providerId ?? '';
   const locked = disabled || busy || !request;
   async function load() {
-    if (!transport.current) return;
+    connectionChange.current?.(null);
+    if (!transport.current) { if (mounted.current) setSnapshot(null); return; }
     const revision = ++sequence.current;
-    const result = await transport.current({ action: 'oauthMcpStatus' });
-    if (!('providers' in result) || !Array.isArray(result.providers) || !Array.isArray(result.bindings)) throw new Error(t('OAuth MCP status is unavailable.', 'Состояние OAuth MCP недоступно.'));
-    if (mounted.current && revision === sequence.current) setStatus(result);
+    const requestedScope = selectedScope.current;
+    if (mounted.current) setSnapshot(null);
+    try {
+      const result = await transport.current({ action: 'oauthMcpStatus' });
+      if (!('providers' in result) || !Array.isArray(result.providers) || !Array.isArray(result.bindings) || !Array.isArray(result.receipts)) throw new Error(t('OAuth MCP status is unavailable.', 'Состояние OAuth MCP недоступно.'));
+      if (mounted.current && revision === sequence.current && requestedScope === selectedScope.current) setSnapshot({ scopeKey: requestedScope, status: result });
+    } catch (reason) {
+      if (mounted.current && revision === sequence.current && requestedScope === selectedScope.current) { setSnapshot(null); connectionChange.current?.(null); }
+      throw reason;
+    }
   }
   async function act(body: OAuthMcpRequest) {
     if (!transport.current || inFlight.current || !['oauthMcpStatus', 'oauthMcpDisconnect'].includes(body.action) && disabled) return;
     const currentScope = selectedScope.current;
     inFlight.current = true; setBusy(true); setError(null);
+    if (body.action === 'oauthMcpAttach' || body.action === 'oauthMcpDisconnect') { ++sequence.current; setSnapshot(null); connectionChange.current?.(null); }
     if (body.action !== 'oauthMcpStatus') { setReview(null); setAcknowledged(false); }
     try {
       if (body.action === 'oauthMcpStatus') await load();
@@ -73,11 +116,12 @@ export function AgentOAuthMcpPanel({ request, scope, accountScopeKey = '', langu
   }
   useEffect(() => {
     mounted.current = true;
-    setStatus(null); setError(null);
+    setSnapshot(null); setError(null);
     void load().catch(reason => { if (mounted.current) setError(stripIpcErrorPrefix(reason instanceof Error ? reason.message : String(reason))); });
-    return () => { mounted.current = false; ++sequence.current; };
-  }, [accountScopeKey]);
+    return () => { mounted.current = false; ++sequence.current; connectionChange.current?.(null); };
+  }, [scopeKey, Boolean(request)]);
   useEffect(() => { setReview(null); setAcknowledged(false); }, [scopeKey]);
+  useEffect(() => { onConnectionChange?.(request ? oauthMcpTaskConnection(status, scope, accountScopeKey, refreshRevision) : null); }, [status, scopeKey, Boolean(request), onConnectionChange]);
   const currentReview = review && scope && sameScope(review.scope, scope) && review.pin.providerId === providerId ? review : null;
   return <Panel title={t('OAuth MCP task connection', 'Подключение OAuth MCP к задаче')}>
     <PanelStack className="agent-tools-panel-body">

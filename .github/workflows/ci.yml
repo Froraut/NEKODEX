@@ -85,7 +85,7 @@ jobs:
         run: bun test tests/agent-loop-external-producer.test.ts tests/loop-file-watcher-recovery.test.ts tests/loop-file-watcher-integration.test.ts --timeout 10000
       - name: Run owned text history and exact OAuth callback contracts
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
-        run: bun test tests/owned-conversation-text.test.ts tests/conversation-history-owned-conversation.test.ts tests/conversation-history-owned-bridge.test.ts tests/agent-oauth-exact-redirect.test.ts --timeout 10000
+        run: bun test tests/owned-conversation-text.test.ts tests/conversation-history-owned-conversation.test.ts tests/conversation-history-owned-bridge.test.ts tests/agent-oauth-exact-redirect.test.ts tests/oauth-mcp-task-availability.test.ts --timeout 10000
       - name: Run isolated VM protocol regressions without booting a VM
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun test tests/execution-vm-contract.test.ts tests/python-build-scope-status.test.ts tests/execution-vm-network-grant-http.test.ts --timeout 10000

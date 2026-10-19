@@ -8,7 +8,7 @@ import { stripIpcErrorPrefix } from './ipc-error';
 import './surfaces/agent-tools.css';
 import type { AgentOAuthPanelPort } from '../../src/agent-tools/oauth-types';
 import { AgentOAuthPanel } from './AgentOAuthPanel';
-import { AgentOAuthMcpPanel, type OAuthMcpTransport } from './AgentOAuthMcpPanel';
+import { AgentOAuthMcpPanel, oauthMcpCallMatches, oauthMcpConnectionMatches, type OAuthMcpTransport, type OAuthMcpTaskConnection } from './AgentOAuthMcpPanel';
 import { AgentToolsInstaller } from './AgentToolsInstaller';
 import { AgentManagedSkills } from './AgentManagedSkills';
 import { AgentSkillScripts } from './AgentSkillScripts';
@@ -51,6 +51,8 @@ export function AgentToolsSurface({ api, language, disabled = false, oauthMcpReq
     } : {}),
   } : undefined, [status?.capabilities.oauth, oauthScopeKey, Boolean(api.pickOAuthProvider)]);
   const [remoteStatus, setRemoteStatus] = useState<RemoteAgentStatus | null>(null);
+  const [oauthMcpConnection, setOAuthMcpConnection] = useState<OAuthMcpTaskConnection | null>(null);
+  const [oauthMcpRefreshRevision, setOAuthMcpRefreshRevision] = useState(0);
   const [pending, setPending] = useState(false); const [error, setError] = useState<string | null>(null);
   const [tasks, setTasks] = useState<{ id: string; generation: number; status: string }[]>([]);
   const [taskId, setTaskId] = useState(''); const selectedTask = tasks.find(task => task.id === taskId);
@@ -88,13 +90,15 @@ export function AgentToolsSurface({ api, language, disabled = false, oauthMcpReq
   const networkGrantsForTask = status?.vmNetwork?.available && selectedTask ? status.vmNetwork.grants.filter(row => !row.revoked && row.grant.scope.taskId === selectedTask.id && row.grant.scope.generation === selectedTask.generation) : [];
   const networkEnabledForTask = networkGrantsForTask.length > 0;
   const networkCallGranted = networkGrantsForTask.some(row => row.grant.id === selectedCall?.arguments.grantId && row.grant.scope.actionId === selectedCall?.arguments.actionId);
-  const discoveryEnabled = status?.config.enabled || browserEnabledForTask || desktopEnabledForTask || remoteEnabledForTask || resourceEnabledForTask || scriptsEnabledForTask || vmRunEnabledForTask || vmExportEnabledForTask || networkEnabledForTask;
+  const oauthEnabledForTask = !!oauthMcpRequest && oauthMcpConnectionMatches(oauthMcpConnection, remoteScope, oauthScopeKey, oauthMcpRefreshRevision);
+  const oauthCallEnabledForTask = oauthEnabledForTask && oauthMcpCallMatches(oauthMcpConnection, selectedCall);
+  const discoveryEnabled = status?.config.enabled || browserEnabledForTask || desktopEnabledForTask || remoteEnabledForTask || resourceEnabledForTask || scriptsEnabledForTask || vmRunEnabledForTask || vmExportEnabledForTask || networkEnabledForTask || oauthEnabledForTask;
   const callPrefix = selectedCall?.tool.split('/')[0];
   const configuredCallServer = status?.config.servers.find(server => server.id === callPrefix);
   // Existing user MCP namespaces win over built-ins, including remote/ and skill-resource/.
   const selectedCallEnabled = !!selectedCall && (configuredCallServer ? status?.config.enabled && configuredCallServer.enabled
     : callPrefix === 'browser' ? browserEnabledForTask : callPrefix === 'desktop' ? desktopEnabledForTask
-      : callPrefix === 'vm-network' ? networkCallGranted
+      : callPrefix === 'oauth_mcp_tools' ? oauthCallEnabledForTask : callPrefix === 'vm-network' ? networkCallGranted
       : callPrefix === 'vm-shell' ? (selectedCall.tool === 'vm-shell/export' ? (vmExportEnabledForTask || !!selectedTask) : vmRunEnabledForTask) : callPrefix === 'remote' ? remoteEnabledForTask : callPrefix === 'skill-resource' ? resourceEnabledForTask : callPrefix === 'skill-script' ? scriptsEnabledForTask : status?.config.enabled);
   const isInspectionOnlyReceipt = (tool: string) => ['browser/', 'desktop/', 'remote/', 'skill-resource/', 'skill-script/', 'vm-shell/', 'vm-network/'].some(prefix => tool.startsWith(prefix))
     && !status?.config.servers.some(server => tool.startsWith(`${server.id}/`));
@@ -105,7 +109,7 @@ export function AgentToolsSurface({ api, language, disabled = false, oauthMcpReq
       if (mounted.current) setRemoteStatus(next);
     } catch (cause) { if (mounted.current) setRemoteStatus(null); throw cause; }
   };
-  const clearPendingCalls = () => { setTaskDetailScope(undefined); setCallId(''); setCalls([]); setPendingCallsTruncated(false); };
+  const clearPendingCalls = () => { setTaskDetailScope(undefined); setOAuthMcpConnection(null); setOAuthMcpRefreshRevision(value => value + 1); setCallId(''); setCalls([]); setPendingCallsTruncated(false); };
   const refreshTask = async (value: string, loadRevision: number, minimumGeneration = 0) => {
     const detail = await transport.current.getTask(value);
     if (!mounted.current || selectedTaskId.current !== value || taskLoadRevision.current !== loadRevision
@@ -146,7 +150,7 @@ export function AgentToolsSurface({ api, language, disabled = false, oauthMcpReq
     {error ? <Notice tone="error" role="alert">{error}</Notice> : null}
     <Notice tone="warning">{choose('Each server displays its execution boundary. Unrestricted servers have your user permissions; tool approval alone does not create OS isolation. The limited official catalog has a separate installer below; Provider authorization uses the protected service when it is configured. Automatic key import is unavailable.', 'У каждого сервера показана граница исполнения. Сервер без изоляции имеет права вашего пользователя; подтверждение инструмента само по себе не создаёт OS sandbox. Ниже доступен установщик ограниченного официального каталога; Авторизация провайдеров использует защищённый сервис, если он настроен. Автоматический импорт ключей недоступен.')}</Notice>
     <AgentOAuthPanel api={oauthApi} scopeKey={oauthScopeKey} locked={locked} choose={choose} />
-    <AgentOAuthMcpPanel request={oauthMcpRequest} accountScopeKey={oauthScopeKey} scope={remoteScope && actionableTask ? { taskId: remoteScope.taskId, generation: remoteScope.generation, toolCallId: 'oauth-mcp-control' } : undefined} language={language} disabled={locked} />
+    <AgentOAuthMcpPanel request={oauthMcpRequest} accountScopeKey={oauthScopeKey} refreshRevision={oauthMcpRefreshRevision} scope={remoteScope && actionableTask ? { taskId: remoteScope.taskId, generation: remoteScope.generation, toolCallId: 'oauth-mcp-control' } : undefined} language={language} disabled={locked} onConnectionChange={setOAuthMcpConnection} />
     <AgentToolsInstaller api={api} status={status} locked={locked} choose={choose} act={act} refresh={refresh} onReview={candidate => { setReview(candidate); setTrusted(false); }} />
     <Panel title={choose('Host state', 'Состояние host')} actions={<Button className="agent-tools-button" disabled={locked || !status} onClick={() => void act(async () => { await transport.current.request({ action: 'setEnabled', enabled: !status?.config.enabled, explicitUserAction: true }); await refresh(); })}>{status?.config.enabled ? choose('Disable and close owned servers', 'Выключить и закрыть свои серверы') : choose('Enable configured servers', 'Включить настроенные серверы')}</Button>}>
       <PanelStack className="agent-tools-panel-body">
