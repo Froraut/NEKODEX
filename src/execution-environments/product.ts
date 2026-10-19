@@ -45,11 +45,19 @@ export class VmProductController {
         if (this.restored.has(fingerprint) || !this.options.existingOutcome(request)) continue;
         // Original request + journal identity, then the real retained executor
         // receipt. No runtime preparation, snapshot, grant or execution replay.
-        const observed = await this.provider.reconcile?.(request);
+        // Status stays passive: a busy or locked owner (a live run, another
+        // profile) is retried on the next status instead of failing it.
+        const observed = await this.provider.reconcile?.(request).catch(() => undefined);
         if (observed && observed.state !== 'outcome_unknown') this.restored.add(fingerprint);
       }
     }
     return this.projection(); // Global held owners remain reachable for cancellation.
+  }
+  /** A fresh core restores the exact retained run first, so an export review
+   * prepared before a restart can still read its candidate. */
+  async readCandidate(scope: Pick<ToolScope, 'taskId' | 'generation'>, operationId: string, path: string, sha256: string) {
+    await this.status({ ...scope, toolCallId: 'vm-export-candidate' });
+    return this.provider.readCandidate(scope, operationId, path, sha256);
   }
   review(actionId: string, explicit: boolean) {
     this.options.assertMutation(explicit); return this.environment.review(actionId, true).review!;
