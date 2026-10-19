@@ -81,7 +81,7 @@ if (target === "--mac" && !signing.release && !env.CSC_LINK && !env.CSC_NAME) {
   builderArgs.push("--config.mac.identity=-");
 }
 
-const staging = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-package-"));
+const staging = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-package-")));
 const artifactsDirectory = path.join(root, "artifacts");
 const artifactExtension = /\.(?:AppImage|dmg|exe|zip|blockmap)$/i;
 const requiredExtensions = {
@@ -121,7 +121,7 @@ function verifySignedMacArchive() {
   if (archives.length !== 1) {
     throw new Error(`Expected exactly one macOS ZIP for verification; found ${archives.join(", ") || "none"}`);
   }
-  const verificationRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-mac-verify-"));
+  const verificationRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-mac-verify-")));
   try {
     runChecked("ditto", ["-x", "-k", path.join(staging, archives[0]), verificationRoot]);
     const appBundle = path.join(verificationRoot, `${launcherManifest.build.productName}.app`);
