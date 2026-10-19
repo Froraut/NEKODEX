@@ -36,9 +36,14 @@ export interface PythonBuildAction {
 interface PrivatePlan { runtime: AdmittedVmRuntime; files: VmFile[]; review: PythonBuildReview; runtimeWheels: PythonBuildWheel[]; name: string; version: string; directArtifacts: PythonDirectArtifactPin[]; action: PythonBuildAction; scope?: VmExecutionInput['scope'] }
 const environments = new WeakMap<LinuxVmPythonEnvironment, { runtime: AdmittedVmRuntime; files: VmFile[] }>();
 function runtimeCheck(runtime: AdmittedVmRuntime, executor: VmExecutorPort) {
-  vmAssert(runtime.kind === 'development-linux-vm' && isSha256(runtime.runtimeDigest), 'python-build-runtime-required');
+  vmAssert((runtime.kind === 'development-linux-vm' || runtime.kind === 'production-linux-vm') && isSha256(runtime.runtimeDigest), 'python-build-runtime-required');
   const paths = executor.protectedPaths(runtime); // validates the actual nonserializable executor brand and pins
   const manifest = paths[4]; vmAssert(manifest && sha256(readFileSync(manifest)) === ACCEPTED_GUEST_MANIFEST, 'python-build-toolchain-not-reviewed');
+}
+/** Passive readiness uses the same brand, file pins and toolchain as Review. */
+export function isPythonBuildRuntimeSupported(runtime: AdmittedVmRuntime | undefined, executor: VmExecutorPort): boolean {
+  if (!runtime) return false;
+  try { runtimeCheck(runtime, executor); return true; } catch { return false; }
 }
 function artifact(a: PythonBuildArtifact) { vmAssert(a.bytes instanceof Uint8Array && a.bytes.length > 0 && a.bytes.length <= 16 * 1024 * 1024 && sha256(a.bytes) === a.sha256, 'python-build-artifact-pin'); return Uint8Array.from(a.bytes); }
 function packageRow(w: PythonBuildWheel) { return { filename: w.filename, name: w.name, version: w.version, artifactSha256: w.artifactSha256 }; }

@@ -5,7 +5,7 @@ import { canReviewVmSource, selectVmOutputCandidates } from './output';
 import type { VmExecutorPort, VmShellToolsProvider } from './types';
 import { invocationFingerprint, validateToolScope } from '../agent-tools/journal';
 import type { StandaloneBuiltinToolsProvider, ToolInvocation, ToolOutcome, ToolScope } from '../agent-tools/types';
-import { PythonBuildController, attachPythonBuildEnvironment, type PythonBuildSelection, type LinuxVmPythonEnvironment } from './python-build';
+import { PythonBuildController, attachPythonBuildEnvironment, isPythonBuildRuntimeSupported, type PythonBuildSelection, type LinuxVmPythonEnvironment } from './python-build';
 import { uniqueVmPaths } from './protocol';
 import { VmNetworkBroker, type VmNetworkGrant, type VmNetworkGrantInput, type VmNetworkLedger, type VmNetworkScope, type VmNetworkTransport } from './network';
 import { FileVmNetworkLedger } from './network-ledger';
@@ -138,8 +138,8 @@ export class VmProductController {
   get buildActiveCount() { return this.builds.actions().filter(action => action.ownerHeld).length; }
   pythonBuildStatus(scope?: ToolScope) {
     const matches = (s: ToolScope) => !scope || s.taskId === scope.taskId && s.generation === scope.generation;
-    const runtime = this.environment.getRuntime(), supported = runtime?.kind === 'development-linux-vm';
-    return { supported, reason: supported ? undefined : runtime ? 'Python builds require the separately reviewed development toolchain' : 'Prepare the reviewed VM runtime first',
+    const runtime = this.environment.getRuntime(), supported = isPythonBuildRuntimeSupported(runtime, this.executor);
+    return { supported, reason: supported ? undefined : runtime ? 'Python builds require the reviewed Linux VM toolchain' : 'Prepare the reviewed VM runtime first',
       actions: this.builds.actions().filter(action => { const s = this.buildScopes.get(action.review.actionId); return s && matches(s); }),
       bindings: [...this.pythonBindings.values()].filter(binding => matches(binding.scope)).map(binding => ({ actionId: binding.actionId, taskId: binding.scope.taskId, generation: binding.scope.generation, closureDigest: binding.environment.closureDigest, packages: binding.environment.packages })),
       processLocalReviews: true, importRoot: 'python-environment', network: false };

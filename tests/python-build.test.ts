@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { zipSync, type Zippable } from 'fflate';
-import { PythonBuildController, attachPythonBuildEnvironment, type PythonBuildSelection } from '../src/execution-environments/python-build';
+import { PythonBuildController, attachPythonBuildEnvironment, isPythonBuildRuntimeSupported, type PythonBuildSelection } from '../src/execution-environments/python-build';
 import { inspectPythonBuildWheel } from '../src/execution-environments/python-build-wheel';
 import { sha256 } from '../src/execution-environments/protocol';
 import type { AdmittedVmRuntime, VmExecutionInput, VmExecutionResult } from '../src/execution-environments/executor';
@@ -19,10 +19,10 @@ function wheel(options: { badRecord?: boolean; wrongMachine?: boolean; tag?: str
   const z: Zippable = {}; for (const [p, b] of Object.entries(files)) z[p] = [b, { os: 3, attrs: 0o100600 << 16 }];
   const bytes = zipSync(z); return { filename, bytes, sha256: sha256(bytes) };
 }
-function fixture(options: { ownerHeld?: boolean; invalidWheel?: boolean } = {}) {
+function fixture(options: { ownerHeld?: boolean; invalidWheel?: boolean; runtimeKind?: AdmittedVmRuntime['kind'] } = {}) {
   // Injected trusted port is a fixture only. Production executor checks its own
   // WeakMap runtime brand before returning these protected manifest paths.
-  const runtime: AdmittedVmRuntime = Object.freeze({ kind: 'development-linux-vm', runtimeDigest: 'a'.repeat(64) });
+  const runtime: AdmittedVmRuntime = Object.freeze({ kind: options.runtimeKind ?? 'development-linux-vm', runtimeDigest: 'a'.repeat(64) });
   const manifest = fileURLToPath(new URL('../launcher/native/execution-guest/.build/bundle/manifest.json', import.meta.url));
   let calls = 0, retained: VmExecutionResult | undefined; const candidates = new Map<string, Uint8Array>();
   const executor: VmExecutorPort = {
@@ -44,6 +44,21 @@ function fixture(options: { ownerHeld?: boolean; invalidWheel?: boolean } = {}) 
 }
 const acceptedImageAvailable = existsSync(fileURLToPath(new URL('../launcher/native/execution-guest/.build/bundle/manifest.json', import.meta.url)));
 const scope = () => ({ taskId: randomUUID(), generation: 1, toolCallId: 'build-call' });
+
+test.skipIf(!acceptedImageAvailable)('production runtime kind keeps the same reviewed toolchain and executor admission boundary', async () => {
+  const f = fixture({ runtimeKind: 'production-linux-vm' }), action = randomUUID(), review = f.controller.review(action, f.selection, true);
+  expect(isPythonBuildRuntimeSupported(f.runtime, f.executor)).toBe(true);
+  const result = await f.controller.prepare(action, review.reviewDigest, scope(), true);
+  expect(result.state).toBe('ready');
+  expect(attachPythonBuildEnvironment(result.environment!, f.runtime, f.executor, true).some(file => file.path.endsWith('.so'))).toBe(true);
+  const refused = { ...f.executor, protectedPaths() { throw new Error('vm-runtime-not-admitted'); } };
+  expect(isPythonBuildRuntimeSupported(f.runtime, refused)).toBe(false);
+  expect(isPythonBuildRuntimeSupported(undefined, f.executor)).toBe(false);
+  expect(isPythonBuildRuntimeSupported(f.runtime, { ...f.executor, protectedPaths: () => ['', '', '', '', import.meta.path] })).toBe(false);
+  const guarded = new PythonBuildController({ getRuntime: () => f.runtime, executor: refused });
+  expect(() => guarded.review(randomUUID(), f.selection, true)).toThrow('vm-runtime-not-admitted');
+  expect(f.calls).toBe(1);
+});
 
 test.skipIf(!acceptedImageAvailable)('offline exact reviewed build snapshots sources and attaches only validated Linux runtime output', async () => {
   const f = fixture(), action = randomUUID(), current = scope(), review = f.controller.review(action, f.selection, true);
