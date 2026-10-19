@@ -662,6 +662,21 @@ The guest still has **no NIC or arbitrary subprocess sockets**. Tools/UI routes
 must expose the actual supported mediated request, never advertise unrestricted
 shell internet because the broker module exists.
 
+[AgentHostNetwork](launcher/src/AgentHostNetwork.tsx) presents the existing
+`vmNetworkStatus`/`grantVmNetwork`/`revokeVmNetwork` facade through a bounded
+EN/RU form and frozen local review for the selected task/generation and observed
+prepared runtime. It resolves no DNS and sends no HTTP request. Core retains
+grant/broker/ledger ownership; lost grant replies reconcile exact action/input
+metadata without replay. Only five fixed pre-grant validation refusals proven to
+add no grant cross the bounded HTTP/supervisor error projection. Explicit revoke
+uses the narrow preload/IPC privacy route during lifecycle drain; grants do not.
+Agent Tools discovers the builtin from current grants and approves only a saved
+call matching its exact grant/action IDs. Builtin host-network receipts remain
+inspection/reconciliation-only, preserving configured MCP namespace precedence.
+Focused verification covers the fixed-refusal HTTP→supervisor path and narrow
+preload→IPC revoke under lifecycle lock; actual ToolJournal/provider acceptance
+is separate from renderer/source checks.
+
 The main export service is the sole workspace publisher: reviewed baseline →
 signed intent → exact candidate/scope/intent revalidation → workspace publication
 → durable settlement. Unknown outcomes reconcile exact written-node evidence

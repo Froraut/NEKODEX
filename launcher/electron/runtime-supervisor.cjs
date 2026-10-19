@@ -2242,6 +2242,27 @@ class RuntimeSupervisor {
         signal: controller.signal,
       });
       if (!response.ok) {
+        // Only these proven pre-insertion grant refusals may reach the UI.
+        // Other tools errors, late failures and lost ACKs retain generic errors.
+        if (action === 'agent-tools' && options.body?.action === 'grantVmNetwork' && response.status === 409) {
+          const reader = response.body?.getReader();
+          if (reader) {
+            const chunks = []; let size = 0;
+            try {
+              while (true) {
+                const part = await reader.read(); if (part.done) break;
+                size += part.value.byteLength;
+                if (size > 8192) { await reader.cancel(); throw new Error('Grant error receipt exceeds limit'); }
+                chunks.push(Buffer.from(part.value));
+              }
+              const receipt = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+              const refusals = new Set(['vm-network-destination-invalid', 'vm-network-origin-invalid', 'vm-network-limits-invalid', 'vm-network-address-mismatch', 'vm-network-url-invalid']);
+              if (receipt && Object.keys(receipt).sort().join(',') === 'error,message,ok' && receipt.ok === false
+                && receipt.error === 'agent_tools_conflict' && refusals.has(receipt.message)) return { ok: false, error: receipt.error, message: receipt.message };
+            } catch { /* Malformed, oversized or generic errors cannot prove pre-admission refusal. */ }
+            finally { reader.releaseLock(); }
+          }
+        }
         // Agent mode opts into bounded, fixed error receipts. Other control
         // callers keep their existing HTTP-error contract. Never forward an
         // arbitrary daemon message, response body, path, or credential.

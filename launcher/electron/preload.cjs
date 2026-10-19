@@ -8,7 +8,7 @@ const HISTORY_REVOKE_ACTIONS = new Set([
 ]);
 const AGENT_TOOLS_REVOKE_ACTIONS = new Set([
   'revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools', 'revokeScriptWorkspace',
-  'revokePythonEnvironment', 'revokeVmWorkspace', 'cancelVmOperation',
+  'revokePythonEnvironment', 'revokeVmWorkspace', 'cancelVmOperation', 'revokeVmNetwork',
 ]);
 const AGENT_TOOLS_OBSERVE_ACTIONS = new Set([
   'remoteStatus', 'scriptStatus', 'vmStatus', 'reconcileVmOperation',

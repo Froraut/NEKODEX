@@ -87,7 +87,7 @@ function registerAgentTools({ handle, runtimeHost, dialog, getWindow, remoteServ
     return request(body);
   });
   handle('launcher:agent-tools-revoke', async (_event, body) => {
-    if (!body || !['revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools', 'revokeScriptWorkspace', 'revokePythonEnvironment', 'revokeVmWorkspace', 'cancelVmOperation'].includes(body.action)
+    if (!body || !['revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools', 'revokeScriptWorkspace', 'revokePythonEnvironment', 'revokeVmWorkspace', 'cancelVmOperation', 'revokeVmNetwork'].includes(body.action)
       || body.explicitUserAction !== true) throw new Error('This tools action only revokes task authority');
     return request(body);
   });

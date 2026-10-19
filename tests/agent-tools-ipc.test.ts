@@ -1,8 +1,40 @@
 import { expect, test } from "bun:test";
 import { createRequire } from "node:module";
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 const require = createRequire(import.meta.url);
 const { registerAgentTools } = require("../launcher/electron/ipc/agent-tools.cjs");
 const { createLifecycleAdmission } = require("../launcher/electron/lifecycle-admission.cjs");
+test('host network privacy revoke uses the actual preload narrow route during lifecycle drain without admitting grants', async () => {
+  const admission = createLifecycleAdmission(), handlers = new Map<string, (...args: any[]) => any>();
+  const forwarded: unknown[] = [], readiness: unknown[] = [], channels: string[] = [];
+  registerAgentTools({ handle: (name: string, handler: any) => handlers.set(name, admission.guard(name, handler)),
+    getApplicationVersion: () => '6.1.32-nekodex.14', runtimeHost: { supervisor: {
+      launcherProfile: 'production', readConfig: () => ({ releaseVersion: '6.1.32-nekodex.13' }),
+      ownedAgentRuntimeReady: async (_config: unknown, options: unknown) => { readiness.push(options); return true; },
+      control: async (_config: unknown, _endpoint: string, packet: any) => { forwarded.push(packet.body); return { ok: true, value: { revoked: true } }; },
+    } } });
+  let bridge: any;
+  runInNewContext(readFileSync(new URL('../launcher/electron/preload.cjs', import.meta.url), 'utf8'), {
+    require(name: string) {
+      if (name !== 'electron') throw new Error('Unexpected preload dependency');
+      return { contextBridge: { exposeInMainWorld(_name: string, api: unknown) { bridge = api; } },
+        ipcRenderer: { async invoke(channel: string, ...args: unknown[]) { channels.push(channel); return handlers.get(channel)!({}, ...args); }, on() {}, removeListener() {}, send() {} } };
+    },
+  });
+  const body = { action: 'revokeVmNetwork', scope: { taskId: 'host-network-task', generation: 3, actionId: 'reviewed-host-action' }, grantId: crypto.randomUUID(), explicitUserAction: true };
+  const lease = admission.acquire('network privacy check');
+  try {
+    expect(await bridge.agentTools(body)).toEqual({ revoked: true });
+    expect(channels).toEqual(['launcher:agent-tools-revoke']);
+    expect(forwarded).toEqual([body]);
+    expect(readiness).toEqual([{ allowDraining: true }]);
+    await expect(bridge.agentTools({ ...body, explicitUserAction: false })).rejects.toThrow('Wait for');
+    await expect(bridge.agentTools({ action: 'grantVmNetwork', explicitUserAction: true })).rejects.toThrow('Wait for');
+    await expect(handlers.get('launcher:agent-tools-revoke')!({}, { action: 'grantVmNetwork', explicitUserAction: true })).rejects.toThrow('only revokes');
+    expect(forwarded).toHaveLength(1);
+  } finally { admission.release(lease); }
+});
 test('pending production upgrade preserves cleanup and reads while fencing new tool work', async () => {
   const handlers = new Map<string, (...args: any[]) => any>();
   let version = '6.1.32-nekodex.8', coreError = '', ready = true;

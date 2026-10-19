@@ -11,6 +11,10 @@ const identity = z.object({ id: z.string().min(1).max(8192), grantId: z.string()
 const networkScope = z.object({ taskId: z.string().min(1).max(200), generation: z.number().int().positive(), actionId: z.string().min(1).max(200) }).strict();
 const networkGrant = z.object({ scope: networkScope, destinations: z.array(z.object({origin:z.string().min(1).max(8192),addresses:z.array(z.string().min(1).max(128)).min(1).max(8),methods:z.array(z.string().min(1).max(16)).min(1).max(7)}).strict()).min(1).max(16),
   credentialOwner:z.literal('none'),dns:z.literal('pinned-no-lookup'),proxy:z.literal('none'),maxRequests:z.number().int().min(1).max(100),maxRequestBytes:z.number().int().min(1).max(16*1024*1024),maxResponseBytes:z.number().int().min(1).max(16*1024*1024),maxRedirects:z.number().int().min(0).max(5),timeoutMs:z.number().int().min(1).max(60000)}).strict();
+// These fixed broker validation errors precede grant insertion. Never expose
+// arbitrary vm-network errors as proof that a grant was not admitted.
+const preGrantRefusals = new Set(["vm-network-destination-invalid", "vm-network-origin-invalid", "vm-network-limits-invalid", "vm-network-address-mismatch", "vm-network-url-invalid"]);
+class PublicNetworkGrantRefusal extends Error {}
 const requestBody = z.discriminatedUnion("action", [
   z.object({ action: z.literal("status") }).strict(),
   z.object({ action: z.literal("reviewServer"), input: z.unknown(), explicitUserAction: z.literal(true) }).strict(),
@@ -126,7 +130,18 @@ export function createAgentToolsRoutes(composition: AgentToolsComposition, path 
         case "grantScriptWorkspace": value = composition.grantScriptWorkspace(body.scope, body.root, body.access, body.acknowledgeRestrictions, body.explicitUserAction); break;
         case "revokeScriptWorkspace": await composition.revokeScriptWorkspace(body.scope, body.grantId, body.explicitUserAction); value = { revoked: true }; break;
         case 'vmNetworkStatus': value = composition.vmNetworkStatus(body.scope); break;
-        case 'grantVmNetwork': value = composition.grantVmNetwork(body.input, body.explicitUserAction); break;
+        case 'grantVmNetwork': {
+          const before = JSON.stringify(composition.vmNetworkStatus().grants);
+          try { value = composition.grantVmNetwork(body.input, body.explicitUserAction); }
+          catch (error) {
+            // A fault after insertion stays uncertain, even if it carries one
+            // of the familiar validation strings. This is a synchronous path.
+            if (error instanceof Error && preGrantRefusals.has(error.message)
+              && JSON.stringify(composition.vmNetworkStatus().grants) === before) throw new PublicNetworkGrantRefusal(error.message);
+            throw error;
+          }
+          break;
+        }
         case 'revokeVmNetwork': value = await composition.revokeVmNetwork(body.scope, body.grantId, body.explicitUserAction); break;
         case 'pythonBuildStatus': value = composition.pythonBuildStatus(body.scope); break;
         case 'reviewPythonBuild': value = await composition.reviewPythonBuild(body.actionId, body.selectionId, body.scope, body.explicitUserAction); break;
@@ -158,7 +173,7 @@ export function createAgentToolsRoutes(composition: AgentToolsComposition, path 
     } catch (error) {
       const invalid = error instanceof z.ZodError;
       // Fixed domain strings are safe; arbitrary filesystem/SDK errors can contain private paths.
-      const message = isPythonEnvironmentError(error) ? pythonEnvironmentPublicReason(error)
+      const message = error instanceof PublicNetworkGrantRefusal ? error.message : isPythonEnvironmentError(error) ? pythonEnvironmentPublicReason(error)
         : error instanceof Error && /^(?:Explicit |Current owned|Local tools admission|No exact |Pending Agent|Wait for owned|Configuration review|Reserved (?:builtin|browser|desktop|remote)|Installers,|Interpreter recipes|Pinned server|Tools host|Standalone tool|Tool |Selected skill|Skill root|Skill source|Managed skill|Exact reviewed managed|Official\/vendor plugin|Native OS|Invalid secret|Unsupported server)/.test(error.message) ? error.message : "The tools action could not be completed. Inspect the current saved configuration and receipt before retrying.";
       return Response.json({ ok: false, error: invalid ? "invalid_request" : "agent_tools_conflict", message }, { status: invalid ? 400 : 409 });
     }

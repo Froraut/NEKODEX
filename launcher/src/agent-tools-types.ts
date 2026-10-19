@@ -9,6 +9,8 @@ import type { AgentDesktopStatus } from './agent-desktop-types';
 import type { AgentPendingToolCall } from './agent-mode-types';
 import type { RemoteAgentStatus, RemoteAgentTaskScope } from '../electron/agent-remote-types.cjs';
 import type { SkillPythonEnvironmentAction, SkillPythonEnvironmentDescriptor } from '../../src/agent-tools/skill-python-environment';
+import type { VmNetworkGrant, VmNetworkGrantInput, VmNetworkScope } from '../../src/execution-environments/network';
+export type { VmNetworkGrant, VmNetworkGrantInput, VmNetworkScope };
 export type { SkillPythonEnvironmentAction, SkillPythonEnvironmentDescriptor };
 export type { RemoteAgentStatus, RemoteAgentTaskScope };
 export type { ServerRecipe, ToolDescriptor, ToolScope, ToolOutcome, SkillIdentity, SkillRootGrant, SelectedSkill };
@@ -101,6 +103,10 @@ export interface AgentVmToolsStatus {
     candidates: { path: string; size: number; sha256: string; mode: number }[]; reason?: string; resultDigest?: string;
   }[];
 }
+export interface AgentVmNetworkStatus {
+  available: boolean; mode: 'separately-approved-host-broker'; guestNic: false; activeCount: number;
+  grants: { grant: VmNetworkGrant; revoked: boolean }[];
+}
 export interface AgentToolsStatus {
   config: { version: 1; enabled: boolean; servers: ServerRecipe[] };
   runtime: { enabled: boolean; servers: { id: string; connected: boolean; pid: number | null; sandbox?: string; boundary?: unknown }[]; sandbox: string };
@@ -110,6 +116,7 @@ export interface AgentToolsStatus {
   descriptors: ToolDescriptor[];
   vmEnvironment?: { prepared: boolean; supported: boolean; reason?: string; runtimeDigest?: string; review?: AgentVmEnvironmentReview };
   vmTools?: AgentVmToolsStatus | null;
+  vmNetwork?: AgentVmNetworkStatus;
   pythonEnvironments?: { supported: boolean; reason?: string; environments: SkillPythonEnvironmentDescriptor[]; actions: SkillPythonEnvironmentAction[] };
   skillRoots: SkillRootGrant[];
   selections: { scope: ToolScope; skills: SkillIdentity[] }[];

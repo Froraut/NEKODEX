@@ -79,7 +79,7 @@ jobs:
         run: bun test tests/agent-native-wait-context.test.ts tests/native-selected-attachments.test.ts tests/agent-mode-multistage.test.ts tests/conversation-history-events.test.ts --timeout 10000
       - name: Run successful browser session presentation regression
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
-        run: bun test tests/browser-session-presentation.test.ts --timeout 10000
+        run: bun test tests/browser-session-presentation.test.ts tests/agent-provider-failed-terminal.test.ts --timeout 10000
       - name: Run bounded Loop ingress and owner recovery contracts
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun test tests/agent-loop-external-producer.test.ts tests/loop-file-watcher-recovery.test.ts tests/loop-file-watcher-integration.test.ts --timeout 10000
@@ -88,7 +88,7 @@ jobs:
         run: bun test tests/owned-conversation-text.test.ts tests/conversation-history-owned-conversation.test.ts tests/conversation-history-owned-bridge.test.ts tests/agent-oauth-exact-redirect.test.ts --timeout 10000
       - name: Run isolated VM protocol regressions without booting a VM
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
-        run: bun test tests/execution-vm-contract.test.ts tests/python-build-scope-status.test.ts --timeout 10000
+        run: bun test tests/execution-vm-contract.test.ts tests/python-build-scope-status.test.ts tests/execution-vm-network-grant-http.test.ts --timeout 10000
       - name: Run passive VM admission, export and delivery integrity contracts
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun test tests/execution-vm-production-runtime.test.ts tests/execution-vm-export-contract.test.ts tests/execution-vm-network.test.ts tests/python-build.test.ts tests/delivery-integrity.test.ts --timeout 10000

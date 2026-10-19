@@ -135,9 +135,21 @@ export function createLocalResponsesExecutionPort(options: LocalResponsesProvide
       const summary = (unsupportedProvenance ? "Provider output attempted to supply a client-owned tool result or non-assistant message. No continuation was retained; human review is required.\n" : "")
         + (unsupportedTools ? "Tool execution is unavailable in this Agent provider. Human action or a configured tool host is required.\n" : "") + output.join("\n");
       const continuation: AgentContinuation | undefined = pending.length && !unsupportedTools && !unsupportedProvenance ? { responseId: record.id, rootDispatchId, input, output: record.output as Record<string, unknown>[], tools, toolMap, pending } : undefined;
-      return { receiptId: `response:${record.id}`, outcome, actualSpend, summary: boundedSummary(summary || (pending.length ? "Model requested configured tools; exact human approval is required before execution." : `Responses turn ${record.status}; no assistant text was returned.`)), ...(continuation ? { continuation } : {}) };
+      const terminalSummary = record.status === "failed" ? safeFailedResponsesSummary(record.error) : undefined;
+      return { receiptId: `response:${record.id}`, outcome, actualSpend, summary: boundedSummary(summary || (pending.length ? "Model requested configured tools; exact human approval is required before execution." : terminalSummary ?? `Responses turn ${record.status}; no assistant text was returned.`)), ...(continuation ? { continuation } : {}) };
     },
   };
+}
+
+/** Public fixed diagnostics only: upstream messages, HTML, URLs and secrets are never echoed. */
+function safeFailedResponsesSummary(error: unknown): string | undefined {
+  if (!error || typeof error !== "object" || Array.isArray(error)) return undefined;
+  const failure = error as Record<string, unknown>;
+  if (failure.code !== "connector_not_found" || failure.type !== "connector_error") return undefined;
+  if (failure.message === "ChatGPT personalization preflight exceeded its readiness deadline") {
+    return "ChatGPT connector/personalization readiness timed out before the website prompt was sent (connector_not_found). Open NEKODEX Browser to inspect sign-in and any security challenge, then review the task before explicitly starting another attempt.";
+  }
+  return "The ChatGPT connector is unavailable (connector_not_found). Open NEKODEX Browser to inspect sign-in and any security challenge, then review the task before explicitly starting another attempt.";
 }
 
 function boundedSummary(value: string): string {
