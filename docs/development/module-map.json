@@ -36,7 +36,7 @@
   {"path":"launcher/electron/agent-native-descriptor.d.cts","dependencies":[]},
   {"path":"launcher/electron/agent-native-protocol.cjs","dependencies":["node:crypto"]},
   {"path":"launcher/electron/agent-native-protocol.d.cts","dependencies":[]},
-  {"path":"launcher/electron/agent-oauth-launcher.cjs","dependencies":["node:crypto","node:http"]},
+  {"path":"launcher/electron/agent-oauth-launcher.cjs","dependencies":["launcher/electron/agent-oauth.cjs","node:crypto","node:http"]},
   {"path":"launcher/electron/agent-oauth-launcher.d.cts","dependencies":[]},
   {"path":"launcher/electron/agent-oauth-mcp-descriptor.cjs","dependencies":["launcher/electron/atomic-file.cjs","node:crypto","node:fs","node:path"]},
   {"path":"launcher/electron/agent-oauth-mcp-descriptor.d.cts","dependencies":[]},
