@@ -151,9 +151,16 @@ That synthetic task had zero model offers/dispatches and zero tool calls. GUI an
 core both closed with exit 0, exact PIDs/port were checked absent and the private
 temporary profile was removed. No OS permission inspection/grant was requested.
 Leaf success alone does not
-prove model use or a completed task outcome. Broader executables, unsupported Python distributions/dependencies and shell,
+prove model use or a completed task outcome. Selected offline pure-wheel Python
+dependencies now have a separate [environment contract](python-skill-environments.md)
+and [actual dateutil/six Native acceptance](../reviews/2026-10-19-python-environments.md),
+with distinct Review/Prepare, task-generation Attach and per-call approval.
+PEP508 markers/extras/URLs, native wheels/builds/data schemes and other Python
+distributions remain unsupported. Broader executables and shell,
 other binary/multimedia assets, remote resources and automatic dependency discovery
 remain unsupported and require separate authority and executor design.
+The [isolated execution environment continuation](isolated-execution-environments.md)
+is a design-only full-shell/native-build proposal; it is not current support.
 
 ## Mixed image package batch
 

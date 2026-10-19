@@ -412,7 +412,7 @@ function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 15000, t
   if (!admission?.prestart || !admission?.forBinding || !admission?.checkAccount || !Number.isInteger(maxConcurrentThreads)
     || maxConcurrentThreads < 1 || maxConcurrentThreads > 32) throw fail('invalid_admission', 'Qualified Native account admission is required');
   const listeners = new Set(), threads = new Map(), facades = new Map(), persistentFacades = new Map();
-  let rpc, starting, closing, stopped = false, fault, persistentGate = null;
+  let rpc, starting, closing, stopped = false, prepared = false, fault, persistentGate = null;
   const changed = () => { try { onChange?.(); } catch {} };
   const threadState = id => {
     if (!threads.has(id)) threads.set(id, { closed: false, requested: false, resolve: null, promise: null });
@@ -446,15 +446,16 @@ function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 15000, t
     starting = (async () => {
       const admitted = admission.prestart();
       rpc = createTransport({ admitted, requestTimeoutMs, stopGraceMs, onNotification: notify,
-        onFailure: reason => { fault ||= reason; for (const listener of listeners) listener.failure(reason); changed(); },
-        onClosed: () => { for (const id of threads.keys()) signalClose(id); for (const listener of listeners) listener.failure(fail('client_closed', 'Native account process closed')); changed(); },
+        onFailure: reason => { prepared = false; fault ||= reason; for (const listener of listeners) listener.failure(reason); changed(); },
+        onClosed: () => { prepared = false; for (const id of threads.keys()) signalClose(id); for (const listener of listeners) listener.failure(fail('client_closed', 'Native account process closed')); changed(); },
         spawnProcess: testHooks.spawnProcess, terminateProcess: testHooks.terminateProcess });
       await rpc.connect(); changed();
       admission.checkEffective(await rpc.request('config/read', { includeLayers: true, cwd: admission.paths.cwd }), await rpc.request('configRequirements/read', {}));
       admission.checkAccount(await rpc.request('account/read', { refreshToken: false }), await rpc.request('account/rateLimits/read', {}));
       if (stopped || fault) throw fault || fail('client_closed', 'Native account server is closing');
+      prepared = true; changed();
     })().catch(async reason => {
-      fault ||= reason; changed();
+      prepared = false; fault ||= reason; changed();
       // Startup preflight precedes every thread. Close only its one owned process;
       // a failed close remains explicit account activity and keeps the profile lease.
       try { await rpc?.destroy(); } catch {}
@@ -576,8 +577,8 @@ function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 15000, t
     }); }
     finally { if (persistentGate === token) persistentGate = null; changed(); }
   }
-  return Object.freeze({ createWorker: (binding, onReceipt) => createWorker(binding, onReceipt), persistentOperation,
-    inspect: () => ({ serverGeneration: admission.serverGeneration, pid: rpc?.pid ?? null, closed: physicallyClosed(), accepting: !stopped && !fault && ![...listeners].some(value => value.creationUnknown),
+  return Object.freeze({ prepare: ready, createWorker: (binding, onReceipt) => createWorker(binding, onReceipt), persistentOperation,
+    inspect: () => ({ serverGeneration: admission.serverGeneration, pid: rpc?.pid ?? null, closed: physicallyClosed(), ready: prepared && !stopped && !fault && !physicallyClosed(), accepting: prepared && !stopped && !fault && !physicallyClosed() && ![...listeners].some(value => value.creationUnknown),
       threadIds: [...threads.keys()], bindings: [...facades.keys()], activeCount: [...facades.values()].filter(value => value.currentOperation()).length }),
     currentOperation: () => persistentGate ? 'Native persistent conversation' : closing && !physicallyClosed() ? 'Closing Native account process' : fault && rpc && !physicallyClosed() ? 'Native account preflight reconciliation' : [...facades.values()].some(value => value.currentOperation()) ? 'Native account threads' : null,
     destroy() {

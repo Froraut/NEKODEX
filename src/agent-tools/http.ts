@@ -4,6 +4,7 @@ import type { AgentToolsComposition } from "./composition";
 import { browserBindingSchema } from "../browser-companion/protocol";
 import { macosWindowSelectionSchema } from "../browser-companion/macos-desktop";
 import { remoteTaskScopeSchema } from "../remote-workspace/protocol";
+import { isPythonEnvironmentError, pythonEnvironmentPublicReason } from "./skill-python-environment";
 
 const scope = z.object({ taskId: z.string().min(1).max(200), generation: z.number().int().positive(), toolCallId: z.string().min(1).max(200) }).strict();
 const identity = z.object({ id: z.string().min(1).max(8192), grantId: z.string().min(1).max(80), relativePath: z.string().min(1).max(4096), source: z.enum(["user", "workspace", "official-plugin", "vendor-plugin"]), digest: z.string().regex(/^[a-f0-9]{64}$/), bytes: z.number().int().nonnegative().max(512 * 1024) }).strict();
@@ -38,6 +39,13 @@ const requestBody = z.discriminatedUnion("action", [
   z.object({ action: z.literal("scriptStatus"), scope: scope.optional() }).strict(),
   z.object({ action: z.literal("grantScriptWorkspace"), scope, root: z.string().min(1).max(4096), access: z.enum(["read-only", "read-write"]), acknowledgeRestrictions: z.literal(true), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("revokeScriptWorkspace"), scope, grantId: z.string().uuid(), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("pythonEnvironmentStatus") }).strict(),
+  z.object({ action: z.literal("reviewPythonEnvironment"), actionId: z.string().uuid(), wheelPaths: z.array(z.string().min(1).max(4096)).min(1).max(16), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("preparePythonEnvironment"), actionId: z.string().uuid(), reviewDigest: z.string().regex(/^[a-f0-9]{64}$/), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("pythonEnvironmentAction"), actionId: z.string().uuid() }).strict(),
+  z.object({ action: z.literal("reconcilePythonEnvironment"), actionId: z.string().uuid(), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("bindPythonEnvironment"), scope, environmentId: z.string().regex(/^[a-f0-9]{64}$/), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("revokePythonEnvironment"), scope, bindingId: z.string().uuid(), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("skillRoot"), input: z.object({ root: z.string().min(1).max(4096), label: z.string().min(1).max(200) }).strict(), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("skillsDiscover"), grantId: z.string().min(1).max(80) }).strict(),
   z.object({ action: z.literal("removeSkillRoot"), grantId: z.string().min(1).max(80), explicitUserAction: z.literal(true) }).strict(),
@@ -90,6 +98,13 @@ export function createAgentToolsRoutes(composition: AgentToolsComposition, path 
         case "scriptStatus": value = composition.scriptStatus(body.scope); break;
         case "grantScriptWorkspace": value = composition.grantScriptWorkspace(body.scope, body.root, body.access, body.acknowledgeRestrictions, body.explicitUserAction); break;
         case "revokeScriptWorkspace": await composition.revokeScriptWorkspace(body.scope, body.grantId, body.explicitUserAction); value = { revoked: true }; break;
+        case "pythonEnvironmentStatus": value = composition.pythonEnvironmentStatus(); break;
+        case "reviewPythonEnvironment": value = composition.reviewPythonEnvironment(body.actionId, body.wheelPaths, body.explicitUserAction); break;
+        case "preparePythonEnvironment": value = composition.preparePythonEnvironment(body.actionId, body.reviewDigest, body.explicitUserAction); break;
+        case "pythonEnvironmentAction": value = composition.pythonEnvironmentAction(body.actionId); break;
+        case "reconcilePythonEnvironment": value = composition.reconcilePythonEnvironment(body.actionId, body.explicitUserAction); break;
+        case "bindPythonEnvironment": value = composition.bindPythonEnvironment(body.scope, body.environmentId, body.explicitUserAction); break;
+        case "revokePythonEnvironment": await composition.revokePythonEnvironment(body.scope, body.bindingId, body.explicitUserAction); value = { revoked: true }; break;
         case "skillRoot": value = composition.addSkillRoot(body.input, body.explicitUserAction); break;
         case "skillsDiscover": value = composition.discoverSkills(body.grantId); break;
         case "removeSkillRoot": value = composition.removeSkillRoot(body.grantId, body.explicitUserAction); break;
@@ -106,7 +121,8 @@ export function createAgentToolsRoutes(composition: AgentToolsComposition, path 
     } catch (error) {
       const invalid = error instanceof z.ZodError;
       // Fixed domain strings are safe; arbitrary filesystem/SDK errors can contain private paths.
-      const message = error instanceof Error && /^(?:Explicit |Current owned|Local tools admission|No exact |Pending Agent|Wait for owned|Configuration review|Reserved (?:builtin|browser|desktop|remote)|Installers,|Interpreter recipes|Pinned server|Tools host|Standalone tool|Tool |Selected skill|Skill root|Skill source|Managed skill|Exact reviewed managed|Official\/vendor plugin|Native OS|Invalid secret|Unsupported server)/.test(error.message) ? error.message : "The tools action could not be completed. Inspect the current saved configuration and receipt before retrying.";
+      const message = isPythonEnvironmentError(error) ? pythonEnvironmentPublicReason(error)
+        : error instanceof Error && /^(?:Explicit |Current owned|Local tools admission|No exact |Pending Agent|Wait for owned|Configuration review|Reserved (?:builtin|browser|desktop|remote)|Installers,|Interpreter recipes|Pinned server|Tools host|Standalone tool|Tool |Selected skill|Skill root|Skill source|Managed skill|Exact reviewed managed|Official\/vendor plugin|Native OS|Invalid secret|Unsupported server)/.test(error.message) ? error.message : "The tools action could not be completed. Inspect the current saved configuration and receipt before retrying.";
       return Response.json({ ok: false, error: invalid ? "invalid_request" : "agent_tools_conflict", message }, { status: invalid ? 400 : 409 });
     }
   };

@@ -5,12 +5,15 @@ import type { BrowserBinding } from '../../src/browser-companion/protocol';
 import type { AgentDesktopStatus } from './agent-desktop-types';
 import type { AgentPendingToolCall } from './agent-mode-types';
 import type { RemoteAgentStatus, RemoteAgentTaskScope } from '../electron/agent-remote-types.cjs';
+import type { SkillPythonEnvironmentAction, SkillPythonEnvironmentDescriptor } from '../../src/agent-tools/skill-python-environment';
+export type { SkillPythonEnvironmentAction, SkillPythonEnvironmentDescriptor };
 export type { RemoteAgentStatus, RemoteAgentTaskScope };
 export type { ServerRecipe, ToolDescriptor, ToolScope, ToolOutcome, SkillIdentity, SkillRootGrant, SelectedSkill };
 export interface AgentToolsApi {
   request(body: Record<string, unknown>): Promise<unknown>;
   pickSkillRoot(): Promise<{ cancelled: boolean; grant?: SkillRootGrant }>;
   pickScriptWorkspace?(): Promise<{ cancelled: boolean; root?: string }>;
+  pickPythonWheels?(): Promise<{ cancelled: boolean; wheelPaths?: string[] }>;
   pickInstallRoot?(): Promise<{ cancelled: boolean; root?: string }>;
   /** Exact private pending calls come from the owned Agent-mode store through its guarded API. */
   listTasks(): Promise<{ tasks: { id: string; generation: number; status: string }[] }>;
@@ -76,6 +79,7 @@ export interface AgentSkillScriptsStatus {
     python: { supported: boolean; reason?: string; executable?: string; executableSha256?: string; closureDigest?: string };
   }; [key: string]: unknown };
   grants: AgentSkillScriptWorkspaceGrant[];
+  environmentBindings?: { id: string; taskId: string; generation: number; environmentId: string; closureDigest: string }[];
   activeOperations: { operationId: string; workspaceGrantId: string; taskId: string; generation: number }[];
 }
 export interface AgentToolsStatus {
@@ -83,6 +87,7 @@ export interface AgentToolsStatus {
   runtime: { enabled: boolean; servers: { id: string; connected: boolean; pid: number | null; sandbox?: string; boundary?: unknown }[]; sandbox: string };
   activeCount: number;
   descriptors: ToolDescriptor[];
+  pythonEnvironments?: { supported: boolean; reason?: string; environments: SkillPythonEnvironmentDescriptor[]; actions: SkillPythonEnvironmentAction[] };
   skillRoots: SkillRootGrant[];
   selections: { scope: ToolScope; skills: SkillIdentity[] }[];
   capabilities: { stdio: boolean; install: boolean; oauth: boolean; secrets: boolean; nativeSandbox: boolean; mcpSandboxAvailable?: boolean; skillWrites: boolean; managedSkillImports?: boolean; skillResourceReads?: boolean; skillScripts?: boolean; pendingToolCalls: boolean };

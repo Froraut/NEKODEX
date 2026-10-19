@@ -631,6 +631,7 @@ export interface LauncherApi extends NativeThreadsApi, NativePersistentApi, Work
   pickAgentSkillRoot: AgentToolsApi['pickSkillRoot'];
   pickAgentToolsInstallRoot(): Promise<{ cancelled: boolean; root?: string }>;
   pickAgentScriptWorkspace(): Promise<{ cancelled: boolean; root?: string }>;
+  pickAgentPythonWheels(): Promise<{ cancelled: boolean; wheelPaths?: string[] }>;
   browserCompanion: BrowserCompanionApi['request'];
   copyBrowserPairing: NonNullable<BrowserCompanionApi['copyPairing']>;
   localControlApiRequest: LocalControlApiAdminApi['request'];

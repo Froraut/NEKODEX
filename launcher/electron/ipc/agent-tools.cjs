@@ -4,6 +4,7 @@ for (const action of ['browserStatus', 'bindBrowserTools', 'revokeBrowserTools']
 for (const action of ['inspectDesktopPermissions', 'listDesktopWindows', 'setDesktopEnabled', 'selectDesktopWindow', 'revokeDesktopTools']) ACTIONS.add(action);
 for (const action of ['remoteStatus', 'bindRemoteTools', 'revokeRemoteTools']) ACTIONS.add(action);
 for (const action of ['scriptStatus', 'grantScriptWorkspace', 'revokeScriptWorkspace']) ACTIONS.add(action);
+for (const action of ['pythonEnvironmentStatus', 'reviewPythonEnvironment', 'preparePythonEnvironment', 'pythonEnvironmentAction', 'reconcilePythonEnvironment', 'bindPythonEnvironment', 'revokePythonEnvironment']) ACTIONS.add(action);
 /** Existing IPC sender guard and owned supervisor remain the sole authority. */
 function registerAgentTools({ handle, runtimeHost, dialog, getWindow, remoteService }) {
   const request = async body => {
@@ -23,7 +24,7 @@ function registerAgentTools({ handle, runtimeHost, dialog, getWindow, remoteServ
     }
     const supervisor = runtimeHost.supervisor;
     const config = supervisor.readConfig();
-    const allowDraining = ['status', 'receipt', 'installReceipt', 'managedSkillAction', 'browserStatus', 'remoteStatus', 'scriptStatus', 'revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools', 'revokeScriptWorkspace'].includes(body.action)
+    const allowDraining = ['status', 'receipt', 'installReceipt', 'managedSkillAction', 'browserStatus', 'remoteStatus', 'scriptStatus', 'pythonEnvironmentStatus', 'pythonEnvironmentAction', 'reconcilePythonEnvironment', 'revokePythonEnvironment', 'revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools', 'revokeScriptWorkspace'].includes(body.action)
       || body.action === 'setDesktopEnabled' && body.enabled === false;
     if (!config || !await supervisor.ownedAgentRuntimeReady(config, { allowDraining })) throw new Error('Start the current NEKODEX runtime to use Agent tools');
     const receipt = await supervisor.control(config, 'agent-tools', { body });
@@ -32,11 +33,11 @@ function registerAgentTools({ handle, runtimeHost, dialog, getWindow, remoteServ
   };
   handle('launcher:agent-tools', async (_event, body) => request(body));
   handle('launcher:agent-tools-observe', async (_event, body) => {
-    if (!body || !['remoteStatus', 'scriptStatus'].includes(body.action)) throw new Error('This tools action only reads provider metadata');
+    if (!body || !['remoteStatus', 'scriptStatus', 'pythonEnvironmentStatus', 'pythonEnvironmentAction'].includes(body.action)) throw new Error('This tools action only reads provider metadata');
     return request(body);
   });
   handle('launcher:agent-tools-revoke', async (_event, body) => {
-    if (!body || !['revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools', 'revokeScriptWorkspace'].includes(body.action)
+    if (!body || !['revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools', 'revokeScriptWorkspace', 'revokePythonEnvironment'].includes(body.action)
       || body.explicitUserAction !== true) throw new Error('This tools action only revokes task authority');
     return request(body);
   });
@@ -63,6 +64,17 @@ function registerAgentTools({ handle, runtimeHost, dialog, getWindow, remoteServ
     const selection = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
     // Choosing a path is not a workspace grant or an execution approval.
     return selection.canceled || selection.filePaths.length !== 1 ? { cancelled: true } : { cancelled: false, root: selection.filePaths[0] };
+  });
+  handle('launcher:agent-tools-pick-python-wheels', async () => {
+    if (!dialog) throw new Error('Native Python wheel picker is unavailable');
+    const options = { title: 'Select the complete wheel dependency set for a separate review',
+      properties: ['openFile', 'multiSelections'], filters: [{ name: 'Python wheels', extensions: ['whl'] }] };
+    const window = getWindow?.();
+    const selection = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
+    // Selection supplies paths only; the core owner snapshots and reviews bounded artifacts.
+    if (selection.canceled) return { cancelled: true };
+    if (!selection.filePaths.length || selection.filePaths.length > 16) throw new Error('Select between one and sixteen wheel files');
+    return { cancelled: false, wheelPaths: selection.filePaths };
   });
 }
 module.exports = { registerAgentTools };

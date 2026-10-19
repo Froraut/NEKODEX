@@ -85,7 +85,7 @@ Python bootstrap validates interpreter/base-prefix/search paths, waits for the
 supervisor's durable PID/start permit, applies Seatbelt, writes and closes the
 sealed control FD, then reads, hashes and compiles the exact selected `.py`.
 Only then are immutable package directories added to module search paths.
-No site customization or automatic dependency loading is enabled. Runtime and
+No site customization or automatic dependency installation/discovery is enabled. Runtime and
 bootstrap identities are retained with the execution receipt.
 
 Python uses the existing per-operation approval, exact scope, ephemeral workspace
@@ -97,9 +97,17 @@ code can interpret data it is allowed to read, so this is not a guarantee that
 every interpreted byte originated in an immutable package. stdout/stderr remains
 untrusted output, and a successful script does not verify a task result.
 
-Other Python distributions/versions, third-party dependencies, shell, PDF OCR/full visual interpretation,
-network resources and Windows/Linux execution remain separate work. This source
-contract is not installed-app acceptance or a real-model result.
+Explicitly selected offline pure-wheel dependencies now use a separate
+[environment owner](python-skill-environments.md): Review/Prepare, exact runtime/
+artifact/lock/tree identity, task-generation Attach and normal per-call approval.
+The [real acceptance report](../reviews/2026-10-19-python-environments.md) records
+the dateutil/six Native Goal; that result is separate from the original stdlib
+batch above. No pip, resolver, package import or network runs during preparation.
+PEP508 markers/extras/URLs, native wheels/builds/data schemes, other Python
+distributions/versions, shell, PDF OCR/full visual interpretation, network resources
+and Windows/Linux remain separate work. The
+[full-shell/native-build VM proposal](isolated-execution-environments.md) is design
+only. This source contract does not establish installed-app delivery.
 
 
 Selected PDF v5 packages retain bounded raw PDF files as immutable dependencies,

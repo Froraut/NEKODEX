@@ -24,6 +24,24 @@ explicit finite maxTurns with maxSpend=null. Their stored turnUnit is
 `native-offers`; no exact internal provider-request count or monetary price is
 claimed. Internal retry/compaction accounting is outside this adapter.
 
+## Qualified account readiness precedes model advertisement
+
+Explicit account qualification prepares the existing shared account process before
+publishing available/accepting models. `prepare()` performs the existing pinned
+prestart, connection, effective-configuration and current account/usage checks;
+it creates no Native thread or inference turn. Status and persistent-context
+admission require the resulting `ready` state. Preparing, closing, startup failure
+or physical process closure advertises no execution readiness.
+
+The catalog freshness guard remains at qualification/startup. Completing that
+startup during the explicit qualification action prevents later human-paced
+resource selection and approvals from deferring the first prestart beyond its
+provenance window. It does not remove account, configuration, pin or per-turn
+checks. Failed preparation retains its exact owner and cleanup responsibility;
+status and a repeated call never restart it automatically. A new Run remains a
+separate explicit command. A prior terminal `not_sent` receipt is retained and
+never replayed as a Native offer.
+
 ## One bridge, one durable transport claim
 
 `createOwnedNativeExecutionPort` implements the same AgentExecutionPort as Web,

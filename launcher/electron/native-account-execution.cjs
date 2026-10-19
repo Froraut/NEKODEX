@@ -41,17 +41,19 @@ function createNativeAccountExecutionService({ authority, inventory, getWrapperP
         fs.writeFileSync(path.join(root, 'generation.json'), JSON.stringify({ version: 1, profileId, epoch, serverGeneration: current.serverGeneration,
           inventoryActionId, modelAdmissions: admission.models }) + '\n', { flag: 'wx', mode: 0o600 });
         syncPath(path.join(root, 'generation.json')); syncPath(root);
-        notify(); return { models: models(), serverGeneration: current.serverGeneration };
+        await current.server.prepare();
+        if (destroyed || closing) throw fail('execution_busy', 'Native execution closed during preparation');
       } catch (reason) { current.failed = true; notify(); throw reason; }
     })();
-    try { return await preparing; } finally { preparing = undefined; }
+    try { await preparing; } finally { preparing = undefined; notify(); }
+    return { models: models(), serverGeneration: current.serverGeneration };
   }
-  function models() { return !destroyed && !current?.failed && current?.server?.inspect().accepting ? current.admission.models.map(row => ({ ...row })) : []; }
+  function models() { const status = current?.server?.inspect(); return !destroyed && !preparing && !closing && !current?.failed && status?.ready && status.accepting ? current.admission.models.map(row => ({ ...row })) : []; }
   return Object.freeze({ admit, models,
     // Trusted main-only view of the already admitted owner. This accessor never
     // starts a process or reopens a profile and is never exposed through IPC.
     persistentContext() {
-      if (destroyed || preparing || closing || !current || current.failed || !current.server?.inspect().accepting) return null;
+      if (destroyed || preparing || closing || !current || current.failed || !current.server?.inspect().ready || !current.server.inspect().accepting) return null;
       return { server: current.server, models: models(), serverGeneration: current.serverGeneration,
         profileId: current.lease.profileId, epoch: current.lease.epoch };
     },

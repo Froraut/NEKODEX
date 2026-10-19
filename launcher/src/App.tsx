@@ -64,6 +64,7 @@ const agentToolsApi: import('./agent-tools-types').AgentToolsApi = {
   request: body => api!.agentTools(body), pickSkillRoot: () => api!.pickAgentSkillRoot(),
   pickInstallRoot: () => api!.pickAgentToolsInstallRoot(),
   pickScriptWorkspace: () => api!.pickAgentScriptWorkspace(),
+  pickPythonWheels: () => api!.pickAgentPythonWheels(),
   attachEvidence: (taskId, evidence) => api!.agentMode({ action: 'evidence', taskId, actionId: crypto.randomUUID(), evidence }),
   listTasks: () => api!.agentMode({ action: 'list' }) as ReturnType<import('./agent-tools-types').AgentToolsApi['listTasks']>,
   getTask: taskId => api!.agentMode({ action: 'get', taskId }) as ReturnType<import('./agent-tools-types').AgentToolsApi['getTask']>,
@@ -612,8 +613,8 @@ function LauncherShell({
     const command = enqueueBrowserSurfaceCommand(browserSurfaceCommand.current,
       () => intent === browserSurfaceIntent.current,
       () => api!.setBrowserSurfaceActive(active), show ? () => api!.showBrowser() : undefined);
-    browserSurfaceCommand.current = command.then(() => undefined, () => undefined);
-    return command.then(result => ({ intent, result }));
+    browserSurfaceCommand.current = command.queueTail.then(() => undefined, () => undefined);
+    return command.result.then(result => ({ intent, result }));
   }, []);
 
   useEffect(() => {

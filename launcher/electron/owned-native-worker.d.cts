@@ -82,6 +82,7 @@ export function createOwnedNativeAccountServer(options:{
     compileOutputSchema?:(schema:Record<string,unknown>)=>(value:unknown)=>boolean};
   requestTimeoutMs?:number;terminalTimeoutMs?:number;stopGraceMs?:number;maxConcurrentThreads?:number;onChange?:()=>void;
 }):{
+  prepare():Promise<void>;
   createWorker(binding:import('./agent-native-bridge.cjs').AgentNativeBinding,onReceipt?:(receipt:OwnedNativeReceipt)=>void):ReturnType<typeof createOwnedNativeWorkerService>;
   /** Main-only exclusive account operation. No raw RPC or foreign-thread adoption. */
   persistentOperation<T>(action:(operation:{
@@ -89,6 +90,6 @@ export function createOwnedNativeAccountServer(options:{
     useWorker(worker:ReturnType<typeof createOwnedNativeWorkerService>):ReturnType<typeof createOwnedNativeWorkerService>;
     prepareResume(input:{registryPath:string;conversationId:string;revision:number}):(binding:import('./agent-native-bridge.cjs').AgentNativeBinding,onReceipt?:(receipt:OwnedNativeReceipt)=>void)=>ReturnType<typeof createOwnedNativeWorkerService>;
   })=>Promise<T>):Promise<T>;
-  inspect():{serverGeneration:string;pid:number|null;closed:boolean;accepting:boolean;threadIds:string[];bindings:string[];activeCount:number};
+  inspect():{serverGeneration:string;pid:number|null;closed:boolean;ready:boolean;accepting:boolean;threadIds:string[];bindings:string[];activeCount:number};
   currentOperation():string|null;destroy():Promise<void>;
 };

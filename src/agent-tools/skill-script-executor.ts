@@ -4,9 +4,10 @@ import { chmodSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdi
 import { dirname, join, posix } from "node:path";
 import type { ToolScope } from "./types";
 import type { SandboxRootGrant } from "./sandbox";
-import { assertPinnedBun, buildSkillScriptSandbox, scriptPath, type SkillScriptBoundary } from "./skill-script-sandbox";
+import { assertPinnedBun, buildSkillScriptSandbox, scriptPath, scriptWithin, type SkillScriptBoundary } from "./skill-script-sandbox";
 import { SKILL_SCRIPT_BOOTSTRAP, SKILL_SCRIPT_SUPERVISOR } from "./skill-script-supervisor";
 import { assertAdmittedPythonRuntime, pythonRuntimeStatus, SKILL_PYTHON_BOOTSTRAP, SKILL_PYTHON_BOOTSTRAP_SHA256, type AdmittedPythonRuntime } from "./skill-python-runtime";
+import { assertAdmittedPythonEnvironment, type AdmittedPythonEnvironment } from './skill-python-environment';
 
 export interface SkillScriptOwnerReceipt {
   supervisor: { pid: number; start: string }; child: { pid: number; start: string } | null;
@@ -16,10 +17,12 @@ export interface SkillScriptResult {
   state: "completed" | "failed" | "unknown"; stdout: string; stderr: string;
   exitCode: number | null; truncated: boolean; owner?: SkillScriptOwnerReceipt;
   boundary?: SkillScriptBoundary; reason?: string;
+  pythonEnvironment?: { environmentId: string; runtimeClosureDigest: string; closureDigest: string };
 }
 export interface SkillScriptExecution {
   /** Chosen by the resource owner from verified media type, never script text/shebang. */
   runtime?: "javascript" | "python";
+  pythonEnvironment?: AdmittedPythonEnvironment;
   scope: ToolScope; operationId: string; entryRelativePath: string;
   /** Entire immutable reviewed closure, including the entry point. No disk path resolution. */
   resources: { relativePath: string; bytes: Uint8Array }[];
@@ -122,6 +125,20 @@ export class SkillScriptExecutor {
       if (value.state === "completed" && (!owner.sealed || !owner.reaped || value.exitCode !== 0)) return undefined;
       if (value.state === "unknown" && value.owner && !value.owner.reaped) this.unresolved.set(operationId, value.owner);
       else this.unresolved.delete(operationId);
+      const configPath = join(parent, 'code', '__trusted', 'supervisor.json');
+      if (existsSync(configPath)) {
+        const fd = openSync(configPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+        try {
+          const stat = fstatSync(fd);
+          if (!stat.isFile() || stat.size > 64 * 1024 || (stat.mode & 0o077) || realpathSync(configPath) !== configPath) return undefined;
+          const config = JSON.parse(readFileSync(fd, 'utf8'));
+          if (config.executionDigest !== value.executionDigest) return undefined;
+          if (config.pythonEnvironment) {
+            if (!['environmentId', 'runtimeClosureDigest', 'closureDigest'].every(key => /^[a-f0-9]{64}$/.test(config.pythonEnvironment[key]))) return undefined;
+            value.pythonEnvironment = { ...config.pythonEnvironment };
+          }
+        } finally { closeSync(fd); }
+      }
       return { ...value, stdout: value.stdout ?? "", stderr: value.stderr ?? "", exitCode: value.exitCode ?? null, truncated: value.truncated ?? false };
     } catch { return undefined; }
   }
@@ -164,6 +181,11 @@ export class SkillScriptExecutor {
       if (!["javascript", "python"].includes(runtime) || !safeRelative(input.entryRelativePath) || !(runtime === "python" ? /\.py$/ : /\.(m?js)$/).test(input.entryRelativePath)) throw new Error("Script entry must match its selected admitted runtime");
       const python = runtime === "python" ? this.options.pythonRuntime : undefined;
       if (runtime === "python" && !pythonRuntimeStatus(python).supported) throw new Error("Selected Python runtime is unavailable");
+      if (input.pythonEnvironment) {
+        if (!python) throw new Error('Python environment cannot be used by another runtime');
+        assertAdmittedPythonEnvironment(input.pythonEnvironment, python);
+        if (input.writeRoots.some(root => scriptWithin(root.path, input.pythonEnvironment!.readRoot) || scriptWithin(input.pythonEnvironment!.readRoot, root.path))) throw new Error('Script writes overlap immutable Python environment');
+      }
       const argv = input.argv ?? [], timeoutMs = input.timeoutMs ?? 15_000, maxOutputBytes = input.maxOutputBytes ?? 16_384;
       if (argv.length > 32 || argv.some(x => typeof x !== "string" || x.length > 4096 || x.includes("\0"))
         || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 || !Number.isInteger(maxOutputBytes) || maxOutputBytes < 1 || maxOutputBytes > 16_384) throw new Error("Script execution bounds exceeded");
@@ -197,7 +219,7 @@ export class SkillScriptExecutor {
         const path = join(code, item.relativePath); mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
         writeFileSync(path, item.bytes, { flag: "wx", mode: 0o400 });
       }
-      const sandbox = buildSkillScriptSandbox({ bunPath: this.options.bunPath, bunSha256: this.options.bunSha256, codeRoot: code, scratch, ...(python ? { pythonRuntime: python } : {}),
+      const sandbox = buildSkillScriptSandbox({ bunPath: this.options.bunPath, bunSha256: this.options.bunSha256, codeRoot: code, scratch, ...(python ? { pythonRuntime: python } : {}), ...(input.pythonEnvironment ? { pythonEnvironment: input.pythonEnvironment } : {}),
         readRoots: input.readRoots, writeRoots: input.writeRoots }); boundary = sandbox.boundary;
       const cwd = input.cwd ?? code;
       if (cwd !== code && ![...input.readRoots, ...input.writeRoots].some(x => x.path === cwd)) throw new Error("Script cwd must be exact reviewed root");
@@ -207,19 +229,23 @@ export class SkillScriptExecutor {
       write(bunfig, "[install]\nauto = \"disable\"\n"); write(bootstrap, python ? SKILL_PYTHON_BOOTSTRAP : SKILL_SCRIPT_BOOTSTRAP); write(supervisor, SKILL_SCRIPT_SUPERVISOR);
       write(childConfig, JSON.stringify({ profile: sandbox.profile, launchPermit, entry: join(code, input.entryRelativePath), argv,
         ...(python ? { executable: python.executable, basePrefix: python.basePrefix, stdlibRoot: python.stdlibRoot, stdlibZip: join(python.basePrefix, "lib/python39.zip"), codeRoot: code,
+          pythonVersion: python.pythonVersion, ...(input.pythonEnvironment ? { environmentRoot: input.pythonEnvironment.readRoot } : {}),
           entryDigest: digest(input.resources.find(item => item.relativePath === input.entryRelativePath)!.bytes) } : {}) }));
       const env = { HOME: home, TMPDIR: tmp, TMP: tmp, TEMP: tmp, PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" };
       const executionIdentity = input.resources.map(x => ({ path: x.relativePath, sha256: digest(x.bytes) }));
       write(config, JSON.stringify({ root, launchPermit, operationId: input.operationId, scope: input.scope,
-        executionDigest: digest(JSON.stringify(python ? { resources: executionIdentity, runtime: { executable: python.executable, executableSha256: python.executableSha256, closureDigest: python.closureDigest }, bootstrapSha256: SKILL_PYTHON_BOOTSTRAP_SHA256 } : executionIdentity)),
+        executionDigest: digest(JSON.stringify(python ? { resources: executionIdentity, runtime: { executable: python.executable, executableSha256: python.executableSha256, closureDigest: python.closureDigest },
+          ...(input.pythonEnvironment ? { pythonEnvironment: { environmentId: input.pythonEnvironment.environmentId, runtimeClosureDigest: input.pythonEnvironment.runtimeClosureDigest, closureDigest: input.pythonEnvironment.closureDigest } } : {}), bootstrapSha256: SKILL_PYTHON_BOOTSTRAP_SHA256 } : executionIdentity)),
         receipt: join(root, "receipt.json"), bunPath: this.options.bunPath, bunfig, bootstrap, childConfig, cwd, env, timeoutMs, maxOutputBytes,
-        ...(python ? { runtime: "python", pythonExecutable: python.executable, pythonExecutableSha256: python.executableSha256, pythonClosureDigest: python.closureDigest, bootstrapSha256: SKILL_PYTHON_BOOTSTRAP_SHA256 } : {}) }));
+        ...(python ? { runtime: "python", pythonExecutable: python.executable, pythonExecutableSha256: python.executableSha256, pythonClosureDigest: python.closureDigest, bootstrapSha256: SKILL_PYTHON_BOOTSTRAP_SHA256 } : {}),
+        ...(input.pythonEnvironment ? { pythonEnvironment: { environmentId: input.pythonEnvironment.environmentId, runtimeClosureDigest: input.pythonEnvironment.runtimeClosureDigest, closureDigest: input.pythonEnvironment.closureDigest } } : {}) }));
       // Seatbelt additionally protects staged bytes even from chmod/native syscalls in selected code.
       const sealDirectory = (path: string) => chmodSync(path, 0o500);
       for (const item of input.resources) { for (let path = dirname(join(code, item.relativePath)); path !== code; path = dirname(path)) sealDirectory(path); }
       sealDirectory(fixed); sealDirectory(code);
       if (python) {
-        assertAdmittedPythonRuntime(python);
+        if (input.pythonEnvironment) assertAdmittedPythonEnvironment(input.pythonEnvironment, python);
+        else assertAdmittedPythonRuntime(python);
         if (digest(readFileSync(bootstrap)) !== SKILL_PYTHON_BOOTSTRAP_SHA256) throw new Error("Trusted Python bootstrap changed before dispatch");
       }
       sandbox.assertCurrent(); input.assertCurrent?.();

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Checkbox, Notice, Panel, Select, TextField } from './design';
+import { Button, Checkbox, Notice, Page, Panel, Select, TextField } from './design';
 import type { Language } from './types';
 import type { ExternalUsageApi, ExternalUsageCatalog, ExternalUsageClient, ExternalUsageEstimate, ExternalUsageScope, ExternalUsageSnapshot } from './external-usage-types';
 import { externalUsageCopy } from './external-usage-copy';
@@ -41,19 +41,22 @@ export function ExternalUsageSurface({ api, language = 'en' }: { api: ExternalUs
     <span>{value.complete ? c.complete : c.partial} · {c.unpriced}: {value.unpricedTokens.toLocaleString(language)} · {c.missing}: {value.unknownRecords.toLocaleString(language)}</span>
     {value.catalogVersion ? <span>{value.catalogVersion} · {value.effectiveDate} · USD</span> : null}
   </div>;
-  return <section className="external-usage" aria-label={c.title}>
+  return <Page width="wide"><section className="external-usage" aria-label={c.title}>
     <Panel title={c.title} actions={<Button disabled={busy} onClick={() => void run(() => api.request({action:'status'}))}>{c.refresh}</Button>}>
-      <p>{c.description}</p><p className="external-usage__muted">{c.coverage}</p>
+      <p className="external-usage__intro">{c.intro}</p>
+      <details className="external-usage__details"><summary>{c.importDetails}</summary><p>{c.description}</p><p className="external-usage__muted">{c.coverage}</p></details>
       {error ? <Notice tone="error" title={error} role="alert" /> : null}
       <div className="external-usage__form">
-        <Select label={c.client} value={client} onChange={value => setClient(value as ExternalUsageClient)} options={[{value:'codex',label:'Codex'},{value:'claude',label:'Claude Code'}]} disabled={busy} />
-        <TextField label={c.account} value={account} onChange={event => setAccount(event.target.value)} pattern="[A-Za-z0-9_-]{1,40}" maxLength={40} disabled={busy} />
-        <Select label={c.scope} value={scope} onChange={value => setScope(value as ExternalUsageScope)} options={options} disabled={busy} />
+        <label className="external-usage__field"><span>{c.client}</span><Select label={c.client} value={client} onChange={value => setClient(value as ExternalUsageClient)} options={[{value:'codex',label:'Codex'},{value:'claude',label:'Claude Code'}]} disabled={busy} /></label>
+        <TextField label={c.account} hint={c.accountHint} value={account} onChange={event => setAccount(event.target.value)} pattern="[A-Za-z0-9_-]{1,40}" maxLength={40} disabled={busy} />
+        <label className="external-usage__field"><span>{c.scope}</span><Select label={c.scope} value={scope} onChange={value => setScope(value as ExternalUsageScope)} options={options} disabled={busy} /></label>
       </div>
-      <Checkbox checked={consent} onChange={setConsent} label={c.consent} disabled={busy} />
-      <Button disabled={busy || !consent || !/^[A-Za-z0-9_-]{1,40}$/.test(account)} onClick={() => void run(() => api.selectRoot({client,accountPseudonym:account,scope,consent:true}))}>{c.pick}</Button>
+      <div className="external-usage__import">
+        <Checkbox checked={consent} onChange={setConsent} label={c.consent} disabled={busy} />
+        <Button variant="primary" disabled={busy || !consent || !/^[A-Za-z0-9_-]{1,40}$/.test(account)} onClick={() => void run(() => api.selectRoot({client,accountPseudonym:account,scope,consent:true}))}>{c.pick}</Button>
+      </div>
     </Panel>
-    {!snapshot?.sources.length ? <Panel title={c.recorded}><p>{c.empty}</p></Panel> : snapshot.sources.map(source => <Panel key={source.id} title={`${source.client} · ${source.accountPseudonym} · ${source.directoryName}`}>
+    {!snapshot?.sources.length ? <Panel title={c.recorded}><p>{c.empty}</p></Panel> : snapshot.sources.map(source => <Panel key={source.id} title={`${source.client === 'codex' ? 'Codex' : 'Claude Code'} · ${source.accountPseudonym}`}>
       <p>{source.enabled ? c.active : c.paused} · {c.unknownCoverage} · {source.adapter}</p>
       <div className="external-usage__stats">
         <div><span>{c.input}</span><strong>{source.reportedRecords ? source.inputTokens.toLocaleString(language) : '—'}</strong></div>
@@ -62,14 +65,14 @@ export function ExternalUsageSurface({ api, language = 'en' }: { api: ExternalUs
         <div><span>{c.missing}</span><strong>{source.unknownRecords}</strong></div>
       </div>
       <p className="external-usage__muted">{c.models}: {source.models.join(', ') || '—'} · {c.versions}: {source.clientVersions.join(', ') || '—'}</p>
-      <p className="external-usage__muted">{c.last}: {source.lastImport ? new Date(source.lastImport).toLocaleString(language) : c.never}</p>
-      <Select label={c.scope} value={source.scope} onChange={value => void run(() => api.request({action:'set-scope',sourceId:source.id,scope:value as ExternalUsageScope}))} options={options} disabled={busy} />
+      <p className="external-usage__muted">{source.directoryName} · {c.last}: {source.lastImport ? new Date(source.lastImport).toLocaleString(language) : c.never}</p>
+      <label className="external-usage__field external-usage__source-scope"><span>{c.scope}</span><Select label={c.scope} value={source.scope} onChange={value => void run(() => api.request({action:'set-scope',sourceId:source.id,scope:value as ExternalUsageScope}))} options={options} disabled={busy} /></label>
       {source.warnings.length ? <Notice tone="warning" title={c.warnings}><ul>{source.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul></Notice> : null}
       <h3>{c.estimate}</h3>{estimate(source.estimate)}
       <div className="external-usage__actions">
         <Button disabled={busy || !source.enabled} onClick={() => void run(() => api.request({action:'import',sourceId:source.id}))}>{c.import}</Button>
         <Button disabled={busy} onClick={() => void run(() => api.request({action:'set-enabled',sourceId:source.id,enabled:!source.enabled}))}>{source.enabled ? c.pause : c.resume}</Button>
-        <Button disabled={busy} variant="danger" onClick={() => setDeleting(source.id)}>{c.forget}</Button>
+        <Button disabled={busy} variant="ghost" className="external-usage__forget" onClick={() => setDeleting(source.id)}>{c.forget}</Button>
       </div>
       {deleting === source.id ? <div role="group" aria-label={c.confirm}><p>{c.confirm}</p><Button variant="danger" disabled={busy} onClick={() => void run(async () => {const next=await api.request({action:'forget-source',sourceId:source.id});setDeleting(null);return next;})}>{c.yes}</Button><Button disabled={busy} onClick={() => setDeleting(null)}>{c.cancel}</Button></div> : null}
     </Panel>)}
@@ -82,5 +85,5 @@ export function ExternalUsageSurface({ api, language = 'en' }: { api: ExternalUs
         const next = await api.request({action:'set-catalog',catalog:parsed}); catalogEdited.current=false;setCatalogDirty(false);return next;
       })}>{c.save}</Button><Button disabled={busy || !snapshot?.catalog} onClick={() => void run(async () => {const next=await api.request({action:'set-catalog',catalog:null});return next;})}>{c.clear}</Button></div>
     </Panel>
-  </section>;
+  </section></Page>;
 }

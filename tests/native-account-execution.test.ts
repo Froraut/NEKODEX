@@ -12,10 +12,12 @@ import { AGENT_NATIVE_PROTOCOL, AGENT_NATIVE_OUTPUT_SCHEMA_ID, AGENT_NATIVE_OUTP
 import type { AgentNativeOfferEnvelope } from '../src/agent-mode/native-protocol';
 const require = createRequire(import.meta.url);
 const { digest, SOURCE, VERSION } = require('../launcher/electron/owned-native-admission.cjs');
+const { createOwnedNativeAccountServer } = require('../launcher/electron/owned-native-worker.cjs');
 const catalog = require('./fixtures/owned-native-model.cjs');
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; };
 
 test.skipIf(process.platform !== 'darwin')('one qualified account generation owns two interleaved ephemeral threads and exact late cleanup without replay', async () => {
+  const actualNow = Date.now;
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'neko-account-pool-')));
   const profileId = randomUUID(), epoch = randomUUID(), inventoryActionId = randomUUID();
   const p: any = { profileId, epoch, root: join(root, 'profile'), home: join(root, 'profile', 'home'), codexHome: join(root, 'profile', 'codex'),
@@ -49,6 +51,7 @@ test.skipIf(process.platform !== 'darwin')('one qualified account generation own
   const child: any = new EventEmitter(); child.pid = 43121; child.stdout = new PassThrough(); child.stderr = new PassThrough();
   const received: any[] = [], starts: any[] = [], turns = new Map<string, any>(), threadIds: string[] = [];
   const firstTurn = deferred(), secondTurn = deferred(), firstUnsubscribe = deferred();
+  const startupAccountRead = deferred(), releaseStartup = deferred(); let holdStartup = true;
   let launches = 0, endings = 0, closed = false, input = '';
   const respond = (message: any, result: any) => child.stdout.write(JSON.stringify({ id: message.id, result }) + '\n');
   const event = (method: string, params: any) => child.stdout.write(JSON.stringify({ method, params }) + '\n');
@@ -62,7 +65,10 @@ test.skipIf(process.platform !== 'darwin')('one qualified account generation own
         if (message.method === 'initialize') respond(message, { codexHome: p.codexHome, userAgent: 'synthetic shared native account' });
         if (message.method === 'config/read') respond(message, { config, layers: [{ name: { type: 'user', file: p.config, profile: null }, config, disabledReason: null }] });
         if (message.method === 'configRequirements/read') respond(message, { requirements: null });
-        if (message.method === 'account/read') respond(message, { account });
+        if (message.method === 'account/read') {
+          if (holdStartup) { startupAccountRead.resolve(); void releaseStartup.promise.then(() => respond(message, { account })); }
+          else respond(message, { account });
+        }
         if (message.method === 'account/rateLimits/read') respond(message, usage);
         if (message.method === 'thread/start') {
           const id = randomUUID(); threadIds.push(id); starts.push(message);
@@ -101,8 +107,15 @@ test.skipIf(process.platform !== 'darwin')('one qualified account generation own
       expect(launches).toBe(0); expect(lease).toBeTruthy(); await rejected.destroy(); expect(lease).toBeUndefined();
     }
     expect(releases).toBe(2); leases = 0; releases = 0;
-    const admitted = await service.admit({ actionId: randomUUID(), inventoryActionId, profileId, epoch });
-    expect(launches).toBe(0); expect(admitted.models).toHaveLength(1); expect(leases).toBe(1);
+    const admitting = service.admit({ actionId: randomUUID(), inventoryActionId, profileId, epoch });
+    await startupAccountRead.promise;
+    expect(service.models()).toEqual([]); expect(service.persistentContext()).toBeNull();
+    expect(service.inspect().server).toMatchObject({ ready: false, accepting: false });
+    expect(threadIds).toHaveLength(0); expect(turns.size).toBe(0);
+    holdStartup = false; releaseStartup.resolve();
+    const admitted = await admitting;
+    expect(launches).toBe(1); expect(admitted.models).toHaveLength(1); expect(leases).toBe(1);
+    expect(service.inspect().server).toMatchObject({ ready: true, accepting: true });
     expect(admitted.models[0]!.imageInput).toBe(true);
     expect(config.thread_unload_delay_secs).toBe(0);
     const sealed = JSON.parse(readFileSync(config.model_catalog_json, 'utf8'));
@@ -116,6 +129,8 @@ test.skipIf(process.platform !== 'darwin')('one qualified account generation own
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNg+A8AAQIBAEK+vGgAAAAASUVORK5CYII=', 'base64');
     a.images = [{ data: png.toString('base64'), mimeType: 'image/png', width: 1, height: 1, byteLength: png.length, sha256: digest(png),
       source: { toolCallId: 'synthetic-approved-observation', receipt: 'synthetic-image-receipt', attachmentIndex: 0 } }];
+    // Human setup time after successful preparation cannot defer the first prestart validation.
+    Date.now = () => actualNow() + 360000;
     const pendingA = bridge.offer(a); await firstTurn.promise;
     const pendingB = bridge.offer(b); await secondTurn.promise;
     expect(launches).toBe(1); expect(received.filter(row => row.method === 'initialize')).toHaveLength(1); expect(threadIds).toHaveLength(2); expect(threadIds[0]).not.toBe(threadIds[1]);
@@ -149,5 +164,35 @@ test.skipIf(process.platform !== 'darwin')('one qualified account generation own
     expect(received.filter(row => row.method === 'turn/start')).toHaveLength(2); expect(received.filter(row => row.method === 'thread/start')).toHaveLength(2);
     await Promise.all([service.destroy(), service.destroy()]); expect(endings).toBe(1); expect(releases).toBe(1); expect(lease).toBeUndefined();
     expect(existsSync(join(p.root, '.execution-owner'))).toBe(false); await bridge.destroy();
-  } finally { close(); await service.destroy(); await bridge.destroy(); rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    try { holdStartup = false; releaseStartup.resolve(); close(); await service.destroy(); await bridge.destroy(); rmSync(root, { recursive: true, force: true }); }
+    finally { Date.now = actualNow; }
+  }
 }, 5_000);
+
+test('failed account preparation never advertises readiness or opens a Native thread and never retries startup', async () => {
+  const child: any = new EventEmitter(); child.pid = 43210; child.stdout = new PassThrough(); child.stderr = new PassThrough();
+  const received: string[] = []; let launches = 0, closed = false, input = '';
+  const close = () => { if (!closed) { closed = true; child.emit('close', 0, null); } };
+  child.stdin = new Writable({ write(chunk, _encoding, done) {
+    input += chunk.toString();
+    for (;;) {
+      const at = input.indexOf('\n'); if (at < 0) break;
+      const message = JSON.parse(input.slice(0, at)); input = input.slice(at + 1); received.push(message.method);
+      if (message.id !== undefined) queueMicrotask(() => child.stdout.write(JSON.stringify({ id: message.id, result: message.method === 'initialize' ? { codexHome: '/inert', userAgent: 'inert-readiness' } : {} }) + '\n'));
+    }
+    done();
+  } });
+  child.stdin.on('finish', close);
+  const server = createOwnedNativeAccountServer({ admission: { serverGeneration: randomUUID(), paths: { cwd: '/inert' },
+    prestart: () => ({ executable: '/inert', args: [], paths: { cwd: '/inert', codexHome: '/inert' }, environment: {} }),
+    checkEffective() { throw new Error('Exact synthetic effective policy failed'); }, checkAccount() { throw new Error('Must not reach account check'); }, forBinding() { throw new Error('Must not create a binding'); } },
+    testHooks: { spawnProcess() { launches++; return child; }, terminateProcess: close }, requestTimeoutMs: 100, stopGraceMs: 5 });
+  try {
+    expect(server.inspect()).toMatchObject({ ready: false, accepting: false, pid: null });
+    await expect(server.prepare()).rejects.toThrow('effective policy failed');
+    expect(server.inspect()).toMatchObject({ ready: false, accepting: false, closed: true });
+    await expect(server.prepare()).rejects.toThrow('effective policy failed');
+    expect(launches).toBe(1); expect(received.some(method => method.startsWith('thread/') || method.startsWith('turn/'))).toBe(false);
+  } finally { close(); await server.destroy(); }
+}, 1000);

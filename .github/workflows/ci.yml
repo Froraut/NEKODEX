@@ -59,6 +59,9 @@ jobs:
       - name: Run focused tunnel credential regressions
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun run test:tunnel-credentials
+      - name: Run Native readiness and passive Python environment regressions
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun test tests/native-account-execution.test.ts tests/skill-python-environment.test.ts --timeout 10000
       - name: Run persistent Native ownership regressions
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun test tests/persistent-native-conversations.test.ts tests/native-persistent-ipc.test.ts tests/native-account-ipc.test.ts --timeout 10000

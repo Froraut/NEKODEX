@@ -6,7 +6,7 @@ export function settleNativeConversationOwners(execution?:{destroy():Promise<voi
 export interface NativeAccountExecutionModel { id:string; label?:string; admissionId:string; provider:'owned-native'; available:true; accepting:boolean; imageInput:boolean; historySource:import('./agent-native-protocol.cjs').AgentNativeHistorySource; }
 export interface NativeAccountExecutionSnapshot {
   models:NativeAccountExecutionModel[];profileId:string|null;epoch:string|null;ownerHeld:boolean; failed:boolean;
-  server:null|{serverGeneration:string;pid:number|null;closed:boolean;accepting:boolean;threadIds:string[];bindings:string[];activeCount:number};
+  server:null|{serverGeneration:string;pid:number|null;closed:boolean;ready:boolean;accepting:boolean;threadIds:string[];bindings:string[];activeCount:number};
 }
 /** Main-owned account execution; no credential bytes, caller paths or raw RPC cross IPC. */
 export function createNativeAccountExecutionService(options:{

@@ -5,6 +5,8 @@ import { dirname, join } from "node:path";
 const PREFIX = "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9";
 const CANDIDATE = "/Applications/Xcode.app/Contents/Developer/usr/bin/python3";
 const STDLIB = join(PREFIX, "lib/python3.9"), LIBRARY = join(PREFIX, "Python3");
+const HEADERS = join(PREFIX, 'Headers'), INCLUDE_LINK = join(PREFIX, 'include/python3.9');
+const PATCHLEVEL = join(HEADERS, 'patchlevel.h');
 const LIMITS = { files: 2048, directories: 256, bytes: 64 * 1024 * 1024, fileBytes: 20 * 1024 * 1024 };
 interface Pin { path: string; dev: string; ino: string; size: number; mtimeNs: string; ctimeNs: string; mode: number; kind: "file" | "directory" | "link"; sha256?: string; target?: string }
 export interface AdmittedPythonRuntime {
@@ -12,6 +14,7 @@ export interface AdmittedPythonRuntime {
   readonly basePrefix: string; readonly stdlibRoot: string; readonly closureDigest: string;
   readonly readRoots: readonly string[]; readonly readFiles: readonly string[];
   readonly versionFamily: "3.9"; readonly origin: "root-owned-apple-xcode-framework";
+  readonly pythonVersion: string;
   readonly closureFiles: number; readonly closureBytes: number;
 }
 const admitted = new WeakMap<AdmittedPythonRuntime, readonly Pin[]>();
@@ -70,13 +73,16 @@ export function admitApplePythonRuntime(): AdmittedPythonRuntime {
     }
   };
   walk(STDLIB); addFile(executable); addFile(LIBRARY);
+  addDirectory(join(PREFIX, 'include')); addDirectory(HEADERS); addLink(INCLUDE_LINK, HEADERS); addFile(PATCHLEVEL);
+  const pythonVersion = readFileSync(PATCHLEVEL, 'utf8').match(/^\s*#\s*define\s+PY_VERSION\s+"(3\.9\.\d+)"\s*$/m)?.[1];
+  if (!pythonVersion) throw new Error('Fixed Python framework version metadata is unavailable');
   addLink(CANDIDATE, executable); addLink(join(PREFIX, "lib/libpython3.9.dylib"), LIBRARY);
   for (const path of [PREFIX, join(PREFIX, "bin"), join(PREFIX, "lib"), dirname(CANDIDATE)]) addDirectory(path);
   const zip = join(PREFIX, "lib/python39.zip");
   try { lstatSync(zip); addFile(zip); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   const closure = [...pins.values()].sort((a, b) => a.path.localeCompare(b.path)); closure.forEach(sameMetadata);
   const runtime: AdmittedPythonRuntime = Object.freeze({ kind: "python", executable, executableSha256: pins.get(executable)!.sha256!, basePrefix: PREFIX,
-    stdlibRoot: STDLIB, closureDigest: sha256(JSON.stringify(closure)), readRoots: Object.freeze([STDLIB]),
+    stdlibRoot: STDLIB, pythonVersion, closureDigest: sha256(JSON.stringify(closure)), readRoots: Object.freeze([STDLIB]),
     readFiles: Object.freeze([executable, LIBRARY, ...(pins.has(zip) ? [zip] : [])]), versionFamily: "3.9", origin: "root-owned-apple-xcode-framework",
     closureFiles: files, closureBytes: bytes });
   admitted.set(runtime, Object.freeze(closure)); return runtime;
@@ -91,12 +97,12 @@ export function assertAdmittedPythonRuntime(runtime: AdmittedPythonRuntime): voi
 }
 /** Status is passive and cheap; complete dependency validation belongs to the
  * one immediate dispatch boundary, not UI refreshes or per-resource checks. */
-export function pythonRuntimeStatus(runtime?: AdmittedPythonRuntime): { supported: boolean; reason?: string; executable?: string; executableSha256?: string; closureDigest?: string } {
+export function pythonRuntimeStatus(runtime?: AdmittedPythonRuntime): { supported: boolean; reason?: string; executable?: string; executableSha256?: string; closureDigest?: string; pythonVersion?: string } {
   if (!runtime || !admitted.has(runtime)) return { supported: false, reason: "No admitted fixed Apple Python runtime" };
   try {
     const pins = admitted.get(runtime)!;
     for (const path of [runtime.executable, runtime.basePrefix, runtime.stdlibRoot]) sameMetadata(pins.find(pin => pin.path === path)!);
-    return { supported: true, executable: runtime.executable, executableSha256: runtime.executableSha256, closureDigest: runtime.closureDigest };
+    return { supported: true, executable: runtime.executable, executableSha256: runtime.executableSha256, closureDigest: runtime.closureDigest, pythonVersion: runtime.pythonVersion };
   } catch { return { supported: false, reason: "Admitted Python runtime identity changed" }; }
 }
 
@@ -108,7 +114,7 @@ with open(sys.argv[1], "r", encoding="utf-8") as handle:
     config = json.load(handle)
 if not (sys.flags.isolated and sys.flags.no_site and sys.flags.dont_write_bytecode):
     raise SystemExit(125)
-if os.path.realpath(sys.executable) != config["executable"] or os.path.realpath(sys.base_prefix) != config["basePrefix"] or sys.version_info[:2] != (3, 9):
+if os.path.realpath(sys.executable) != config["executable"] or os.path.realpath(sys.base_prefix) != config["basePrefix"] or sys.version_info[:3] != tuple(int(part) for part in config["pythonVersion"].split(".")):
     raise SystemExit(125)
 for entry in sys.path:
     if not entry or not os.path.isabs(entry) or not (entry == config["stdlibZip"] or os.path.realpath(entry) == config["stdlibRoot"] or os.path.realpath(entry).startswith(config["stdlibRoot"] + os.sep)):
@@ -136,6 +142,10 @@ with open(config["entry"], "rb") as selected:
 if len(source) > 32768 or hashlib.sha256(source).hexdigest() != config["entryDigest"]:
     raise SystemExit(125)
 sys.argv = [config["entry"]] + config["argv"]
+if config.get("environmentRoot"):
+    if not os.path.isabs(config["environmentRoot"]) or os.path.realpath(config["environmentRoot"]) != config["environmentRoot"]:
+        raise SystemExit(125)
+    sys.path.insert(0, config["environmentRoot"])
 sys.path = [os.path.dirname(config["entry"]), config["codeRoot"]] + sys.path
 namespace = {"__name__": "__main__", "__file__": config["entry"], "__package__": None, "__cached__": None}
 exec(compile(source, config["entry"], "exec", dont_inherit=True), namespace)

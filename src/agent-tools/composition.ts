@@ -21,7 +21,8 @@ import { reviewTrustedSandboxConfig, sandboxProviderAvailable } from "./sandbox"
 import { ManagedSkillStore } from "./managed-skills";
 import { createSkillResourceToolsProvider, type AttachedSkillResource, type SkillResourceToolsProvider } from "./skill-resource-tools";
 import { SkillScriptExecutor } from "./skill-script-executor";
-import { admitApplePythonRuntime, type AdmittedPythonRuntime } from "./skill-python-runtime";
+import { admitApplePythonRuntime, pythonRuntimeStatus, type AdmittedPythonRuntime } from "./skill-python-runtime";
+import { SkillPythonEnvironmentStore, pythonEnvironmentPublicReason, asPythonEnvironmentPublicError } from "./skill-python-environment";
 import { createSkillScriptToolsProvider, type SkillScriptExecutorPort, type SkillScriptToolsProvider } from "./skill-script-tools";
 import { SkillPdfExtractor, type SkillPdfExtractorPort } from "./skill-pdf-extractor";
 import type { PinnedSkillPdfHelper } from "./skill-pdf-helper-path";
@@ -45,6 +46,8 @@ export interface AgentToolsCompositionOptions {
   builtins?: readonly StandaloneBuiltinToolsProvider[];
   /** Trusted test/platform port; never supplied through HTTP or model arguments. */
   scriptExecutor?: SkillScriptExecutorPort;
+  /** Trusted runtime admission shared by execution and environment preparation, never HTTP input. */
+  pythonRuntime?: AdmittedPythonRuntime;
   /** Trusted process/helper pin or injected platform port; never accepted from HTTP/model input. */
   pdfHelper?: PinnedSkillPdfHelper;
   pdfExtractor?: SkillPdfExtractorPort;
@@ -68,15 +71,13 @@ function ownedPdfExtractor(home: string, helper?: PinnedSkillPdfHelper): SkillPd
   };
 }
 /** Passive lazy binding to the owned Bun and an optional fixed, pinned Apple Python closure. */
-function ownedScriptExecutor(home: string): SkillScriptExecutorPort {
+function ownedScriptExecutor(home: string, getPythonRuntime: () => AdmittedPythonRuntime | undefined): SkillScriptExecutorPort {
   let executor: SkillScriptExecutor | undefined;
   const get = () => {
     if (!executor) {
       const command = realpathSync(process.execPath);
       if (process.platform !== "darwin" || !/^bun(?:\.exe)?$/.test(basename(command))) throw new Error("Restricted skill script runtime is unavailable");
-      let pythonRuntime: AdmittedPythonRuntime | undefined;
-      try { pythonRuntime = admitApplePythonRuntime(); } catch { /* Missing/untrusted Python cannot change JavaScript authority. */ }
-      executor = new SkillScriptExecutor({ bunPath: command, bunSha256: pinnedFile(command, 512 * 1024 * 1024).sha256, home, pythonRuntime });
+      executor = new SkillScriptExecutor({ bunPath: command, bunSha256: pinnedFile(command, 512 * 1024 * 1024).sha256, home, pythonRuntime: getPythonRuntime() });
     }
     return executor;
   };
@@ -116,6 +117,8 @@ export class AgentToolsComposition {
   private managedSkillStore?: ManagedSkillStore;
   private readonly skillResourceTools: SkillResourceToolsProvider;
   private readonly skillScriptTools: SkillScriptToolsProvider;
+  private readonly pythonRuntime: () => AdmittedPythonRuntime | undefined;
+  private readonly pythonEnvironments: SkillPythonEnvironmentStore;
   private readonly pdfExtractor: SkillPdfExtractorPort;
   readonly installer: ManagedMcpInstaller;
   readonly toolsPort: StandaloneToolsPort;
@@ -123,6 +126,16 @@ export class AgentToolsComposition {
   constructor(readonly options: AgentToolsCompositionOptions) {
     this.configPath = join(options.home, "agent-tools.json"); this.journalPath = join(options.home, "agent-tool-calls.sqlite");
     this.skillStatePath = join(options.home, "agent-skills.json");
+    let pythonRuntime = options.pythonRuntime;
+    let pythonAdmissionAttempted = Boolean(pythonRuntime);
+    this.pythonRuntime = () => {
+      if (!pythonAdmissionAttempted) {
+        pythonAdmissionAttempted = true;
+        try { pythonRuntime = admitApplePythonRuntime(); } catch { /* Python absence does not change JavaScript authority. */ }
+      }
+      return pythonRuntime;
+    };
+    this.pythonEnvironments = new SkillPythonEnvironmentStore({ home: join(options.home, "skill-python-environments"), getRuntime: this.pythonRuntime });
     this.pdfExtractor = options.pdfExtractor ?? ownedPdfExtractor(options.home, options.pdfHelper);
     this.skillResourceTools = createSkillResourceToolsProvider({
       isScopeActive: scope => !this.closing && !this.changing && this.options.canStart?.() !== false && this.options.isScopeActive(scope),
@@ -134,7 +147,8 @@ export class AgentToolsComposition {
       isScopeActive: scope => !this.closing && !this.changing && this.options.canStart?.() !== false && this.options.isScopeActive(scope),
       resources: scope => this.attachedSkillResources(scope),
       readResource: (scope, versionId, packageDigest, path, digest) => this.managedSkills().readResource(scope, versionId, packageDigest, path, digest),
-      executor: options.scriptExecutor ?? ownedScriptExecutor(options.home), privateOwnerHome: options.home,
+      executor: options.scriptExecutor ?? ownedScriptExecutor(options.home, this.pythonRuntime), privateOwnerHome: options.home,
+      resolvePythonEnvironment: environmentId => this.pythonEnvironmentControl(() => this.pythonEnvironments.admit(environmentId)),
     });
     this.installer = new ManagedMcpInstaller(options.home);
     const persisted = readPrivateMetadata(this.skillStatePath);
@@ -208,6 +222,41 @@ export class AgentToolsComposition {
     return this.skillScriptTools.status().grants.some(grant => this.options.isScopeActive({ taskId: grant.taskId, generation: grant.generation, toolCallId: "script-discovery" }));
   }
   scriptStatus(scope?: ToolScope) { return this.skillScriptTools.status(scope); }
+  private pythonEnvironmentControl<T>(work: () => T): T {
+    try { return work(); } catch (cause) { throw asPythonEnvironmentPublicError(cause); }
+  }
+  pythonEnvironmentStatus() {
+    try {
+      const runtime = pythonRuntimeStatus(this.pythonRuntime());
+      return { supported: runtime.supported, ...(runtime.reason ? { reason: runtime.reason } : {}),
+        environments: this.pythonEnvironments.list(), actions: this.pythonEnvironments.actions() };
+    } catch (cause) {
+      // A damaged optional environment store does not hide unrelated tools or create an empty-ready claim.
+      return { supported: false, reason: pythonEnvironmentPublicReason(cause), environments: [], actions: [] };
+    }
+  }
+  private pythonEnvironmentMutation(explicitUserAction: boolean) {
+    if (!explicitUserAction || this.closing || this.changing || this.options.canStart?.() === false) throw new Error("Explicit current local Python environment action required");
+  }
+  reviewPythonEnvironment(actionId: string, wheelPaths: string[], explicitUserAction: boolean) {
+    this.pythonEnvironmentMutation(explicitUserAction);
+    return this.pythonEnvironmentControl(() => this.pythonEnvironments.review(actionId, { wheelPaths }, true));
+  }
+  preparePythonEnvironment(actionId: string, reviewDigest: string, explicitUserAction: boolean) {
+    this.pythonEnvironmentMutation(explicitUserAction);
+    return this.pythonEnvironmentControl(() => this.pythonEnvironments.prepare(actionId, reviewDigest, true));
+  }
+  pythonEnvironmentAction(actionId: string) { return this.pythonEnvironmentControl(() => this.pythonEnvironments.inspect(actionId)); }
+  reconcilePythonEnvironment(actionId: string, explicitUserAction: boolean) {
+    if (!explicitUserAction) throw new Error("Explicit exact environment reconciliation required");
+    return this.pythonEnvironmentControl(() => this.pythonEnvironments.reconcile(actionId, true));
+  }
+  bindPythonEnvironment(scope: ToolScope, environmentId: string, explicitUserAction: boolean) {
+    this.scope(scope);
+    if (!explicitUserAction || readToolsConfig(this.configPath).servers.some(server => server.id === this.skillScriptTools.serverId)) throw new Error("Explicit available builtin Python environment selection required");
+    return this.skillScriptTools.bindPythonEnvironment(scope, environmentId, true);
+  }
+  revokePythonEnvironment(scope: ToolScope, bindingId: string, explicitUserAction: boolean) { return this.skillScriptTools.revokePythonEnvironment(scope, bindingId, explicitUserAction); }
   grantScriptWorkspace(scope: ToolScope, root: string, access: "read-only" | "read-write", acknowledged: boolean, explicitUserAction: boolean) {
     if (!acknowledged || !explicitUserAction) throw new Error("Explicit restricted script workspace acknowledgement required");
     this.scope(scope);
@@ -225,6 +274,7 @@ export class AgentToolsComposition {
       desktopTools: this.options.desktopTools?.status() ?? null,
       remoteTools: this.options.remoteTools?.status() ?? null,
       scriptTools: this.scriptStatus(),
+      pythonEnvironments: this.pythonEnvironmentStatus(),
       capabilities: { stdio: process.platform !== "win32", install: process.platform !== "win32", oauth: false, secrets: false, nativeSandbox: false, mcpSandboxAvailable: sandboxProviderAvailable(), skillWrites: false, managedSkillImports: process.platform !== "win32", skillResourceReads: process.platform !== 'win32' && !config.servers.some(server => server.id === this.skillResourceTools.serverId), skillScripts: this.skillScriptTools.status().capabilities.supported && !config.servers.some(server => server.id === this.skillScriptTools.serverId), pendingToolCalls: Boolean(this.options.resolveToolCall) } };
   }
   private reviewedSandbox(input: { codeRoots: string[]; readRoots: string[]; writeRoots: string[] }, ownedReadRoots: string[] = [], ownedCodeRoots: string[] = []) {
