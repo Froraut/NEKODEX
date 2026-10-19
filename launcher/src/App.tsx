@@ -55,6 +55,7 @@ const historyApi = {
   saveMarkdown: (markdown: string) => api!.saveConversationHistoryMarkdown(markdown),
 };
 const agentModeApi = { request: (body: Record<string, unknown>) => api!.agentMode(body),
+  ...(typeof api?.loopFileWatcherRequest === 'function' ? { loopFileWatcherRequest: (body: import('./AgentLoopFileWatcher').LoopFileWatcherRequest) => api!.loopFileWatcherRequest(body) } : {}),
   nativeHistory: { request: historyApi.request },
   nativeAccounts: { request: (body: import('./native-accounts-types').NativeAccountsRequest | import('./native-accounts-types').NativeInventoryRequest | import('./native-accounts-types').NativeExecutionCloseRequest) => api!.nativeAccountsRequest(body),
     openVerificationUrl: (url: string) => api!.openNativeAccountVerification(url), copyCode: (code: string) => api!.copyNativeAccountCode(code) },
@@ -1030,7 +1031,7 @@ function LauncherShell({
             {surface === 'native-threads' ? <NativeThreadsSurface loadCopy={copy} language={language} api={api!} disabled={transitionBusy} /> : null}
             {surface === 'agent-mode' ? <AgentModeSurface loadCopy={copy} language={language} api={agentModeApi} disabled={transitionBusy} /> : null}
             {surface === 'external-usage' ? <ExternalUsageSurface loadCopy={copy} language={language} api={externalUsageApi} /> : null}
-            {surface === 'agent-tools' ? <AgentToolsSurface loadCopy={copy} language={language} api={agentToolsApi} disabled={transitionBusy} /> : null}
+            {surface === 'agent-tools' ? <AgentToolsSurface loadCopy={copy} language={language} api={agentToolsApi} oauthMcpRequest={api?.oauthMcpRequest} disabled={transitionBusy} /> : null}
             {surface === 'browser-companion' ? <BrowserCompanionSurface loadCopy={copy} language={language} api={browserCompanionApi} disabled={transitionBusy} /> : null}
             {surface === 'local-control-api' ? <LocalControlApiSurface loadCopy={copy} language={language} api={localControlApi} /> : null}
             {surface === "accounts" ? <AccountSettings loadCopy={copy} copy={copy} language={language} openBrowser={() => navigateSurface("browser")}

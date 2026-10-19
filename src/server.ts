@@ -1,3 +1,6 @@
+import { createAgentOAuthMcpControlRoutes } from './agent-tools/oauth-mcp-control';
+import { createAgentOAuthMcpToolsProvider } from './agent-tools/oauth-mcp-provider';
+import { createLauncherOAuthMcpBridge } from './agent-tools/oauth-mcp-bridge';
 import { ConversationHistoryStore } from "./conversation-history";
 import { conversationHistoryRequest } from "./conversation-history/http";
 import { AgentModeStore, AgentModeRuntime, activeTaskEvidence, createAgentModeRoutes, createLocalResponsesExecutionPort, createOwnedNativeExecutionPort, createAgentExecutionRouter } from "./agent-mode";
@@ -905,6 +908,8 @@ export function startServer(
   const nativeControlRoutes = createAgentNativeControlRoutes({ runtime: () => { getAgentRoutes(); return agentRuntime!; }, authorize: request => controlAuthorized(request) });
   const remoteControlRoutes = createAgentRemoteControlRoutes({ runtime: () => { getAgentRoutes(); return agentRuntime!; }, tools: () => getAgentTools(),
     authorize: request => controlAuthorized(request), canStart: () => !stopPrepared && acceptingAgentTools() });
+  const oauthMcpControlRoutes = createAgentOAuthMcpControlRoutes({ runtime: () => { getAgentRoutes(); return agentRuntime!; }, tools: () => getAgentTools(),
+    authorize: request => controlAuthorized(request), canStart: () => !stopPrepared && acceptingAgentTools() });
   const vmExportControlRoutes = createVmExportControlRoutes({ runtime: () => { getAgentRoutes(); return agentRuntime!; }, tools: () => getAgentTools(),
     authorize: request => controlAuthorized(request), canStart: () => !stopPrepared && acceptingAgentTools() });
   const pythonBuildSelections = config.browserHost === "launcher" ? createLauncherPythonBuildSelectionBridge({
@@ -982,6 +987,8 @@ export function startServer(
     });
   }
   let shutdownPromise: Promise<void> | undefined;
+  let shutdownStage: "idle" | "cancelling" | "native_cleanup" | "listener_close" | "resource_cleanup" | "failed" | "closed" = "idle";
+  let shutdownErrorCode: "shutdown_cleanup_failed" | null = null;
   let successfulModelCatalogRequests = 0;
   let lastSuccessfulModelCatalogRequestAt: string | null = null;
   let modelCatalogRequests = 0;
@@ -1166,6 +1173,11 @@ export function startServer(
   });
   const getAgentTools = () => agentTools ??= createAgentToolsComposition({ home: historyHome, authorize: controlAuthorized, canStart: acceptingAgentTools,
     browserTools: getAgentBrowserTools(),
+    oauthMcpTools: config.browserHost === 'launcher' ? createAgentOAuthMcpToolsProvider({
+      bridge: createLauncherOAuthMcpBridge({ descriptorPath: join(historyHome, 'runtime', 'launcher-agent-oauth-mcp.json'),
+        expectedProfile: dependencies.nativeLauncherProfile ?? (process.env.CODEX_CHATGPT_WEB_LAUNCHER_PROFILE === 'development' ? 'development' : 'production') }),
+      isScopeActive: isAgentScopeActive,
+    }) : undefined,
     desktopTools: getAgentDesktopTools(),
     remoteTools: config.browserHost === 'launcher' ? getAgentRemoteTools() : undefined,
     pdfHelper: resolveSkillPdfHelper({ explicit: dependencies.pdfHelper }),
@@ -1268,6 +1280,7 @@ export function startServer(
         return (await getAgentRoutes()(req))!;
       }
       if (url.pathname === "/admin/agent-native") return nativeControlRoutes(req);
+      if (url.pathname === "/admin/agent-oauth-mcp") return oauthMcpControlRoutes(req);
       if (url.pathname === "/admin/agent-remote") return remoteControlRoutes(req);
       if (url.pathname === '/admin/agent-vm-export') return vmExportControlRoutes(req);
       const localApiRequest = url.pathname === "/v1/chat/completions" || url.pathname.startsWith("/v1/messages")
@@ -1321,6 +1334,8 @@ export function startServer(
           native_accepting_turns: acceptingNative(),
           web_accepting_turns: acceptingTurns(),
           draining: admission.draining,
+          shutdown_stage: shutdownStage,
+          shutdown_error_code: shutdownErrorCode,
           broker_ready: brokerReady(),
           broker_state: brokerState,
           tunnel_ready: tunnelReady,
@@ -1681,18 +1696,20 @@ export function startServer(
   function shutdown(): void {
     admission.beginShutdown();
     if (shutdownPromise) return;
-    disposeSignalHandlers();
-    turnBroker?.setExternalOwnersAccepted(false);
-    const reason = new Error("Runtime shutting down");
-    agentRuntime?.beginShutdown();
-    // Signal-driven shutdown can arrive without an idle drain. Revoke detached compaction
-    // owners before retiring their source sessions, otherwise a fallback can start fresh work.
-    const compactionCancellation = cancelAllStructuredCompactions(reason);
-    chatGptTurnSessions.clear();
-    turnBroker?.revokeExternalOwners();
-    const httpCancellation = httpTurns.cancelAll(reason);
-    flushResponseState();
-    shutdownPromise = (async () => {
+    shutdownStage = "cancelling";
+    shutdownErrorCode = null;
+    // Publish the attempt owner before invoking cancellation callbacks. Repeated signals
+    // coalesce while it runs; failed cleanup remains draining and permits an explicit retry.
+    shutdownPromise = Promise.resolve().then(async () => {
+      turnBroker?.setExternalOwnersAccepted(false);
+      const reason = new Error("Runtime shutting down");
+      agentRuntime?.beginShutdown();
+      // Revoke detached compaction owners before retiring their source sessions.
+      const compactionCancellation = cancelAllStructuredCompactions(reason);
+      chatGptTurnSessions.clear();
+      turnBroker?.revokeExternalOwners();
+      const httpCancellation = httpTurns.cancelAll(reason);
+      flushResponseState();
       const results = await Promise.allSettled([
         compactionCancellation,
         httpCancellation,
@@ -1709,9 +1726,14 @@ export function startServer(
         }
       }
       await server.stop(true);
-    })().catch(error => {
+    }).catch(error => {
+      shutdownStage = "failed";
+      shutdownErrorCode = "shutdown_cleanup_failed";
       process.exitCode = 1;
       console.error(`[codex-chatgpt-web] server shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
+      // Only a terminal failed attempt releases ownership. Native receipts and the
+      // authority listener remain intact until recovery makes a later cleanup succeed.
+      shutdownPromise = undefined;
     });
   }
   function disposeSignalHandlers(): void {
@@ -1743,6 +1765,7 @@ export function startServer(
   })().catch(error => { nativeShutdownPreparation = undefined; throw error; });
   let ownedResourcesFinalizer: Promise<void> | undefined;
   const finalizeOwnedResources = (): Promise<void> => ownedResourcesFinalizer ??= (async () => {
+      shutdownStage = "resource_cleanup";
       historyStore?.close();
       await browserCompanion?.close();
       await agentTools?.close();
@@ -1760,18 +1783,26 @@ export function startServer(
   server.stop = (...args: Parameters<typeof stop>) => {
     if (!stopPrepared) {
       stopPrepared = true;
-      disposeSignalHandlers();
       admission.beginShutdown();
       agentRuntime?.beginShutdown();
       nativeShutdown = Boolean(agentRuntime && (nativeInvalidations.size || agentRuntime.store.listTasks().some(task => task.execution?.provider === "owned-native")));
     }
     // Every request still reaches Bun: stop(true) can escalate an earlier stop(false)
     // while that listener drains. Only the owned-resource finalizer is shared.
-    return nativeShutdown
-      ? prepareNativeShutdown().then(() => stop(...args).finally(finalizeOwnedResources))
-      : stop(...args).finally(finalizeOwnedResources);
+    shutdownErrorCode = null;
+    const stopListener = () => { shutdownStage = "listener_close"; return stop(...args).finally(finalizeOwnedResources); };
+    if (nativeShutdown) shutdownStage = "native_cleanup";
+    const stopped = nativeShutdown ? prepareNativeShutdown().then(stopListener) : stopListener();
+    return stopped.then(() => {
+      shutdownStage = "closed";
+      disposeSignalHandlers();
+    }, error => {
+      shutdownStage = "failed";
+      shutdownErrorCode = "shutdown_cleanup_failed";
+      throw error;
+    });
   };
-  process.once("SIGINT", shutdown);
-  process.once("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
   return Object.assign(server, { disposeSignalHandlers });
 }

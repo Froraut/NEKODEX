@@ -50,6 +50,7 @@ export interface AgentToolsCompositionOptions {
   /** Explicit native controller; status is passive and registration never creates its helper. */
   desktopTools?: AgentDesktopToolsProvider;
   remoteTools?: AgentRemoteToolsProvider;
+  oauthMcpTools?: StandaloneBuiltinToolsProvider;
   /** Other trusted pure executors (for example an independently configured desktop provider). */
   builtins?: readonly StandaloneBuiltinToolsProvider[];
   /** Trusted test/platform port; never supplied through HTTP or model arguments. */
@@ -181,7 +182,7 @@ export class AgentToolsComposition {
     this.toolsPort = {
       discover: (scope, opts) => this.track(async () => {
         this.scope(scope);
-        if (!readToolsConfig(this.configPath).enabled && !this.options.browserTools && !this.options.desktopTools && !this.options.remoteTools && !this.hasSkillResourceTools() && !this.hasSkillScriptTools() && !this.hasVmShellTools([scope]) && !this.hasVmNetworkTools(scope) && !this.options.builtins?.length) return [];
+        if (!readToolsConfig(this.configPath).enabled && !this.options.browserTools && !this.options.desktopTools && !this.options.remoteTools && !this.hasSkillResourceTools() && !this.hasSkillScriptTools() && !this.hasVmShellTools([scope]) && !this.hasVmNetworkTools(scope) && !this.options.oauthMcpTools && !this.options.builtins?.length) return [];
         this.descriptors = await this.getHost().discover(scope, opts); return structuredClone(this.descriptors);
       }),
       invoke: (request, opts) => this.track(() => this.getHost().invoke(request, opts)),
@@ -202,7 +203,7 @@ export class AgentToolsComposition {
       const scripts = config.servers.some(server => server.id === this.skillScriptTools.serverId) ? [] : [this.skillScriptTools];
       const vm = config.servers.some(server => server.id === this.vm.provider.serverId) ? [] : [this.vm.provider];
       const network = config.servers.some(server => server.id === this.vm.networkProvider.serverId) ? [] : [this.vm.networkProvider];
-      this.host = new StandaloneMcpHost({ config, journalPath: this.journalPath, isScopeActive: scope => !this.closing && !this.changing && this.options.canStart?.() !== false && this.options.isScopeActive(scope), builtins: [...(this.options.builtins ?? []), ...(this.options.browserTools ? [this.options.browserTools] : []), ...(this.options.desktopTools ? [this.options.desktopTools] : []), ...remote, ...resources, ...scripts, ...vm, ...network] });
+      this.host = new StandaloneMcpHost({ config, journalPath: this.journalPath, isScopeActive: scope => !this.closing && !this.changing && this.options.canStart?.() !== false && this.options.isScopeActive(scope), builtins: [...(this.options.builtins ?? []), ...(this.options.oauthMcpTools ? [this.options.oauthMcpTools] : []), ...(this.options.browserTools ? [this.options.browserTools] : []), ...(this.options.desktopTools ? [this.options.desktopTools] : []), ...remote, ...resources, ...scripts, ...vm, ...network] });
     }
     return this.host;
   }
@@ -365,7 +366,7 @@ export class AgentToolsComposition {
   reviewServer(input: unknown, explicitUserAction: boolean) {
     if (!explicitUserAction || this.closing || this.changing) throw new Error("Explicit trusted configuration review required");
     const value = recipeInput.parse(input);
-    if (value.id === this.options.browserTools?.serverId || value.id === this.options.desktopTools?.serverId || value.id === this.options.remoteTools?.serverId || value.id === this.skillResourceTools.serverId || value.id === this.vm.provider.serverId || value.id === this.vm.networkProvider.serverId || this.options.builtins?.some(provider => provider.serverId === value.id)) throw new Error("Reserved builtin tool namespace cannot be used by an MCP server");
+    if (value.id === this.options.oauthMcpTools?.serverId || value.id === this.options.browserTools?.serverId || value.id === this.options.desktopTools?.serverId || value.id === this.options.remoteTools?.serverId || value.id === this.skillResourceTools.serverId || value.id === this.vm.provider.serverId || value.id === this.vm.networkProvider.serverId || this.options.builtins?.some(provider => provider.serverId === value.id)) throw new Error("Reserved builtin tool namespace cannot be used by an MCP server");
     const command = realpathSync(value.command); const cwd = realpathSync(value.cwd);
     if (["sh", "bash", "zsh", "fish", "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "npx", "bunx", "uvx", "npm", "pnpm", "yarn", "pip", "pip3"].includes(basename(command).toLowerCase()) || value.args.some(arg => ["-e", "--eval", "-c", "--command"].includes(arg))) throw new Error("Installers, shell commands and inline evaluation are unsupported server recipes");
     const recipe: ServerRecipe = { id: value.id, enabled: false, transport: "stdio", source: { kind: "user-installed", label: value.label, version: value.version }, command, commandSha256: pinnedFile(command, 512 * 1024 * 1024).sha256, args: value.args, pinnedFiles: value.pinnedFiles.map(path => pinnedFile(path, 32 * 1024 * 1024)), cwd, envSecretRefs: {} };
@@ -456,6 +457,15 @@ export class AgentToolsComposition {
     const prior = this.host?.existingOutcome(request);
     if (!prior || prior.state !== "outcome_unknown") throw new Error("Remote tool intent has not begun");
   }
+  /** Main transport asks independently; only the immutable pending call plus begun journal can admit an effect. */
+  validateBegunOAuthMcpInvocation(request: Omit<ToolInvocation, "grantId">): void {
+    if (!request.tool.startsWith("oauth_mcp_tools/")) throw new Error("Unsupported OAuth MCP source");
+    this.scope(request.scope);
+    const call = this.options.resolveToolCall?.(request.scope);
+    if (!call || call.idempotencyKey !== request.idempotencyKey || invocationFingerprint({ scope: request.scope, ...call }) !== invocationFingerprint(request)) throw new Error("No exact pending OAuth MCP tool call");
+    const prior = this.host?.existingOutcome(request);
+    if (!prior || prior.state !== "outcome_unknown") throw new Error("OAuth MCP intent has not begun");
+  }
   remoteStatus(scope?: ToolScope) { return this.options.remoteTools?.inspect(scope ? { taskId: scope.taskId, generation: scope.generation } : undefined) ?? null; }
   bindRemoteTools(scope: RemoteTaskScope, hostId: string, explicitUserAction: boolean) {
     if (!explicitUserAction || this.closing || this.changing || this.options.canStart?.() === false || !this.options.remoteTools) throw new Error("Explicit current remote attachment is unavailable");
@@ -484,6 +494,7 @@ export class AgentToolsComposition {
     this.options.browserTools?.invalidate(taskId);
     this.options.desktopTools?.invalidate(taskId);
     this.options.remoteTools?.invalidate(taskId);
+    this.options.oauthMcpTools?.invalidate?.(taskId);
     this.skillScriptTools.invalidate?.(taskId);
     this.vm.provider.invalidate?.(taskId);
     this.vm.networkProvider.invalidate?.(taskId);
@@ -639,6 +650,7 @@ export class AgentToolsComposition {
       this.closing = true;
       this.options.browserTools?.invalidate();
       this.options.desktopTools?.invalidate();
+      this.options.oauthMcpTools?.invalidate?.();
       this.skillScriptTools.invalidate?.();
       this.vm.provider.invalidate?.();
       this.vm.networkProvider.invalidate?.();

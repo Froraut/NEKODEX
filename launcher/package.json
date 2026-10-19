@@ -1,6 +1,6 @@
 {
   "name": "codex-web-gpt-launcher",
-  "version": "6.1.32-nekodex.11",
+  "version": "6.1.32-nekodex.12",
   "private": true,
   "description": "NEKODEX \u2014 a desktop workspace for ChatGPT accounts, coding agents, and local tools.",
   "author": "FroRaut",
@@ -25,6 +25,7 @@
     "build:terminal": "node scripts/build-workspace-terminal.cjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
     "@xterm/xterm": "6.0.0",
     "motion": "^12.42.2",
     "node-pty": "1.1.0",

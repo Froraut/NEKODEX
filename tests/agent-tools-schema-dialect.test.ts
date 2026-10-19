@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compileToolInputSchema } from "../src/agent-tools/schema-validator";
@@ -21,9 +21,27 @@ test("strict local tool dialect selection preserves default/draft07 and 2020-12 
   expect(tuple(["only"])).toBe(true); expect(tuple([5])).toBe(false); expect(tuple(["only", "extra"])).toBe(false);
   const email = compileToolInputSchema({ $schema: "https://json-schema.org/draft/2020-12/schema", type: "string", format: "email" });
   expect(email("fixture@example.invalid")).toBe(true); expect(email("invalid")).toBe(false);
+  for (const $schema of ["http://json-schema.org/draft-07/schema#", "https://json-schema.org/draft/2020-12/schema"]) {
+    const union = compileToolInputSchema({ $schema, type: "object", properties: { next: { type: ["boolean", "string"] } }, required: ["next"], additionalProperties: false });
+    expect(union({ next: false })).toBe(true); expect(union({ next: "false" })).toBe(true);
+    for (const input of [{ next: 0 }, { next: null }, { next: [] }, {}, { next: true, extra: true }]) expect(union(input)).toBe(false);
+  }
   for (const schema of [{ ...legacy, $schema: "https://arbitrary.invalid/schema" }, { ...legacy, $schema: 7 }, { ...legacy, $schema: "http://json-schema.org/draft-04/schema#" },
     { ...legacy, unknownKeyword: true }, { $ref: "https://arbitrary.invalid/remote-schema" },
     { ...legacy, $async: true }, { ...legacy, properties: { nested: { $async: true, type: "string" } } }]) expect(() => compileToolInputSchema(schema)).toThrow();
+});
+
+const sequentialSchemaFile = process.env.NEKODEX_OFFICIAL_SEQUENTIAL_SCHEMA_FILE;
+test.skipIf(!sequentialSchemaFile)("actual frozen official sequential-thinking union schema accepts only advertised input types in host and Native", () => {
+  const actual = JSON.parse(readFileSync(sequentialSchemaFile!, "utf8")) as { name: string; inputSchema: Record<string, unknown> }[];
+  const tool = actual.find(tool => tool.name === "sequentialthinking")!;
+  expect(tool).toBeDefined(); const before = JSON.stringify(tool.inputSchema);
+  const valid = { thought: "Recipe connectivity check completed.", nextThoughtNeeded: false, thoughtNumber: 1, totalThoughts: 1 };
+  for (const validate of [compileToolInputSchema(tool.inputSchema), nativeToolValidator({ id: "official/sequentialthinking", inputSchema: tool.inputSchema })]) {
+    expect(validate(valid)).toBe(true); expect(validate({ ...valid, nextThoughtNeeded: "false" })).toBe(true);
+    for (const input of [{ ...valid, nextThoughtNeeded: 0 }, { ...valid, thoughtNumber: 0 }, { ...valid, totalThoughts: "1" }, { ...valid, thought: null }, { thought: valid.thought }]) expect(validate(input)).toBe(false);
+  }
+  expect(JSON.stringify(tool.inputSchema)).toBe(before);
 });
 
 const officialModule = process.env.NEKODEX_OFFICIAL_FILESYSTEM_SCHEMA_MODULE;

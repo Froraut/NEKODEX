@@ -15,6 +15,7 @@ const { registerWorkspaceIpc } = require('./ipc/workspace.cjs');
 const { registerConversationHistory } = require('./ipc/conversation-history.cjs');
 const { createCanonicalNativeHistoryRecorder } = require('./canonical-native-history.cjs');
 const { registerAgentMode } = require('./ipc/agent-mode.cjs');
+const { createLoopFileWatcherIntegration } = require('./loop-file-watcher-integration.cjs');
 const { createCodexClientControl } = require('./codex-client-control.cjs');
 const { createAgentNativeBridge } = require('./agent-native-bridge.cjs');
 const { createAgentNativeDescriptorPublisher } = require('./agent-native-descriptor.cjs');
@@ -25,6 +26,8 @@ const { createPythonBuildSelectionService } = require('./python-build-selection.
 const { createAgentOAuthService } = require('./agent-oauth-service.cjs');
 const { oauthProtectedVaultAvailable } = require('./agent-oauth-vault.cjs');
 const { createAgentOAuthIpc } = require('./ipc/agent-oauth.cjs');
+const { createAgentOAuthMcpController } = require('./oauth-mcp-controller.cjs');
+const { createAgentOAuthMcpDescriptorPublisher } = require('./agent-oauth-mcp-descriptor.cjs');
 const { createWorkspaceVmExportService } = require('./workspace-vm-export.cjs');
 const { createNativeAccountAuthority } = require('./native-account-authority.cjs');
 const { fileDigest: nativeFileDigest, regular: nativeRegular, VERSION: NATIVE_CLI_VERSION } = require('./owned-native-admission.cjs');
@@ -172,6 +175,9 @@ let agentVmExportDescriptor = null;
 let agentPythonBuildDescriptor = null;
 let pythonBuildSelectionService = null;
 let agentOAuthService = null;
+let agentOAuthMcpController = null;
+let agentOAuthMcpDescriptor = null;
+let loopFileWatcher = null;
 let workspaceVmExportService = null;
 async function vmCoreControl(action, body) {
   if (quitting || shutdownInProgress || exitCommitted || lifecycleAdmission.busy()) throw new Error('VM export admission is closed');
@@ -179,6 +185,25 @@ async function vmCoreControl(action, body) {
   if (!config || !await runtimeSupervisor.ownedAgentRuntimeReady(config)) throw new Error('VM export runtime owner is unavailable');
   const result = await runtimeSupervisor.control(config, 'agent-vm-export', { body: { action, ...body }, timeoutMs: 15000 });
   if (result?.ok !== true) throw new Error('VM export core authority is unavailable'); return result.value;
+}
+async function oauthMcpCoreControl(action, body) {
+  if (quitting || shutdownInProgress || exitCommitted || lifecycleAdmission.busy()) throw new Error('OAuth MCP admission is closed');
+  if (!agentOAuthMcpDescriptor?.instanceId) throw new Error('OAuth MCP launcher bridge is unavailable');
+  const config = runtimeSupervisor?.readConfig();
+  const pendingVersion = runtimeSupervisor?.launcherProfile === 'production' && config?.releaseVersion
+    && config.releaseVersion !== app.getVersion();
+  if (pendingVersion) throw new Error('OAuth MCP requires the automatic safe runtime switch to the installed application version');
+  const captured = JSON.stringify(config);
+  if (!config || !await runtimeSupervisor.ownedAgentRuntimeReady(config)) throw new Error('OAuth MCP runtime owner is unavailable');
+  if (quitting || shutdownInProgress || exitCommitted || lifecycleAdmission.busy()
+    || JSON.stringify(runtimeSupervisor.readConfig()) !== captured) throw new Error('OAuth MCP runtime owner changed');
+  const receipt = await runtimeSupervisor.control(config, 'agent-oauth-mcp', { body: { action, ...body }, returnErrorReceipt: true });
+  if (receipt?.ok !== true) throw new Error(receipt?.message || receipt?.error || 'OAuth MCP core authority is unavailable');
+  return receipt.value;
+}
+function invalidateAgentSourceOwners() {
+  try { loopFileWatcher?.beforeOwnerTeardown(); }
+  finally { agentOAuthMcpController?.invalidate(); }
 }
 let nativeAccountAuthority = null;
 let nativeAccountInventory = null;
@@ -1011,6 +1036,7 @@ function smokePassedForCurrentVersion(state) {
 
 async function closeBrowserResources() {
   let cleanupError = null;
+  try { invalidateAgentSourceOwners(); } catch (error) { cleanupError = error; }
   // Stop official account flows while their bound browser sessions still exist.
   for (const [name, participant] of additionalLifecycleParticipants) {
     try { await participant.destroy(); }
@@ -1042,6 +1068,12 @@ function registerIpc({ logger, stateStore }) {
   const handle = (channel, handler) => registerLoggedIpc(
     ipcMain, logger, channel, lifecycleAdmission.guard(channel, handler), authorize,
   );
+  // Exact privacy revocation remains sender-authorized while another lifecycle
+  // action is pending. The registrar still validates the complete request.
+  const privacyHandle = (channel, handler, isPrivacyRequest) => registerLoggedIpc(
+    ipcMain, logger, channel, (event, body) => isPrivacyRequest(body)
+      ? handler(event, body) : lifecycleAdmission.guard(channel, handler)(event, body), authorize,
+  );
   handle('launcher:task-plan-policy', async () => taskPlans.status());
   handle('launcher:task-plan-capture', async (_event, enabled, revision) => taskPlans.setEnabled(enabled, revision));
   handle('launcher:task-plan-read', async (_event, accountId, taskId) => taskPlans.get({ accountId, taskId }));
@@ -1072,6 +1104,7 @@ function registerIpc({ logger, stateStore }) {
   });
   registerWorkspaceGitIpc({ registerIpcHandler: handle, service: workspaceGitService });
   registerWorkspaceIpc({ registerIpcHandler: handle, service: localWorkspaceService, beforeForget: id => {
+    loopFileWatcher?.beforeForget(id);
     if (workspaceVmExportService?.hasRetainedState(id)) throw new Error('Keep this workspace registered until its exact VM export outcome is reconciled');
     if (workspaceGitService.hasRetainedState(id)) throw new Error('Keep this folder registered to access its worktrees, archives and snapshots');
     if (workspaceTerminalService.list(id).some(row => ['running', 'closing'].includes(row.state))) throw new Error('Close this folder’s terminal sessions before forgetting it');
@@ -1121,7 +1154,17 @@ function registerIpc({ logger, stateStore }) {
     keyPath: path.join(CORE_HOME, 'agent-workspace', 'grant-key'),
     resolveWorkspace: id => localWorkspaceService.resolveGrant(id),
   });
+  loopFileWatcher ??= createLoopFileWatcherIntegration({
+    directory: path.join(CORE_HOME, 'loop-file-sources'), workspaceService: localWorkspaceService, runtimeHost,
+    getApplicationVersion: () => app.getVersion(),
+    canRequest: () => !quitting && !shutdownInProgress && !exitCommitted && !lifecycleAdmission.busy(),
+  });
+  loopFileWatcher.register({ privacyHandle, dialog, getWindow: () => mainWindow });
+  registerLifecycleParticipant('loop-file-sources', {
+    currentOperation: () => loopFileWatcher.currentOperation(), destroy: () => loopFileWatcher.close(),
+  });
   registerAgentMode({ handle, runtimeHost, workspaceService: localWorkspaceService, workspaceEvidenceService,
+    beforeTaskAuthorityChange: body => loopFileWatcher.beforeTaskAuthorityChange(body),
     getApplicationVersion: () => app.getVersion() });
   workspaceVmExportService ??= createWorkspaceVmExportService({ home: path.join(app.getPath('userData'), 'workspace-vm-export'), workspaceService: localWorkspaceService,
     protectedRoots: [CORE_HOME, app.getPath('userData'), process.env.CODEX_CHATGPT_WEB_HOME || path.join(os.homedir(), '.codex-chatgpt-web'), path.join(os.homedir(), '.nekodex-execution-vm'),
@@ -1155,6 +1198,15 @@ function registerIpc({ logger, stateStore }) {
     openExternal: url => shell.openExternal(url),
   });
   const oauthIpc = createAgentOAuthIpc({ service: agentOAuthService, handle, dialog, getWindow: () => mainWindow });
+  agentOAuthMcpController ??= createAgentOAuthMcpController({ coreHome: CORE_HOME, oauthService: agentOAuthService,
+    validateTask: scope => oauthMcpCoreControl('validate-task', { scope }),
+    validateIntent: request => oauthMcpCoreControl('validate-intent', { request }),
+  });
+  privacyHandle('launcher:oauth-mcp', (_event, body) => agentOAuthMcpController.request(body),
+    body => body?.action === 'oauthMcpDisconnect');
+  registerLifecycleParticipant('agent-oauth-mcp', {
+    currentOperation: () => agentOAuthMcpController.currentOperation(), destroy: () => agentOAuthMcpController.close(),
+  });
   registerLifecycleParticipant('agent-oauth', {
     currentOperation: () => agentOAuthService.currentOperation(),
     destroy: () => agentOAuthService.close(),
@@ -2137,6 +2189,7 @@ async function activatePendingRuntime(reason) {
       if (currentGlobalOperation() || browserHost?.hasActiveTurns() || runtimeHost.currentOperation()) continue;
       let upgrade;
       try {
+        invalidateAgentSourceOwners();
         upgrade = await runtimeHost.upgradeManagedRuntime();
       } catch (error) {
         // A turn that started after the idle check, or a transient status probe, refuses the
@@ -2243,6 +2296,7 @@ async function requestQuit({ admissionHeld = false, restart = false, stopRuntime
     // Ordinary Quit preserves the background Native runtime. An explicit restart
     // replaces that runtime and uses the existing idle drain; it must not require
     // a healthy background route just to recover a failed application.
+    invalidateAgentSourceOwners();
     shutdownResult = stopRuntime || restart || IS_DEV_PROFILE
       ? await runtimeSupervisor?.shutdown({ cancelActiveTurns: false, force: false })
       : await runtimeSupervisor?.detachForQuit();
@@ -2419,6 +2473,8 @@ async function start() {
     getVmExportInstance: () => agentVmExportDescriptor?.instanceId,
     getPythonBuildSelectionService: () => pythonBuildSelectionService,
     getPythonBuildSelectionInstance: () => agentPythonBuildDescriptor?.instanceId,
+    getAgentOAuthMcpController: () => agentOAuthMcpController,
+    getAgentOAuthMcpInstance: () => agentOAuthMcpDescriptor?.instanceId,
     validateRemoteInvalidation: body => {
       if (!body || typeof body !== 'object' || Array.isArray(body)
         || Object.keys(body).some(key => !['taskId', 'familyId', 'beforeGeneration'].includes(key))) throw new Error('Invalid remote invalidation');
@@ -2524,6 +2580,13 @@ async function start() {
   } catch {
     agentPythonBuildDescriptor = null;
     logger.warn('agent_python_build.descriptor_unavailable', { reasonCode: 'private-profile-unavailable' });
+  }
+  try {
+    agentOAuthMcpDescriptor = createAgentOAuthMcpDescriptorPublisher({ coreHome: CORE_HOME, profile: LAUNCHER_PROFILE.kind, control: browserControl.descriptor() });
+    agentOAuthMcpDescriptor.publish();
+  } catch {
+    agentOAuthMcpDescriptor = null;
+    logger.warn('agent_oauth_mcp.descriptor_unavailable', { reasonCode: 'private-profile-unavailable' });
   }
   contextChangeQueue?.stop();
   contextChangeQueue = createContextChangeQueue({

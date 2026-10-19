@@ -27,6 +27,7 @@ export interface AgentToolReconciliationView {
 }
 export interface AgentModeApi {
   request(body: Record<string, unknown>): Promise<unknown>;
+  loopFileWatcherRequest?(body: import('./AgentLoopFileWatcher').LoopFileWatcherRequest): Promise<import('./AgentLoopFileWatcher').LoopFileWatcherResponse>;
   nativeAccounts?: import('./native-accounts-types').NativeAccountsApi;
   nativeHistory?: Pick<import('./conversation-history-types').ConversationHistoryApi, 'request'>;
   workspaceRoots?(): Promise<AgentWorkspaceRoot[]>;
@@ -45,6 +46,7 @@ export interface AgentModeStatus {
 }
 export interface AgentModeDetail {
   task: AgentTask;
+  loopSourceAuthority?: import('../../src/agent-mode/types').AgentLoopSourceAuthority;
   workers: AgentWorker[];
   dispatches: AgentDispatch[];
   messages: MailMessage[];

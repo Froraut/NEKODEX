@@ -14,11 +14,13 @@ const recoveryPlanKey = (preview: NativeOwnerRecoveryPreview) => JSON.stringify(
 });
 
 /** Presentation only: the native authority owns profiles, login processes and receipts. */
-export function NativeAccountsPanel({ language, api, disabled = false }: {
-  language: Language; api: NativeAccountsApi; disabled?: boolean;
+export function NativeAccountsPanel({ language, api, disabled = false, onChange }: {
+  language: Language; api: NativeAccountsApi; disabled?: boolean; onChange?: () => void;
 }) {
   const ru = language === 'ru';
   const transport = useRef(api); transport.current = api;
+  const changed = useRef(onChange); changed.current = onChange;
+  const qualificationRequests = useRef(new Map<string, 'inspect-models' | 'close-execution'>());
   const mounted = useRef(false);
   const inFlight = useRef(false);
   const uncertainRequest = useRef<Mutation | null>(null);
@@ -46,6 +48,19 @@ export function NativeAccountsPanel({ language, api, disabled = false }: {
       recoveryPlan.current = next; setRecoveryPreview(result.recoveryPreview);
     }
   };
+  const acceptQualification = (result: NativeAccountsSnapshot) => {
+    let qualified = false;
+    for (const [actionId, action] of qualificationRequests.current) {
+      const inventory = action === 'inspect-models' ? result.inventory?.receipts.find(row => row.actionId === actionId) : undefined;
+      const closed = action === 'close-execution' ? result.receipts.find(row => row.actionId === actionId && row.kind === action && row.state === 'completed') : undefined;
+      if (inventory?.state === 'completed' && !inventory.ownerHeld || closed) {
+        qualificationRequests.current.delete(actionId); qualified = true;
+      } else if (result.rejectedAction?.actionId === actionId || inventory && !inventory.ownerHeld && inventory.state === 'unknown') {
+        qualificationRequests.current.delete(actionId);
+      }
+    }
+    return qualified;
+  };
   const reconciledRecovery = (result: NativeAccountsSnapshot, body: Mutation) =>
     result.rejectedAction?.actionId === body.actionId && result.rejectedAction.knownNotStarted
     || result.recoveryReceipt?.actionId === body.actionId && result.recoveryReceipt.terminal && !result.recoveryReceipt.ownerHeld;
@@ -53,12 +68,13 @@ export function NativeAccountsPanel({ language, api, disabled = false }: {
   const read = async () => {
     if (inFlight.current) return;
     inFlight.current = true;
+    let qualified = false;
     if (mounted.current) setBusy(true);
     try {
       const outstanding = uncertainRequest.current;
       const result = await transport.current.request({ action: 'status', ...(outstanding ? { actionId: outstanding.actionId } : {}) });
       if (!mounted.current) return;
-      acceptSnapshot(result); setError(false);
+      acceptSnapshot(result); qualified = acceptQualification(result); setError(false);
       if (outstanding && (outstanding.action === 'recover-owner' ? reconciledRecovery(result, outstanding) : (result.receipts?.some(receipt => receipt.actionId === outstanding.actionId)
         || result.inventory?.receipts.some(receipt => receipt.actionId === outstanding.actionId)
         || result.rejectedAction?.actionId === outstanding.actionId && result.rejectedAction.knownNotStarted))) {
@@ -70,6 +86,7 @@ export function NativeAccountsPanel({ language, api, disabled = false }: {
     } finally {
       inFlight.current = false;
       if (mounted.current) setBusy(false);
+      if (mounted.current && qualified) changed.current?.();
     }
   };
 
@@ -92,10 +109,13 @@ export function NativeAccountsPanel({ language, api, disabled = false }: {
     inFlight.current = true; setBusy(true); setError(false); setAuxError(false);
     // Keep this exact identity if the response is lost. Refresh reconciles its receipt, never resubmits it.
     uncertainRequest.current = body;
+    if (body.action === 'inspect-models' || body.action === 'close-execution') qualificationRequests.current.set(body.actionId, body.action);
+    let qualified = false;
     try {
       const result = await transport.current.request(body);
       if (!mounted.current) return;
       acceptSnapshot(result);
+      qualified = acceptQualification(result);
       if (body.action !== 'recover-owner' || reconciledRecovery(result, body)) {
         uncertainRequest.current = null; setUncertain(false);
       } else setUncertain(true);
@@ -106,6 +126,7 @@ export function NativeAccountsPanel({ language, api, disabled = false }: {
     } finally {
       inFlight.current = false;
       if (mounted.current) setBusy(false);
+      if (mounted.current && qualified) changed.current?.();
     }
   };
 

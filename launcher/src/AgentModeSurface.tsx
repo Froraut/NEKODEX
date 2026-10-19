@@ -8,6 +8,7 @@ import './surfaces/agent-mode.css';
 import { NativeAccountsPanel } from './NativeAccountsPanel';
 import { OwnedNativeHistoryPanel } from './OwnedNativeHistoryPanel';
 import { NativeAttachmentsPanel, type NativeSelectedAttachment } from './NativeAttachmentsPanel';
+import { AgentLoopFileWatcher } from './AgentLoopFileWatcher';
 
 const lines = (text: string) => text.split('\n').map(value => value.trim()).filter(Boolean);
 const requirementRows = (text: string) => lines(text).map((value, index) => ({ id: `r${index + 1}`, text: value }));
@@ -49,6 +50,8 @@ export function AgentModeSurface({ language, api, disabled = false }: {
   const transport = useRef(api); transport.current = api;
   const mounted = useRef(true);
   const actionPending = useRef(false);
+  const nativeRefreshRequested = useRef(false);
+  const [nativeRefreshRevision, setNativeRefreshRevision] = useState(0);
   const selectedRef = useRef('');
   const heading = useRef<HTMLHeadingElement>(null);
   const [status, setStatus] = useState<AgentModeStatus | null>(null);
@@ -166,6 +169,13 @@ export function AgentModeSurface({ language, api, disabled = false }: {
     // A shell transition becoming ready is the only retry trigger here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [disabled]);
+  useEffect(() => {
+    if (!nativeRefreshRequested.current || disabled || pending !== null || actionPending.current) return;
+    nativeRefreshRequested.current = false;
+    void act('refresh-native-models', () => refresh());
+    // Observe only settled Native mutations; preserve the parent action guard.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nativeRefreshRevision, disabled, pending]);
 
   const create = () => void act('create', async () => {
     const maxTurns = Number(turns), maxConcurrent = Number(concurrent);
@@ -347,7 +357,9 @@ export function AgentModeSurface({ language, api, disabled = false }: {
   const currentNativeModel = task?.execution?.provider === 'owned-native' ? status?.models.find(row =>
     row.provider === 'owned-native' && row.id === task.execution?.model && row.available === true && row.accepting !== false && row.admissionId) : undefined;
   const staleNativeAdmission = task?.execution?.provider === 'owned-native' && !!currentNativeModel && currentNativeModel.admissionId !== task.execution.admissionId;
-  const loopRunActive = Boolean(task?.loopRun && task.loopRun.generation === task.generation && task.loopRun.ownerId === status?.ownerId);
+  const loopAuthority = detail?.loopSourceAuthority;
+  const loopRunActive = Boolean(task && loopAuthority?.active && loopAuthority.familyId === task.familyId
+    && loopAuthority.generation === task.generation && loopAuthority.revision === task.revision && loopAuthority.ownerId === status?.ownerId);
   const taskState = (value: AgentTask) => text.taskStates[value.status] ?? value.status;
   const date = (value: number) => new Intl.DateTimeFormat(language === 'ru' ? 'ru-RU' : 'en-US', { dateStyle: 'medium', timeStyle: 'short', hourCycle: 'h23' }).format(value);
   const modeOptions = [{ value: 'manual', label: text.manual }, { value: 'goal', label: text.goal }, { value: 'loop', label: text.loop }];
@@ -362,7 +374,9 @@ export function AgentModeSurface({ language, api, disabled = false }: {
   return <Page width="wide" className="agent-mode-surface">
     <PanelStack>
     <SurfaceHeader title={text.title} subtitle={text.subtitle} actions={<Button disabled={locked} busy={pending === 'refresh'} onClick={() => void act('refresh', () => refresh())}>{text.refresh}</Button>} />
-    {api.nativeAccounts ? <NativeAccountsPanel language={language} api={api.nativeAccounts} disabled={disabled} /> : null}
+    {api.nativeAccounts ? <NativeAccountsPanel language={language} api={api.nativeAccounts} disabled={locked} onChange={() => {
+      nativeRefreshRequested.current = true; setNativeRefreshRevision(value => value + 1);
+    }} /> : null}
     {error ? <Notice tone="error" title={text.error}>{error} {text.readAfterError}</Notice> : null}
     {notice ? <Notice>{notice}</Notice> : null}
     {status?.accepting === false ? <Notice tone="warning">{text.admissionHold}</Notice> : null}
@@ -447,6 +461,9 @@ export function AgentModeSurface({ language, api, disabled = false }: {
           </button></li>)}</ul>}
       </Panel>
       <div className="agent-mode-detail" aria-busy={pending === 'get' || undefined}>
+        {api.loopFileWatcherRequest ? <AgentLoopFileWatcher task={task ?? null} projects={workspaceRoots.map(root => ({ id: root.id, label: root.name }))}
+          request={api.loopFileWatcherRequest} language={language} disabled={locked}
+          observationKey={JSON.stringify([task?.id, task?.familyId, task?.generation, task?.revision, task?.status, task?.updatedAt, loopAuthority?.runId])} /> : null}
         {!task ? <p className="agent-mode-muted">{text.noSelection}</p> : <>
           <Panel>
             <h2 tabIndex={-1} ref={heading}>{text.open}</h2>

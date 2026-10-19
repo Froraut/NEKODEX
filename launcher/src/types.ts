@@ -622,6 +622,7 @@ export interface LauncherApi extends NativeThreadsApi, NativePersistentApi, Work
   copyConversationHistoryText(text: string): Promise<unknown>;
   saveConversationHistoryMarkdown(markdown: string): Promise<{ saved: boolean; path?: string }>;
   agentMode(body: Record<string, unknown>): Promise<unknown>;
+  loopFileWatcherRequest(body: import('./AgentLoopFileWatcher').LoopFileWatcherRequest): Promise<import('./AgentLoopFileWatcher').LoopFileWatcherResponse>;
   nativeAccountsRequest(body: import('./native-accounts-types').NativeAccountsRequest | import('./native-accounts-types').NativeInventoryRequest | import('./native-accounts-types').NativeExecutionCloseRequest): Promise<import('./native-accounts-types').NativeAccountsSnapshot>;
   openNativeAccountVerification(url: string): Promise<unknown>;
   copyNativeAccountCode(code: string): Promise<unknown>;
@@ -629,6 +630,7 @@ export interface LauncherApi extends NativeThreadsApi, NativePersistentApi, Work
   agentWorkspaceGrants(): Promise<AgentWorkspaceGrantSummary[]>;
   revokeAgentWorkspaceGrant(grantId: string): Promise<unknown>;
   agentTools: AgentToolsApi['request'];
+  oauthMcpRequest: import('./AgentOAuthMcpPanel').OAuthMcpTransport;
   pickAgentSkillRoot: AgentToolsApi['pickSkillRoot'];
   pickAgentToolsInstallRoot(): Promise<{ cancelled: boolean; root?: string }>;
   pickAgentScriptWorkspace(): Promise<{ cancelled: boolean; root?: string }>;

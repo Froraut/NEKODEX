@@ -1,6 +1,6 @@
 # Полная программа развития NEKODEX
 
-Обновлено: 18 октября 2026 года. Рабочая ветка: `codex/full-adoption-20261018`.
+Обновлено: 19 октября 2026 года. Рабочая ветка: `codex/full-adoption-20261018`.
 Это программа реализации всего набора возможностей из
 [36 строк предыдущей оценки](../reviews/2026-10-18-deferred-features-next.md),
 включая прежде отложенные области. Она заменяет прежнюю очередь «только
@@ -211,7 +211,7 @@ macOS; затем Windows/Linux»**. Это порядок реализации 
 | DW8a | Автоматические per-turn checkpoints | Действительно восстановимое состояние до agent writes | Actual Manual DEV task подписал exact grant и pre-turn snapshot 6-byte hello; Pause gen2 и revoke выполнены; immutable receipt store подключён | Расширения snapshot-only scope не обещать; native-client generic pre-write hook и весь machine filesystem не охвачены | DW8; supported exact boundary hook; P17 execution owner | Пропущенный hook даёт unavailable; человеческие concurrent edits сохранены; post-turn diff не назван pre-turn snapshot или полным rollback | F2 после DW8; собственный hook F3 |
 | DW9 | Ручной Goal helper | Найти оставшуюся работу по требованиям и наблюдённым исходам | Actual Manual UI: SHA passed/Review → external drift → Verify409; restore+new observation → current Review → verified_complete; immutable facts сохранены | Semantic independent helper/provider отдельно; выбранное file property не сертификат всего deliverable; unchanged SHA drift/recovery не повторять | DW1/DW5; evidence adapter; provider contract; отправка через существующего owner | Missing/failed/unknown не done; incomplete input виден; correction инвалидирует review; recommendation не самосертификат; тот же revision без новых facts не проверяется снова | F3, до автоматического Goal |
 | DW10 | Автоматический Goal для конечного результата | Доведение разрешённой задачи без ручного повторения follow-up | Явный Goal Run, процессное exact-scope разрешение и один durable auto_step сохранены; прежние MCP/Python/PDF/SSH Goals подтверждены отдельно. Новый selected-environment Goal:1Run/2Nativeoffers/1GUIapproval/1auto_step, dateutil+six,CSV182B/SHA,17independent+32canonical checks, main observer/r1/Review+QA Verify→verified_complete без manual Step. Первый отдельный task NOT_SENT/0offers остановлен, не replay; generic receipt не доказывает exact failure code. [Evidence](../reviews/2026-10-19-python-environments.md). | Более длинные Goals/semantic review и installed acceptance. Процессное разрешение не восстанавливается после перезапуска; требуется новое явное Run. QA approval не личное human approval. | DW9; DW3/P20 для Agent mode либо supported client follow-up; существующие approvals | Goal/Loop/Off не оживляют старую generation; user input/approval/active workers первичны; unknown send не replay; завершение по наблюдённому coverage; unknown spend не объявлен нулём | F3 после ручного helper |
-| DW11 | Непрерывный Loop | Явно заказанная повторяющаяся работа | Реальный GPT-6.1-Sol Loop: cycle1 → новый содержательный mailbox item → auto cycle2; два canonical finals, duplicate сохранил2 dispatches/1packet при maxTurns3. UI Pause дал gen3 и снял loopRun; externalWatchers:false.  Meaningful service-risk Loopde24a923 used M then new mailboxU: two cycles, correct changing risk; GUI correction after restart retained U in canonical Native input and produced decision-status output, three offers total within bound4. Final GUI Pause and exact cleanup accepted. | Indefinite recurring reliability, real external sources/watchers and installed acceptance remain. Controlled synthetic semantic review is not operational remediation or verified_complete. | DW3/DW10; explicit recurring instruction; P20 | Нет пустого Continue; unchanged state ставит на паузу с причиной; stop не теряет late results; approval/unknown не перескакиваются; расход/параллельность ограничены | F3 после конечного Goal |
+| DW11 | Непрерывный Loop | Явно заказанная повторяющаяся работа | Реальный GPT-6.1-Sol Loop: cycle1 → новый содержательный mailbox item → auto cycle2; два canonical finals, duplicate сохранил2 dispatches/1packet при maxTurns3. UI Pause дал gen3 и снял loopRun; externalWatchers:false.  Meaningful service-risk Loopde24a923 used M then new mailboxU: two cycles, correct changing risk; GUI correction after restart retained U in canonical Native input and produced decision-status output, three offers total within bound4. Final GUI Pause and exact cleanup accepted. В source .12 добавлен selected local-file metadata source; targeted checks и controlled DEV UI приняты отдельно (checkpoint ниже). | Generic network/external watchers и восстановление retained stale-owner lock остаются unsupported. Indefinite recurring reliability и installed acceptance остаются открыты. Controlled synthetic semantic review is not operational remediation or verified_complete. | DW3/DW10; explicit recurring instruction; P20 | Нет пустого Continue; unchanged state ставит на паузу с причиной; stop не теряет late results; approval/unknown не перескакиваются; расход/параллельность ограничены | F3 после конечного Goal |
 
 Таблицы содержат **8 строк N01–N08, 24 строки P01–P24 и 12 строк DW1–DW11
 с отдельной DW8a, всего 44**. P09 — интерфейс выборочного restore, DW8 — владелец snapshot;
@@ -251,6 +251,32 @@ signing, installed replacement и release. Source commit/PR может сохр�
 и live capabilities фиксируются отдельно, только после фактического результата.
 
 ## Текущий checkpoint программы
+
+### Source batch .12 — 19 октября 2026 года
+
+Текущая связанная партия исходников — `6.1.32-nekodex.12`; это **ещё не
+установленная версия** и не release acceptance. Исторический baseline ниже
+сохранён отдельно; все 44 ID остаются в программе.
+
+- **DW11 / selected local metadata source:** main/IPC/preload/UI и owned-core
+  enqueue интегрированы. Источник по умолчанию выключен, работает только с явно
+  выбранным файлом ранее разрешённого локального проекта и действующим explicit
+  Loop Run; передаёт ограниченные metadata/SHA, без содержимого файла. Targeted
+  проверки сохранены. Root принял actual controlled DEV UI: один event доставлен,
+  естественный переход cycle1 → cycle2 сохранён, Pause снял источник; выполнены
+  два synthetic offers, внешних provider calls не было. Это проверка выбранного
+  локального источника, а не generic network watcher или бесконечной надёжности.
+  При retained owner lock после unclean exit watcher явно unavailable;
+  восстановление прежнего physical owner/unfinished enqueue не реализовано.
+- **OAuth MCP:** reviewed binding, transport, core/main lifecycle и UI
+  интегрированы и имеют controlled targeted checks. Реальный provider остаётся
+  unconfigured; actual OAuth authorization, discovery и tool effect этим не
+  подтверждены.
+- **Связанные исправления:** Native dropdown refresh, copy/отступы, повтор
+  shutdown после отказа и обработка schema unions входят в эту source-партию.
+  Их сохранённые focused результаты не подменяют итоговую installed-проверку.
+
+### Сохранённый baseline .9/.8
 
 Порядок платформ остаётся прежним: **весь macOS набор, затем Windows/Linux**.
 N01–N08 source и D01 installed-migration сохранены. Текущая исходная версия `.9`

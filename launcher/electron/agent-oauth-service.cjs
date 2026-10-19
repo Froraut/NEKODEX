@@ -113,7 +113,11 @@ function createAgentOAuthService({ coreHome, getAuthority, openExternal, approve
     || typeof approvedFetch !== 'function' || typeof protectedAvailable !== 'function') fail();
   const directory = path.join(coreHome, 'agent-oauth'), registryPath = path.join(directory, 'providers.json');
   let owner = null, closed = false, uncertain = false, registrationBusy = false, activeActions = 0;
-  const reviews = new Map();
+  const reviews = new Map(), mcpInvalidationListeners = new Set();
+  function notifyMcpInvalidation(providerId) {
+    // Consumers deny in memory before persistence. A failed consumer write must not block credential revocation.
+    for (const listener of mcpInvalidationListeners) { try { listener(providerId); } catch {} }
+  }
   function authority() {
     if (closed || uncertain) fail();
     const value = getAuthority();
@@ -196,6 +200,16 @@ function createAgentOAuthService({ coreHome, getAuthority, openExternal, approve
   }
   return {
     handles: action => ACTIONS.has(action), status,
+    // Main-only projection from the validated registry and actual account/config epoch.
+    subscribeMcpInvalidation(listener) { if (typeof listener !== 'function') fail(); mcpInvalidationListeners.add(listener); return () => mcpInvalidationListeners.delete(listener); },
+    reviewedMcpProviders() {
+      const current = context();
+      return current.registry.providers.filter(row => row.config.accountId === current.current.accountId).map(row => ({
+        providerId: row.config.providerId, label: row.config.label, resource: row.config.resource,
+        issuer: row.config.issuer, clientId: row.config.clientId, metadataDigest: row.metadataDigest,
+        accountId: current.current.accountId, epoch: current.stamp,
+      }));
+    },
     async reviewProviderFile(file) {
       if (registrationBusy) fail(); registrationBusy = true;
       try {
@@ -280,21 +294,22 @@ function createAgentOAuthService({ coreHome, getAuthority, openExternal, approve
         if (body.action === 'oauthBegin') return await current.launcher.begin(input);
         if (body.action === 'oauthCancel') return await current.launcher.cancel(input);
         if (body.action === 'oauthRefresh') return await current.launcher.refresh(input);
+        notifyMcpInvalidation(body.providerId);
         return await current.launcher.revoke(input);
       } catch { throw new Error('OAuth action incomplete; inspect the retained provider status'); }
       finally { activeActions--; }
     },
-    /** Trusted transport leaf only AFTER ToolJournal approval. This port is never sent to core/renderer. */
+    /** Trusted reviewed transport only; effect calls additionally require ToolJournal approval. Never sent to core/renderer. */
     async withAccessToken(scope, use) {
       const current = context();
       if (!exact(scope, ['providerId', 'resource', 'accountId', 'epoch']) || current.current.accountId !== scope.accountId
         || current.stamp !== scope.epoch || protectedAvailable() !== true) fail();
       return current.broker.withAccessToken(scope.providerId, scope.resource, use);
     },
-    invalidate() { reviews.clear(); closeOwner(); },
+    invalidate() { notifyMcpInvalidation(); reviews.clear(); closeOwner(); },
     currentOperation() { return registrationBusy ? 'OAuth provider metadata review or registration'
       : activeActions || owner?.broker.hasOwner() ? 'OAuth provider authorization action' : null; },
-    close() { closed = true; reviews.clear(); closeOwner(); },
+    close() { notifyMcpInvalidation(); closed = true; reviews.clear(); closeOwner(); mcpInvalidationListeners.clear(); },
   };
 }
 module.exports = { createAgentOAuthService, createPublicOAuthFetch, validateRegistrationFile };

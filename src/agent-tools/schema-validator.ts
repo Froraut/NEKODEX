@@ -11,7 +11,7 @@ export function compileToolInputSchema(schema: Record<string, unknown>): Validat
   if (dialect !== undefined && dialect !== "http://json-schema.org/draft-07/schema#"
     && dialect !== "https://json-schema.org/draft/2020-12/schema") throw new Error("Unsupported tool input schema dialect");
   const ajv = dialect === "https://json-schema.org/draft/2020-12/schema"
-    ? new Ajv2020({ strict: true, allErrors: false }) : new Ajv({ strict: true, allErrors: false });
+    ? new Ajv2020({ strict: true, allowUnionTypes: true, allErrors: false }) : new Ajv({ strict: true, allowUnionTypes: true, allErrors: false });
   addFormats(ajv);
   return ajv.compile(schema);
 }

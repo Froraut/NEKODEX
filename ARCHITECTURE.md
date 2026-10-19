@@ -69,7 +69,7 @@ separate facts.
 | Agent snapshot authority | [main grant signer](launcher/electron/agent-workspace-grant.cjs), [Bun snapshot store](src/agent-workspace/store.ts) | Picker-authorized exact paths are signed for task/family/generation, scope `pre-turn-snapshot-only`. The Bun before-offer hook persists one immutable dispatch baseline before execution; this grants no executor filesystem access. |
 | Standalone MCP and skills | [composition](src/agent-tools/composition.ts), [host](src/agent-tools/mcp-host.ts), [journal](src/agent-tools/journal.ts), [skills](src/agent-tools/skills.ts), [managed versions](src/agent-tools/managed-skills.ts), [Python environment](src/agent-tools/skill-python-environment.ts), [dependency policy](src/agent-tools/skill-python-requirements.ts), [installer](src/agent-tools/installer.ts) | Exact approval/outcome owner serves configured and builtin tools. Concurrent discovery builds independent catalog candidates and publishes only complete validated snapshots after scope/abort rechecks; discovery never grants invocation authority. Frozen official recipe graph/tree integrity, separate save/enable/connect/effect, immutable skill versions and selected environment Attach remain distinct. OAuth uses a separate protected service; stdio recipes remain auth:none. |
 | Isolated VM execution/builds | [executor](src/execution-environments/executor.ts), [product](src/execution-environments/product.ts), [production origin](src/execution-environments/production-runtime.ts), [Python build](src/execution-environments/python-build.ts), [selection bridge](src/execution-environments/launcher-python-build-selection.ts), [native picker](launcher/electron/python-build-picker.cjs), [host network](src/execution-environments/network.ts) | Exact runtime brand, user-wide durable owner and physical stop/join govern effects. Build, mediated network grant and workspace export each retain separate approval/receipt scope. Production source admission does not establish installed VM execution; guest NIC remains unavailable. |
-| Protected MCP OAuth | [public action port](src/agent-tools/oauth.ts), [broker](launcher/electron/agent-oauth.cjs), [launcher](launcher/electron/agent-oauth-launcher.cjs), [vault](launcher/electron/agent-oauth-vault.cjs), [service](launcher/electron/agent-oauth-service.cjs), [IPC](launcher/electron/ipc/agent-oauth.cjs), [panel](launcher/src/AgentOAuthPanel.tsx) | Separate protected CAS credential scope and trusted provider/account configuration; safe renderer actions/status only. Pending refresh/revoke persists before network; actual human consent and admitted MCP transport effect remain independent of service construction. |
+| Protected MCP OAuth | [public action port](src/agent-tools/oauth.ts), [task provider](src/agent-tools/oauth-mcp-provider.ts), [private bridge](src/agent-tools/oauth-mcp-bridge.ts), [binding controller](launcher/electron/oauth-mcp-controller.cjs), [HTTPS transport](launcher/electron/oauth-mcp-transport.cjs), [broker](launcher/electron/agent-oauth.cjs), [launcher](launcher/electron/agent-oauth-launcher.cjs), [vault](launcher/electron/agent-oauth-vault.cjs), [service](launcher/electron/agent-oauth-service.cjs), [IPC](launcher/electron/ipc/agent-oauth.cjs), [panel](launcher/src/AgentOAuthPanel.tsx) | Separate protected CAS credential scope and trusted provider/account configuration; safe renderer actions/status only. Pending refresh/revoke persists before network; actual human consent and admitted MCP transport effect remain independent of service construction. |
 | Browser companion/providers | [host](src/browser-companion/host.ts), [runtime](src/browser-companion/runtime.ts), [protocol](src/browser-companion/protocol.ts), [Chrome manifest](browser-companion/manifest.json), [Firefox manifest](browser-companion/manifest.firefox.json), [IPC](launcher/electron/ipc/browser-companion.cjs) | Popup pairs/selects; session owns one no-replay poller; dispatcher targets exact active document. Firefox pins profile-specific origin. Approved optional pixels and exact text-transition evidence are separate from input execution, real Send and actual provider/site outcome. |
 | Native desktop tools | [helper](launcher/native/desktop-provider.swift), [controller](src/browser-companion/macos-desktop.ts), [task tools](src/browser-companion/agent-desktop-tools.ts), [property evidence](src/browser-companion/desktop-outcome.ts), [builder](scripts/build-desktop-helper.cjs) | Explicit macOS14+ permission/window/task-generation authority; bounded capture, fresh AX/CG input and separate AX property reads. Canonical property evidence is point-in-time and revalidated against current attachment/operation; input success is not business acceptance. |
 | Builtin tool continuation | [tool contract](src/agent-tools/types.ts), [browser leaf](src/browser-companion/agent-tools.ts), [host](src/agent-tools/mcp-host.ts), [image projection](src/agent-mode/tool-images.ts), [Agent runtime/store](src/agent-mode/runtime.ts) | MCP and builtin browser/desktop calls share one approval/journal/outbox; reconciliation reads exact retained receipts without executing. Canonical result images remain tool-call outputs; immutable late facts preserve prior unknown outcomes. |
@@ -341,7 +341,7 @@ installation and live-provider evidence remain separate.
 The maintained scope is [all 44 IDs](docs/design/full-adoption-program.md):
 N01–N08, P01–P24 and DW1–DW11 with DW8a. macOS is stage1; Windows/Linux adapters
 and delivery remain stage2. P18 composition is conditional on a demonstrated gap.
-The current source version is `6.1.32-nekodex.9`. Source, focused fixtures,
+The current source version is recorded in [package.json](package.json). Source, focused fixtures,
 connected development behavior, provider outcomes, signed packages, installed
 version and active process are independent evidence. Dated outcomes live in
 [review reports](docs/reviews); this architecture describes current ownership,
@@ -367,6 +367,27 @@ stay with their original dispatch, and corrections retire old-generation authori
 The real two-cycle mailbox proof establishes scheduling, not a recurring business
 outcome; external generic watchers remain unavailable.
 
+**Explicit selected-file source:** [the main-owned producer](launcher/electron/loop-file-watcher.cjs),
+[owned-core adapter](launcher/electron/loop-file-watcher-integration.cjs) and
+[panel](launcher/src/AgentLoopFileWatcher.tsx) watch one explicitly selected regular
+file beneath an existing project grant. Selection and Enable are separate; only
+name, size, SHA and the user's event instruction enter the durable mailbox. File
+contents do not become model instructions or tool authority. Main pins the root,
+parents and file identity around bounded reads, coalesces changes and journals
+each exact enqueue before sending. Status never starts reading or restores Enable.
+
+Core's process-local `loopSourceAuthority` binds the explicit Run ID, family,
+owner and current generation/revision/cycle. Natural cycles carry the same Run;
+Pause, Stop, correction, owner loss, restart or exhausted offer/spend bounds retire
+the source authority. `enqueue-work` rechecks its `loopSourceRunId` inside the
+serialized command boundary. Historical reconciliation uses exact retained
+`workId`, independently of the bounded mailbox list, and never resends an unknown
+effect. Main invalidates before explicit task/project/lifecycle changes and joins
+already committed enqueue work before closure. An unreconciled existing owner
+lock makes this optional source unavailable without blocking other launcher IPC;
+it is not deleted or silently adopted. This is a bounded metadata producer, not a
+generic external watcher or restored background Run consent.
+
 Both providers use [bounded historical context](src/agent-mode/prior-tool-context.ts)
 with original task/stage/dispatch/generation/revision/receipt provenance. Historical
 values are inert data, never continuation, permission or verification authority.
@@ -381,6 +402,15 @@ policy and source/binary identity are checked together. Same-owner reads and
 bounded waits observe the existing operation without a new offer. Qualification
 prepares and checks the account server before advertising models, without opening
 a thread or sending inference. A saved login or old receipt is not fresh admission.
+
+Core shutdown retains one cleanup-attempt owner across repeated signals. A failed
+Native cleanup keeps admission draining and preserves unknown receipts, but retires
+the failed Promise so explicit retry can proceed after reconciliation. SIGINT and
+SIGTERM handlers remain installed until the listener and owned resources actually
+close; they never fall back to platform termination during an unfinished cleanup.
+`/healthz` exposes bounded `shutdown_stage` and `shutdown_error_code`, not raw
+cleanup errors. A shutdown acknowledgement alone does not establish process exit
+or physical closure of an external Native owner.
 
 [Production wrapper pins](launcher/electron/owned-native-production-pin.cjs) use a
 separate signed-distribution manifest preserving original development static flags.
@@ -620,6 +650,37 @@ arbitrary authorization URLs. Trusted MCP use acquires a token only for its exac
 registered resource. An empty trusted provider list or unavailable protected backend
 is unavailable capability, not successful authorization. Actual provider consent
 and accepted transport/tool effect remain separate from source construction.
+
+Reviewed OAuth MCP HTTP tools use `oauth_mcp_tools/<pin-digest-prefix>__<tool>`
+through the existing standalone host's exact per-call approval and ToolJournal.
+The main-only binding controller derives resource/endpoint/issuer/public client/
+metadata digest/account/epoch from the validated OAuth registration; renderer
+review and attach select an existing provider ID plus exact task generation.
+Discovery and attachment create no tool-call permission. Core talks through the
+private profile/instance descriptor `runtime/launcher-agent-oauth-mcp.json` and
+fixed BrowserControlServer actions. Main independently asks
+`/admin/agent-oauth-mcp` to validate the immutable already-begun core intent before
+acquiring a protected token; credentials never enter core or renderer DTOs.
+
+The transport pins SDK 1.30.0 and the reviewed HTTPS endpoint, checks every DNS
+answer inside the actual TLS socket lookup, disallows redirects/ambient proxies,
+omits SDK authProvider, disables retries/background GET SSE, and consumes an
+independent physical tools/call budget of one. JSON and finite POST SSE are
+bounded and token echoes are scrubbed after JSON decoding. Per-pin private
+journals persist unknown before dispatch and retain terminal/unknown receipts
+across restart; receipt lookup cannot send. Stale owner locks fail closed.
+Disconnect/task invalidation/provider revoke remove attachment authority before
+future calls; graceful lifecycle close durably detaches while retaining receipts.
+An abort ends owned observation, without claiming cancellation of a remote effect.
+Registration, OAuth human Begin, task attachment, tool approval, MCP response and
+actual provider/business acceptance remain separate evidence. Current bounds are
+one provider per task generation, 64 retained pins/bindings, 64 discovered tools,
+102 raw tool-name characters after the namespace prefix, nine list pages,
+15-second sessions, 256 KiB HTTP bodies and 1,024 retained invocations per pin.
+Controlled tests in `tests/oauth-mcp-feature.test.ts` exercise the actual private
+HTTP bridge, independent core intent route, host/journal, protected callback and
+SDK with a synthetic HTTPS peer. They perform no external provider consent.
+
 
 Local API reads are passive and scoped by revocable bearer/Host/Origin/local peer.
 Named TaskMonitor uses stdin credentials and a private durable one-submit Pause

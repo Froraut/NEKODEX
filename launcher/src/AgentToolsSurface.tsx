@@ -8,6 +8,7 @@ import { stripIpcErrorPrefix } from './ipc-error';
 import './surfaces/agent-tools.css';
 import type { AgentOAuthPanelPort } from '../../src/agent-tools/oauth-types';
 import { AgentOAuthPanel } from './AgentOAuthPanel';
+import { AgentOAuthMcpPanel, type OAuthMcpTransport } from './AgentOAuthMcpPanel';
 import { AgentToolsInstaller } from './AgentToolsInstaller';
 import { AgentManagedSkills } from './AgentManagedSkills';
 import { AgentSkillScripts } from './AgentSkillScripts';
@@ -31,7 +32,7 @@ function Area({ label, value, onChange, hint }: { label: string; value: string; 
   const id = useId(); return <div className="nk-field"><label htmlFor={id}>{label}</label><textarea id={id} className="nk-input" rows={3} value={value} onChange={event => onChange(event.target.value)} maxLength={32768} aria-describedby={hint ? `${id}-hint` : undefined} />{hint ? <p className="nk-field__hint" id={`${id}-hint`}>{hint}</p> : null}</div>;
 }
 /** All mutations cross guarded IPC. The surface cannot grant itself OS/file permissions. */
-export function AgentToolsSurface({ api, language, disabled = false }: { api: AgentToolsApi; language: Language; disabled?: boolean }) {
+export function AgentToolsSurface({ api, language, disabled = false, oauthMcpRequest }: { api: AgentToolsApi; language: Language; disabled?: boolean; oauthMcpRequest?: OAuthMcpTransport }) {
   const ru = language === 'ru'; const choose = (en: string, russian: string) => ru ? russian : en;
   const transport = useRef(api); transport.current = api;
   const mounted = useRef(true); const busy = useRef(false);
@@ -139,7 +140,8 @@ export function AgentToolsSurface({ api, language, disabled = false }: { api: Ag
     <SurfaceHeader eyebrow={choose('Standalone Agent mode', 'Самостоятельный Agent mode')} title={choose('Tools and skills', 'Инструменты и skills')} subtitle={choose('Configure explicitly installed MCP servers and selected read-only instructions for owned Agent tasks.', 'Настройте явно установленные MCP-серверы и выберите инструкции только для чтения для Agent-задач.')} actions={<Button className="agent-tools-button" variant="secondary" disabled={locked} onClick={() => void act(refresh)}>{choose('Refresh', 'Обновить')}</Button>} />
     {error ? <Notice tone="error" role="alert">{error}</Notice> : null}
     <Notice tone="warning">{choose('Each server displays its execution boundary. Unrestricted servers have your user permissions; tool approval alone does not create OS isolation. The limited official catalog has a separate installer below; Provider authorization uses the protected service when it is configured. Automatic key import is unavailable.', 'У каждого сервера показана граница исполнения. Сервер без изоляции имеет права вашего пользователя; подтверждение инструмента само по себе не создаёт OS sandbox. Ниже доступен установщик ограниченного официального каталога; Авторизация провайдеров использует защищённый сервис, если он настроен. Автоматический импорт ключей недоступен.')}</Notice>
-    {oauthApi ? <AgentOAuthPanel api={oauthApi} scopeKey={oauthScopeKey} locked={locked} choose={choose} /> : null}
+    <AgentOAuthPanel api={oauthApi} scopeKey={oauthScopeKey} locked={locked} choose={choose} />
+    <AgentOAuthMcpPanel request={oauthMcpRequest} accountScopeKey={oauthScopeKey} scope={remoteScope && actionableTask ? { taskId: remoteScope.taskId, generation: remoteScope.generation, toolCallId: 'oauth-mcp-control' } : undefined} language={language} disabled={locked} />
     <AgentToolsInstaller api={api} status={status} locked={locked} choose={choose} act={act} refresh={refresh} onReview={candidate => { setReview(candidate); setTrusted(false); }} />
     <Panel title={choose('Host state', 'Состояние host')} actions={<Button className="agent-tools-button" disabled={locked || !status} onClick={() => void act(async () => { await transport.current.request({ action: 'setEnabled', enabled: !status?.config.enabled, explicitUserAction: true }); await refresh(); })}>{status?.config.enabled ? choose('Disable and close owned servers', 'Выключить и закрыть свои серверы') : choose('Enable configured servers', 'Включить настроенные серверы')}</Button>}>
       <PanelStack className="agent-tools-panel-body">

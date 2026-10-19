@@ -78,7 +78,7 @@ export function createAgentModeRoutes(options: AgentModeRouteOptions): (request:
     if (!options.authorize(request)) return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
     if (request.method !== "POST") return Response.json({ ok: false, error: "method_not_allowed" }, { status: 405, headers: { allow: "POST" } });
     try {
-      const envelope = z.object({ action: z.enum(["status", "list", "get", "create", "control", "step", "run", "review", "evidence", "verify", "workspace-grant", "resume-continuation", "enqueue-work", "cycle", "workspace-evidence", "reconcile-tool", "refresh-execution"]), taskId: identity.optional(), actionId: identity.optional(), idempotencyKey: identity.optional(), dispatchId: identity.optional(), workId: identity.optional(), work: z.unknown().optional(), input: z.unknown().optional(), control: z.unknown().optional(), scope: taskScope.optional(), grant: z.unknown().optional(), proof: z.unknown().optional(), explicitUserAction: z.boolean().optional(), workerName: identity.optional(), reviewId: identity.optional(), evidence: z.unknown().optional() }).strict().parse(await readJsonRequestBody(request, 512 * 1024, 512 * 1024));
+      const envelope = z.object({ action: z.enum(["status", "list", "get", "create", "control", "step", "run", "review", "evidence", "verify", "workspace-grant", "resume-continuation", "enqueue-work", "cycle", "workspace-evidence", "reconcile-tool", "refresh-execution"]), taskId: identity.optional(), actionId: identity.optional(), idempotencyKey: identity.optional(), dispatchId: identity.optional(), workId: identity.optional(), work: z.unknown().optional(), input: z.unknown().optional(), control: z.unknown().optional(), scope: taskScope.optional(), loopSourceRunId: identity.optional(), grant: z.unknown().optional(), proof: z.unknown().optional(), explicitUserAction: z.boolean().optional(), workerName: identity.optional(), reviewId: identity.optional(), evidence: z.unknown().optional() }).strict().parse(await readJsonRequestBody(request, 512 * 1024, 512 * 1024));
       const runtime = options.runtime;
       if (envelope.action === "status") return success({ ...runtime.status(), ...listing(runtime), capabilities: { ...runtime.status().capabilities, observedEvidence: Boolean(options.resolveEvidence || options.observeWorkspaceEvidence) } });
       if (envelope.action === "list") return success(listing(runtime));
@@ -98,9 +98,12 @@ export function createAgentModeRoutes(options: AgentModeRouteOptions): (request:
         const toolOutcomes = boundedRows(runtime.store.listToolOutcomes(taskId));
         const effectiveToolOutcomes = boundedRows(runtime.store.effectiveToolOutcomes(taskId));
         const toolReconciliations = boundedRows(runtime.store.listToolReconciliations(taskId));
-        const workPackets = boundedRows(runtime.store.listWork(taskId));
+        const allWorkPackets = runtime.store.listWork(taskId), workPackets = boundedRows(allWorkPackets);
+        // Historical reconciliation reads one exact durable receipt independently
+        // of the ordinary bounded projection. Absence never proves no send.
+        const workPacket = envelope.workId === undefined ? undefined : allWorkPackets.find(row => row.workId === envelope.workId);
         const workspaceEvidence = boundedRows(runtime.workspaceEvidenceReferences(taskId));
-        return success({ task, activeEvidence: activeTaskEvidence(task), workspaceEvidence: workspaceEvidence.rows, workers: runtime.store.listWorkers(taskId), pendingToolCalls: pendingCalls.rows, dispatches: dispatches.rows, messages: messages.rows, receipts: receipts.rows, toolOutcomes: toolOutcomes.rows, effectiveToolOutcomes: effectiveToolOutcomes.rows, toolReconciliations: toolReconciliations.rows, workPackets: workPackets.rows, loopSource: "mailbox", snapshotReceipts: runtime.snapshotReceipts(taskId),
+        return success({ task, loopSourceAuthority: runtime.loopSourceAuthority(taskId), activeEvidence: activeTaskEvidence(task), workspaceEvidence: workspaceEvidence.rows, workers: runtime.store.listWorkers(taskId), pendingToolCalls: pendingCalls.rows, dispatches: dispatches.rows, messages: messages.rows, receipts: receipts.rows, toolOutcomes: toolOutcomes.rows, effectiveToolOutcomes: effectiveToolOutcomes.rows, toolReconciliations: toolReconciliations.rows, workPackets: workPackets.rows, ...(workPacket ? { workPacket } : {}), loopSource: "mailbox", snapshotReceipts: runtime.snapshotReceipts(taskId),
           coverage: { pendingToolCalls: { total: pendingCalls.total, truncated: pendingCalls.truncated }, dispatches: { total: dispatches.total, truncated: dispatches.truncated }, messages: { total: messages.total, truncated: messages.truncated }, receipts: { total: receipts.total, truncated: receipts.truncated }, workspaceEvidence: { total: workspaceEvidence.total, truncated: workspaceEvidence.truncated }, toolReconciliations: { total: toolReconciliations.total, truncated: toolReconciliations.truncated }, effectiveToolOutcomes: { total: effectiveToolOutcomes.total, truncated: effectiveToolOutcomes.truncated } } });
       }
       const actionId = identity.parse(envelope.actionId);
@@ -118,7 +121,7 @@ export function createAgentModeRoutes(options: AgentModeRouteOptions): (request:
         if (observed.evidence.taskRevision !== task.revision || !task.requirements.some(requirement => requirement.id === observed.evidence.requirementId)) throw new Error("Stale workspace outcome scope");
         return success({ task: runtime.recordObservedEvidence(taskId, actionId, observed.evidence), reference: observed.reference, evidence: observed.evidence });
       }
-      if (envelope.action === "enqueue-work") return success(runtime.enqueueWork(taskId, actionId, taskScope.parse(envelope.scope), z.object({ workId: identity, workKey: identity, text: boundedText }).strict().parse(envelope.work)));
+      if (envelope.action === "enqueue-work") return success(runtime.enqueueWork(taskId, actionId, taskScope.parse(envelope.scope), z.object({ workId: identity, workKey: identity, text: boundedText }).strict().parse(envelope.work), envelope.loopSourceRunId));
       if (envelope.action === "cycle") {
         if (envelope.explicitUserAction !== true) return Response.json({ ok: false, error: "explicit_action_required" }, { status: 400 });
         return success({ task: runtime.cycle(taskId, actionId, taskScope.parse(envelope.scope), envelope.workId) });

@@ -12,7 +12,7 @@ function selection(value) {
 }
 /** The existing guarded handle and owned supervisor are the only transport.
  * Main alone derives/signs snapshot authority from a previously picked root. */
-function registerAgentMode({ handle, runtimeHost, workspaceService, workspaceEvidenceService, getApplicationVersion }) {
+function registerAgentMode({ handle, runtimeHost, workspaceService, workspaceEvidenceService, getApplicationVersion, beforeTaskAuthorityChange = () => {} }) {
   handle('launcher:agent-mode', async (_event, body) => {
     if (!record(body) || !ACTIONS.has(body.action) || Buffer.byteLength(JSON.stringify(body), 'utf8') > 600000) throw new Error('Invalid Agent mode request');
     if (owns(body, 'grant') || owns(body, 'workspaceSnapshotGrant') || (record(body.input) && owns(body.input, 'workspaceSnapshotGrant'))) {
@@ -37,6 +37,7 @@ function registerAgentMode({ handle, runtimeHost, workspaceService, workspaceEvi
       || body.action === 'control' && record(body.control)
         && Object.keys(body.control).join(',') === 'action' && ['pause', 'stop'].includes(body.control.action);
     if (pendingVersion && !allowDraining) throw new Error(pendingMessage);
+    beforeTaskAuthorityChange(body);
     if (!config || !await supervisor.ownedAgentRuntimeReady(config, { allowDraining })) throw new Error('Start the current NEKODEX runtime to use Agent mode');
     const send = async payload => {
       let receipt;

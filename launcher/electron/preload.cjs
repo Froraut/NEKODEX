@@ -83,6 +83,8 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   copyConversationHistoryText: text => ipcRenderer.invoke('launcher:conversation-history-copy', text),
   saveConversationHistoryMarkdown: markdown => ipcRenderer.invoke('launcher:conversation-history-save', markdown),
   agentMode: body => ipcRenderer.invoke('launcher:agent-mode', body),
+  loopFileWatcherRequest: body => ipcRenderer.invoke('launcher:loop-file-watcher', body),
+  oauthMcpRequest: body => ipcRenderer.invoke('launcher:oauth-mcp', body),
   nativeAccountsRequest: body => ipcRenderer.invoke('launcher:native-accounts', body),
   openNativeAccountVerification: url => ipcRenderer.invoke('launcher:native-accounts-open', url),
   copyNativeAccountCode: code => ipcRenderer.invoke('launcher:native-accounts-copy', code),

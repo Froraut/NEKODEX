@@ -4,6 +4,8 @@ export interface AgentOAuthService {
   handles(action: string): boolean;
   status(): { oauthScope?: { accountId: string; epoch: string }; capabilities: { oauth: boolean; secrets: boolean };
     oauthRegistry: { state: 'empty' | 'configured' | 'unavailable'; providerCount: number; reason?: string } };
+  subscribeMcpInvalidation(listener: (providerId?: string) => void): () => void;
+  reviewedMcpProviders(): { providerId: string; label: string; resource: string; issuer: string; clientId: string; metadataDigest: string; accountId: string; epoch: string }[];
   reviewProviderFile(file: string): Promise<OAuthProviderRegistrationReview>;
   request(body: unknown): Promise<OAuthProviderStatus[] | OAuthProviderStatus | OAuthProviderRegistrationReview>;
   withAccessToken<T>(scope: { providerId: string; resource: string; accountId: string; epoch: string }, use: (token: string) => Promise<T>): Promise<T>;

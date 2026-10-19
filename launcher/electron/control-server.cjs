@@ -52,7 +52,8 @@ class BrowserControlServer {
   constructor({ logger, getBrowserHost, getPreferences, resolveNativeProxy,
     getAgentNativeBridge, getAgentNativeInstance, validateNativeInvalidation,
     getAgentRemoteService, getAgentRemoteInstance, validateRemoteInvalidation,
-    getVmExportService, getVmExportInstance, getPythonBuildSelectionService, getPythonBuildSelectionInstance }) {
+    getVmExportService, getVmExportInstance, getPythonBuildSelectionService, getPythonBuildSelectionInstance,
+    getAgentOAuthMcpController, getAgentOAuthMcpInstance }) {
     this.logger = logger;
     this.getBrowserHost = getBrowserHost;
     this.getPreferences = getPreferences;
@@ -67,6 +68,8 @@ class BrowserControlServer {
     this.getVmExportInstance = getVmExportInstance;
     this.getPythonBuildSelectionService = getPythonBuildSelectionService;
     this.getPythonBuildSelectionInstance = getPythonBuildSelectionInstance;
+    this.getAgentOAuthMcpController = getAgentOAuthMcpController;
+    this.getAgentOAuthMcpInstance = getAgentOAuthMcpInstance;
     this.token = randomBytes(32).toString("base64url");
     this.automaticMutationReceipts = new Map();
     this.port = 0;
@@ -164,6 +167,20 @@ class BrowserControlServer {
     ]).get(request.url);
     if (nativeAction) {
       await this.handleAgentNative(request, response, nativeAction);
+      return;
+    }
+    const oauthMcpAction = new Map(['discover', 'execute', 'receipt', 'invalidate'].map(action => [`/v1/agent-oauth-mcp/${action}`, action])).get(request.url);
+    if (oauthMcpAction) {
+      if (request.method !== 'POST') { writeJson(response, 405, { error: 'method_not_allowed' }); return; }
+      try {
+        const instanceId = this.getAgentOAuthMcpInstance?.();
+        if (!instanceId || request.headers['x-nekodex-oauth-mcp-instance'] !== instanceId) throw new Error('stale');
+        const controller = this.getAgentOAuthMcpController?.(); if (!controller) throw new Error('unavailable');
+        const body = await readJson(request, 112 * 1024);
+        const value = await controller.dispatch(oauthMcpAction, body);
+        if (Buffer.byteLength(JSON.stringify(value)) > 240 * 1024) throw new Error('oversize');
+        writeJson(response, 200, { ok: true, instanceId, value });
+      } catch { writeJson(response, 409, { error: 'oauth_mcp_observation_unavailable' }); }
       return;
     }
     const remoteAction = new Map(['status', 'attach', 'revoke', 'execute', 'receipt', 'invalidate'].map(action => [`/v1/agent-remote/${action}`, action])).get(request.url);

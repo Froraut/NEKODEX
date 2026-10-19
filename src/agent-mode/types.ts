@@ -120,6 +120,16 @@ export interface AgentWorkPacket {
   cycle?: number;
   createdAt: number;
 }
+/** Live runtime observation for a selected Loop source; never persisted or a tool grant. */
+export interface AgentLoopSourceAuthority {
+  active: true;
+  runId: string;
+  ownerId: string;
+  familyId: string;
+  generation: number;
+  revision: number;
+  cycle: number;
+}
 export type DispatchState = "admitted" | "offered" | "acked" | "unknown" | "settled" | "cancelled";
 export interface ExecutionResult {
   receiptId: string;

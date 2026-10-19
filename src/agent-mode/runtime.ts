@@ -5,7 +5,7 @@ import { projectNativeSelectedAttachments } from "./native-images";
 import { activeTaskEvidence } from "./evidence";
 import { agentModelConfigured, agentModelAccepting, agentNativeConcurrency, type AgentModelOption } from "./provider";
 import { nativeScopeOf, sameNativeScope, type AgentNativeScope } from "./native-protocol";
-import type { AgentControl, AgentDispatch, AgentExecutionPort, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliationResult, AgentWorkPacket, CreateAgentTask, OutcomeEvidence, OutcomeReview } from "./types";
+import type { AgentControl, AgentDispatch, AgentExecutionPort, AgentLoopSourceAuthority, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliationResult, AgentWorkPacket, CreateAgentTask, OutcomeEvidence, OutcomeReview } from "./types";
 
 export interface AgentModeRuntimeOptions {
   store: AgentModeStore;
@@ -47,7 +47,7 @@ export class AgentModeRuntime {
   readonly runner: AgentModeRunner;
   private readonly pending = new Map<string, Promise<unknown>>();
   /** A durable run command authorizes only this live runtime and exact task scope. Never restored from status. */
-  private readonly automaticRuns = new Map<string, AgentActionScope & { ownerId: string }>();
+  private readonly automaticRuns = new Map<string, AgentActionScope & { ownerId: string; runId: string }>();
   private stopping = false;
   private shutdownFinished = false;
   constructor(private readonly options: AgentModeRuntimeOptions) {
@@ -132,7 +132,7 @@ export class AgentModeRuntime {
     catch (error) { this.pauseAtBound(taskId); throw error; }
     if (!command.duplicate && this.store.getTask(taskId).generation !== task.generation) this.options.onTaskScopeInvalidated?.(taskId);
     if (!command.duplicate) {
-      if (input.automatic) this.rememberAutomaticRun(this.store.getTask(taskId));
+      if (input.automatic) this.rememberAutomaticRun(this.store.getTask(taskId), true);
       else this.automaticRuns.delete(taskId);
       if (command.result) {
         this.launch(command.result, input.automatic === true);
@@ -154,17 +154,49 @@ export class AgentModeRuntime {
       if (automatic) this.continueAutomatic(dispatch);
     }).catch(() => {
       // Runner persisted unknown send or the bound hold. Never retry from a rejected promise.
+      this.automaticRuns.delete(dispatch.taskId);
       this.pauseAtBound(dispatch.taskId);
     }).finally(() => { this.pending.delete(dispatch.id); });
     this.pending.set(dispatch.id, promise);
   }
-  private rememberAutomaticRun(task: AgentTask): void {
-    this.automaticRuns.set(task.id, { familyId: task.familyId, generation: task.generation, revision: task.revision, ownerId: this.runner.ownerId });
+  private rememberAutomaticRun(task: AgentTask, explicitRun = false): void {
+    const runId = explicitRun ? randomUUID() : this.automaticRuns.get(task.id)?.runId;
+    if (!runId) return;
+    this.automaticRuns.set(task.id, { familyId: task.familyId, generation: task.generation, revision: task.revision, ownerId: this.runner.ownerId, runId });
   }
   private hasAutomaticRun(task: AgentTask): boolean {
     const grant = this.automaticRuns.get(task.id);
     return Boolean(grant && grant.ownerId === this.runner.ownerId && task.ownerId === this.runner.ownerId
       && grant.familyId === task.familyId && grant.generation === task.generation && grant.revision === task.revision && task.mode !== "manual");
+  }
+  /** A provider reads this metadata, then the enqueue command rechecks it at commit. */
+  loopSourceAuthority(taskId: string): AgentLoopSourceAuthority | undefined {
+    const task = this.store.getTask(taskId);
+    const activeRun = this.hasAutomaticRun(task), dispatches = this.store.listDispatches(taskId);
+    if (!activeRun || ["paused", "stopped", "verified_complete"].includes(task.status)
+      || dispatches.some(row => row.state === "unknown")
+      || this.store.effectiveToolOutcomes(taskId).some(row => row.state === "outcome_unknown")) {
+      this.automaticRuns.delete(taskId); return undefined;
+    }
+    if (task.mode !== "loop" || !["ready", "running", "review_required"].includes(task.status)
+      || task.loopRun?.ownerId !== this.runner.ownerId || task.loopRun.generation !== task.generation
+      || this.stopping || this.options.canStart?.() === false || this.options.configured?.() === false
+      || this.options.canExecute?.(task) === false || !agentModelAccepting(task, this.options.models())) return undefined;
+    // An admitted offer already owns a turn slot, and pending reservations already
+    // own budget. Observing exhaustion retires this Loop source identity without
+    // changing the task or renewing consent if a reservation later releases.
+    if (task.turns + dispatches.filter(row => row.state === "admitted").length >= task.bounds.maxTurns
+      || task.bounds.maxSpend !== null && (!this.options.reserveSpend
+        || task.spent + task.reserved + this.options.reserveSpend(task) > task.bounds.maxSpend)) {
+      this.automaticRuns.delete(taskId); return undefined;
+    }
+    return { active: true, runId: this.automaticRuns.get(taskId)!.runId, ownerId: this.runner.ownerId,
+      familyId: task.familyId, generation: task.generation, revision: task.revision, cycle: task.cycle };
+  }
+  private assertLoopSourceRun(taskId: string, scope: AgentActionScope, runId: string): void {
+    const authority = this.loopSourceAuthority(taskId);
+    if (!authority || authority.runId !== runId || authority.familyId !== scope.familyId
+      || authority.generation !== scope.generation || authority.revision !== scope.revision) throw new Error("Stale Loop source run");
   }
   private continueAutomatic(dispatch: AgentDispatch): void {
     const task = this.store.getTask(dispatch.taskId);
@@ -282,7 +314,10 @@ export class AgentModeRuntime {
       const key = this.store.toolCallReceiptKey(dispatch.id, call.toolCallId);
       if (known.some(outcome => outcome.idempotencyKey === key)) continue;
       const outcome = this.options.lookupToolOutcome(key);
-      if (outcome) this.store.recordToolOutcome(outcome);
+      if (outcome) {
+        this.store.recordToolOutcome(outcome);
+        if (outcome.state === "outcome_unknown") this.automaticRuns.delete(taskId);
+      }
     }
   }
   resumeContinuation(taskId: string, actionId: string, scope: AgentActionScope, dispatchId: string): AgentTask {
@@ -296,8 +331,16 @@ export class AgentModeRuntime {
       this.assertScope(taskId, scope); return this.store.attachWorkspaceSnapshotGrant(taskId, grant);
     }).result;
   }
-  enqueueWork(taskId: string, actionId: string, scope: AgentActionScope, work: Pick<AgentWorkPacket, "workId" | "workKey" | "text">) {
-    const command = this.store.command(taskId, actionId, "enqueue_work", { scope, work }, () => { this.assertScope(taskId, scope); return this.store.enqueueWork(taskId, work); });
+  enqueueWork(taskId: string, actionId: string, scope: AgentActionScope, work: Pick<AgentWorkPacket, "workId" | "workKey" | "text">, loopSourceRunId?: string) {
+    // Duplicate command receipts skip apply; they must not revive a retired producer either.
+    if (loopSourceRunId !== undefined) this.assertLoopSourceRun(taskId, scope, loopSourceRunId);
+    const command = this.store.command(taskId, actionId, "enqueue_work", { scope, work, ...(loopSourceRunId !== undefined ? { loopSourceRunId } : {}) }, () => {
+      this.assertScope(taskId, scope);
+      // Synchronous inside the store's existing immediate transaction: no await or
+      // external callback can separate the live authority check from mailbox commit.
+      if (loopSourceRunId !== undefined) this.assertLoopSourceRun(taskId, scope, loopSourceRunId);
+      return this.store.enqueueWork(taskId, work);
+    });
     if (!command.duplicate) this.advanceLoop(taskId);
     return { ...command.result, task: this.store.getTask(taskId) };
   }
