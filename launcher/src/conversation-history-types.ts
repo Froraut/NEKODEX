@@ -5,3 +5,5 @@ export interface ConversationHistoryApi {
   copyText(text: string): Promise<unknown>;
   saveMarkdown(markdown: string): Promise<{ saved: boolean; path?: string }>;
 }
+
+export type { TranscriptSubscriptionStatus } from "../../src/conversation-history/transcript";

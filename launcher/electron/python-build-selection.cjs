@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {createHash,randomUUID} = require('node:crypto');
 const {PYTHON_BUILD_SELECTION_LIMITS:L,parsePythonBuildScope,parsePythonBuildConfig,parsePythonBuildSelectionRequest,selectionDigest,safePythonBuildPath} = require('./python-build-selection-contract.cjs');
+const {excludedPythonBuildSourceName} = require('./python-build-source-policy.cjs');
 const hash = b => createHash('sha256').update(b).digest('hex');
 function fail() { throw new Error('Python build selection unavailable'); }
 function same(a,b) { return a.taskId === b.taskId && a.generation === b.generation; }
@@ -14,7 +15,7 @@ function createPythonBuildSelectionService({assertScope}) {
     const scope = parsePythonBuildScope(scopeInput); if (explicitUserAction !== true || selections.size >= 8) fail(); await current(scope);
     try {
       const config = parsePythonBuildConfig(input.config), files = [], chunks = [], pins = []; let total = 0, visited = 0, excluded = 0;
-      const skip = name => ['.git','node_modules','.venv','venv','__pycache__','.DS_Store','.ssh','.aws','.npmrc','.pypirc','.netrc','credentials.json'].includes(name) || /^\.env(?:\.|$)/i.test(name) || /^(?:id_rsa|id_ed25519|client_secret)/i.test(name) || /\.(?:pem|key|p12|pfx)$/i.test(name);
+      const skip = excludedPythonBuildSourceName;
       function pin(p,directory = false) { const s = fs.lstatSync(p,{bigint:true}); if (fs.realpathSync(p) !== p || s.isSymbolicLink() || (directory ? !s.isDirectory() : !s.isFile() || s.nlink !== 1n)) fail(); return {p,s,directory}; }
       function unchanged(q) { const s = fs.lstatSync(q.p,{bigint:true}); if (fs.realpathSync(q.p) !== q.p || ['dev','ino','size','mtimeNs','ctimeNs','mode'].some(k => q.s[k] !== s[k])) fail(); }
       function add(p,role,name) {

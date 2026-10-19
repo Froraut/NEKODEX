@@ -5,6 +5,7 @@ import type { NativePersistentApi } from './native-persistent-types';
 import type { WorkspaceTerminalApi } from './workspace-terminal-types';
 import type { RemoteWorkspaceApi } from '../electron/remote-workspace.cjs';
 import type { WorkspaceGitControlsApi } from './WorktreeControls';
+import type { LocalGitReviewApi } from '../electron/local-git-review.cjs';
 import type { ExternalUsageRequest, ExternalUsageSelection, ExternalUsageSnapshot } from '../electron/external-usage.cjs';
 import type { AgentWorkspaceRoot, AgentWorkspaceGrantSummary } from './agent-mode-types';
 import type { AgentToolsApi } from './agent-tools-types';
@@ -601,7 +602,7 @@ export interface RouteDiagnosticsReport {
   };
 }
 
-export interface LauncherApi extends NativeThreadsApi, NativePersistentApi, WorkspaceTerminalApi, RemoteWorkspaceApi, WorkspaceGitControlsApi {
+export interface LauncherApi extends NativeThreadsApi, NativePersistentApi, WorkspaceTerminalApi, RemoteWorkspaceApi, WorkspaceGitControlsApi, LocalGitReviewApi {
   workspaceRoots(): Promise<LocalWorkspaceRoot[]>;
   workspaceOpenWorktree(sourceRootId: string, worktreeId: string): Promise<LocalWorkspaceRoot>;
   workspacePick(): Promise<LocalWorkspaceRoot | null>;
@@ -632,6 +633,8 @@ export interface LauncherApi extends NativeThreadsApi, NativePersistentApi, Work
   pickAgentToolsInstallRoot(): Promise<{ cancelled: boolean; root?: string }>;
   pickAgentScriptWorkspace(): Promise<{ cancelled: boolean; root?: string }>;
   pickAgentPythonWheels(): Promise<{ cancelled: boolean; wheelPaths?: string[] }>;
+  pickAgentOAuthProvider(): Promise<{ cancelled: boolean; review?: import('../../src/agent-tools/oauth-types').OAuthProviderRegistrationReview }>;
+  pickAgentPythonBuildSelection(scope: import('./agent-tools-types').ToolScope, config: import('./agent-tools-types').AgentPythonBuildConfig): Promise<{ cancelled: boolean; selection?: import('./agent-tools-types').AgentPythonBuildSelection }>;
   browserCompanion: BrowserCompanionApi['request'];
   copyBrowserPairing: NonNullable<BrowserCompanionApi['copyPairing']>;
   localControlApiRequest: LocalControlApiAdminApi['request'];

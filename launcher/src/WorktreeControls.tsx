@@ -30,6 +30,10 @@ const strings = {
     created: "Worktree is ready.", snapshotSaved: "Source snapshot saved privately.", restored: "Selected files restored. Their previous contents remain in a recovery snapshot.",
     archiveSaved: "Worktree archived; its checkout and recovery data remain private.", remove: "Delete snapshot", deleteTitle: "Delete this snapshot?", deleteBody: "This explicitly removes the selected saved file copies. Current workspace files remain as they are.",
     inspectRestore: "Close this preview, refresh snapshots and inspect current files and the recovery snapshot before preparing another restore.",
+    draftBlocked: "Save or discard the selected files’ editor drafts before taking a disk snapshot or restoring them.",
+    archiveSnapshotScope: "These copies came from a managed worktree. Restoring them writes to the selected folder shown above. Open the archived checkout to continue working in that worktree.",
+    recovery: "Recovery snapshot", receipt: "Restore receipt", inspectState: "Restoration requires inspection; use the retained recovery snapshot before preparing another restore.",
+    openRecovery: "Open recovery checkout", archiveHeld: "Archive was submitted. Refresh and inspect its retained state before preparing another archive.",
     deleted: "Snapshot deleted.", retained: "Recovery checkout", operation: "Working…", missing: "Select at least one file.",
   },
   ru: {
@@ -44,14 +48,19 @@ const strings = {
     created: "Рабочее дерево готово.", snapshotSaved: "Снимок исходных файлов сохранён приватно.", restored: "Выбранные файлы восстановлены. Прежнее содержимое доступно в резервном снимке.",
     archiveSaved: "Рабочее дерево в архиве; рабочая копия и резервные данные сохранены приватно.", remove: "Удалить снимок", deleteTitle: "Удалить этот снимок?", deleteBody: "Выбранные сохранённые копии файлов будут удалены. Текущие файлы рабочей области сохранятся.",
     inspectRestore: "Закройте предпросмотр, обновите снимки и проверьте текущие файлы и резервный снимок перед новым восстановлением.",
+    draftBlocked: "Сохраните или удалите черновики выбранных файлов перед снимком с диска или восстановлением.",
+    archiveSnapshotScope: "Эти копии получены из рабочего дерева. Восстановление запишет их в выбранную папку, указанную выше. Чтобы продолжить работу в том рабочем дереве, откройте копию из архива.",
+    recovery: "Резервный снимок", receipt: "Квитанция восстановления", inspectState: "Требуется проверка восстановления; изучите резервный снимок перед новым восстановлением.",
+    openRecovery: "Открыть копию из архива", archiveHeld: "Архивация отправлена. Обновите список и проверьте сохранённый исход перед новой архивацией.",
     deleted: "Снимок удалён.", retained: "Рабочая копия в архиве", operation: "Выполняется…", missing: "Выберите хотя бы один файл.",
   },
 };
 
 /** All authority stays with the picked workspace ID and main-process service. */
-export function WorktreeControls({ workspaceId, headOid, language, api, onOpenWorktree }: {
+export function WorktreeControls({ workspaceId, headOid, language, api, onOpenWorktree, dirtyPaths = [], onFilesChanged }: {
   workspaceId: string; headOid: string | null; language: Language; api: WorkspaceGitControlsApi;
   onOpenWorktree?: (root: LocalWorkspaceRoot) => void;
+  dirtyPaths?: string[]; onFilesChanged?: (paths: string[]) => void;
 }) {
   const c = language === "ru" ? strings.ru : strings.en;
   const [worktrees, setWorktrees] = useState<ManagedWorktree[]>([]);
@@ -61,12 +70,18 @@ export function WorktreeControls({ workspaceId, headOid, language, api, onOpenWo
   const [archivePreview, setArchivePreview] = useState<WorkspaceArchivePreview | null>(null);
   const [restorePreview, setRestorePreview] = useState<WorkspaceRestorePreview | null>(null);
   const [restoreBlocked, setRestoreBlocked] = useState(false);
+  const [archiveBlocked, setArchiveBlocked] = useState(false);
+  const [restoreReceipt, setRestoreReceipt] = useState<WorkspaceRestoreReceipt | null>(null);
+  const inFlight = useRef(false);
+  const currentDraftPaths = useRef(dirtyPaths); currentDraftPaths.current = dirtyPaths;
   const [deleting, setDeleting] = useState<WorkspaceSourceSnapshot | null>(null);
   const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
   const identity = useRef({ workspaceId, epoch: 0 });
   if (identity.current.workspaceId !== workspaceId) identity.current = { workspaceId, epoch: identity.current.epoch + 1 };
-  useEffect(() => () => { identity.current.epoch++; }, []);
+  useEffect(() => () => { identity.current.epoch++; inFlight.current = false; }, []);
   async function run<T>(action: (port: WorkspaceGitControlsApi, id: string) => Promise<T>, apply?: (result: T) => void) {
+    if (inFlight.current) return;
+    inFlight.current = true;
     const captured = { ...identity.current }; const port = api;
     setBusy(true); setError(""); setNotice("");
     try {
@@ -75,20 +90,61 @@ export function WorktreeControls({ workspaceId, headOid, language, api, onOpenWo
     } catch (reason) {
       if (captured.workspaceId === identity.current.workspaceId && captured.epoch === identity.current.epoch) setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
-      if (captured.workspaceId === identity.current.workspaceId && captured.epoch === identity.current.epoch) setBusy(false);
+      if (captured.workspaceId === identity.current.workspaceId && captured.epoch === identity.current.epoch) { inFlight.current = false; setBusy(false); }
     }
   }
   const inventory = async (port: WorkspaceGitControlsApi, id: string) => Promise.all([port.workspaceWorktrees(id), port.workspaceSnapshots(id)]);
   const applyInventory = ([trees, saved]: [ManagedWorktree[], WorkspaceSourceSnapshot[]]) => { setWorktrees(trees); setSnapshots(saved); };
   useEffect(() => {
-    setWorktrees([]); setSnapshots([]); setSelectedSnapshot(""); setSelectedPaths([]); setArchivePreview(null); setRestorePreview(null); setRestoreBlocked(false); setDeleting(null);
+    setWorktrees([]); setSnapshots([]); setSelectedSnapshot(""); setSelectedPaths([]); setArchivePreview(null); setArchiveBlocked(false); setRestorePreview(null); setRestoreBlocked(false); setRestoreReceipt(null); setDeleting(null);
     setName(""); setPaths(""); setLabel(""); setNotice("");
     void run(inventory, applyInventory);
   }, [workspaceId]);
   const snapshot = snapshots.find((entry) => entry.id === selectedSnapshot);
-  return <Panel title={c.title} description={c.description} actions={<Button size="sm" disabled={busy} onClick={() => void run(inventory, applyInventory)}>{c.refresh}</Button>}>
+  const selection = useRef({ snapshotId: selectedSnapshot, key: selectedPaths.join("\0") });
+  selection.current = { snapshotId: selectedSnapshot, key: selectedPaths.join("\0") };
+  const snapshotPaths = paths.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
+  const hasDraft = (files: string[]) => files.some(file => currentDraftPaths.current.includes(file));
+  const restoreDraftBlocked = hasDraft(restorePreview?.files.map(file => file.path) || selectedPaths);
+  const snapshotDraftBlocked = hasDraft(snapshotPaths);
+  const selectRecovery = (id: string) => { setSelectedSnapshot(id); setSelectedPaths([]); setRestorePreview(null); setRestoreBlocked(false); };
+  const openRecoverySnapshot = (id: string) => { void run(inventory, value => { applyInventory(value); selectRecovery(id); }); };
+  function previewSelectedRestore() {
+    if (!snapshot || hasDraft(selectedPaths)) return;
+    const requested = { snapshotId: snapshot.id, paths: [...selectedPaths] };
+    const key = requested.paths.join("\0");
+    void run((port, id) => port.workspacePreviewRestore(id, requested), value => {
+      if (selection.current.snapshotId !== requested.snapshotId || selection.current.key !== key) return;
+      setRestoreBlocked(false); setRestorePreview(value);
+    });
+  }
+  async function restoreSelected(port: WorkspaceGitControlsApi, id: string) {
+    const preview = restorePreview!;
+    const captured = { ...identity.current };
+    if (hasDraft(preview.files.map(file => file.path))) throw new Error(c.draftBlocked);
+    setRestoreBlocked(true);
+    const receipt = await port.workspaceRestoreSnapshot(id, { previewId: preview.previewId });
+    if (receipt.workspaceId !== id || receipt.snapshotId !== preview.snapshotId
+        || receipt.restoredPaths.some(file => !preview.files.some(selected => selected.path === file))) {
+      throw new Error("Restore receipt does not match the selected workspace and files. Inspect current files before another restore.");
+    }
+    // Record the authoritative mutation result before a fallible inventory refresh.
+    if (id === identity.current.workspaceId && captured.epoch === identity.current.epoch) {
+      setRestoreReceipt(receipt); setRestorePreview(null);
+      setRestoreBlocked(receipt.state !== "complete");
+      setNotice(receipt.state === "complete" ? c.restored : c.inspectState);
+      onFilesChanged?.(receipt.restoredPaths);
+    }
+    return inventory(port, id);
+  }
+  return <Panel className="nk-workspace__panel nk-workspace__worktrees" title={c.title} description={c.description} actions={<Button size="sm" disabled={busy} onClick={() => void run(inventory, applyInventory)}>{c.refresh}</Button>}>
     {error && <Notice tone="error">{error}</Notice>}{notice && <Notice>{notice}</Notice>}
     {busy && <p role="status">{c.operation}</p>}
+    {restoreReceipt && <Notice tone={restoreReceipt.state === "complete" ? "success" : "warning"}
+      action={<Button size="sm" disabled={busy} onClick={() => openRecoverySnapshot(restoreReceipt.recoverySnapshotId)}>{c.recovery}</Button>}>
+      <p>{c.receipt}: <code>{restoreReceipt.id}</code> · {restoreReceipt.state}</p>
+      <p><code>{restoreReceipt.recoverySnapshotId}</code></p>
+    </Notice>}
     <TextField label={c.name} value={name} onChange={(event) => setName(event.target.value)} placeholder="feature-name" disabled={busy} />
     <Button disabled={busy || !headOid || !/^[a-z0-9][a-z0-9-]{0,47}$/.test(name)} onClick={() => void run(async (port, id) => {
       await port.workspaceCreateWorktree(id, { name, expectedHeadOid: headOid! }); return inventory(port, id);
@@ -96,50 +152,61 @@ export function WorktreeControls({ workspaceId, headOid, language, api, onOpenWo
     {!headOid && <p>{c.captureHead}</p>}
     <h3>{c.worktrees}</h3>
     {!worktrees.length && <p>{c.noWorktrees}</p>}
-    {worktrees.map((tree) => <div key={tree.id} className="nk-workspace__branch">
-      <p><strong>{tree.branch}</strong> <Badge>{tree.state === "archived" ? c.archived : tree.state === "ready" ? tree.dirty ? c.dirty : c.clean : tree.state}</Badge></p>
+    {worktrees.map((tree) => <div key={tree.id} className="nk-workspace__worktree">
+      <p className="nk-workspace__actions"><strong>{tree.branch}</strong> <Badge>{tree.state === "archived" ? c.archived : tree.state === "ready" ? tree.dirty ? c.dirty : c.clean : tree.state}</Badge></p>
       <p><code>{tree.archivePath || tree.path}</code></p>
       <small>{c.head}: <code>{tree.currentHeadOid || tree.archivedHeadOid || tree.headOid}</code></small>
-      {tree.state === "ready" && <>
-        <Button size="sm" disabled={busy || !onOpenWorktree} onClick={() => void run((port, id) => port.workspaceOpenWorktree(id, tree.id), (root) => onOpenWorktree?.(root))}>{c.openWorktree}</Button>
-        <Button size="sm" disabled={busy} onClick={() => void run((port, id) => port.workspacePreviewWorktreeArchive(id, tree.id), setArchivePreview)}>{c.archive}</Button>
-      </>}
+      <div className="nk-workspace__actions">
+      {(tree.state === "ready" || tree.state === "archived") && <Button size="sm" disabled={busy || !onOpenWorktree}
+        onClick={() => void run((port, id) => port.workspaceOpenWorktree(id, tree.id), root => onOpenWorktree?.(root))}>{tree.state === "archived" ? c.openRecovery : c.openWorktree}</Button>}
+      {tree.recoverySnapshotId && <Button size="sm" disabled={busy} onClick={() => openRecoverySnapshot(tree.recoverySnapshotId!)}>{c.recovery}</Button>}
+      </div>
+      {tree.recoveryRef && <p>{c.retained}: <code>{tree.recoveryRef}</code></p>}
+      {tree.state === "ready" && <div className="nk-workspace__actions">
+        <Button size="sm" disabled={busy} onClick={() => void run((port, id) => port.workspacePreviewWorktreeArchive(id, tree.id), value => { setArchiveBlocked(false); setArchivePreview(value); })}>{c.archive}</Button>
+      </div>}
     </div>)}
     <h3>{c.snapshots}</h3>
-    <label className="nk-field"><span>{c.paths}</span><textarea aria-label={c.paths} rows={3} value={paths} disabled={busy} onChange={(event) => setPaths(event.target.value)} /></label>
+    <label className="nk-field"><span>{c.paths}</span><textarea className="nk-workspace__paths" aria-label={c.paths} rows={3} value={paths} disabled={busy} onChange={(event) => setPaths(event.target.value)} /></label>
     <TextField label={c.label} value={label} disabled={busy} onChange={(event) => setLabel(event.target.value)} />
-    <Button disabled={busy || !paths.trim()} onClick={() => void run(async (port, id) => {
-      await port.workspaceCreateSnapshot(id, { paths: paths.split(/\r?\n/).map((value) => value.trim()).filter(Boolean), ...(label.trim() ? { label: label.trim() } : {}) });
+    <Button disabled={busy || !paths.trim() || snapshotDraftBlocked} onClick={() => void run(async (port, id) => {
+      if (hasDraft(snapshotPaths)) throw new Error(c.draftBlocked);
+      await port.workspaceCreateSnapshot(id, { paths: snapshotPaths, ...(label.trim() ? { label: label.trim() } : {}) });
       return inventory(port, id);
     }, (value) => { applyInventory(value); setNotice(c.snapshotSaved); })}>{c.snapshotCreate}</Button>
+    {snapshotDraftBlocked && <Notice tone="warning">{c.draftBlocked}</Notice>}
     {!snapshots.length && <p>{c.noSnapshots}</p>}
-    {!!snapshots.length && <Select label={c.select} value={selectedSnapshot} disabled={busy} onChange={(value) => { setSelectedSnapshot(value); setSelectedPaths([]); setRestorePreview(null); }}
+    {!!snapshots.length && <Select label={c.select} value={selectedSnapshot} disabled={busy} onChange={(value) => { setSelectedSnapshot(value); setSelectedPaths([]); setRestorePreview(null); setRestoreBlocked(false); }}
       options={[{ value: "", label: "—" }, ...snapshots.map((entry) => ({ value: entry.id, label: `${entry.label} · ${new Date(entry.createdAt).toLocaleString(language === "ru" ? "ru-RU" : "en-US")}` }))]} />}
-    {snapshot && <div>
+    {snapshot && <div className="nk-workspace__selection">
+      {snapshot.kind === "worktree-recovery" && <Notice tone="warning">{c.archiveSnapshotScope}</Notice>}
       <h4>{c.selected}</h4>{snapshot.paths.map((file) => <Checkbox key={file} label={file} checked={selectedPaths.includes(file)} disabled={busy}
-        onChange={(checked) => setSelectedPaths((current) => checked ? [...current, file] : current.filter((value) => value !== file))} />)}
-      <Button disabled={busy || !selectedPaths.length} onClick={() => void run((port, id) => port.workspacePreviewRestore(id, { snapshotId: snapshot.id, paths: selectedPaths }), (value) => { setRestoreBlocked(false); setRestorePreview(value); })}>{c.preview}</Button>
-      <Button disabled={busy} variant="danger" onClick={() => setDeleting(snapshot)}>{c.remove}</Button>
+        onChange={(checked) => { setSelectedPaths((current) => checked ? [...current, file] : current.filter((value) => value !== file)); setRestorePreview(null); setRestoreBlocked(false); }} />)}
+      {restoreDraftBlocked && <Notice tone="warning">{c.draftBlocked}</Notice>}
+      <div className="nk-workspace__actions"><Button disabled={busy || !selectedPaths.length || restoreDraftBlocked} onClick={previewSelectedRestore}>{c.preview}</Button>
+      <Button disabled={busy} variant="danger" onClick={() => setDeleting(snapshot)}>{c.remove}</Button></div>
     </div>}
     <Dialog open={!!archivePreview} title={c.archiveTitle} onClose={() => { if (!busy) setArchivePreview(null); }} actions={<>
       <Button disabled={busy} onClick={() => setArchivePreview(null)}>{c.cancel}</Button>
-      <Button disabled={busy} onClick={() => void run(async (port, id) => { await port.workspaceArchiveWorktree(id, { previewId: archivePreview!.previewId }); return inventory(port, id); },
-        (value) => { applyInventory(value); setArchivePreview(null); setNotice(c.archiveSaved); })}>{c.archiveConfirm}</Button>
+      <Button disabled={busy || archiveBlocked} onClick={() => { void run(async (port, id) => { setArchiveBlocked(true); await port.workspaceArchiveWorktree(id, { previewId: archivePreview!.previewId }); return inventory(port, id); },
+        (value) => { applyInventory(value); setArchivePreview(null); setArchiveBlocked(false); setNotice(c.archiveSaved); }); }}>{c.archiveConfirm}</Button>
     </>}>
+      {error && <Notice tone="error">{error}</Notice>}
+      {archiveBlocked && !busy && <Notice>{c.archiveHeld}</Notice>}
       <p>{c.archiveBody}</p><p><strong>{archivePreview?.branch}</strong> <code>{archivePreview?.headOid}</code></p>
       <ul>{archivePreview?.paths.map((file) => <li key={file}><code>{file}</code></li>)}</ul>
     </Dialog>
     <Dialog open={!!restorePreview} title={c.restoreTitle} onClose={() => { if (!busy) setRestorePreview(null); }} actions={<>
       <Button disabled={busy} onClick={() => setRestorePreview(null)}>{c.cancel}</Button>
-      <Button disabled={busy || restoreBlocked} onClick={() => { setRestoreBlocked(true); void run(async (port, id) => { await port.workspaceRestoreSnapshot(id, { previewId: restorePreview!.previewId }); return inventory(port, id); },
-        (value) => { applyInventory(value); setRestorePreview(null); setRestoreBlocked(false); setNotice(c.restored); }); }}>{c.restore}</Button>
+      <Button disabled={busy || restoreBlocked || restoreDraftBlocked} onClick={() => { void run(restoreSelected, applyInventory); }}>{c.restore}</Button>
     </>}>
       {error && <Notice tone="error">{error}</Notice>}
       {restoreBlocked && !busy && error && <Notice>{c.inspectRestore}</Notice>}
-      <p>{c.restoreBody}</p>{restorePreview?.files.map((file) => <section key={file.path}>
-        <h4>{file.path} {!file.changed && <Badge>{c.unchanged}</Badge>}</h4>
-        <p>{c.current}: <code>{file.currentHash || c.absent}</code></p><pre>{file.currentText ?? (file.currentHash ? c.binary : c.absent)}</pre>
-        <p>{c.target}: <code>{file.targetHash || c.absent}</code></p><pre>{file.targetText ?? (file.targetMissing ? c.absent : c.binary)}</pre>
+      {restoreDraftBlocked && <Notice tone="warning">{c.draftBlocked}</Notice>}
+      <p>{c.restoreBody}</p>{restorePreview?.files.map((file) => <section className="nk-workspace__restore-file" key={file.path}>
+        <h4 className="nk-workspace__actions">{file.path} {!file.changed && <Badge>{c.unchanged}</Badge>}</h4>
+        <p>{c.current}: <code>{file.currentHash || c.absent}</code></p><pre tabIndex={0} aria-label={`${c.current}: ${file.path}`}>{file.currentText ?? (file.currentHash ? c.binary : c.absent)}</pre>
+        <p>{c.target}: <code>{file.targetHash || c.absent}</code></p><pre tabIndex={0} aria-label={`${c.target}: ${file.path}`}>{file.targetText ?? (file.targetMissing ? c.absent : c.binary)}</pre>
       </section>)}
     </Dialog>
     <Dialog open={!!deleting} title={c.deleteTitle} onClose={() => { if (!busy) setDeleting(null); }} actions={<>

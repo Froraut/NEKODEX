@@ -24,6 +24,11 @@ export function Badge({ tone, dot, icon, shape, children, className }: BadgeProp
   );
 }
 
+/** A wrapping group supplies spacing between badges; Badge's gap is internal to one badge. */
+export function BadgeRow({ children, className, label, ...rest }: HTMLAttributes<HTMLDivElement> & { label?: string }) {
+  return <div role={label ? "group" : undefined} aria-label={label} {...rest} className={cx("nk-badge-row", className)}>{children}</div>;
+}
+
 const noticeIcon: Record<NonNullable<NoticeProps["tone"]>, IconName> = { info: "info", success: "check", warning: "alert", error: "alert" };
 
 export interface NoticeProps extends Omit<HTMLAttributes<HTMLElement>, "title" | "children"> {

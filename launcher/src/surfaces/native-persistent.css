@@ -1,11 +1,27 @@
-.native-persistent__layout { display: grid; grid-template-columns: minmax(180px, 0.8fr) minmax(0, 2fr); gap: 20px; }
-.native-persistent__list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
-.native-persistent__list li { display: grid; gap: 4px; min-width: 0; }
-.native-persistent__list .nk-btn { justify-content: flex-start; text-align: start; overflow-wrap: anywhere; }
-.native-persistent__list small, .native-persistent__hint { color: var(--text-secondary); overflow-wrap: anywhere; }
-.native-persistent__detail { display: grid; gap: 12px; min-width: 0; align-content: start; }
-.native-persistent__detail code { overflow-wrap: anywhere; }
-.native-persistent__answer { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; padding: 12px; border: 1px solid var(--border); border-radius: 8px; max-height: 320px; overflow-y: auto; }
-.native-persistent__prompt { min-height: 96px; resize: vertical; width: 100%; box-sizing: border-box; font: inherit; }
-.native-persistent__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.native-persistent__body { gap: var(--space-4, 16px); }
+.native-persistent__body > p { margin: 0; overflow-wrap: anywhere; }
+.native-persistent__layout { display: grid; grid-template-columns: minmax(180px, 0.8fr) minmax(0, 2fr); gap: var(--space-5, 20px); align-items: start; }
+.native-persistent__sidebar { display: grid; gap: var(--space-3, 12px); min-width: 0; }
+.native-persistent__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2, 8px); }
+.native-persistent__list li { display: grid; gap: var(--space-1, 4px); min-width: 0; }
+.native-persistent__list .nk-btn { justify-content: flex-start; height: auto; min-height: var(--size-control); padding-block: var(--space-2, 8px); max-width: 100%; white-space: normal; text-align: start; overflow-wrap: anywhere; }
+.native-persistent .nk-panel__header .nk-btn, .native-persistent__actions .nk-btn { max-width: 100%; height: auto; min-height: var(--size-control); padding-block: var(--space-2, 8px); white-space: normal; overflow-wrap: anywhere; text-align: start; }
+.native-persistent .nk-panel__header .nk-btn > span, .native-persistent__list .nk-btn > span, .native-persistent__actions .nk-btn > span { min-width: 0; }
+.native-persistent__conversation-label { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-1, 4px); min-width: 0; }
+.native-persistent__conversation-label strong { min-width: 0; font-weight: 500; overflow-wrap: anywhere; }
+.native-persistent__conversation-label > span { display: flex; flex-wrap: wrap; gap: var(--space-1, 4px) var(--space-2, 8px); min-width: 0; color: var(--text-secondary); font-size: 12px; }
+.native-persistent__list small, .native-persistent__detail > small, .native-persistent__hint { color: var(--text-secondary); overflow-wrap: anywhere; }
+.native-persistent__detail { display: grid; gap: var(--space-3, 12px); min-width: 0; align-content: start; }
+.native-persistent__detail p { margin: 0; overflow-wrap: anywhere; }
+.native-persistent__detail code { min-width: 0; overflow-wrap: anywhere; }
+.native-persistent__detail .nk-select { min-width: 0; width: 100%; }
+.native-persistent__detail .nk-check { align-items: flex-start; min-width: 0; }
+.native-persistent__detail .nk-check input { flex-shrink: 0; margin-top: 2px; }
+.native-persistent__detail .nk-check > span { min-width: 0; overflow-wrap: anywhere; }
+.native-persistent__metadata > code { flex: 1 1 180px; font-size: 12px; color: var(--text-secondary); }
+.native-persistent__summary, .native-persistent__compose { display: grid; gap: var(--space-2, 8px); min-width: 0; }
+.native-persistent__summary h3 { margin: 0; font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+.native-persistent__answer { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; padding: var(--space-3, 12px); border: 1px solid var(--border); border-radius: var(--radius-md, 8px); max-height: 320px; overflow-y: auto; }
+.native-persistent__prompt { min-height: 96px; padding: var(--space-2, 8px) var(--space-3, 12px); resize: vertical; width: 100%; box-sizing: border-box; font: inherit; }
+.native-persistent__actions { display: flex; flex-wrap: wrap; gap: var(--space-2, 8px); min-width: 0; }
 @media (max-width: 720px) { .native-persistent__layout { grid-template-columns: minmax(0, 1fr); } }

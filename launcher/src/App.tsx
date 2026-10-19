@@ -65,6 +65,10 @@ const agentToolsApi: import('./agent-tools-types').AgentToolsApi = {
   pickInstallRoot: () => api!.pickAgentToolsInstallRoot(),
   pickScriptWorkspace: () => api!.pickAgentScriptWorkspace(),
   pickPythonWheels: () => api!.pickAgentPythonWheels(),
+  ...(typeof api?.pickAgentOAuthProvider === 'function' ? { pickOAuthProvider: () => api!.pickAgentOAuthProvider() } : {}),
+  ...(typeof api?.pickAgentPythonBuildSelection === 'function' ? {
+    pickPythonBuild: (scope: import('./agent-tools-types').ToolScope, config: import('./agent-tools-types').AgentPythonBuildConfig) => api!.pickAgentPythonBuildSelection(scope, config),
+  } : {}),
   attachEvidence: (taskId, evidence) => api!.agentMode({ action: 'evidence', taskId, actionId: crypto.randomUUID(), evidence }),
   listTasks: () => api!.agentMode({ action: 'list' }) as ReturnType<import('./agent-tools-types').AgentToolsApi['listTasks']>,
   getTask: taskId => api!.agentMode({ action: 'get', taskId }) as ReturnType<import('./agent-tools-types').AgentToolsApi['getTask']>,
@@ -1130,6 +1134,7 @@ function LauncherShell({
                 browser={browser}
                 catalogFailure={catalogFailure}
                 showModelSetup={() => navigateSurface("setup")}
+                showWorkflow={workflow => navigateSurface(workflow === 'native' ? 'agent-mode' : workflow === 'vm' ? 'agent-tools' : 'browser-companion')}
                 configureInteractionMode={(mode) => {
                   setMcpTargetMode(mode);
                   setMcpReturnAccountId(null);

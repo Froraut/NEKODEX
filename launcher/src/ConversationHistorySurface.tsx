@@ -1,6 +1,7 @@
 import { CanonicalHistoryPanel } from "./CanonicalHistoryPanel";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Button, Checkbox, Notice, Panel, Select, TextField } from "./design";
+import { Button, Checkbox, Notice, Panel, PanelStack, Select, TextField } from "./design";
+import type { TranscriptSubscriptionStatus } from "./conversation-history-types";
 import type { Language } from "./types";
 import type { ConversationHistoryApi, HistoryMarkdownExport, HistoryMessage, HistoryPage, HistoryStatus, HistoryThread, ThreadIdentity } from "./conversation-history-types";
 import "./surfaces/conversation-history.css";
@@ -13,6 +14,7 @@ const COPY = {
 
 export function ConversationHistorySurface({ api, language = "en" }: { api: ConversationHistoryApi; language?: Language }) {
   const copy = language === "ru" ? COPY.ru : COPY.en;
+  const [subscriptions, setSubscriptions] = useState<TranscriptSubscriptionStatus[]>([]);
   const [status, setStatus] = useState<HistoryStatus | null>(null);
   const [consent, setConsent] = useState(false);
   const [threads, setThreads] = useState<HistoryPage<HistoryThread> | null>(null);
@@ -43,8 +45,8 @@ export function ConversationHistorySurface({ api, language = "en" }: { api: Conv
   const refresh = async (offset = 0) => {
     const token = ++generation.current; setLoading(true); setError("");
     try {
-      const [nextStatus, nextThreads] = await Promise.all([ask<HistoryStatus>({ action: "status" }), ask<HistoryPage<HistoryThread>>({ action: "threads", limit: PAGE, offset })]);
-      if (token === generation.current) { setStatus(nextStatus); setThreads(nextThreads); }
+      const [nextStatus, nextThreads, nextSubscriptions] = await Promise.all([ask<HistoryStatus>({ action: "status" }), ask<HistoryPage<HistoryThread>>({ action: "threads", limit: PAGE, offset }), ask<TranscriptSubscriptionStatus[]>({ action: "transcript-subscriptions" })]);
+      if (token === generation.current) { setStatus(nextStatus); setThreads(nextThreads); setSubscriptions(nextSubscriptions); }
     } catch (reason) { if (token === generation.current) failure(reason); }
     finally { if (token === generation.current) setLoading(false); }
   };
@@ -97,19 +99,31 @@ export function ConversationHistorySurface({ api, language = "en" }: { api: Conv
   const rows = exact ? [exact] : page?.items ?? [];
   return <section className="conversation-history" aria-label={copy.title}>
     <Panel title={copy.title} actions={<Button disabled={busy || loading} onClick={() => { setThread(null); setMessages(null); setSearchResults(null); setExact(null); void refresh(); }}>{copy.refresh}</Button>}>
+      <PanelStack className="conversation-history__stack">
       <p>{copy.boundary}</p>
-      <p className="conversation-history__muted">{copy.coverage}</p>
+      <p className="conversation-history__coverage">{copy.coverage}</p>
       {error ? <Notice tone="error" title={error} role="alert" /> : null}
       {notice ? <p role="status">{notice}</p> : null}
       {!status?.recordingEnabled ? <Checkbox label={copy.consent} checked={consent} onChange={setConsent} disabled={busy} /> : null}
-      <Button disabled={busy || !status || (!status.recordingEnabled && !consent)} onClick={() => void action(async () => {
+      <div className="conversation-history__actions"><Button disabled={busy || !status || (!status.recordingEnabled && !consent)} onClick={() => void action(async () => {
         const next = await ask<HistoryStatus>({ action: "set-recording", enabled: !status!.recordingEnabled, consent }); setStatus(next);
-      })}>{status?.recordingEnabled ? copy.disable : copy.enable}</Button>
+      })}>{status?.recordingEnabled ? copy.disable : copy.enable}</Button></div>
       {status ? <p role="status">{copy.total}: {status.totalMessages} · {copy.indexed}: {status.indexedMessages} · {copy.partial}: {status.incompleteMessages} · {status.storedBytes.toLocaleString()} / {status.maxStoredBytes.toLocaleString()} bytes</p> : null}
       {status?.quotaReached ? <Notice tone="warning" title={copy.stopped} /> : null}
+      </PanelStack>
     </Panel>
     <CanonicalHistoryPanel api={api} language={language} globallyEnabled={status?.recordingEnabled===true} onCaptured={()=>{void refresh();}}/>
+    <Panel title={language === "ru" ? "Подписки на разрешённый текст" : "Consented text subscriptions"}>
+      <PanelStack className="conversation-history__stack">
+      <p className="conversation-history__coverage">{language === "ru" ? "Подписка требует отдельного согласия для текущей задачи, поколения и источника в Agent mode. Сейчас Native передаёт только подтверждённые частичные проекции ответа. Полная переписка клиента и фоновый поток недоступны. Отключение сохраняет уже записанный текст." : "Subscriptions require separate consent for the current task, generation and source in Agent mode. Native currently supplies authenticated partial answer projections. Complete client transcripts and background feeds are unavailable. Stopping preserves retained text."}</p>
+      {!subscriptions.length ? <p>{language === "ru" ? "Подписок нет." : "No subscriptions."}</p> : <ul className="conversation-history__subscriptions">{subscriptions.map(row => <li key={JSON.stringify(row.scope)}>
+        <p><strong>{row.scope.taskId}</strong> · {language === "ru" ? "поколение" : "generation"} {row.scope.generation} · {row.scope.profileId} · {row.enabled && row.recordingEnabled ? (language === "ru" ? "разрешена" : "consented") : (language === "ru" ? "остановлена" : "stopped")} · {row.activeSubscriptions} {language === "ru" ? "активных потоков" : "active streams"}</p>
+        <div className="conversation-history__actions"><Button size="sm" disabled={busy || !row.enabled} onClick={() => void action(async () => { await ask({ action: "transcript-revoke", taskId: row.scope.taskId, generation: row.scope.generation }); await refresh(); })}>{language === "ru" ? "Остановить запись поколения задачи" : "Stop task-generation capture"}</Button></div>
+      </li>)}</ul>}
+      </PanelStack>
+    </Panel>
     <Panel title={copy.search}>
+      <PanelStack className="conversation-history__stack">
       <form className="conversation-history__actions" onSubmit={event => { event.preventDefault(); void search(query); }}>
         <TextField label={copy.search} value={query} onChange={event => setQuery(event.target.value)} maxLength={256} type="search" />
         <Button type="submit" disabled={busy || loading || !query.trim()}>{copy.search}</Button>
@@ -122,44 +136,50 @@ export function ConversationHistorySurface({ api, language = "en" }: { api: Conv
           void openExact({clientId,threadId,messageId,revisionId});
         } catch { setError(copy.invalidLink); }
       }}>{copy.open}</Button></div></details>
+      </PanelStack>
     </Panel>
     <div className="conversation-history__columns">
       <Panel title={copy.title}>
-        <ul className="conversation-history__threads">{threads?.items.map(row => <li key={JSON.stringify([row.clientId,row.threadId])}><Button disabled={busy || loading} variant="ghost" onClick={() => void openThread(row)}><strong>{row.threadId}</strong><span>{row.clientId} · {row.messages} · {row.incompleteMessages} {copy.partial.toLowerCase()}</span></Button></li>)}</ul>
+        <PanelStack className="conversation-history__stack">
+        <ul className="conversation-history__threads">{threads?.items.map(row => <li key={JSON.stringify([row.clientId,row.threadId])}><Button disabled={busy || loading} variant="ghost" onClick={() => void openThread(row)}><span className="conversation-history__thread-label"><strong>{row.threadId}</strong>{" "}<span>{row.clientId} · {row.messages} · {row.incompleteMessages} {copy.partial.toLowerCase()}</span></span></Button></li>)}</ul>
         {!threads?.items.length && !loading ? <p>{copy.empty}</p> : null}
         <div className="conversation-history__actions"><Button disabled={busy || loading || !threads || !threads.offset} onClick={() => void refresh(Math.max(0, threads!.offset - PAGE))}>{copy.previous}</Button><Button disabled={busy || loading || !threads?.hasMore} onClick={() => void refresh(threads!.offset + PAGE)}>{copy.next}</Button></div>
+        </PanelStack>
       </Panel>
       <Panel title={exact ? copy.exact : thread?.threadId ?? copy.content}>
+        <PanelStack className="conversation-history__stack">
         {exact ? <Button onClick={() => { setExact(null); if (!messages && !searchResults) void openThread(exact); }}>{copy.back}</Button> : null}
         {(thread || exact) ? <div className="conversation-history__actions"><span>{selected.length} {copy.selected}</span><Button disabled={busy || loading} onClick={() => void exportText(false)}>{copy.copy}</Button><Button disabled={busy || loading} onClick={() => void exportText(true)}>{copy.export}</Button>{thread && !exact ? <Button variant="danger" disabled={busy || loading} onClick={() => setDeleting(true)}>{copy.remove}</Button> : null}</div> : null}
-        {deleting && thread ? <div role="group" aria-label={copy.confirm}><p>{copy.confirm}</p><Button variant="danger" disabled={busy} onClick={() => void action(async () => {
+        {deleting && thread ? <div className="conversation-history__confirmation" role="group" aria-label={copy.confirm}><p>{copy.confirm}</p><div className="conversation-history__actions"><Button variant="danger" disabled={busy} onClick={() => void action(async () => {
           await ask({action:"delete-thread",...thread}); setDeleting(false); setThread(null); setMessages(null); setSelected([]); await refresh();
-        })}>{copy.yes}</Button><Button disabled={busy} onClick={() => setDeleting(false)}>{copy.cancel}</Button></div> : null}
+        })}>{copy.yes}</Button><Button disabled={busy} onClick={() => setDeleting(false)}>{copy.cancel}</Button></div></div> : null}
         {loading ? <p role="status" aria-live="polite">…</p> : rows.map(row => <article className="conversation-history__message" key={JSON.stringify([row.clientId,row.threadId,row.messageId,row.revisionId])}>
           <div className="conversation-history__actions">{thread && !exact ? <Checkbox label={`${copy.selection}: ${row.messageId}`} checked={selected.includes(row.messageId)} onChange={value => setSelected(ids => value ? [...ids,row.messageId] : ids.filter(id => id !== row.messageId))} /> : null}<strong>{row.role} · {row.author}</strong><Button size="sm" disabled={busy || loading} onClick={() => void openExact(row)}>{copy.exact}</Button><Button size="sm" disabled={busy} onClick={() => void action(async () => { await api.copyText(row.link); setNotice(copy.copied); })}>{copy.link}</Button></div>
-          {row.capturePolicy === 'owned-native-final-summary-v1' ? <p className="conversation-history__muted">{language === 'ru' ? 'Итог Native-агента: частичная проекция ответа, сохранённая с отдельным согласием для поколения задачи.' : 'Native agent final summary: a partial projection retained with separate task-generation consent.'}</p> : null}
-          <div className="conversation-history__actions"><Button size="sm" variant="danger" disabled={busy || loading} onClick={() => setDeletingMessage(row.link)}>{language === "ru" ? "Удалить сообщение" : "Delete message"}</Button>
-          {deletingMessage === row.link ? <span role="group" aria-label={language === "ru" ? "Удалить все редакции сообщения?" : "Delete every revision of this message?"}>{language === "ru" ? "Удалить все редакции сообщения?" : "Delete every revision of this message?"}<Button size="sm" variant="danger" disabled={busy} onClick={() => void action(async () => {
+          {row.transcript ? <p className="conversation-history__muted">{language === "ru" ? "Подтверждённый текст источника" : "Authenticated source text"} · {row.transcript.scope.taskId} · {row.transcript.scope.generation} · {row.transcript.scope.profileId} · {row.transcript.scope.authEpoch} · {row.transcript.sourceRevision}</p> : null}
+          {row.capturePolicy === 'owned-native-final-summary-v1'  ? <p className="conversation-history__muted">{language === 'ru' ? 'Итог Native-агента: частичная проекция ответа, сохранённая с отдельным согласием для поколения задачи.' : 'Native agent final summary: a partial projection retained with separate task-generation consent.'}</p> : null}
+          <div className="conversation-history__actions"><Button size="sm" variant="danger" disabled={busy || loading} onClick={() => setDeletingMessage(row.link)}>{language === "ru" ? "Удалить сообщение" : "Delete message"}</Button></div>
+          {deletingMessage === row.link ? <div className="conversation-history__confirmation" role="group" aria-label={language === "ru" ? "Удалить все редакции сообщения?" : "Delete every revision of this message?"}><p>{language === "ru" ? "Удалить все редакции сообщения?" : "Delete every revision of this message?"}</p><div className="conversation-history__actions"><Button size="sm" variant="danger" disabled={busy} onClick={() => void action(async () => {
             const currentThread = thread; const currentSearch = searchResults ? activeQuery : null;
             await ask({action:"delete-message",clientId:row.clientId,threadId:row.threadId,messageId:row.messageId});
             setDeletingMessage(null); setExact(null); await refresh();
             if (currentSearch !== null) await search(currentSearch); else await openThread(currentThread ?? row);
-          })}>{copy.yes}</Button><Button size="sm" disabled={busy} onClick={() => setDeletingMessage(null)}>{copy.cancel}</Button></span> : null}</div>
+          })}>{copy.yes}</Button><Button size="sm" disabled={busy} onClick={() => setDeletingMessage(null)}>{copy.cancel}</Button></div></div> : null}
           <p className="conversation-history__muted">{row.source} · {row.messageId} · {row.revisionId} · {row.coverage}{row.coverageReason ? ` (${row.coverageReason})` : ""}</p>
           <pre>{row.text ?? `${copy.incomplete}: ${row.originalBytes} bytes`}</pre>
         </article>)}
         {!loading && !rows.length ? <p>{copy.empty}</p> : null}
         {!exact && page ? <div className="conversation-history__actions"><Button disabled={busy || loading || !page.offset} onClick={() => searchResults ? void search(activeQuery, Math.max(0,page.offset-PAGE)) : thread ? void openThread(thread,Math.max(0,page.offset-PAGE)) : undefined}>{copy.previous}</Button><span>{page.total ? page.offset+1 : 0}–{page.offset+page.items.length} / {page.total}</span><Button disabled={busy || loading || !page.hasMore} onClick={() => searchResults ? void search(activeQuery,page.offset+PAGE) : thread ? void openThread(thread,page.offset+PAGE) : undefined}>{copy.next}</Button></div> : null}
+        </PanelStack>
       </Panel>
     </div>
     <Panel title={copy.import}>
       <form onSubmit={saveSelection} className="conversation-history__import">
         <TextField label={copy.task} value={draftThread} onChange={event => { setDraftThread(event.target.value); setChecked(false); renewDraft(); }} maxLength={120} required />
         <div className="conversation-history__actions"><Select label={copy.role} value={draftRole} onChange={value => { setDraftRole(value); setChecked(false); renewDraft(); }} options={[{value:"user",label:"user"},{value:"assistant",label:"assistant"}]} /><Select label={copy.author} value={draftAuthor} onChange={value => { setDraftAuthor(value); setChecked(false); renewDraft(); }} options={[{value:"unknown",label:"unknown"},{value:"human",label:"human"},{value:"assistant",label:"assistant"},{value:"agent",label:"agent"}]} /></div>
-        <label>{copy.text}<textarea value={draftText} onChange={event => { setDraftText(event.target.value); setChecked(false); renewDraft(); }} rows={7} required aria-invalid={draftTooLarge || undefined} aria-describedby="history-draft-size" /></label>
+        <label className="conversation-history__text-field"><span>{copy.text}</span><textarea value={draftText} onChange={event => { setDraftText(event.target.value); setChecked(false); renewDraft(); }} rows={7} required aria-invalid={draftTooLarge || undefined} aria-describedby="history-draft-size" /></label>
         <p id="history-draft-size" role={draftTooLarge ? "alert" : undefined}>{draftBytes.toLocaleString()} / {(status?.maxMessageBytes ?? 524288).toLocaleString()} bytes{draftTooLarge ? (language === "ru" ? " — превышен лимит сообщения; выберите меньший текст. Текст не обрезан." : " — message limit exceeded; select less text. Text has not been truncated.") : ""}</p>
         <Checkbox checked={checked} onChange={setChecked} label={copy.checked} />
-        <Button type="submit" disabled={busy || !status?.recordingEnabled || status.quotaReached || draftTooLarge || !checked || !draftThread.trim() || !draftText.trim()}>{copy.save}</Button>
+        <div className="conversation-history__actions"><Button type="submit" disabled={busy || !status?.recordingEnabled || status.quotaReached || draftTooLarge || !checked || !draftThread.trim() || !draftText.trim()}>{copy.save}</Button></div>
       </form>
     </Panel>
   </section>;

@@ -19,8 +19,8 @@
 .nk-workspace__text:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .nk-workspace__text[readonly] { color: var(--text-secondary); }
 .nk-workspace__note { color: var(--text-secondary); font-size: 12px; margin: 0; }
-.nk-workspace__conflict { display: grid; gap: var(--space-3); }
-.nk-workspace__diff, .nk-workspace__status { max-height: 440px; overflow: auto; white-space: pre; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-under); color: var(--text-secondary); font: 12px/1.65 var(--font-mono); }
+.nk-workspace__conflict { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-3); min-width: 0; }
+.nk-workspace__diff, .nk-workspace__status { box-sizing: border-box; max-width: 100%; max-height: 440px; overflow: auto; white-space: pre; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-under); color: var(--text-secondary); font: 12px/1.65 var(--font-mono); }
 .nk-workspace__diff:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .nk-workspace__status { max-height: 160px; }
 .nk-workspace__oids { display: flex; flex-wrap: wrap; gap: var(--space-3); color: var(--text-tertiary); font-size: 12px; }
@@ -31,3 +31,48 @@
   .nk-workspace__files { max-height: 380px; overflow: auto; }
   .nk-workspace__text { min-height: 300px; }
 }
+
+/* Local workspace panels own their spacing; opening a remote screen is not required. */
+.nk-workspace__panel { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-3); }
+.nk-workspace__panel > .nk-panel__header, .nk-workspace__editor > .nk-panel__header { margin-bottom: 0; }
+.nk-workspace__panel > :where(p, h3, h4, pre), .nk-workspace__editor > :where(p, h3, h4, pre), .nk-workspace__conflict > :where(h3, pre) { margin-block: 0; }
+.nk-workspace__panel > .nk-btn, .nk-workspace__conflict > .nk-btn { align-self: flex-start; max-width: 100%; }
+.nk-workspace__panel :where(code, summary), .nk-workspace__editor :where(code, h3) { overflow-wrap: anywhere; }
+.nk-workspace__editor > .nk-panel__header { align-items: flex-start; }
+.nk-workspace__editor > .nk-panel__header > h2 { flex: 1 1 180px; min-width: 0; }
+.nk-workspace__editor > .nk-panel__header > .nk-workspace__actions { flex: 1 1 auto; justify-content: flex-end; }
+.nk-workspace__actions > :where(.nk-btn, .nk-badge), .nk-workspace__drafts > .nk-btn { max-width: 100%; }
+.nk-workspace__drafts > .nk-btn { overflow-wrap: anywhere; white-space: normal; text-align: left; }
+.nk-workspace__form-actions { align-items: flex-end; }
+.nk-workspace__form-actions > .nk-field { flex: 1 1 200px; min-width: 0; }
+.nk-workspace__actions:empty, .nk-local-git .nk-remote-git__files:empty, .nk-local-git .nk-remote-git__review > ul:empty { display: none; }
+.nk-workspace__worktree, .nk-workspace__selection { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-3); min-width: 0; }
+.nk-workspace__worktree { padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.nk-workspace__worktree > p, .nk-workspace__selection > h4 { margin: 0; }
+.nk-workspace__worktree :where(p, small), .nk-workspace__selection .nk-check, .nk-local-git .nk-check { overflow-wrap: anywhere; min-width: 0; }
+.nk-workspace__selection .nk-check, .nk-local-git .nk-check { align-items: flex-start; }
+.nk-workspace__selection .nk-check input, .nk-local-git .nk-check input { flex-shrink: 0; margin-top: 2px; }
+.nk-workspace__paths { box-sizing: border-box; width: 100%; min-height: 96px; resize: vertical; padding: var(--space-3); border: 1px solid var(--border-heavy); border-radius: var(--radius-sm); background: var(--bg-under); color: var(--text-primary); font: 12px/1.6 var(--font-mono); }
+.nk-workspace__paths:focus-visible, .nk-workspace__restore-file pre:focus-visible, .nk-local-git :where(pre, .nk-local-git__table):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.nk-workspace__paths-list { display: grid; gap: var(--space-1); margin: var(--space-2) 0 0; padding-inline-start: var(--space-4); overflow-wrap: anywhere; }
+.nk-workspace__restore-file { display: grid; gap: var(--space-2); min-width: 0; margin-block: var(--space-4); }
+.nk-workspace__restore-file > :where(h4, p, pre) { margin-block: 0; }
+.nk-workspace__restore-file h4 { overflow-wrap: anywhere; }
+.nk-workspace__restore-file pre { box-sizing: border-box; max-width: 100%; max-height: 300px; overflow: auto; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-under); font: 12px/1.6 var(--font-mono); }
+.nk-local-git .nk-remote-git__file > .nk-check { flex: 1 1 240px; }
+.nk-local-git :where(p, li, summary) { overflow-wrap: anywhere; }
+.nk-local-git .nk-remote-git__review { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-3); min-width: 0; }
+.nk-local-git .nk-remote-git__review > :where(h3, p, ul, pre), .nk-local-git details > :where(p, pre) { margin-block: 0; }
+.nk-local-git details > p + pre { margin-top: var(--space-2); }
+.nk-local-git .nk-remote-git__review > .nk-btn { align-self: flex-start; max-width: 100%; }
+.nk-local-git details > summary { cursor: pointer; }
+.nk-local-git details[open] > summary { margin-bottom: var(--space-3); }
+.nk-local-git details pre { box-sizing: border-box; max-width: 100%; max-height: 430px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.nk-local-git__table { max-width: 100%; overflow-x: auto; }
+.nk-local-git__table table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; }
+.nk-local-git__table :where(th, td) { padding: var(--space-2); border-bottom: 1px solid var(--border); vertical-align: top; }
+.nk-local-git__record { display: grid; gap: var(--space-2); margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border); }
+.nk-local-git__record > p { margin: 0; }
+
+.nk-workspace__selection .nk-check > span, .nk-local-git .nk-check > span { min-width: 0; overflow-wrap: anywhere; }
+.nk-local-git .nk-remote-git__message { background: var(--bg-under); border-color: var(--border-heavy); }

@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { WorkspaceTerminal } from './WorkspaceTerminal';
+import { WorkspaceEditor, waitForWorkspaceDraftMutations } from './WorkspaceEditor';
 import { WorktreeControls } from './WorktreeControls';
+import LocalGitReviewPanel from './LocalGitReviewPanel';
 import type { LocalWorkspaceRoot, WorkspaceDraft, WorkspaceGitBases, WorkspaceGitDiff, WorkspaceGitStatus,
-  WorkspaceListing, WorkspacePreview } from "../electron/local-workspace.cjs";
+  WorkspaceListing } from "../electron/local-workspace.cjs";
 import type { Language } from "./types";
-import { Badge, Button, Dialog, Notice, Page, Panel, Select, SurfaceHeader, TextField } from "./design";
+import { Button, Notice, Page, Panel, Select, SurfaceHeader, TextField } from "./design";
 import "./surfaces/workspace.css";
 
 const copy = {
@@ -57,14 +59,6 @@ const api = () => {
   return window.codexWebLauncher;
 };
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
-// Serialize draft/save mutations for a file even when its editor unmounts and remounts.
-const mutationQueues = new Map<string, Promise<unknown>>();
-function enqueue<T>(key: string, action: () => Promise<T>): Promise<T> {
-  const next = (mutationQueues.get(key) || Promise.resolve()).catch(() => {}).then(action);
-  mutationQueues.set(key, next);
-  void next.finally(() => { if (mutationQueues.get(key) === next) mutationQueues.delete(key); }).catch(() => {});
-  return next;
-}
 
 function DirectoryBranch({ workspaceId, directory, label, onOpen, c, initialOpen = false }: {
   workspaceId: string; directory: string; label: string; onOpen: (path: string) => void; c: Copy; initialOpen?: boolean;
@@ -99,151 +93,11 @@ function DirectoryBranch({ workspaceId, directory, label, onOpen, c, initialOpen
   </div>;
 }
 
-type EditorModel = { preview: WorkspacePreview; text: string; draftId?: string; dirty: boolean; version: number };
-function WorkspaceEditor({ workspaceId, path, c, onChanged, onClose }: {
-  workspaceId: string; path: string; c: Copy; onChanged: () => void; onClose: () => void;
+
+function GitReview({ workspaceId, c, language, dirtyPaths, onChanged, onOpenFile, onOpenWorktree }: {
+  workspaceId: string; c: Copy; language: Language; dirtyPaths: string[]; onChanged: (paths?: string[]) => void;
+  onOpenFile: (path: string) => void; onOpenWorktree: (root: LocalWorkspaceRoot) => void;
 }) {
-  const [model, setModel] = useState<EditorModel | null>(null);
-  const current = useRef<EditorModel | null>(null);
-  const active = useRef(true);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [error, setError] = useState("");
-  const [note, setNote] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [conflict, setConflict] = useState(false);
-  const [latest, setLatest] = useState<WorkspacePreview | null>(null);
-  const [discarding, setDiscarding] = useState(false);
-  const key = `${workspaceId}:${path}`;
-  const update = (value: EditorModel) => { current.current = value; if (active.current) setModel(value); };
-  const clearTimer = () => { if (timer.current) clearTimeout(timer.current); timer.current = null; };
-  const input = (value: EditorModel) => ({ path, text: value.text, expectedRevision: value.preview.revision,
-    ...(value.draftId ? { draftId: value.draftId } : {}) });
-  const retain = (value: EditorModel) => enqueue(key, async () => {
-    const draft = await api().workspaceRetainDraft(workspaceId, input(value));
-    if (active.current && current.current?.version === value.version) {
-      update({ ...current.current, draftId: draft.id }); setNote(c.retained); onChanged();
-    }
-    return draft;
-  });
-  useEffect(() => {
-    active.current = true;
-    let loadingCurrent = true;
-    void (async () => {
-      await mutationQueues.get(key)?.catch(() => {});
-      const [fileResult, draftResult] = await Promise.allSettled([
-        api().workspacePreview(workspaceId, path), api().workspaceDrafts(workspaceId),
-      ]);
-      if (!active.current || !loadingCurrent) return;
-      const draft = draftResult.status === "fulfilled" ? draftResult.value.find((item) => item.path === path) : null;
-      if (fileResult.status === "rejected") setError(message(fileResult.reason));
-      if (draftResult.status === "rejected") setError(message(draftResult.reason));
-      const preview = fileResult.status === "fulfilled" ? fileResult.value : draft
-        ? { path, state: "text" as const, text: draft.text, revision: draft.expectedRevision, size: new TextEncoder().encode(draft.text).length }
-        : null;
-      if (preview) {
-        update({ preview, text: draft?.text ?? preview.text ?? "", draftId: draft?.id, dirty: Boolean(draft), version: 0 });
-        if (draft) { setNote(c.recovering); setConflict(preview.revision !== draft.expectedRevision); }
-        // A recovered candidate always keeps its original baseline until explicit conflict resolution.
-        if (draft) update({ ...current.current!, preview: { ...preview, revision: draft.expectedRevision } });
-      }
-    })().catch((reason) => { if (active.current && loadingCurrent) setError(message(reason)); });
-    return () => {
-      loadingCurrent = false; active.current = false; clearTimer();
-      void enqueue(key, async () => {
-        const value = current.current;
-        if (value?.dirty) await api().workspaceRetainDraft(workspaceId, input(value));
-      }).catch(() => {});
-    };
-    // A parent key remounts the editor for every workspace/file identity.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
-
-  function edit(text: string) {
-    if (!current.current) return;
-    const value = { ...current.current, text, dirty: true, version: current.current.version + 1 };
-    update(value); setNote(c.dirty); clearTimer();
-    timer.current = setTimeout(() => { timer.current = null; void retain(value).catch((reason) => {
-      if (active.current) setError(message(reason));
-    }); }, 600);
-  }
-  async function save(expected?: WorkspacePreview) {
-    const value = current.current; if (!value) return;
-    clearTimer(); setBusy(true); setError("");
-    try {
-      const result = await enqueue(key, () => api().workspaceSave(workspaceId,
-        { ...input(value), ...(expected ? { expectedRevision: expected.revision } : {}) }));
-      if (result.state === "saved") {
-        const latestModel = current.current!;
-        const unchangedText = latestModel.version === value.version;
-        update({ ...latestModel, preview: { ...latestModel.preview, revision: result.revision, state: "text" },
-          dirty: !unchangedText, draftId: result.draftRetained ? result.draftId : undefined });
-        if (!active.current) return;
-        setNote(unchangedText ? result.draftRetained ? c.kept : c.saved : c.dirty); setConflict(false); setLatest(null);
-        if (!unchangedText) void retain(current.current!).catch((reason) => { if (active.current) setError(message(reason)); });
-      } else { if (!active.current) return; setConflict(result.state === "conflict"); setError(result.state === "conflict" ? c.conflict : result.message);
-        update({ ...current.current!, draftId: result.draftId }); }
-      onChanged();
-    } catch (reason) { if (active.current) setError(message(reason)); }
-    finally { if (active.current) setBusy(false); }
-  }
-  async function review() {
-    setBusy(true); setError("");
-    try { const value = await api().workspacePreview(workspaceId, path); if (active.current) setLatest(value); }
-    catch (reason) { if (active.current) setError(message(reason)); }
-    finally { if (active.current) setBusy(false); }
-  }
-  async function closeEditor() {
-    clearTimer(); setBusy(true); setError("");
-    try {
-      if (current.current?.dirty) await retain(current.current);
-      if (active.current) onClose();
-    } catch (reason) { if (active.current) setError(message(reason)); }
-    finally { if (active.current) setBusy(false); }
-  }
-  async function discard() {
-    clearTimer(); setBusy(true); setError("");
-    try {
-      await enqueue(key, async () => {
-        const stored = (await api().workspaceDrafts(workspaceId)).find((draft) => draft.path === path);
-        if (stored) await api().workspaceDiscardDraft(workspaceId, stored.id);
-        const preview = await api().workspacePreview(workspaceId, path);
-        update({ preview, text: preview.text ?? "", dirty: false, version: (current.current?.version || 0) + 1 });
-      });
-      if (active.current) {
-        setConflict(false); setLatest(null); setNote(""); setDiscarding(false); onChanged(); }
-    } catch (reason) { if (active.current) setError(message(reason)); }
-    finally { if (active.current) setBusy(false); }
-  }
-  const editable = model && ["text", "missing"].includes(model.preview.state);
-  return <Panel title={path} className="nk-workspace__editor" actions={<div className="nk-workspace__actions">
-    {model?.dirty && <Badge tone="warning">{c.dirty}</Badge>}
-    <Button size="sm" disabled={!model?.dirty || busy} onClick={() => setDiscarding(true)}>{c.discard}</Button>
-    <Button variant="primary" size="sm" busy={busy} disabled={!editable || !model?.dirty || conflict} onClick={() => void save()}>{c.save}</Button>
-    <Button size="sm" disabled={busy} onClick={() => void closeEditor()}>{c.close}</Button>
-  </div>}>
-    {error && <Notice tone="error">{error}</Notice>}
-    {note && <p className="nk-workspace__note" role="status">{note}</p>}
-    {!model && !error && <p role="status">{c.loading}</p>}
-    {model?.preview.state === "binary" && <Notice>{c.binary}</Notice>}
-    {model?.preview.state === "truncated" && <Notice tone="warning">{c.truncated}</Notice>}
-    {model?.preview.state === "missing" && <p>{c.missing}</p>}
-    {model && <textarea aria-label={`${c.editor}: ${path}`} className="nk-workspace__text" spellCheck={false}
-      value={model.text} readOnly={!editable || busy} onChange={(event) => edit(event.target.value)}
-      onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "s") { event.preventDefault(); if (!busy && editable && !conflict) void save(); } }} />}
-    {conflict && <div className="nk-workspace__conflict">
-      <Notice tone="warning" action={<Button size="sm" disabled={busy} onClick={() => void review()}>{c.review}</Button>}>{c.conflict}</Notice>
-      {latest && <><h3>{c.disk}</h3><pre className="nk-workspace__diff">{latest.text ?? c.binary}</pre>
-        <Button busy={busy} disabled={!["text", "missing"].includes(latest.state)} onClick={() => void save(latest)}>{c.resolve}</Button></>}
-    </div>}
-    <Dialog open={discarding} title={c.discardTitle} onClose={() => { if (!busy) setDiscarding(false); }}
-      actions={<><Button disabled={busy} onClick={() => setDiscarding(false)}>{c.cancel}</Button>
-        <Button variant="danger" busy={busy} onClick={() => void discard()}>{c.discard}</Button></>}>
-      <p>{c.discardBody}</p>
-    </Dialog>
-  </Panel>;
-}
-
-function GitReview({ workspaceId, c, language, onOpenWorktree }: { workspaceId: string; c: Copy; language: Language; onOpenWorktree: (root: LocalWorkspaceRoot) => void }) {
   const [bases, setBases] = useState<WorkspaceGitBases | null>(null);
   const [selectedBase, setSelectedBase] = useState("HEAD");
   const [snapshot, setSnapshot] = useState<WorkspaceGitStatus | null>(null);
@@ -283,7 +137,7 @@ function GitReview({ workspaceId, c, language, onOpenWorktree }: { workspaceId: 
   }
   const choices = bases?.state === "ready" ? bases.choices : [];
   const headRef = snapshot?.state === "ready" ? snapshot.headRef : bases?.state === "ready" ? bases.headRef : null;
-  return <><Panel title={c.git} actions={<div className="nk-workspace__actions">
+  return <><Panel className="nk-workspace__panel" title={c.git} actions={<div className="nk-workspace__actions">
     <Button size="sm" busy={busy} onClick={() => void read(true)}>{c.gitRefresh}</Button>
     {snapshot?.state === "ready" && <Button size="sm" disabled={busy} onClick={() => void read(false)}>{c.gitCheck}</Button>}
   </div>}>
@@ -312,7 +166,9 @@ function GitReview({ workspaceId, c, language, onOpenWorktree }: { workspaceId: 
       {(diff.truncated || diff.binary) && <p>{diff.truncated ? c.limited : ""} {diff.binary ? c.gitBinary : ""}</p>}
       <pre className="nk-workspace__diff" tabIndex={0} aria-label={c.git}>{diff.text || c.noChanges}</pre>
     </>}
-  </Panel><WorktreeControls workspaceId={workspaceId} headOid={snapshot?.state === 'ready' ? snapshot.headOid : null} language={language} api={api()} onOpenWorktree={onOpenWorktree} /></>;
+  </Panel><LocalGitReviewPanel workspaceId={workspaceId} api={api()} language={language}
+    dirtyPaths={dirtyPaths} onChanged={onChanged} onOpenFile={onOpenFile} />
+    <WorktreeControls workspaceId={workspaceId} headOid={snapshot?.state === 'ready' ? snapshot.headOid : null} language={language} api={api()} onOpenWorktree={onOpenWorktree} dirtyPaths={dirtyPaths} onFilesChanged={onChanged} /></>;
 }
 
 export function WorkspaceSurface({ language }: { language: Language }) {
@@ -325,6 +181,17 @@ export function WorkspaceSurface({ language }: { language: Language }) {
   const [error, setError] = useState("");
   const [picking, setPicking] = useState(false);
   const [version, setVersion] = useState(0);
+  const [editorVersion, setEditorVersion] = useState(0);
+  const [dirtyPaths, setDirtyPaths] = useState<string[]>([]);
+  const editorPort = useRef<(() => Promise<void>) | null>(null);
+  const navigation = useRef(false);
+  async function navigate(action: () => void) {
+    if (navigation.current) return;
+    navigation.current = true; setError("");
+    try { await editorPort.current?.(); await refreshDrafts(); if (mounted.current) action(); }
+    catch (reason) { if (mounted.current) setError(message(reason)); }
+    finally { navigation.current = false; }
+  }
   const mounted = useRef(true);
   const selectedRef = useRef(selected); selectedRef.current = selected;
   useEffect(() => {
@@ -338,11 +205,11 @@ export function WorkspaceSurface({ language }: { language: Language }) {
     try { const value = await api().workspaceDrafts(id); if (mounted.current && selectedRef.current === id) setDrafts(value); }
     catch (reason) { if (mounted.current && selectedRef.current === id) setError(message(reason)); }
   }
-  useEffect(() => { setOpened(""); setPathInput(""); setDrafts([]); setError(""); void refreshDrafts(); }, [selected]);
+  useEffect(() => { setOpened(""); setPathInput(""); setDrafts([]); setDirtyPaths([]); setError(""); void refreshDrafts(); }, [selected]);
   async function pick() {
     setPicking(true); setError("");
     try { const root = await api().workspacePick(); if (mounted.current && root) {
-      setRoots((previous) => previous.some((item) => item.id === root.id) ? previous : [...previous, root]); setOpened(""); setSelected(root.id);
+      await navigate(() => { setRoots((previous) => previous.some((item) => item.id === root.id) ? previous : [...previous, root]); setOpened(""); setSelected(root.id); });
     } } catch (reason) { if (mounted.current) setError(message(reason)); }
     finally { if (mounted.current) setPicking(false); }
   }
@@ -350,18 +217,24 @@ export function WorkspaceSurface({ language }: { language: Language }) {
     const id = selected;
     try {
       // Flush the editor's most recent queued recovery write before removing its grant.
-      await Promise.all([...mutationQueues.entries()].filter(([key]) => key.startsWith(`${id}:`)).map(([, promise]) => promise.catch(() => {})));
+      await waitForWorkspaceDraftMutations(id);
       await api().workspaceForget(id);
       if (mounted.current) { setRoots((previous) => previous.filter((root) => root.id !== id)); setSelected(""); setOpened(""); }
     } catch (reason) { if (mounted.current) setError(message(reason)); }
   }
   const root = roots.find((item) => item.id === selected);
-  const open = (path: string) => { setOpened(path); setPathInput(path); };
+  const retainedPaths = [...new Set([...drafts.map(draft => draft.path), ...dirtyPaths])];
+  const changed = (paths?: string[]) => {
+    setVersion(previous => previous + 1);
+    if (paths?.includes(opened) && !retainedPaths.includes(opened)) setEditorVersion(previous => previous + 1);
+    void refreshDrafts();
+  };
+  const open = (path: string) => { void navigate(() => { setDirtyPaths([]); setOpened(path); setPathInput(path); }); };
   return <Page width="wide" className="nk-workspace" >
     <SurfaceHeader title={c.title} subtitle={c.subtitle} actions={<Button variant="primary" busy={picking} onClick={() => void pick()}>{c.pick}</Button>} />
     {error && <Notice tone="error">{error}</Notice>}
     {roots.length > 0 && <div className="nk-workspace__root-bar">
-      <Select label={c.folder} value={selected} onChange={(id) => { setOpened(""); setSelected(id); }} options={[{ value: "", label: c.folder }, ...roots.map((item) => ({ value: item.id, label: item.name }))]} />
+      <Select label={c.folder} value={selected} onChange={(id) => { void navigate(() => { setOpened(""); setSelected(id); }); }} options={[{ value: "", label: c.folder }, ...roots.map((item) => ({ value: item.id, label: item.name }))]} />
       {root && <><code className="nk-workspace__root-path">{root.path}</code>
         <Button size="sm" onClick={() => void forget()} disabled={Boolean(opened)} title={opened ? c.close : undefined}>{c.remove}</Button></>}
     </div>}
@@ -378,13 +251,18 @@ export function WorkspaceSurface({ language }: { language: Language }) {
             <Button size="sm" type="submit" disabled={!pathInput}>{c.open}</Button>
           </form>
         </Panel>
-        {opened ? <WorkspaceEditor key={`${root.id}:${opened}`} workspaceId={root.id} path={opened} c={c} onChanged={() => void refreshDrafts()} onClose={() => { setOpened(""); void refreshDrafts(); }} />
+        {opened ? <WorkspaceEditor key={`${root.id}:${opened}:${editorVersion}`} workspaceId={root.id} path={opened} c={c} host={api} onChanged={() => void refreshDrafts()} editorPort={editorPort}
+          onDirty={(path, dirty) => setDirtyPaths(previous => dirty ? previous.includes(path) ? previous : [...previous, path] : previous.filter(item => item !== path))}
+          onClose={() => { setOpened(""); setDirtyPaths([]); void refreshDrafts(); }} />
           : <Panel title={c.editor}><p>{c.selectFile}</p></Panel>}
       </div>
-      <GitReview key={root.id} workspaceId={root.id} c={c} language={language} onOpenWorktree={openedRoot => {
+      <GitReview key={root.id} workspaceId={root.id} c={c} language={language} dirtyPaths={retainedPaths}
+        onChanged={changed} onOpenFile={open} onOpenWorktree={openedRoot => {
         if (!mounted.current) return;
-        setRoots(previous => previous.some(item => item.id === openedRoot.id) ? previous : [...previous, openedRoot]);
-        setOpened(''); setSelected(openedRoot.id);
+        void navigate(() => {
+          setRoots(previous => previous.some(item => item.id === openedRoot.id) ? previous : [...previous, openedRoot]);
+          setOpened(''); setSelected(openedRoot.id);
+        });
       }} />
       <WorkspaceTerminal key={`terminal:${root.id}`} api={api()} workspaceId={root.id} language={language} />
     </>}

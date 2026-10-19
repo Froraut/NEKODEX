@@ -130,7 +130,7 @@ export function TitleBar({
       )}
       <ol aria-label={shellCopy(language).location} className="nk-titlebar__trail">
         {trail.map((crumb, index) => (
-          <li aria-current={index === trail.length - 1 && index > 0 ? "page" : undefined} key={index}>{crumb}</li>
+          <li aria-current={index === trail.length - 1 && index > 0 ? "page" : undefined} key={index} title={crumb}>{crumb}</li>
         ))}
       </ol>
       {/* At most one quiet status: the DEV tag replaces the Local workspace pill. The pill gives way before the
@@ -160,15 +160,15 @@ function useStatusPillFit(header: RefObject<HTMLElement | null>, content: string
     if (!bar || !pill || !label || !trail) return;
     const clipped = (element: Element | null) => Boolean(element && element.scrollWidth > element.clientWidth);
     const fit = () => {
-      const current = trail.querySelector('li[aria-current="page"]');
+      const locationClipped = () => [...trail.querySelectorAll("li")].some(clipped);
       if (!pill.classList.contains("is-icon-only")) {
-        if (clipped(current) || clipped(label)) pill.classList.add("is-icon-only");
+        if (locationClipped() || clipped(label)) pill.classList.add("is-icon-only");
         return;
       }
       // Icon only: the pill takes the label back when the free room before it holds the label, the label's gap and
       // the pill's wider padding (2 x 5px), with a pixel to spare.
       const room = pill.getBoundingClientRect().left - trail.getBoundingClientRect().right - 12;
-      if (!clipped(current) && room >= label.scrollWidth + 8 + 10 + 1) pill.classList.remove("is-icon-only");
+      if (!locationClipped() && room >= label.scrollWidth + 8 + 10 + 1) pill.classList.remove("is-icon-only");
     };
     // Start from the full pill for new content (another page, language or window state).
     pill.classList.remove("is-icon-only");

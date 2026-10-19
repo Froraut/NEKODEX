@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Badge, Button, Notice, Page, Panel, SurfaceHeader, TextField } from './design';
+import { Badge, BadgeRow, Button, Notice, Page, Panel, SurfaceHeader, TextField } from './design';
 import type { Language } from './types';
 import type { BrowserCompanionApi, BrowserCompanionPairing, BrowserCompanionStatus } from './browser-companion-types';
 import { stripIpcErrorPrefix } from './ipc-error';
@@ -7,14 +7,16 @@ import './surfaces/browser-companion.css';
 
 function copy(language: Language) {
   return language === 'ru' ? {
-    title: 'Браузерный companion', subtitle: 'Подключите одну выбранную вкладку Chrome к локальной задаче.', refresh: 'Обновить',
+    title: 'Браузерный companion', subtitle: 'Подключите одну выбранную вкладку Chrome или Firefox к локальной задаче.', refresh: 'Обновить',
     disabled: 'Выключен', listening: 'Локальный сервер включён', paired: 'Расширение сопряжено', selected: 'Вкладка выбрана', connected: 'Popup подключён', unavailable: 'Недоступен',
-    setup: 'Подключение расширения', id: 'ID расширения Chrome', idHint: '32 буквы a–p из карточки проверенного расширения в chrome://extensions.',
-    invalidId: 'Введите точный ID расширения: 32 буквы a–p.', enable: 'Включить локальное подключение', disable: 'Выключить',
+    setup: 'Подключение расширения', id: 'ID расширения', idHint: 'Chrome: 32 буквы a–p из chrome://extensions. Firefox 153+: browser-companion@nekodex.local из popup.',
+    extensionOrigin: 'Origin расширения Firefox (moz-extension://UUID)', originHint: 'Точный moz-extension://UUID из popup расширения. Для Chrome оставьте пустым.',
+    invalidId: 'Введите точный Chrome ID или Firefox ID вместе с его moz-extension://UUID.', enable: 'Включить локальное подключение', disable: 'Выключить',
     enableHint: 'Подключение запускается только этой кнопкой. После перезапуска приложения оно снова выключено.',
     install: 'В профиле Chrome для разработки откройте chrome://extensions, включите режим разработчика и выберите «Загрузить распакованное расширение». Укажите эту папку:',
+    firefoxInstall: 'Для Firefox 153+ подготовьте Firefox-артефакт расширения, затем откройте about:debugging#/runtime/this-firefox и выберите «Загрузить временное дополнение», указав его manifest.json. Файл manifest.firefox.json из исходников нужно сначала преобразовать сборкой; показанная папка Chrome не является готовым Firefox-артефактом.',
     missing: 'В этой установке не найден исходный артефакт расширения. Используйте проверенную папку browser-companion из исходников.',
-    extensionPath: 'Папка расширения', manifest: 'Manifest',
+    extensionPath: 'Папка расширения Chrome', manifest: 'Manifest',
     create: 'Создать данные сопряжения', pairing: 'Одноразовое сопряжение', copy: 'Скопировать и скрыть', hide: 'Скрыть данные',
     pairingHint: 'Откройте расширение на нужной странице, вставьте эти частные данные, нажмите Pair, затем Select current tab and connect. После копирования код скрывается.',
     copied: 'Данные сопряжения скопированы. Вставьте их в popup расширения.', revoke: 'Отозвать сопряжение',
@@ -22,19 +24,21 @@ function copy(language: Language) {
     scope: 'Текущая область', noScope: 'Откройте popup расширения и явно выберите текущую вкладку.', tab: 'Вкладка', window: 'Окно', document: 'Документ',
     operation: 'Операция', unknown: 'У ранее отправленного действия нет подтверждённого исхода. Оно не будет автоматически повторено; проверьте его результат.',
     receipt: 'Последняя остановленная операция',
-    capabilities: 'Возможности', browser: 'Chrome: наблюдение, click и type по свежим ссылкам выбранной страницы.',
-    boundaries: 'Отправка ChatGPT через companion ещё не подключена к владельцу аккаунта/turn. Native desktop требует отдельно настроенного MCP provider; Firefox пока не проверен.',
+    capabilities: 'Возможности', browser: 'Chrome и Firefox 153+: наблюдение, click и type по свежим ссылкам выбранной страницы.',
+    boundaries: 'Отправка ChatGPT через companion ещё не подключена к владельцу аккаунта/turn. Настройка native desktop выполняется отдельно. Приёмка настоящего Firefox остаётся отдельной проверкой.',
     error: 'Не удалось выполнить действие', readAfterError: 'Обновите состояние перед следующим действием. Автоматического повтора нет.', runtime: 'Запустите текущий runtime NEKODEX для подключения.',
     loading: 'Чтение состояния…', local: 'Локальный адрес', notAutoInstalled: 'Расширение не устанавливается автоматически. Сначала проверьте его исходники и разрешения.',
   } : {
-    title: 'Browser companion', subtitle: 'Connect one selected Chrome tab to a local task.', refresh: 'Refresh',
+    title: 'Browser companion', subtitle: 'Connect one selected Chrome or Firefox tab to a local task.', refresh: 'Refresh',
     disabled: 'Disabled', listening: 'Local listener enabled', paired: 'Extension paired', selected: 'Tab selected', connected: 'Popup connected', unavailable: 'Unavailable',
-    setup: 'Connect extension', id: 'Chrome extension ID', idHint: '32 letters a–p from the reviewed extension card in chrome://extensions.',
-    invalidId: 'Enter the exact extension ID: 32 letters a–p.', enable: 'Enable local connection', disable: 'Disable',
+    setup: 'Connect extension', id: 'Extension ID', idHint: 'Chrome: 32 letters a–p from chrome://extensions. Firefox 153+: browser-companion@nekodex.local from the popup.',
+    extensionOrigin: 'Firefox extension origin (moz-extension://UUID)', originHint: 'Exact moz-extension://UUID shown in the extension popup. Leave empty for Chrome.',
+    invalidId: 'Enter the exact Chrome ID, or the Firefox ID with its moz-extension://UUID.', enable: 'Enable local connection', disable: 'Disable',
     enableHint: 'Only this button starts the connection. It is off again after application restart.',
     install: 'In a development Chrome profile, open chrome://extensions, turn on Developer mode and choose Load unpacked. Select this directory:',
+    firefoxInstall: 'For Firefox 153+, prepare the Firefox extension artifact, open about:debugging#/runtime/this-firefox and choose Load Temporary Add-on with its manifest.json. The source manifest.firefox.json must first be prepared by the build; the Chrome directory shown by this runtime is not a ready Firefox artifact.',
     missing: 'This installation does not contain the extension source artifact. Use the reviewed browser-companion directory from the source checkout.',
-    extensionPath: 'Extension directory', manifest: 'Manifest',
+    extensionPath: 'Chrome extension directory', manifest: 'Manifest',
     create: 'Create pairing details', pairing: 'One-time pairing', copy: 'Copy and hide', hide: 'Hide details',
     pairingHint: 'Invoke the extension on the intended page, paste these private details, choose Pair, then Select current tab and connect. Copying hides this code.',
     copied: 'Pairing details copied. Paste them into the extension popup.', revoke: 'Revoke pairing',
@@ -42,8 +46,8 @@ function copy(language: Language) {
     scope: 'Current scope', noScope: 'Open the extension popup and explicitly select the current tab.', tab: 'Tab', window: 'Window', document: 'Document',
     operation: 'Operation', unknown: 'A previously dispatched input has no confirmed outcome. It will not be retried automatically; inspect its result.',
     receipt: 'Last stopped operation',
-    capabilities: 'Capabilities', browser: 'Chrome: observe, click and type using fresh references from the selected page.',
-    boundaries: 'Companion ChatGPT sending is not yet connected to the account/turn owner. Native desktop needs a separately configured MCP provider; Firefox has not been verified.',
+    capabilities: 'Capabilities', browser: 'Chrome and Firefox 153+: observe, click and type using fresh references from the selected page.',
+    boundaries: 'Companion ChatGPT sending is not yet connected to the account/turn owner. Native desktop is configured separately. Live Firefox acceptance remains a separate check.',
     error: 'Action failed', readAfterError: 'Refresh state before the next action. Nothing is retried automatically.', runtime: 'Start the current NEKODEX runtime to connect.',
     loading: 'Reading state…', local: 'Local address', notAutoInstalled: 'The extension is not installed automatically. Review its source and permissions first.',
   };
@@ -57,18 +61,21 @@ export function BrowserCompanionSurface({ language, api, disabled = false }: { l
   const mounted = useRef(true), pendingRef = useRef(false);
   const [state, setState] = useState<BrowserCompanionStatus | null>(null);
   const [extensionId, setExtensionId] = useState('');
+  const [extensionOrigin, setExtensionOrigin] = useState('');
   const [pairing, setPairing] = useState<BrowserCompanionPairing | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const pairingId = useId();
   const locked = disabled || pending !== null;
-  const validId = /^[a-p]{32}$/.test(extensionId);
+  const firefox = extensionId === 'browser-companion@nekodex.local';
+  const validId = /^[a-p]{32}$/.test(extensionId) && (!extensionOrigin || extensionOrigin === `chrome-extension://${extensionId}`)
+    || firefox && /^moz-extension:\/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(extensionOrigin);
   const uncertain = state?.companion?.operation?.phase === 'unknown' || state?.lastReceipt?.outcome === 'unknown';
   const update = (value: BrowserCompanionStatus) => {
     if (!mounted.current) return;
     setState(value);
-    if (value.extensionId) setExtensionId(value.extensionId);
+    if (value.extensionId) { setExtensionId(value.extensionId); setExtensionOrigin(value.extensionOrigin || ''); }
     if (!value.enabled || value.companion?.paired) setPairing(null);
   };
   async function run(name: string, operation: () => Promise<void>) {
@@ -89,7 +96,7 @@ export function BrowserCompanionSurface({ language, api, disabled = false }: { l
   const action = (name: 'enable' | 'disable' | 'revoke') => void run(name, async () => {
     setPairing(null);
     if (name === 'enable' && !validId) throw new Error(text.invalidId);
-    update(await apiRef.current.request({ action: name, ...(name === 'enable' ? { extensionId } : {}) }) as BrowserCompanionStatus);
+    update(await apiRef.current.request({ action: name, ...(name === 'enable' ? { extensionId, ...(extensionOrigin ? { extensionOrigin } : {}) } : {}) }) as BrowserCompanionStatus);
   });
   const createPairing = () => void run('pair', async () => {
     setPairing(null);
@@ -112,22 +119,24 @@ export function BrowserCompanionSurface({ language, api, disabled = false }: { l
     {error ? <Notice tone="error" title={text.error}>{error} {text.readAfterError}</Notice> : null}
     {notice ? <Notice>{notice}</Notice> : null}
     {!state && pending ? <p role="status">{text.loading}</p> : null}
-    {state ? <div className="browser-companion-badges" aria-live="polite">
+    {state ? <BadgeRow aria-live="polite">
       <Badge>{state.state === 'unavailable' ? text.unavailable : state.enabled ? text.listening : text.disabled}</Badge>
       {state.companion?.paired ? <Badge>{text.paired}</Badge> : null}
       {state.companion?.connected ? <Badge>{text.connected}</Badge> : null}
       {selected ? <Badge>{text.selected}</Badge> : null}
-    </div> : null}
+    </BadgeRow> : null}
     {state?.reason ? <Notice tone="warning">{state.reason}</Notice> : null}
     {uncertain ? <Notice tone="warning">{text.unknown}</Notice> : null}
     <Panel title={text.setup}>
       <p>{text.notAutoInstalled}</p>
-      {state?.extensionArtifact.available ? <>
+      {firefox ? <p>{text.firefoxInstall}</p> : state?.extensionArtifact.available ? <>
         <p>{text.install}</p>
         <dl className="browser-companion-data"><dt>{text.extensionPath}</dt><dd><code>{state.extensionArtifact.directory}</code></dd><dt>{text.manifest}</dt><dd><code>{state.extensionArtifact.manifestPath}</code></dd></dl>
       </> : state ? <Notice tone="warning">{text.missing}</Notice> : null}
-      <TextField label={text.id} hint={text.idHint} value={extensionId} autoComplete="off" spellCheck={false} maxLength={32}
+      <TextField label={text.id} hint={text.idHint} value={extensionId} autoComplete="off" spellCheck={false} maxLength={128}
         disabled={locked || !!state?.enabled} onChange={event => setExtensionId(event.target.value.trim())} />
+      <TextField label={text.extensionOrigin} hint={text.originHint} value={extensionOrigin} autoComplete="off" spellCheck={false} maxLength={160}
+        disabled={locked || !!state?.enabled} onChange={event => setExtensionOrigin(event.target.value.trim())} />
       <p className="browser-companion-muted">{text.enableHint}</p>
       <div className="browser-companion-actions">
         <Button variant="primary" disabled={locked || !validId || !!state?.enabled} busy={pending === 'enable'} onClick={() => action('enable')}>{text.enable}</Button>
@@ -143,7 +152,7 @@ export function BrowserCompanionSurface({ language, api, disabled = false }: { l
       </div>
       {pairing ? <div className="browser-companion-pairing">
         <label htmlFor={pairingId}>{text.pairing}</label>
-        <textarea id={pairingId} readOnly rows={5} value={JSON.stringify(pairing)} autoComplete="off" spellCheck={false} />
+        <textarea id={pairingId} readOnly rows={5} wrap="soft" value={JSON.stringify(pairing)} autoComplete="off" spellCheck={false} />
         <div className="browser-companion-actions"><Button disabled={locked} busy={pending === 'copy'} onClick={copyPairing}>{text.copy}</Button><Button disabled={locked} onClick={() => setPairing(null)}>{text.hide}</Button></div>
       </div> : null}
     </Panel>

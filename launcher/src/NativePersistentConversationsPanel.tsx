@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Badge, Button, Checkbox, EmptyState, Notice, Panel, Select } from './design';
+import { Badge, BadgeRow, Button, Checkbox, EmptyState, Notice, Panel, PanelStack, Select } from './design';
 import type { Language } from './types';
 import type { NativePersistentApi, NativePersistentContext, NativePersistentRequest, NativePersistentSnapshot } from './native-persistent-types';
 import './surfaces/native-persistent.css';
@@ -13,7 +13,10 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
 }) {
   const ru = language === 'ru';
   const promptId = useId();
-  const mounted = useRef(false), inFlight = useRef(false), pending = useRef<Mutation | null>(null);
+  const mounted = useRef(false), reading = useRef(false);
+  const pending = useRef(new Map<string, { body: Mutation; uncertain: boolean }>());
+  const [, renderPending] = useState(0);
+  const draft = useRef({ selectedId: null as string | null, prompt: '' });
   const observedContext = useRef<string | null>(null);
   const [snapshot, setSnapshot] = useState<NativePersistentSnapshot | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -21,63 +24,97 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
   const [prompt, setPrompt] = useState('');
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [uncertain, setUncertain] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const transport = useRef(api); transport.current = api;
   const selected = snapshot?.conversations.find(row => row.id === selectedId);
-  const locked = disabled || busy || uncertain || snapshot?.busy === true;
+  draft.current = { selectedId, prompt };
+  const uncertain = [...pending.current.values()].some(row => row.uncertain)
+    || snapshot?.actions.some(row => row.state === 'unknown' || settled.has(row.state) && row.ownerHeld === true) === true;
+  const reserved = new Set([...pending.current.values()].flatMap(({ body }) => body.action === 'create' ? [] : [body.conversationId]));
+  for (const row of snapshot?.conversations ?? []) if (row.status === 'running' && row.parentId) reserved.add(row.parentId);
+  const selectionBusy = selectedId ? reserved.has(selectedId) : [...pending.current.values()].some(row => row.body.action === 'create');
+  const locked = disabled || uncertain || selectionBusy;
   const textAllowed = Boolean(prompt.trim()) && new TextEncoder().encode(prompt).length <= 32 * 1024;
 
-  const accept = (value: NativePersistentSnapshot) => {
+  const accept = (value: NativePersistentSnapshot, requestedContext: string | null) => {
     const contextKey = JSON.stringify([value.profileId, value.epoch, value.serverGeneration]);
+    if (observedContext.current !== requestedContext && observedContext.current !== contextKey) return;
     if (observedContext.current !== contextKey || !value.models.some(row => row.id === model)) setConsent(false);
     observedContext.current = contextKey;
-    setSnapshot(value);
+    // Concurrent replies may contain older snapshots. Never replace a newer row or terminal action.
+    setSnapshot(previous => {
+      if (!previous || JSON.stringify([previous.profileId, previous.epoch, previous.serverGeneration]) !== contextKey) return value;
+      return { ...value,
+        conversations: [...previous.conversations.filter(prior => !value.conversations.some(row => row.id === prior.id)), ...value.conversations.map(row => {
+          const prior = previous.conversations.find(candidate => candidate.id === row.id);
+          return prior && (prior.revision > row.revision || prior.revision === row.revision && (prior.updatedAt > row.updatedAt || prior.status !== 'running' && row.status === 'running')) ? prior : row;
+        })],
+        actions: [...previous.actions.filter(prior => !value.actions.some(row => row.actionId === prior.actionId)), ...value.actions.map(row => {
+          const prior = previous.actions.find(candidate => candidate.actionId === row.actionId);
+          return prior && settled.has(prior.state) && !settled.has(row.state) ? prior : row;
+        })],
+      };
+    });
     setModel(previous => value.models.some(row => row.id === previous) ? previous : value.models[0]?.id || '');
-    const outstanding = pending.current;
-    if (outstanding) {
-      const receipt = value.observedAction?.actionId === outstanding.actionId ? value.observedAction
-        : value.actions.find(row => row.actionId === outstanding.actionId);
-      if (receipt && settled.has(receipt.state)) {
-        pending.current = null; setUncertain(false);
-        if (receipt.conversationId) setSelectedId(value.conversations.some(row => row.id === receipt.conversationId) ? receipt.conversationId : null);
-        if (receipt.state === 'completed') { setPrompt(''); setConsent(false); }
-      } else setUncertain(true);
+    for (const [actionId, outstanding] of pending.current) {
+      const receipt = value.observedAction?.actionId === actionId ? value.observedAction
+        : value.actions.find(row => row.actionId === actionId);
+      if (!receipt) continue;
+      if (settled.has(receipt.state) && receipt.ownerHeld !== true) {
+        pending.current.delete(actionId);
+        const sourceId = outstanding.body.action === 'create' ? null : outstanding.body.conversationId;
+        const sameDraft = draft.current.selectedId === sourceId
+          && (!('text' in outstanding.body) || draft.current.prompt === outstanding.body.text);
+        if (receipt.state === 'completed' && sameDraft) {
+          if (receipt.conversationId) setSelectedId(value.conversations.some(row => row.id === receipt.conversationId) ? receipt.conversationId : null);
+          setPrompt(''); setConsent(false);
+        }
+      } else outstanding.uncertain = receipt.state === 'unknown' || settled.has(receipt.state) && receipt.ownerHeld === true;
     }
+    renderPending(revision => revision + 1);
   };
   const expectedContext = (): NativePersistentContext | null => snapshot?.available && snapshot.profileId && snapshot.epoch && snapshot.serverGeneration
     ? { profileId: snapshot.profileId, epoch: snapshot.epoch, serverGeneration: snapshot.serverGeneration } : null;
   const read = async () => {
-    if (inFlight.current) return;
-    inFlight.current = true; if (mounted.current) setBusy(true);
+    if (reading.current) return;
+    reading.current = true; if (mounted.current) setBusy(true);
     try {
-      const response = await transport.current.nativePersistentRequest({ action: 'snapshot',
-        ...(pending.current ? { actionId: pending.current.actionId } : {}) });
-      if (!mounted.current) return;
-      if (response.ok) { accept(response.value); setError(null); }
-      else setError(response.error.code);
+      // Each retained action gets its own passive lookup, including those omitted by a bounded list.
+      const actionIds = [...pending.current.keys()];
+      for (const actionId of actionIds.length ? actionIds : [undefined]) {
+        const requestedContext = observedContext.current;
+        const response = await transport.current.nativePersistentRequest({ action: 'snapshot', ...(actionId ? { actionId } : {}) });
+        if (!mounted.current) return;
+        if (response.ok) { accept(response.value, requestedContext); setError(null); }
+        else setError(response.error.code);
+      }
     } catch { if (mounted.current) setError('connection_unavailable'); }
-    finally { inFlight.current = false; if (mounted.current) setBusy(false); }
+    finally { reading.current = false; if (mounted.current) setBusy(false); }
   };
   useEffect(() => {
     mounted.current = true; void read();
     return () => { mounted.current = false; };
   }, []);
   const mutate = async (body: Mutation) => {
-    if (inFlight.current || locked || pending.current) return;
-    inFlight.current = true; pending.current = body; setBusy(true); setError(null);
+    const targetId = body.action === 'create' ? null : body.conversationId;
+    if (disabled || uncertain || [...pending.current.values()].some(row =>
+      body.action === 'create' ? row.body.action === 'create' : row.body.action !== 'create' && row.body.conversationId === targetId)) return;
+    // Reserve synchronously before IPC; a second click cannot offer the same thread twice.
+    pending.current.set(body.actionId, { body, uncertain: false }); renderPending(revision => revision + 1); setError(null);
     try {
+      const requestedContext = observedContext.current;
       const response = await transport.current.nativePersistentRequest(body);
       if (!mounted.current) return;
-      if (response.ok) accept(response.value);
+      if (response.ok) accept(response.value, requestedContext);
       else {
-        // The next read checks durable receipts, without replaying this action.
         setError(response.error.code);
-        if (response.error.knownNotStarted) { pending.current = null; setUncertain(false); }
-        else setUncertain(true);
+        if (response.error.knownNotStarted) pending.current.delete(body.actionId);
+        else { const retained = pending.current.get(body.actionId); if (retained) retained.uncertain = true; }
       }
-    } catch { if (mounted.current) { setError('connection_unavailable'); setUncertain(true); } }
-    finally { inFlight.current = false; if (mounted.current) setBusy(false); }
+    } catch {
+      const retained = pending.current.get(body.actionId); if (retained) retained.uncertain = true;
+      if (mounted.current) setError('connection_unavailable');
+    } finally { if (mounted.current) renderPending(revision => revision + 1); }
   };
   const create = () => {
     const context = expectedContext();
@@ -107,6 +144,7 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
 
   return <Panel className="native-persistent" title={ru ? 'Сохранённые диалоги Native' : 'Retained Native conversations'}
     actions={<Button disabled={disabled || busy} busy={busy} onClick={() => void read()}>{ru ? 'Обновить диалоги' : 'Refresh conversations'}</Button>}>
+    <PanelStack className="native-persistent__body">
     <p>{ru ? 'Создайте отдельный диалог с сохранением контекста, продолжайте его или создавайте ответвления. Используется уже подтверждённое подключение Native.'
       : 'Create a conversation with retained context, continue it or fork it. These conversations use the already admitted Native account.'}</p>
     {!snapshot?.available ? <Notice title={ru ? 'Нужно подключение Native' : 'Native connection required'}>
@@ -117,25 +155,30 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
       {ru ? 'Обновите состояние, чтобы прочитать сохранённую квитанцию. Исходное сообщение повторно не отправляется.'
         : 'Refresh to inspect the retained receipt. The original message is not sent again.'}
     </Notice> : null}
-    {uncertain ? <p role="status">{ru ? 'Ожидается подтверждённый исход исходного действия; новые отправки заблокированы.'
-      : 'The original action needs a confirmed outcome; new sends are held.'}</p> : null}
+    {snapshot?.busy ? <p role="status">{ru ? 'Есть активные диалоги. Другой свободный диалог можно продолжить независимо.' : 'Conversations are active. Another idle conversation can continue independently.'}</p> : null}
+    {uncertain ? <Notice tone="warning" title={ru ? 'Исход действия требует проверки' : 'Action outcome needs inspection'}>{ru ? 'Ожидается подтверждённый исход исходного действия; новые отправки заблокированы.'
+      : 'The original action needs a confirmed outcome; new sends are held.'}</Notice> : null}
     <div className="native-persistent__layout">
-      <div>
-        <Button size="sm" disabled={locked} onClick={() => { setSelectedId(null); setPrompt(''); setConsent(false); }}>
-          {ru ? 'Новый диалог' : 'New conversation'}</Button>
+      <div className="native-persistent__sidebar">
+        <div className="native-persistent__actions"><Button size="sm" disabled={disabled} onClick={() => { setSelectedId(null); setPrompt(''); setConsent(false); }}>
+          {ru ? 'Новый диалог' : 'New conversation'}</Button></div>
         {!snapshot?.conversations.length ? <EmptyState title={ru ? 'Сохранённых диалогов пока нет' : 'No retained conversations yet'} /> :
           <ul className="native-persistent__list">{snapshot.conversations.map(row => <li key={row.id}>
-            <Button variant={row.id === selectedId ? 'secondary' : 'ghost'} disabled={locked}
+            <Button variant={row.id === selectedId ? 'secondary' : 'ghost'} disabled={disabled}
               onClick={() => { setSelectedId(row.id); setPrompt(''); setConsent(false); }}>
-              {row.model} · {row.id.slice(0, 8)} · {statusText(row.status)}
+              <span className="native-persistent__conversation-label"><strong>{row.model}</strong>{' '}
+                <span><code>{row.id.slice(0, 8)}</code> <span>{statusText(row.status)}</span></span></span>
             </Button>
             {row.parentId ? <small>{ru ? 'Ответвление от' : 'Forked from'} {row.parentId.slice(0, 8)}</small> : null}
           </li>)}</ul>}
       </div>
       <div className="native-persistent__detail">
         {selected ? <>
-          <div><Badge>{statusText(selected.status)}</Badge> <code>{selected.threadId || selected.id}</code></div>
-          {selected.lastSummary !== undefined ? <pre className="native-persistent__answer">{selected.lastSummary}</pre> : null}
+          <BadgeRow className="native-persistent__metadata"><Badge>{statusText(selected.status)}</Badge> <code>{selected.threadId || selected.id}</code></BadgeRow>
+          {selected.lastSummary !== undefined ? <div className="native-persistent__summary">
+            <h3>{ru ? 'Последний сохранённый ответ' : 'Last retained answer'}</h3>
+            <pre className="native-persistent__answer">{selected.lastSummary}</pre>
+          </div> : null}
           {!selected.ownerAvailable ? <Notice title={ru ? 'Контекст сохранён, исполнитель недоступен' : 'Context retained; owner unavailable'}>
             {selected.resumeAvailable ? (ru ? 'Можно явно возобновить подключение. При этом новое сообщение не отправляется.'
               : 'You can explicitly resume the connection. This does not send a new message.')
@@ -150,18 +193,18 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
             label={ru ? 'Сохранить сообщения и контекст этого нового диалога локально для продолжения и ответвлений.'
               : 'Retain this new conversation’s messages and context locally for continuation and forks.'} />
         </>}
-        <label htmlFor={promptId}>{ru ? 'Сообщение Native' : 'Native message'}</label>
+        <div className="native-persistent__compose"><label htmlFor={promptId}>{ru ? 'Сообщение Native' : 'Native message'}</label>
         <textarea id={promptId} className="nk-input native-persistent__prompt" value={prompt} maxLength={32768}
-          disabled={locked || !snapshot?.available || Boolean(selected && !ready)} onChange={event => setPrompt(event.target.value)} />
+          disabled={locked || !snapshot?.available || Boolean(selected && !ready)} onChange={event => setPrompt(event.target.value)} /></div>
         <div className="native-persistent__actions">
           <Button variant="primary" disabled={locked || !textAllowed || !snapshot?.available || (selected ? !ready : !consent || !model)}
-            busy={busy} onClick={selected ? send : create}>{selected ? (ru ? 'Продолжить диалог' : 'Continue conversation') : (ru ? 'Создать и отправить' : 'Create and send')}</Button>
+            busy={selectionBusy} onClick={selected ? send : create}>{selected ? (ru ? 'Продолжить диалог' : 'Continue conversation') : (ru ? 'Создать и отправить' : 'Create and send')}</Button>
           {selected ? <Button disabled={locked || !ready || Boolean(prompt.trim())} onClick={fork}>{ru ? 'Ответвить сохранённый контекст' : 'Fork retained context'}</Button> : null}
           {selected && ready ? <Button disabled={locked || Boolean(prompt.trim())} onClick={() => changeConnection('closeIdle')}>
             {ru ? 'Закрыть подключение к диалогу' : 'Close conversation connection'}</Button> : null}
           {selected?.resumeAvailable ? <Button disabled={locked || Boolean(prompt.trim())} onClick={() => changeConnection('resume')}>
             {ru ? 'Возобновить сохранённый диалог' : 'Resume retained conversation'}</Button> : null}
-          {prompt ? <Button disabled={disabled || busy} onClick={() => setPrompt('')}>
+          {prompt ? <Button disabled={disabled || selectionBusy} onClick={() => setPrompt('')}>
             {ru ? 'Очистить черновик' : 'Clear draft'}</Button> : null}
         </div>
         {selected && prompt.trim() ? <small>{ru ? 'Перед ответвлением или закрытием подключения отправьте или очистите черновик сообщения.' : 'Send or clear the draft before forking or closing the connection.'}</small> : null}
@@ -169,5 +212,6 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
           : 'Messages are sent only by clicking. Native tools are disabled. Forking and resuming do not send a message. Closing the connection retains context. Handoff to another client is not available yet.'}</p>
       </div>
     </div>
+    </PanelStack>
   </Panel>;
 }

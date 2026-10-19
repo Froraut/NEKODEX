@@ -37,3 +37,44 @@ test('core rejects corrupted streamed bytes before returning a build selection',
  const client=createLauncherPythonBuildSelectionBridge({descriptorPath:publisher.path,expectedProfile:'development',fetch:(async()=>new Response(wire,{headers:{'content-type':'application/vnd.nekodex.python-build-selection','x-nekodex-python-build-instance':publisher.instanceId}})) as typeof fetch});await expect(client.resolvePythonBuildSelection(selection.selectionId,scope)).rejects.toThrow('snapshot unavailable');
  }finally{service.close();rmSync(root,{recursive:true,force:true});}
 });
+
+test('known credential basenames are excluded from trees and refused by the shared guest archive path guard',async()=>{
+ const {spawnSync}=await import('node:child_process');
+ const {PYTHON_BUILD_SOURCE_PATH_GUARD}=await import('../src/execution-environments/python-build-guest');
+ const root=realpathSync(mkdtempSync(join(tmpdir(),'nekodex-selected-build-credentials-'))),source=join(root,'source');mkdirSync(source);
+ const service=createPythonBuildSelectionService({assertScope:()=>true}),scope={taskId:randomUUID(),generation:1,toolCallId:'credential-policy'};
+ try{
+  writeFileSync(join(source,'pyproject.toml'),'[build-system]\n');writeFileSync(join(source,'auth_client.py'),'# normal source stays selected\n');for(const name of ['auth.json','storage-state.json'])writeFileSync(join(source,name),'private fixture');for(const name of ['.codex','.claude','.gemini']){mkdirSync(join(source,name));writeFileSync(join(source,name,'session.json'),'private fixture');}
+  const summary=await service.register(scope,{source:{kind:'tree',path:source},config},true);expect(summary.excludedEntries).toBe(5);expect(summary.sourceFileCount).toBe(2);const selected=await service.open({selectionId:summary.selectionId,scope});expect(selected.header.files.map(f=>f.path)).toEqual(['auth_client.py','pyproject.toml']);expect(Buffer.from(selected.chunks[0]).toString()).toBe('# normal source stays selected\n');
+  // Execute only the trusted shared path guard and standard-library archive
+  // metadata parsers on synthetic memory fixtures. No VM or backend runs.
+  const program = `import io, pathlib, re, tarfile, zipfile
+${PYTHON_BUILD_SOURCE_PATH_GUARD}
+def refused(path):
+    try:
+        checked_path(path, source=True)
+    except AssertionError:
+        return
+    raise AssertionError('known credential path accepted')
+for name in ['project/auth.json', 'project/storage-state.json', 'project/.codex/session.json', 'project/.claude/session.json', 'project/.gemini/session.json']:
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, 'w') as writer:
+        writer.writestr(name, 'synthetic fixture')
+    with zipfile.ZipFile(io.BytesIO(archive.getvalue())) as reader:
+        refused(reader.infolist()[0].filename)
+archive = io.BytesIO()
+with tarfile.open(fileobj=archive, mode='w:gz', format=tarfile.PAX_FORMAT) as writer:
+    entry = tarfile.TarInfo('project/safe.json')
+    entry.size = 1
+    entry.pax_headers = {'path': 'project/.gemini/session.json'}
+    writer.addfile(entry, io.BytesIO(b'x'))
+with tarfile.open(fileobj=io.BytesIO(archive.getvalue()), mode='r:gz') as reader:
+    entry = next(iter(reader))
+    assert entry.name == 'project/.gemini/session.json'
+    refused(entry.name)
+assert str(checked_path('project/auth_client.py', source=True)) == 'project/auth_client.py'
+print('shared credential path guard: PASS')
+`;
+  const observed=spawnSync('/usr/bin/python3',['-I','-S','-c',program],{encoding:'utf8',timeout:5000,maxBuffer:4096});expect(observed.status).toBe(0);expect(observed.stdout.trim()).toBe('shared credential path guard: PASS');
+ }finally{service.close();rmSync(root,{recursive:true,force:true});}
+});

@@ -37,3 +37,11 @@ export function mergeNativeThreads(previous: CodexThreadMetadata[], incoming: Co
   for (const thread of incoming) rows.set(thread.id, thread);
   return [...rows.values()];
 }
+
+/** Native idle/notLoaded are observations, never authority to reuse an external executor.
+ * The installed public protocol has no cooperative owner-release/exclusive lease. */
+export function nativeExternalThreadControl(thread: CodexThreadMetadata) {
+  return { threadId: thread.id, sessionId: thread.sessionId, parentThreadId: thread.parentThreadId,
+    resumeAvailable: false as const, exclusiveHandoffAvailable: false as const,
+    executionOwner: 'unverified' as const, reason: 'exclusive-owner-contract-unavailable' as const };
+}

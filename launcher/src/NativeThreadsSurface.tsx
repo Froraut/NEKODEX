@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Badge, Button, EmptyState, Notice, Page, Panel, SurfaceHeader, TextField } from './design';
-import { mergeNativeThreads, nativeThreadRows } from './native-threads-model';
+import { Badge, BadgeRow, Button, EmptyState, Notice, Page, Panel, PanelStack, SurfaceHeader, TextField } from './design';
+import { mergeNativeThreads, nativeExternalThreadControl, nativeThreadRows } from './native-threads-model';
 import type { Language } from './types';
 import type { CodexClientControlSnapshot, CodexStatusScope, CodexThreadMetadata, NativeThreadsApi,
   NativeThreadsResult } from './native-threads-types';
@@ -30,6 +30,14 @@ const en = {
   acknowledge: 'I inspected this action', acknowledgeHelp: 'Acknowledging does not confirm whether a fork was created. It allows a separate new fork action after inspection.',
   genericFailure: 'Native Codex client control is unavailable. Check the configured official Codex executable and profile, then reload.',
   permission: 'Approvals and running turns stay in the native Codex client.',
+  boundary: 'Fork through native turn ID (optional)',
+  boundaryHelp: 'Use an exact native turn ID to include history through that turn. Leave empty for history available when Codex handles the request.',
+  boundaryInvalid: 'Use a native turn ID of at most 128 characters without control characters.',
+  forkSource: 'Source thread', forkBoundary: 'Accepted fork boundary', latestBoundary: 'Latest history at the provider',
+  externalTitle: 'External execution remains with its owner',
+  externalBody: 'No verified exclusive owner handoff is available for this connection. Idle or not loaded status does not grant permission to resume an external executor. Continue it in its owning client; approvals and sending are unavailable here.',
+  owner: 'Current execution owner', ownerUnknown: 'Not established by metadata',
+  originator: 'Historical originator',
   statuses: { notLoaded: 'Not loaded here', idle: 'Idle', systemError: 'Native error', active: 'Active' },
   flags: { waitingOnApproval: 'Waiting for native approval', waitingOnUserInput: 'Waiting for user input' },
 };
@@ -55,6 +63,14 @@ const ru: typeof en = {
   acknowledge: 'Я проверил это действие', acknowledgeHelp: 'Отметка не подтверждает создание ответвления. После проверки можно отдельно создать новое ответвление.',
   genericFailure: 'Управление нативным Codex недоступно. Проверьте настроенный официальный исполняемый файл и профиль Codex, затем обновите.',
   permission: 'Согласования и выполнение остаются в нативном клиенте Codex.',
+  boundary: 'Ответвить по ID нативного хода включительно (необязательно)',
+  boundaryHelp: 'Укажите точный ID хода Codex. Пустое поле означает историю, доступную в момент обработки запроса сервером.',
+  boundaryInvalid: 'Нужен ID хода до 128 символов без управляющих символов.',
+  forkSource: 'Исходный чат', forkBoundary: 'Принятая граница ответвления', latestBoundary: 'Актуальная история у провайдера',
+  externalTitle: 'Внешнее выполнение остаётся у владельца',
+  externalBody: 'Для этого подключения нет проверенной передачи исключительного владения. Статус ожидания или отсутствия загрузки не разрешает возобновлять внешний исполнитель. Продолжайте его в исходном клиенте; согласования и отправка здесь недоступны.',
+  owner: 'Текущий владелец выполнения', ownerUnknown: 'Метаданные его не устанавливают',
+  originator: 'Исторический источник создания',
   statuses: { notLoaded: 'Не загружен здесь', idle: 'Ожидает', systemError: 'Ошибка Codex', active: 'Выполняется' },
   flags: { waitingOnApproval: 'Ожидает согласования в Codex', waitingOnUserInput: 'Ожидает ввода пользователя' },
 };
@@ -74,6 +90,8 @@ export function NativeThreadsSurface({ language, disabled = false, api }: {
   const [busy, setBusy] = useState<'list' | 'read' | 'fork' | 'acknowledge' | null>(null);
   const [error, setError] = useState<SafeError | null>(null);
   const [forkedId, setForkedId] = useState<string | null>(null);
+  const [forkReceipt, setForkReceipt] = useState<{ sourceThreadId: string; lastTurnId: string | null } | null>(null);
+  const [lastTurnId, setLastTurnId] = useState('');
   const [uncertainFork, setUncertainFork] = useState<string | null>(null);
   const locked = useRef(false), mounted = useRef(true);
   const detailsId = useId(), listId = useId();
@@ -91,6 +109,8 @@ export function NativeThreadsSurface({ language, disabled = false, api }: {
   const visible = tree.filter(({ thread }) => !normalized || [thread.name, thread.id, thread.agentNickname,
     thread.agentRole, thread.parentThreadId, thread.forkedFromId].some(value => value?.toLocaleLowerCase().includes(normalized)));
   const selected = threads.find(thread => thread.id === selectedId);
+  const externalControl = selected ? nativeExternalThreadControl(selected) : null;
+  const boundaryInvalid = lastTurnId.length > 128 || /[\u0000-\u001f]/.test(lastTurnId);
   const uncertainActions = client?.uncertainForks || [];
   const dateFormat = useMemo(() => new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }), [language]);
   const isDisabled = disabled || busy !== null;
@@ -103,7 +123,7 @@ export function NativeThreadsSurface({ language, disabled = false, api }: {
   };
   const perform = async (kind: NonNullable<typeof busy>, action: () => Promise<void>) => {
     if (disabled || locked.current) return;
-    locked.current = true; setBusy(kind); setError(null); setForkedId(null);
+    locked.current = true; setBusy(kind); setError(null); setForkedId(null); setForkReceipt(null);
     try { await action(); }
     catch (reason) {
       if (!mounted.current) return;
@@ -135,16 +155,20 @@ export function NativeThreadsSurface({ language, disabled = false, api }: {
     const result = unwrap(await api.nativeThreadRead(id));
     if (!mounted.current) return;
     setThreads(previous => mergeNativeThreads(previous, [result.thread]));
-    setSelectedId(result.thread.id); setScope(result.statusScope);
+    setSelectedId(result.thread.id); setLastTurnId(''); setScope(result.statusScope);
   });
   const fork = () => {
-    if (!selected) return;
+    if (!selected || boundaryInvalid) return;
     const id = selected.id;
+    const boundary = lastTurnId || undefined;
     void perform('fork', async () => {
-      const result = unwrap(await api.nativeThreadFork({ threadId: id }));
+      const result = unwrap(await api.nativeThreadFork({ threadId: id, ...(boundary ? { lastTurnId: boundary } : {}) }));
       if (!mounted.current) return;
       setThreads(previous => mergeNativeThreads(previous, [result.thread]));
-      setSelectedId(result.thread.id); setScope(result.statusScope); setForkedId(result.thread.id);
+      setSelectedId(result.thread.id); setScope(result.statusScope); setForkedId(result.thread.id); setLastTurnId('');
+      if (result.sourceThreadId === id && result.lastTurnId === (boundary ?? null) && result.executionStarted === false) {
+        setForkReceipt({ sourceThreadId: result.sourceThreadId, lastTurnId: result.lastTurnId });
+      }
     });
   };
   const acknowledge = (actionId: string, threadId: string) => void perform('acknowledge', async () => {
@@ -159,6 +183,7 @@ export function NativeThreadsSurface({ language, disabled = false, api }: {
   const fields = selected ? [[text.id, selected.id], [text.parent, selected.parentThreadId],
     [text.session, selected.sessionId], [text.forkedFrom, selected.forkedFromId], [text.model, selected.model],
     [text.role, selected.agentRole], [text.agent, selected.agentNickname], [text.source, selected.source],
+    [text.originator, selected.originator],
     [text.cwd, selected.cwd], [text.updated, selected.updatedAt ? dateFormat.format(selected.updatedAt * 1000) : null]] : [];
 
   return <Page width="wide" className="native-threads">
@@ -175,13 +200,17 @@ export function NativeThreadsSurface({ language, disabled = false, api }: {
       action={<Button size="sm" disabled={isDisabled || action.state === 'pending'}
         onClick={() => acknowledge(action.actionId, action.threadId)}>{text.acknowledge}</Button>}>
       {text.unknownForkBody} {text.acknowledgeHelp}
+      {action.lastTurnId ? <> <span className="native-threads__notice-detail">{text.boundary}: <code>{action.lastTurnId}</code></span></> : null}
     </Notice>)}
     {uncertainFork && !uncertainActions.some(action => action.threadId === uncertainFork)
       ? <Notice tone="warning" title={text.unknownFork} meta={uncertainFork}>{text.unknownForkBody}</Notice> : null}
-    {forkedId ? <Notice tone="success" title={text.forkSuccess} meta={forkedId}>{text.forkSuccessBody}</Notice> : null}
+    {forkedId ? <Notice tone="success" title={text.forkSuccess} meta={forkedId}>{text.forkSuccessBody}
+      {forkReceipt ? <> <span className="native-threads__notice-detail">{text.forkSource}: <code>{forkReceipt.sourceThreadId}</code><br />{' '}
+        {text.forkBoundary}: <code>{forkReceipt.lastTurnId || text.latestBoundary}</code></span></> : null}</Notice> : null}
     <div className="native-threads__layout">
       <Panel title={text.rows} titleId={listId} className="native-threads__list-panel"
         actions={<Badge>{text.metadataOnly}</Badge>}>
+        <PanelStack className="native-threads__panel-body">
         {threads.length ? <TextField type="search" label={text.search} value={query}
           onChange={event => setQuery(event.target.value)} /> : null}
         {!loaded && !threads.length ? <EmptyState icon="activity" title={text.initialTitle}>{text.initialBody}</EmptyState>
@@ -192,31 +221,37 @@ export function NativeThreadsSurface({ language, disabled = false, api }: {
                 {visible.map(({ thread, depth, parentMissing }) => <li key={thread.id}
                   className={`native-threads__row${selectedId === thread.id ? ' is-selected' : ''}`}
                   style={{ paddingInlineStart: `${Math.min(depth, 6) * 12 + 12}px` }}>
-                  <div className="native-threads__row-head"><strong>{label(thread)}</strong>
-                    <Badge tone={statusTone(thread)}>{statusLabel(thread)}</Badge></div>
+                  <div className="native-threads__row-head"><strong>{label(thread)}</strong>{' '}
+                    <BadgeRow><Badge tone={statusTone(thread)}>{statusLabel(thread)}</Badge></BadgeRow></div>
                   <code>{thread.id}</code>
                   {thread.agentRole || thread.agentNickname ? <p>{[thread.agentRole, thread.agentNickname].filter(Boolean).join(' · ')}</p> : null}
-                  {thread.parentThreadId ? <p>{text.parent}: <code>{thread.parentThreadId}</code>{parentMissing ? <small>{text.parentMissing}</small> : null}</p> : null}
+                  {thread.parentThreadId ? <p>{text.parent}: <code>{thread.parentThreadId}</code>{parentMissing ? <> <small>{text.parentMissing}</small></> : null}</p> : null}
                   {thread.forkedFromId ? <p>{text.forkedFrom}: <code>{thread.forkedFromId}</code></p> : null}
                   <Button size="sm" variant="ghost" disabled={isDisabled} aria-controls={detailsId}
                     aria-label={`${text.read}: ${label(thread)} ${thread.id}`} onClick={() => read(thread.id)}>{text.read}</Button>
                 </li>)}
               </ul>}
-        {nextCursor ? <Button disabled={isDisabled} onClick={() => load(true)}>{text.more}</Button> : null}
+        {nextCursor ? <div className="native-threads__actions"><Button disabled={isDisabled} onClick={() => load(true)}>{text.more}</Button></div> : null}
+        </PanelStack>
       </Panel>
       <Panel title={text.selected} id={detailsId} className="native-threads__details" aria-live="polite">
+        <PanelStack className="native-threads__panel-body">
         {selected ? <>
           <h3>{label(selected)}</h3>
-          <Badge tone={statusTone(selected)}>{statusLabel(selected)}</Badge>
+          <BadgeRow><Badge tone={statusTone(selected)}>{statusLabel(selected)}</Badge></BadgeRow>
           {selected.status.type === 'active' ? selected.status.activeFlags.map(flag => <p key={flag}>{text.flags[flag]}</p>) : null}
           <dl>{fields.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{value || text.missing}</dd></div>)}</dl>
           <p className="native-threads__scope">{text.scopeTitle}: {scope === 'configured-server' ? text.scopeServer : text.scopeConnection}</p>
+          {externalControl ? <Notice title={text.externalTitle}>{text.externalBody} <span className="native-threads__notice-detail">{text.owner}: {text.ownerUnknown}</span></Notice> : null}
           <p>{text.forkHelp}</p>
-          <Button disabled={isDisabled || client?.capabilities.fork === 'unsupported' || uncertainFork === selected.id
+          <TextField label={text.boundary} hint={text.boundaryHelp} value={lastTurnId} disabled={isDisabled}
+            error={boundaryInvalid ? text.boundaryInvalid : undefined} onChange={event => setLastTurnId(event.target.value)} />
+          <div className="native-threads__actions"><Button disabled={isDisabled || boundaryInvalid || client?.capabilities.fork === 'unsupported' || uncertainFork === selected.id
             || uncertainActions.some(action => action.threadId === selected.id)}
-            busy={busy === 'fork'} onClick={fork}>{busy === 'fork' ? text.forkPending : text.fork}</Button>
+            busy={busy === 'fork'} onClick={fork}>{busy === 'fork' ? text.forkPending : text.fork}</Button></div>
           <p className="native-threads__hint">{text.permission}</p>
         </> : <p className="native-threads__hint">{text.read}</p>}
+        </PanelStack>
       </Panel>
     </div>
   </Page>;

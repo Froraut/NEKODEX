@@ -55,24 +55,26 @@ separate facts.
 | Tunnel | [installation/control](src/tunnel.ts), [status interpretation](src/tunnel-status.ts), [service](src/tunnel-service.ts) with [LaunchAgent helpers](src/launch-agent.ts) | Inventory/diagnostics parsing has no process authority. Scoped stopped proof requires successful inspection, an explicitly non-running process and stopped state; the SDK's missing/null/empty error values mean no status error. Installation, credentials and readiness remain separate steps. |
 | Electron composition | [main](launcher/electron/main.cjs), [preload](launcher/electron/preload.cjs), [IPC registrars](launcher/electron/ipc), [control server](launcher/electron/control-server.cjs) | Main owns guarded IPC and composition. Renderer inputs and helper calls cross validation/admission boundaries. |
 | Native plan content | [source observer](src/adapters/chatgpt-web/task-plan-observation.ts), [capture policy](src/adapters/chatgpt-web/task-plan-policy.ts), [wire validator](launcher/electron/task-plan-observation.cjs), [store](launcher/electron/task-plans.cjs), [requirements](launcher/electron/task-plan-requirements.cjs), [TaskPlans](launcher/src/TaskPlans.tsx) | Separate opt-in content store, never the metadata ledger. `/v1/turn/plan` validates the exact live trace/helper/surface/task and recorded native thread/turn before capture; observed plan claims remain unverified. Explicit requirements/corrections and CAS-bound associations retain trusted action metadata separately from personal user confirmation; property verification is unavailable here. |
-| Conversation text history | [store](src/conversation-history/store.ts), [HTTP actions](src/conversation-history/http.ts), [validated producer adapter](src/conversation-history/capture.ts), [canonical capture](src/conversation-history/canonical.ts), [owned Native final projection](src/conversation-history/owned-native.ts), [main recorder](launcher/electron/canonical-native-history.cjs), [filter](launcher/electron/canonical-history-policy.cjs), [IPC](launcher/electron/ipc/conversation-history.cjs), [surface](launcher/src/ConversationHistorySurface.tsx) | The Bun daemon owns the SQLite/FTS writer. Manual selected text, explicitly refreshed native canonical pages and future validated owned Native final summaries have separate default-off policies. Owned final capture requires global recording, exact task-generation consent, risk acknowledgement and a pre-offer lease; trusted admission provenance and current task authority are revalidated at write. Source-unavailable revocation persists across source return; unavailable status never asserts consent is off. Per-thread consent/recording epoch invalidates late capture; known-pattern exclusions do not guarantee removal of unknown secrets. All corpus coverage remains partial; native empty-page proof is not text proof. |
-| Local project workspace | [service](launcher/electron/local-workspace.cjs), [IPC](launcher/electron/ipc/workspace.cjs), [surface](launcher/src/WorkspaceSurface.tsx) | Main's native picker grants an opaque root ID; renderer paths stay relative. The service owns private persisted roots/drafts, bounded reads and revision-aware writes. Opaque captured base choices support HEAD/local/remote-tracking comparisons with stale reference checks, no fetch/checkout. Actual DEV UI showed HEAD and older-base working diffs/full OIDs without moving main. Bounded in-memory comparisons remain read-only, not recoverable code checkpoints. |
-| Native Codex thread control | [client](launcher/electron/codex-client-control.cjs), [IPC](launcher/electron/ipc/codex-client-control.cjs), [surface](launcher/src/NativeThreadsSurface.tsx), [projection](launcher/src/native-threads-model.ts) | Public native thread list/read UI remains metadata-only; the main-only canonical recorder separately reads supported items under explicit consent. Status is scoped to the configured connection/server. Fork is an explicit user action; start/interrupt/approve are unsupported. Executable/home/socket are main-owned dependencies. |
-| Retained owned Native conversations | [owner](launcher/electron/persistent-native-conversations.cjs), [IPC](launcher/electron/ipc/native-persistent-conversations.cjs), [panel](launcher/src/NativePersistentConversationsPanel.tsx), [contract](docs/design/persistent-native-conversations.md) | Explicit retention, follow-up, fork, idle-close and explicit Resume share the qualified account's sender and lease. Resume validates stored account identity and creates a new binding/admission for the same thread; it does not send a turn. Reads and restart never auto-resume. Legacy records lacking identity proof and third-party client handoff remain unavailable. |
+| Conversation text history | [store](src/conversation-history/store.ts), [event owner](src/conversation-history/transcript.ts), [HTTP](src/conversation-history/http.ts), [owned source](src/conversation-history/owned-native.ts), [IPC](launcher/electron/ipc/conversation-history.cjs), [surface](launcher/src/ConversationHistorySurface.tsx) | One Bun SQLite/FTS writer; separate default-off selected text, page refresh, final-summary and authenticated partial Native event policies. Exact task/account/recording epochs, pre-offer consent leases, revisions/deletion watermarks and revoke fencing govern capture. Full external transcript/background feeds remain unavailable. |
+| Local project workspace | [service](launcher/electron/local-workspace.cjs), [IPC](launcher/electron/ipc/workspace.cjs), [surface](launcher/src/WorkspaceSurface.tsx), [editor leaf](launcher/src/WorkspaceEditor.tsx) | Native picker grants opaque roots; main owns bounded reads/drafts/revision-aware writes. Surface owns navigation; editor leaf preserves the same per-file queue/editorPort/save/recovery lifecycle. Read-only comparisons, snapshots and explicit Git mutations are distinct owners. |
+| Native Codex thread control | [client](launcher/electron/codex-client-control.cjs), [IPC](launcher/electron/ipc/codex-client-control.cjs), [surface](launcher/src/NativeThreadsSurface.tsx), [projection](launcher/src/native-threads-model.ts) | Supported metadata and explicit exact-turn fork use a durable journal; returned boundary starts no execution. Server/idle metadata is not exclusive authority. External resume/handoff remains unavailable without cooperative owner-release contract. |
+| Retained owned Native conversations | [owner](launcher/electron/persistent-native-conversations.cjs), [worker](launcher/electron/owned-native-worker.cjs), [IPC](launcher/electron/ipc/native-persistent-conversations.cjs), [panel](launcher/src/NativePersistentConversationsPanel.tsx) | Exact conversation/thread reservations and synchronous quota writer permit independent known operations. Fork reserves source; alias/unknown creation holds owner. Explicit identity-checked Resume sends no turn; per-selection UI never bypasses account/uncertain-owner gates. |
 | Native owner recovery | [transaction](launcher/electron/native-account-recovery.cjs), [macOS observer](launcher/electron/native-recovery-processes.cjs), [contract](docs/design/native-owner-recovery.md) | Explicit preview and separately confirmed stable plan archive only verified stale ownership markers after physical process absence. Passive exact receipt reconciliation never replays a prior effect; partial archives retain uncertainty and ownership. Account authentication, model requests and original journals remain separate. |
 | Owned Native inference leaf | [admission](launcher/electron/owned-native-admission.cjs), [worker](launcher/electron/owned-native-worker.cjs), [receipts](launcher/electron/owned-native-journal.cjs) | The trusted [auth authority](launcher/electron/native-account-authority.cjs) owns explicit fresh-profile official CLI device login; the [inventory owner](launcher/electron/native-account-inventory.cjs) qualifies only its own exact personal-Pro-family profile (`pro`, `prolite`, `promax`), native account/usage and original catalog; the actual plan value is retained. Explicit qualification prepares the shared account process and validates effective configuration plus current account/usage before advertising available models; this opens no thread or inference turn. Preparing/failed/closed owners remain unavailable. The [execution owner](launcher/electron/native-account-execution.cjs) seals qualified model metadata and resolves model/admission pairs into one account stdio process/AuthManager/sender with up to two new isolated task threads. Main/Bun/Agent UI use a private descriptor and fixed protocol. An isolated personal Pro (Max) account and two real models have been admitted and exercised; this does not establish all-account or installed-app acceptance. The pinned public-library Rust wrapper keeps mandatory policy; network-denied `--account-info` classification is separate from cloud-aware startup checks. Fixture-route official-account refusal remains unchanged. Existing metadata/fork authority is unchanged; neither fake-provider evidence nor a compiled wrapper proves real delivery. |
 | Standalone Agent mode | [store](src/agent-mode/store.ts), [runner](src/agent-mode/runner.ts), [runtime](src/agent-mode/runtime.ts), [Responses port](src/agent-mode/provider.ts), [Native port](src/agent-mode/native-provider.ts), [main bridge](launcher/electron/agent-native-bridge.cjs), [HTTP actions](src/agent-mode/http.ts), [IPC](launcher/electron/ipc/agent-mode.cjs), [surface](launcher/src/AgentModeSurface.tsx) | A separate task family owns stages, durable mailbox/dispatch/command receipts and bounded Goal/Loop. The existing Responses owner executes configured Web routes and advertises explicitly enabled MCP descriptors. Durable pending tool calls require exact approval/results before canonical continuation; snapshot grants grant no tool/filesystem authority. Monetary cost remains unknown without an actual receipt. |
 | Human workspace terminal | [PTY service](launcher/electron/workspace-terminal.cjs), [IPC](launcher/electron/ipc/workspace-terminal.cjs) | Main-owned session/generation and picker grant; bounded output/ack/backpressure and exact PTY lifecycle. Main/preload/Workspace UI and xterm are wired; native `node-pty` availability/ABI remains platform-specific. Human input is not an Agent tool. |
-| Project worktrees and manual restore | [Git mutations](launcher/electron/workspace-git-mutations.cjs), [file capture](launcher/electron/workspace-file-capture.cjs), [IPC](launcher/electron/ipc/workspace-git.cjs) | One main owner serializes worktree create/archive and snapshot/restore receipts, retaining recovery state outside the user's branch. Read-only Git diff snapshots remain distinct. |
+| Project worktrees and manual restore | [Git mutations](launcher/electron/workspace-git-mutations.cjs), [local Git review](launcher/electron/local-git-review.cjs), [capture](launcher/electron/workspace-file-capture.cjs), [IPC](launcher/electron/ipc/workspace-git.cjs) | Main serializes exact reviewed stage/unstage/commit and worktree/snapshot/restore receipts, with draft conflicts, complete index and before-images. Unknown commit/publication is inspection-only; read-only diff remains distinct. |
 | Remote project workspace | [SSH/SFTP owner](launcher/electron/remote-workspace.cjs), [remote worktrees](launcher/electron/remote-worktrees.cjs), [IPC](launcher/electron/ipc/remote-workspace.cjs), [surface](launcher/src/RemoteWorkspaceSurface.tsx) | System SSH owns authentication/known-host policy; selected host/root identity binds reads, drafts, commands and remote Git. One-use approvals and signed durable receipts distinguish completed/unknown; reconnect does not replay mutations. |
 | Remote Git Review | [controller](launcher/electron/remote-git-review.cjs), [fixed helper](launcher/electron/remote-git-review-helper.cjs), [surface](launcher/src/RemoteGitReview.tsx), [contract](docs/design/remote-git-review.md) | The existing remote owner supplies host exclusivity, authenticated transport and signed storage. Opaque base/capture identities bind HEAD, index and repository state. Stage/unstage/commit have distinct reviewed action IDs; atomic main admission/settlement pairs action records with receipts. The remote ledger and common-directory owner retain uncertain outcomes for exact inspection without replay. This human Git interface grants no Agent tool authority. |
 | Agent snapshot authority | [main grant signer](launcher/electron/agent-workspace-grant.cjs), [Bun snapshot store](src/agent-workspace/store.ts) | Picker-authorized exact paths are signed for task/family/generation, scope `pre-turn-snapshot-only`. The Bun before-offer hook persists one immutable dispatch baseline before execution; this grants no executor filesystem access. |
-| Standalone MCP and skills | [composition](src/agent-tools/composition.ts), [MCP host](src/agent-tools/mcp-host.ts), [journal](src/agent-tools/journal.ts), [skills](src/agent-tools/skills.ts), [managed text versions](src/agent-tools/managed-skills.ts), [selected resources](src/agent-tools/skill-resources.ts), [Python environments](src/agent-tools/skill-python-environment.ts), [installer](src/agent-tools/installer.ts), [package tree](src/agent-tools/package-tree.ts), [macOS MCP sandbox](src/agent-tools/sandbox.ts), [native policy](src/agent-tools/native-policy.ts) | Managed official package graph/tree receipts, pinned server recipes, schema validation and exact approval remain separate install/enable/connect/effect transitions. Reviewed MCP recipes can use the custom macOS Seatbelt boundary; OAuth, Windows/Linux sandbox and arbitrary native executor remain unsupported. Skills use granted roots/digest identity; explicitly reviewed local text imports/updates become immutable managed versions with current task-generation attachments and retained revoke/forget state. Offline Python wheel Review/Prepare, task-generation environment Attach and per-call ToolJournal approval are separate decisions; composition shares one exact admitted runtime with the executor. |
-| Browser companion/providers | [host](src/browser-companion/host.ts), [runtime](src/browser-companion/runtime.ts), [protocol/providers](src/browser-companion/providers.ts), [extension](browser-companion/manifest.json), [IPC](launcher/electron/ipc/browser-companion.cjs) | Explicit Chrome extension ID/pair/revoke and exact observation-bound browser actions; restart policy off, ChatGPT send unsupported. Standalone browser tools use the existing builtin tool host/journal and exact task-generation attachments. A macOS native desktop helper/provider/controller now exists in source; actual owned-fixture capture/type/fresh AXPress click and exact selected-window UI are observed. Generic CG pixel fallback and real model/account remain unverified; ChatGPT send unsupported. |
-| Native desktop tools | [Swift helper](launcher/native/desktop-provider.swift), [pinned helper resolver](src/browser-companion/desktop-helper-path.ts), [native provider](src/browser-companion/macos-desktop.ts), [task controller](src/browser-companion/agent-desktop-tools.ts), [builder](scripts/build-desktop-helper.cjs) | macOS 14+ lazy helper, explicit enable/permission inspection/window selection and task-generation attachment. Default off; one exact selected-window/observation owner, bounded model screenshot and late receipts. Kernel process-start identity handles valid CLI-launched GUI apps without LaunchServices launchDate. Actual DEV window/permission selection, capture, literal AX typing and a separately approved fresh click via AX hit-test/AXPress were observed; generic CG pixel fallback was not exercised. |
+| Standalone MCP and skills | [composition](src/agent-tools/composition.ts), [host](src/agent-tools/mcp-host.ts), [journal](src/agent-tools/journal.ts), [skills](src/agent-tools/skills.ts), [managed versions](src/agent-tools/managed-skills.ts), [Python environment](src/agent-tools/skill-python-environment.ts), [dependency policy](src/agent-tools/skill-python-requirements.ts), [installer](src/agent-tools/installer.ts) | Exact approval/outcome owner serves configured and builtin tools. Frozen official recipe graph/tree integrity, separate save/enable/connect/effect, immutable skill versions and selected environment Attach remain distinct. OAuth uses a separate protected service; stdio recipes remain auth:none. |
+| Isolated VM execution/builds | [executor](src/execution-environments/executor.ts), [product](src/execution-environments/product.ts), [production origin](src/execution-environments/production-runtime.ts), [Python build](src/execution-environments/python-build.ts), [selection bridge](src/execution-environments/launcher-python-build-selection.ts), [native picker](launcher/electron/python-build-picker.cjs), [host network](src/execution-environments/network.ts) | Exact runtime brand, user-wide durable owner and physical stop/join govern effects. Build, mediated network grant and workspace export each retain separate approval/receipt scope. Production source admission does not establish installed VM execution; guest NIC remains unavailable. |
+| Protected MCP OAuth | [public action port](src/agent-tools/oauth.ts), [broker](launcher/electron/agent-oauth.cjs), [launcher](launcher/electron/agent-oauth-launcher.cjs), [vault](launcher/electron/agent-oauth-vault.cjs), [service](launcher/electron/agent-oauth-service.cjs), [IPC](launcher/electron/ipc/agent-oauth.cjs), [panel](launcher/src/AgentOAuthPanel.tsx) | Separate protected CAS credential scope and trusted provider/account configuration; safe renderer actions/status only. Pending refresh/revoke persists before network; actual human consent and admitted MCP transport effect remain independent of service construction. |
+| Browser companion/providers | [host](src/browser-companion/host.ts), [runtime](src/browser-companion/runtime.ts), [protocol](src/browser-companion/protocol.ts), [Chrome manifest](browser-companion/manifest.json), [Firefox manifest](browser-companion/manifest.firefox.json), [IPC](launcher/electron/ipc/browser-companion.cjs) | Popup pairs/selects; session owns one no-replay poller; dispatcher targets exact active document. Firefox pins profile-specific origin. Approved optional pixels and exact text-transition evidence are separate from input execution, real Send and actual provider/site outcome. |
+| Native desktop tools | [helper](launcher/native/desktop-provider.swift), [controller](src/browser-companion/macos-desktop.ts), [task tools](src/browser-companion/agent-desktop-tools.ts), [property evidence](src/browser-companion/desktop-outcome.ts), [builder](scripts/build-desktop-helper.cjs) | Explicit macOS14+ permission/window/task-generation authority; bounded capture, fresh AX/CG input and separate AX property reads. Canonical property evidence is point-in-time and revalidated against current attachment/operation; input success is not business acceptance. |
 | Builtin tool continuation | [tool contract](src/agent-tools/types.ts), [browser leaf](src/browser-companion/agent-tools.ts), [host](src/agent-tools/mcp-host.ts), [image projection](src/agent-mode/tool-images.ts), [Agent runtime/store](src/agent-mode/runtime.ts) | MCP and builtin browser/desktop calls share one approval/journal/outbox; reconciliation reads exact retained receipts without executing. Canonical result images remain tool-call outputs; immutable late facts preserve prior unknown outcomes. |
-| Local control API | [routes](src/local-control-api/http.ts), [policy](src/local-control-api/policy.ts), [CLI consumer](src/local-control-api/client.ts), [IPC](launcher/electron/ipc/local-control-api.cjs) | Separate revocable bearer, versioned bounded passive reads and explicit history-content scope. Opt-in scoped Agent actions reuse the existing task owner/command receipts; default reads never start work. The named CLI uses stdin credentials, direct numeric loopback HTTP and stable action IDs, without automatic resend. |
-| Cross-client usage | [import/projection](launcher/electron/external-usage.cjs), [IPC](launcher/electron/ipc/external-usage.cjs), [surface](launcher/src/ExternalUsageSurface.tsx) | Explicitly picked Codex/Claude roots, incremental bounded source-scoped imports and optional versioned pricing. Estimates are API-equivalent comparisons, never bills or provider savings; overlapping/unknown sources stay outside the aggregate. |
+| Local control API | [routes](src/local-control-api/http.ts), [policy](src/local-control-api/policy.ts), [client](src/local-control-api/client.ts), [TaskMonitor](src/local-control-api/task-monitor.ts), [command](src/local-control-api/task-monitor-command.ts), [IPC](launcher/electron/ipc/local-control-api.cjs) | Passive bounded reads and scoped explicit actions use existing Agent owner. Named monitor stores one-submit action journal and reconciles exact receipts without resend. An unopened owner after restart is unavailable, not absent. |
+| Cross-client usage | [service](launcher/electron/external-usage.cjs), [pure formats](launcher/electron/external-usage-formats.cjs), [pricing](launcher/electron/usage-pricing.cjs), [IPC](launcher/electron/ipc/external-usage.cjs), [surface](launcher/src/ExternalUsageSurface.tsx) | Consent/path/I/O/cursors/dedup/commits stay in service; pure Codex/Claude/Gemini parser returns allowlisted metadata and context. Dated/imported exact-model scenarios are API-equivalent estimates with unknown/overlap coverage, never bills/savings. |
 | Browser ownership | [host](launcher/electron/browser-host.cjs), [turn lifecycle](launcher/electron/browser-turn-lifecycle.cjs), [Manual turns](launcher/electron/browser-manual-turns.cjs), [artifact transfers](launcher/electron/browser-artifact-transfers.cjs), [workspaces](launcher/electron/browser-workspace-windows.cjs), [navigation policy](launcher/electron/browser-navigation-policy.cjs), [session probe script](launcher/electron/browser-auth-probe.cjs), [in-page session check](launcher/electron/browser-session-observation.cjs), [app user agent](launcher/electron/browser-user-agent.cjs), [network egress check](launcher/electron/network-egress-check.cjs), [announcement dismissal](launcher/electron/browser-announcements.cjs) | One shared tab map. Ledger settlement precedes removal receipts. Concrete task auth redirects retire cached identity and emit an authentication-required release receipt; a false completion becomes a retained failure, while explicit cancellation keeps its own outcome. Manual policy uses explicit ports; artifact delivery rechecks exact ownership after awaiting download. URL policy (including the toolbar address resolution), the page probe, the in-page session check and the automatic-surface announcement dismissal are stateless leaves; a typed ChatGPT address always loads in the ChatGPT tab so retained task tabs keep their conversation. The app presents one stable Chromium user agent on every view and cross-site frame because Cloudflare binds its clearance to it. After a Cloudflare challenge the host checks, at most every ten minutes and in a throwaway session with the account's network settings, whether the public address changes between connections, and publishes only the verdict; the host owns probe sequencing, dismissal enablement and published authentication state. |
 | OpenAI API panel | [panel policy](launcher/electron/openai-api-panel.cjs), [workspace window owner](launcher/electron/browser-workspace-windows.cjs), [host](launcher/electron/browser-host.cjs), [account pool](launcher/electron/account-pool.cjs) | Human-operated Tunnels/API keys windows use the explicitly selected account session and fixed Platform destinations. The panel stays outside task descriptors, does not persist portal/OAuth URLs in ChatGPT workspace manifests, and participates in account authentication mutation leases. Opening a panel does not establish tunnel access or create a ChatGPT connector. |
 | Accounts/authentication | [account pool](launcher/electron/account-pool.cjs), [browser display projection](launcher/electron/account-browser-snapshot.cjs), [registry](launcher/electron/account-registry.cjs), [operation leases](launcher/electron/account-operation-leases.cjs), [Codex login](launcher/electron/codex-login.cjs), [browser login](src/browser-login.ts) | Preserve account/principal/flow identity and exact operation leases. Only the selected host supplies full navigation observations; other hosts supply turn rows. Display projection has no session authority. Temporary verification failure does not establish logout. Synchronous pacing-policy edits and resume validate an existing account and open pool but do not acquire browser-operation ownership; they affect future admission while current reads, sign-in and turns retain their owners. Optional session limits and scheduled breaks remain derived from the enabled policy; they never latch into provider stop/cooldown fields. An explicitly selected or already pinned account treats cached model discovery as advisory: the worker selects and verifies the exact model and effort before sending. Unbound balanced routing still requires model evidence. An explicitly selected or already pinned account may establish connector availability during the real pre-send flow; unbound balanced routing still requires prior connector evidence. A completed tool result can promote the exact connector only while the captured principal and identity epoch still match. |
@@ -80,7 +82,7 @@ separate facts.
 | Updates | [controller](launcher/electron/update.cjs), [release policy](launcher/electron/update-release-policy.cjs), [staging](launcher/electron/update-staging.cjs), [validation](launcher/electron/update-validation.cjs), [worker](launcher/electron/update-worker.cjs), [commit observation](launcher/electron/update-commit.cjs) | Packaged repository/channel selects candidates; signature validation, preparation, handoff and detached installation are separate owners. Discovery falls back from the REST API to the signed Atom feed on any failure. The replacement launcher owns in-session runtime activation after the worker commits. |
 | Usage | [Native contract](src/usage/native-contract.ts), [outbox](src/native-usage-outbox.ts), [durable store](launcher/electron/usage-store.cjs), [report projection](launcher/electron/usage-report.cjs) | Receipt validation and persistence remain independent of UI aggregation. Preserve unknown fields and source/account scope. |
 | UI | [App](launcher/src/App.tsx), [shell chrome](launcher/src/AppShell.tsx), [update controls](launcher/src/useUpdateControls.ts), [deferred surfaces](launcher/src/deferred-surface.tsx), [presentation log store](launcher/src/launcher-log-store.ts), [Onboarding](launcher/src/Onboarding.tsx), [Accounts](launcher/src/AccountSettings.tsx), [Browser](launcher/src/BrowserSurface.tsx), [Activity](launcher/src/ActivitySurface.tsx), [Task Center](launcher/src/TaskCenter.tsx), [Settings](launcher/src/SettingsSurface.tsx) | App owns shell state/navigation/shared snapshots; AppShell renders prop-driven chrome and the compact-drawer focus trap, and `useUpdateControls` owns update check/install/cancel state. Optional screens load on navigation; logs update subscribed views instead of App. Settings exposes saved-chat preference through guarded preload IPC; saved/temporary behavior remains a runtime/browser contract. Feature surfaces and hooks own local drafts/actions; late results stay with their original account/query/flow. |
-| Design system | [tokens](launcher/src/tokens.css), [component kit](launcher/src/design/index.ts), [kit styles](launcher/src/design/components.css), [appearance](launcher/src/theme.ts), [modal focus](launcher/src/modal-focus.ts) | Tokens own every colour and scale; dark is the default and light applies through `html[data-theme]`, set from the saved Appearance preference by `theme.ts` (and before first render by `theme-boot.ts`, from the appearance the renderer last applied or else the theme the main process resolved and passes as `?theme=`). Kit components are presentational: props in, callbacks out, no IPC or launcher state, and user-visible labels come from the caller's localized copy. Surfaces compose the kit and keep only layout in `launcher/src/surfaces/*.css`, using semantic tokens. |
+| Design system | [tokens](launcher/src/tokens.css), [component kit](launcher/src/design/index.ts), [kit styles](launcher/src/design/components.css), [appearance](launcher/src/theme.ts), [modal focus](launcher/src/modal-focus.ts) | Tokens own every colour and scale; dark is the default and light applies through `html[data-theme]`, set from the saved Appearance preference by `theme.ts` (and before first render by `theme-boot.ts`, from the appearance the renderer last applied or else the theme the main process resolved and passes as `?theme=`). Kit components are presentational: props in, callbacks out, no IPC or launcher state, and user-visible labels come from the caller's localized copy. Surfaces compose the kit and keep only layout in `launcher/src/surfaces/*.css`, using semantic tokens. `Page` supplies the frame; opt-in `PanelStack` supplies vertical peer-panel spacing and `BadgeRow` supplies wrapping sibling status spacing. Button/Badge internal gap does not space siblings. The shared MCP icon name now renders a toolbox; changing its glyph grants no tool capability. |
 | Presentation observations | [publication scheduler](launcher/electron/browser-state-publication.cjs), [account reader](launcher/src/account-snapshot-controller.ts), [observation comparison](launcher/src/snapshot-observation.ts) | Pool invalidation stays synchronous; presentation snapshots coalesce per event-loop turn. Source/revision stamps order observations, not authorization. |
 | Localization | [locale catalog](launcher/src/locale-catalog.ts), [subscription hook](launcher/src/useLocaleCopy.ts), [language selection](launcher/src/language-selection.ts), [message facade](launcher/src/i18n.ts) | English is immediately available. Other dictionaries load independently and share pending requests. Prepare before saving; a superseded preparation cannot overwrite the latest choice. The launch and startup-failure screens, shown before the first snapshot, use the last presented language (`shell-copy.ts`), else the system language. |
 | DEV harness | [CLI](src/dev-chat/cli.ts), [driver](src/dev-chat/driver.ts), [session store](src/dev-chat/session.ts), [context fixtures](src/dev-chat/context-fixtures.ts), [transport](src/dev-chat/transport.ts) | Isolated DEV state and inert generated content are distinct. DEV setup persists saved/temporary chat policy in the isolated config; model selection uses the same real route identities as production. The harness attaches to the launcher's existing DEV tunnel rather than taking over supervision. |
@@ -334,628 +336,335 @@ stay explicit until implemented. This priority does not prove installed `.9` or
 release and does not authorize broad verification; development, source publication,
 installation and live-provider evidence remain separate.
 
-## Plans, history, project workspace and standalone execution
+## Plans, history, workspace and standalone execution
 
-These new source modules extend the maintained runtime; their presence does not
-prove a released or installed feature. Source baseline [PR #98](https://github.com/Froraut/NEKODEX/pull/98)
-(`137399d`, `6.1.32-nekodex.9`) passed all four baseline CI jobs; installed D01
-remains `6.1.32-nekodex.8`. The later requirements/base-selection/canonical-history/
-managed-skills batch has its own fixture evidence and four completed DEV UI flows,
-with its own source publication in `09383bb`. The builtin browser/native desktop batch
-is published in `6f6b171`, whose macOS/Linux/Windows/actionlint CI jobs all passed.
-It has no real model/account turn; actual fixture capture/type is
-observed, including a separate fresh observe→click→canonical-final flow. Real
-model/account and generic CG pixel fallback remain unverified. The
-[full adoption program](docs/design/full-adoption-program.md) records the broader
-36-capability scope. Keep composition evidence separate from contract fixtures,
-development UI, live provider results and installed delivery. The later Native
-auth/inventory/account-pool source is published in `641f277`, with all four exact
-[CI jobs successful](https://github.com/Froraut/NEKODEX/actions/runs/39150687127).
-The final-summary history batch below is published as `e75d073`, with four exact
-[CI jobs successful](https://github.com/Froraut/NEKODEX/actions/runs/39153769800).
-The subsequent image batch does not inherit either earlier CI result. No real Native account/model or installed update is proved.
+The maintained scope is [all 44 IDs](docs/design/full-adoption-program.md):
+N01–N08, P01–P24 and DW1–DW11 with DW8a. macOS is stage1; Windows/Linux adapters
+and delivery remain stage2. P18 composition is conditional on a demonstrated gap.
+The current source version is `6.1.32-nekodex.9`. Source, focused fixtures,
+connected development behavior, provider outcomes, signed packages, installed
+version and active process are independent evidence. Dated outcomes live in
+[review reports](docs/reviews); this architecture describes current ownership,
+not a chronological build log or a claim that the complete program is accepted.
 
-**Plan content:** the native observer reads only the canonical current turn's
-built-in `update_plan`; request identity is not a content source. The helper
-publishes bounded content through `/v1/turn/plan`, separately from metadata-only
-`/v1/turn/progress`. `browser-turn-lifecycle.cjs` rechecks the live tab's
-trace/helper PID/surface/task record and native thread/turn before calling the
-Electron-owned store. `task-plans/policy.json` is private, revision-checked and
-default off; unreadable/unsafe policy disables capture. Account/task-scoped
-records live under `task-plans/records`, retain immutable observed revisions and
-stop at quota. Disabling capture retains saved content; selected deletion is
-explicit. Model `completed` is a claim, never verified outcome evidence.
-`task-plan-requirements.cjs` composes a private account/task/native-thread/turn
-book with explicit original-input consent, corrections, CAS and plan/requirement
-revision invalidation. Selected actions resolve only from successful bound-ledger
-metadata; personal confirmations remain `user-confirmed`. Historical corrections
-and associations survive invalidation; shared content quota failures preserve data.
-The real-ledger fixture passed. Actual DEV UI saved explicit requirements with
-consent, associated plan/action metadata and personal confirmation, then corrected
-the requirements: current counts reset while both requirement revisions and
-coverage history remained. Property verification stayed visibly unavailable.
+### Tasks, Native workers and human waits
 
-**History:** `/admin/conversation-history` uses existing local/control-token
-admission and one lazy daemon-owned `conversation-history/history.sqlite`.
-Electron's registrar calls only the already-owned ready runtime. SQLite/FTS
-records message/revision identity, explicit author/source/sensitivity and bounded
-coverage; search/export read the same retained corpus. The manual HTTP import
-requires user consent and sensitivity confirmation, fixes the source to
-`manual-selection` / `manual-import`, and marks coverage partial. It does not
-claim automatic redaction or a complete native transcript. Unknown sensitivity
-does not persist or hash text; quota stops recording without silently purging
-saved messages. The trusted `captureValidatedNativeResponse` adapter is a separate
-in-process port, not permission to capture every incoming Responses request.
-Exact revision links identify stored records and do not themselves establish OS
-protocol registration. Clipboard/save delivery remains an explicit UI action;
-cancelled save returns `saved: false`.
+`AgentModeStore` owns task families, requirement/plan revisions, mailbox packets,
+commands, dispatch claims, canonical pending calls and immutable receipt history.
+The runtime/runner owns live scheduling and one durable sender. Dependency-ready
+stages fill permitted concurrency and turn/spend reservations; a completion never
+clears another worker's human/tool wait, failure or uncertain dispatch. Native
+logical stages get fresh worker bindings, while an exact tool continuation retains
+its original thread/turn binding. Native's per-task model limit and the account's
+subscription quota are separate from Web stage concurrency.
 
-`canonical-native-history.cjs` now coordinates explicit metadata load and selected
-thread refresh through the existing main-owned Codex client. `thread/read` binds
-the exact thread and one supported `thread/items/list` supplies canonical role/text
-items; no turn/resume/fork or rollout-file fallback is used. Per-thread consent
-and a global recording epoch are leased before read and revalidated in the sole
-history SQLite transaction, including revoke/re-enable and global off/on. The
-renderer cannot submit leases or canonical message batches. Known-pattern policy
-excludes whole unsafe items without storing/hashing bodies; unfamiliar secrets
-can remain, with separate explicit risk acknowledgement. Native authorship and
-compaction remain unknown unless established; observed timestamp fallback is
-labelled and corpus coverage is always partial. Connected native-shaped RPC/SQLite
-fixture passed. Actual official 0.163.0 returned an empty canonical page, so real
-nonempty text/IDs/timestamps are not yet proved. Actual DEV UI confirmed global
-opt-in, exact-thread scoped consent with both acknowledgements, explicit empty
-canonical-page guidance, revoke disabling refresh and global recording off. It
-did not claim an empty original conversation or saved canonical text. See
-[the canonical history contract](docs/development/conversation-history-canonical.md).
+Manual, Goal and Loop share this owner. Goal needs explicit process-local Run
+consent; restart does not restore it. A human reply saves substantive mailbox data
+without inference and requires a new explicit Run. Loop preserves the dependency
+plan and final instructions for each new substantive packet. Duplicate/unchanged
+packets do not produce an empty Continue. Unknown sends remain held, late results
+stay with their original dispatch, and corrections retire old-generation authority.
+The real two-cycle mailbox proof establishes scheduling, not a recurring business
+outcome; external generic watchers remain unavailable.
 
-`owned-native-final-summary-v1` is a separate leaf of that same SQLite writer.
-It stores only validated Native `final.summary`, tagged assistant/agent/native
-with partial coverage. The provider acquires a private dispatch-bound lease before
-its one offer and releases it in `finally`, including tool-request/failed/aborted
-offers. Global recording plus exact future task-generation consent and explicit
-unknown-secret-risk acknowledgement are required. Trusted main admission supplies
-source/profile/backend-account/auth-epoch; actual canonical Native IDs/time and
-the raw-result digest bind receipt to parsed summary. No renderer message batch,
-raw JSON envelope, automatic-host context, tool request/arguments/results, schemas
-or reasoning enter this projection. Missing actual provenance means no capture.
-The composition root re-resolves the actual task and admitted source at write;
-generation/epoch/source/consent/global recording changes invalidate old leases.
-Known-pattern exclusions retain bounded metadata without unsafe body storage or
-hashing; unfamiliar secrets can remain. Search/export share revisions/quota/FTS
-and expose provenance, without claiming full transcript or task verification.
+Both providers use [bounded historical context](src/agent-mode/prior-tool-context.ts)
+with original task/stage/dispatch/generation/revision/receipt provenance. Historical
+values are inert data, never continuation, permission or verification authority.
+Native's fixed protocol separates `tool_request`, `final` and `awaiting_input`;
+a waiting result has no pending tool authority. Bun validates proposals against
+the shared draft-07/2020-12 schema compiler; Native tools remain closed and only
+the existing ToolJournal can approve and execute an external effect.
 
-Every explicit task-history revoke disables all consent scopes for that task
-generation, including alternate admitted sources, while preserving saved content.
-It remains available when its source vanishes:
-authoritative task/family/generation/revision validation precedes persisted
-revocation of all consent scopes for that task generation. Source return cannot
-revive old consent or leases. An unavailable passive status does not manufacture
-`enabled:false`. A revoke-only IPC channel remains usable during drain; canonical
-history uses its dedicated owner before generic runtime readiness, without an
-old Web gate. History failure cannot fail or replay the Native turn. These are
-source/fixture contracts, with no real Native history or actual UI evidence yet.
-Both TypeScript projects passed at 18:16 UTC, renderer (195 modules) at 18:17,
-and plain development CLI (635 modules/exact `.9`) passed with temporary output
-removed. Module-map write/documented-path checks passed; final map check remains
-separate. No new commit/CI result is implied.
-See [design](docs/design/owned-native-final-history.md) and
-[focused evidence](docs/reviews/2026-10-18-owned-native-final-history.md).
+Main's private bridge checks the durable whole-envelope claim and exact current
+model/admission before offer. Descriptor/schema/build pins, current account
+policy and source/binary identity are checked together. Same-owner reads and
+bounded waits observe the existing operation without a new offer. Qualification
+prepares and checks the account server before advertising models, without opening
+a thread or sending inference. A saved login or old receipt is not fresh admission.
 
+[Production wrapper pins](launcher/electron/owned-native-production-pin.cjs) use a
+separate signed-distribution manifest preserving original development static flags.
+The fixed app/runtime owned-native layout binds source/build-target closure, app
+identifier, helper identifier, publisher team, timestamp and hardened signature.
+Fresh signature/hash/static admission remains mandatory; no source-checkout/PATH
+fallback or retained development UID-only pin substitutes production trust. Bundled
+bootstrap reads use that same exact admitted layout. Source pin verification does
+not establish a signed installed wrapper or successful provider run.
 
-**Agent remote tools:** [protocol/provider/bridge](src/remote-workspace/agent-tools.ts)
-connect the existing [SSH owner](launcher/electron/remote-workspace.cjs) to the
-same approved ToolJournal. Explicit human attachment binds an already-connected
-saved host/root to actual task/family/generation/revision, main instance,
-connection ID and config fingerprint (not SSH host key). Main's callback validates
-the actual task plus already-begun exact pending ToolJournal intent/args/key before
-list/read/literal command. Fixed early routes on the existing private main
-listener do not depend on Web readiness. No autoconnect, second sender, implicit
-restart regrant or foreign connection adoption is introduced.
+**Retained owned conversations:** `persistent-native-conversations.cjs` uses the
+existing qualified account server. Every mutation binds the observed profile,
+epoch and server generation. Exact conversation and Native-thread reservations
+allow independent known operations within the live subscription quota. A fork
+reserves its source; the synchronous single registry writer rechecks the global
+quota after account readiness. Reserve account capacity before asynchronous
+startup. Active Agent work and any uncertain owner block new retained operations.
+New/forked thread IDs cannot alias an existing or previously closed subscription;
+unknown creation retains its held receipt and cannot unsubscribe another facade.
+Native receipts own actual offers; the registry associates them with conversation
+and revision. Passive exact-action lookup resolves a lost reply after account
+selection changes. Drain and account shutdown start together and must both settle.
+Idle-close waits for exact thread closure, not merely unsubscribe acknowledgement.
+Explicit Resume validates stored account/profile/epoch, creates a new admission
+binding and restores the same thread without sending. New subscription lifetimes
+cannot borrow an earlier close receipt. Legacy v1 identity gaps remain unavailable.
+The renderer's per-conversation pending guards expose independent known work while
+preserving uncertain-owner blocks and exact action reconciliation.
 
-The signed remote registry retains48 intents/180 KiB encoded full outcomes with
-pinned receipts/reserved terminal storage. Active duplicates coalesce; restarted
-started intents remain unknown. Lost reply uses pure exact receipt lookup,
-including old-instance receipts, then append-only ToolJournal reconciliation;
-never execute again. Truncated list/read content exposes incomplete coverage.
-A command's selected root is cwd, not OS sandbox; SSH user permissions apply.
-Receipts prove execution, not a business outcome. Close settles delayed attach
-before final revoke and retries only retained failed cleanup; dedicated status/
-revoke remain usable during drain directly through guarded main IPC on the same
-remote service even with core absent, without core reads or attach authority.
-Binding and ordinary approvals still require owned Agent readiness; commands
-retain private HTTP/core-intent checks. Source/fixtures passed, including actual
-Runtime/ToolJournal/privateHTTP/main owner with fake SFTP/runner1/48; actual SSH,
-authentication and remote UI/provider outcomes remain open. Both TS19:04,
-renderer196/CLI643exact `.9` and module-map730/finalcheck/paths passed19:06;
-new source commit/CI remain pending.
-See [contract](docs/design/agent-remote-tools.md) and
-[evidence](docs/reviews/2026-10-18-agent-remote-tools.md).
+The separate `codex-client-control.cjs` metadata/fork facade can request an exact
+`lastTurnId` boundary and returns durable source/boundary receipts with
+`executionStarted:false`. Configured server or idle metadata does not prove
+exclusive ownership. External resume/exclusive handoff remains unavailable because
+the inspected public client contract supplies no cooperative release/lease token.
+A supported fork must not be implemented by resending the complete prompt.
 
-**Project files:** `local-workspace.cjs` is distinct from ChatGPT browser workspace
-windows. Main captures the picker and private registry path; IPC accepts opaque
-workspace IDs and relative paths, not arbitrary roots. The private registry
-persists grants and recovery drafts. Renderer mutation queues serialize edits
-for the same file; the main service retains the draft before staging/flush/rename
-and checks current revision/parent identity. Conflicts retain user text. Actual
-DEV managed-worktree Open selected the exact owned root and rendered its file
-tree; this observation is distinct from archive lifecycle proof. Git
-status/diff captures exact HEAD/base OIDs plus bounded comparison data in memory;
-freshness checks can return stale. These read-only comparisons are separate from `workspace-git-mutations.cjs`,
-which owns manual snapshots, selected restore before-images and durable worktree
-create/archive receipts. Native-picker grant resolution remains in main; the
-retained-state guard prevents forgetting a root with snapshots/worktrees. Restore
-rechecks exact file revisions and retains a recovery snapshot before writing.
+### Selected attachments and partial history
 
-**Native client:** `codex-client-control.cjs` uses an explicitly configured
-existing-server proxy or its own stdio app-server connection, checks the chosen
-profile, and calls supported `thread/list`, `thread/read` (`includeTurns: false`)
-and user-requested `thread/fork`. A separate connection's `notLoaded` state says
-nothing about a task running in another process. Method discovery distinguishes
-unverified/supported/unsupported. Unknown fork outcome is retained as an error
-requiring inspection, not retried as a new fork. `codex-fork-journal.cjs` privately
-persists begin/completed/uncertain state before and after mutation, including an
-observed fork ID when retaining the receipt fails; explicit inspection acknowledges
-that exact journal action. Destroy waits for its owned
-client process and never stops an existing server daemon.
+[Selected-byte DTOs](src/agent-mode/native-attachment-types.ts) bind explicit picker
+bytes to selection receipt, SHA, byte length, name and MIME. The provider never
+opens a supplied path or URL. UTF-8 text is bounded to four files/32KiB each/64KiB
+total; PNG/JPEG shares Native's two-image/160KiB cumulative binding budget.
+Selection occurs on the initial binding and survives correction as immutable
+bytes. Typed image content stays outside automatic host text. Model image support
+must be actually admitted. Structural PNG/JPEG validation is not full codec proof.
 
-**Retained owned conversations:** the separate explicit-retention panel uses
-`persistent-native-conversations.cjs` and the existing account server. Every
-mutation binds the observed profile, epoch and server generation. A shared gate
-excludes active or uncertain Agent work. Native receipts remain authoritative
-for actual offers; the private registry associates them with a conversation and
-revision. A passive exact-action lookup resolves a lost reply even after the
-selected account changes. Both conversation drain and account transport shutdown
-start together and must settle before completion. Idle-close waits for the exact
-thread close before releasing its slot. Explicit Resume validates the stored
-profile, epoch and backend account, uses a new binding and current admission,
-and restores the same Native thread without sending. A new subscription lifetime
-cannot borrow a prior close receipt. The real macOS GUI retained context through
-both same-server close/Resume and a full application restart; canonical inputs
-omitted the recalled marker. Legacy v1 records without identity proof remain
-unavailable for Resume; external client handoff is separate.
+One Bun-owned SQLite/FTS writer owns all retained conversation text. Manual text,
+explicit selected-thread page refresh, owned final summaries and supported Native
+event projections have separate default-off policies. The
+[event owner](src/conversation-history/transcript.ts) binds a pre-offer subscription
+to global recording, exact future task-generation consent, risk acknowledgement,
+recording epoch, account/auth epoch and authenticated source revisions. Legacy
+final-summary consent cannot authorize the new policy. Current transport projects
+partial assistant `final`/`awaiting_input` summaries; envelopes, tool requests,
+reasoning and raw media are excluded. Unknown secrets remain possible despite
+known-pattern filtering.
 
-**Agent mode:** the store owns SQLite tasks, workers, mailbox revisions, commands,
-dispatches and receipts. Runner/runtime own one task-family generation and an
-explicit execution port; opening/status reads perform no execution. Stable action
-IDs deduplicate commands; offered/unknown sends require reconciliation, and late
-results remain attached to their dispatch. Corrections, pause/stop and bounded
-Goal/Loop respect current generation and real outcomes. Mailbox work packets
-provide the recurring-work source with durable work identity, deduplication and
-pause/generation boundaries. Core two-cycle behavior has focused fixture evidence.
-The actual GPT-6.1-Sol mailbox Loop also completed two cycles with distinct final
-summaries, waiting for a substantive new packet between them. Re-enqueueing the
-same key/text retained two dispatches while the bound still allowed a third;
-Pause advanced generation to 3 and removed Run consent. This establishes real
-model scheduling and duplicate suppression, not a business outcome. External
-watchers remain unavailable. The provided
-Responses adapter calls a fixed configured loopback endpoint without redirects
-or implicit retries. `server.ts` routes an explicit `local-responses` or
-`owned-native` execution choice through the same runtime, runner and ToolJournal.
-Native requires an explicitly admitted model/admission pair. Bun commits the exact
-complete envelope digest before one private main HTTP offer; main checks that
-already-durable claim before worker creation and again before inference. Initial
-prepared receipts release HTTP observation while the same operation continues.
-Receipt reads and bounded event waits never offer again. Generation fences retire
-only older bindings. Main's matching-core check is independent of Web tunnel
-health; cleanup authority remains valid during drain. The control bearer is never
-Native OAuth. Configured MCP descriptors and selected skill content are attached
-through explicit ports.
+Edits replace exact indexed revisions; deletion watermarks reject stale replay.
+Revocation persists even while the source is unavailable, stops new capture and
+retains stored content. Reads/restart never restore subscriptions. Enable actions
+respect draining admission; revoke/status remain available for cleanup. Markdown
+export/search retain provenance and explicit partial coverage. Selected external
+page reads are not an authenticated event feed: full client transcript/background
+subscription remains unavailable.
 
-The [shared tool schema compiler](src/agent-tools/schema-validator.ts) keeps
-default/explicit draft-07 and canonical JSON Schema 2020-12 validation strict.
-It rejects async validators, unknown dialects and unresolved external references;
-MCP discovery and Native argument validation use the same synchronous contract.
+### Workspace, Git, restore and remote uncertainty
 
-The shared fixed `neko-agent-result-v1` schema encodes NEKODEX `tool_request` or
-`final` assistant text. Native tools stay empty; Bun checks exact announced tool
-schemas and remains the only effect owner. Native continuations retain binding,
-generation and previous completed native-turn identity rather than fabricating
-Responses function outputs. Current Native task concurrency
-is one, cost is unknown and max-turns counts native offers, not internal provider
-requests. Main resolves admission through the qualified Native account execution owner and
-publishes only its current model rows. Explicit Inspect models runs the selected
-profile inventory and admits at most the first two nonhidden actual picker models,
-without inference. An isolated personal Pro (Max) account supplied ten catalog rows on 18 October
-2026. GPT-6.1-Sol and GPT-6-Astra each returned a real canonical final result in
-separate one-turn tasks. The Astra final-summary consent/search/revoke flow was
-observed too; both tasks remained review_required. See
-[real-model evidence](docs/reviews/2026-10-18-native-real-models.md). A saved login
-or historical receipt is not replay or fresh model-admission authority. The account server supports two isolated
-threads across separate tasks; this does not raise the current one-worker limit
-inside each Native task. Bounded typed image input is added in the subsequent
-image batch described below. Sealed zero-delay idle unload applies only after unsubscribe; fixed developer instructions route external tool proposals through the existing ToolJournal while Native remains read-only. Retiring a binding requires its exact thread-closed event
-or physical process closure; unsubscribe acknowledgement alone cannot release it.
-Unknown/lost ACK never permits replay. Whole-app cleanup closes the account
-process before binding facades and auth storage; an idle execution lease is not
-itself active inference. The optional Rust helper is a development artifact, outside packaging.
-The subsequent image batch projects matching approved tool results into typed
-`envelope.images` separate from text, covered by the whole-envelope durable claim.
-Model capability requires both original ModelInfo and picker image modalities.
-Main/leaf structural PNG/JPEG admission and journals enforce two cumulative
-attachments/160 KiB per binding, including unknown outcomes; dimensions are at
-most 8192 each/16 Mi pixels. Fixed high-detail data URLs have exact typed canonical
-echo; file IDs/omitted media retain unknown without replay. No image paths/temp
-files or image bytes enter canonical receipts/history. Actual current wrapper
-loopback proof passed once with text then two images and third-image pre-send
-refusal; actual Runtime/ToolJournal/private HTTP/main bridge image flow passed1/40
-with a fake physical leaf. Image-batch root TS18:30/renderer TS18:29,
-renderer195 modules, plainCLI638/exact `.9` and final module-map/paths passed
-at 18:32. Source commit/CI remain separate and pending. Longer Native
-vision loops, real upload correlation and actual account/model proof remain open.
-See [image contract](docs/design/owned-native-images.md) and
-[evidence](docs/reviews/2026-10-18-owned-native-images.md).
+Main's native picker grants opaque local roots; the workspace service owns bounded
+reads, drafts and revision-aware writes. `WorkspaceSurface` orchestrates selected
+root/path/navigation. `WorkspaceEditor` owns editor/save/recovery presentation and
+the unchanged singleton per-file mutation queue; navigation/forget joins that
+queue before flushing the same durable editor port. `WorktreeControls` and
+`LocalGitReviewPanel` consume exact receipts rather than reconstruct authority.
 
-Its exact source/build/binary pins are checked before a static probe; stock CLI
-admission retains its previous identity. See the [protocol](docs/design/agent-native-protocol.md),
-[main bridge](docs/design/agent-native-bridge.md) and [build guide](docs/development/owned-native-worker-build.md).
+Local Git mutation review binds complete captured index/HEAD/file identity,
+stage/unstage/commit approvals, draft conflict checks and durable no-replay receipts.
+An uncertain commit is inspected after registry restart, not committed again.
+Snapshots/selective restore preserve exact before-images, dirty/untracked/ignored
+work and concurrent-edit refusals. P09 is the restore interface; DW8 owns manual
+snapshots; DW8a is the separately granted real pre-turn boundary. The signed
+snapshot-only grant never becomes filesystem/tool execution authority.
+Human PTY sessions remain main-owned generation-bound resources with bounded
+output/backpressure and exact exit/join; keyboard input is not an Agent tool.
 
-Canonical provider input/output/tool-map/pending calls are retained with the
-result. An exact human approval invokes the pending call through the MCP host;
-its known durable output can be used after restart without another tool effect.
-Unknown effect cannot be retried or silently continued. Actual MCP receipts feed
-the evidence resolver; model claims are not proof, and the local coverage helper
-is not an independent semantic audit. Monetary quotes are unavailable for this
-subscription route: use explicit turn bounds, preserve unknown spend, and never
-turn token counts into a fabricated bill.
+Remote workspace owns immutable host/root/SSH alias/key/fingerprint, drafts,
+SFTP transports and signed mutation receipts. System SSH preserves normal auth
+and strict host-key policy. Explicit local cancellation retires future command/
+attachment authority and aborts only that host's local transport; the original
+promise retains ownership until settlement. Local transport exit does not prove
+remote process termination. Reconnect waits for the old local transport to exit,
+requires new approvals and never replays an uncertain remote write or command.
+An uncertain temporary put retains the draft/path; cleanup requires acknowledged
+exclusive creation and cannot delete a foreign file.
 
-`agent-workspace-grant.cjs` signs only main-derived picker paths for the current
-task/family/generation. `src/agent-workspace/store.ts` checks signature, revocation,
-ancestry and scope and writes a durable preparing/admitted/failed pre-offer attempt.
-Repeated dispatch admission reuses its immutable baseline; changed bytes do not
-silently replace it. Capture is bounded and opt-in; the snapshot-only grant never
-becomes MCP execution, remote access or a general client pre-write hook.
+Remote worktree listing can read retained records offline by immutable host ID
+without SSH or mutation authority. Git Review uses the same per-host owner plus a
+common-repository private gate. Index publication records exact pending lock
+identity/digest before rename. Only a physically retired helper with matching
+private gate and complete file identity can settle its own lock; foreign/modified/
+legacy locks remain untouched. A lost ACK is exact inspection, never a Git retry.
+The earlier real SSH/worktree/remote Git24-property evidence remains distinct from
+new physical network interruption acceptance.
 
-**Remote projects:** system SSH/SFTP preserves normal authentication and strict
-host-key checks. The main registry owns exact host/root and drafts; remote commands
-use one-use approval payloads and signed durable started/outcome receipts. Remote
-Git inspect/prepare/create/archive has a separate owner-bound worktree lifecycle.
-Unknown disconnect outcomes require explicit reconciliation, not reconnect replay.
-Remote command/Git helpers require the selected server's supported environment;
-local picker/Agent grants do not confer remote authority.
+### Tools, skill environments and isolated builds
 
-**Managed local skill text:** `managed-skills.ts` owns bounded private SQLite
-metadata and immutable text-version directories. Review pins source grant,
-canonical inode/timestamps/digest; commit revalidates before a durable exact
-stage/target intent. A lost receipt is reconciled from the verified published
-version, never replayed blindly. Explicit update retains a new lineage version
-without changing old task attachments. Attachments bind exact digest/task/generation;
-revoke/forget disables future composition and retains bytes/receipts. The existing
-`selectedSkillContent` port combines read-only and managed selections within one
-budget. Limits preserve admitted retries and old state: 512 action intents,
-256 versions, 64 MiB reserved text, 64 attachment packets and combined 16 items /
-128 KiB. `skill-resources.ts` extends the same owner with explicitly selected
-UTF-8 reference/template files under `references/` or `assets/`: at most 16 files,
-32 KiB each and 128 KiB for the whole package. Package/version/review digests bind
-every resource; quotas include their bytes. Retained delivery rechecks the complete
-selected tree. Stage publication flushes every directory ancestor bottom-up.
-Official/vendor plugin-cache imports, executable/binary/network resources, OAuth
-and physical cleanup remain unsupported; no official plugin/account registry changes.
-Actual DEV UI selected a local SKILL.md, discovered/reviewed its digest/text,
-imported an unattached immutable version, explicitly attached it to one task/
-generation, revoked it with retained bytes and disabled reattachment, then detached.
-No model/MCP execution or external calls were used for that UI observation.
-The resource follow-up repeated the changed connected flow with a 180-byte
-instruction and 84-byte reference: full preview, package SHA, unattached import,
-explicit task-generation attach, retained revoke and detach. The task stayed at
-zero offers. A separate actual HTTP/composer fixture delivered the exact package
-to one counted fake Responses request; that is not real provider/model evidence.
+`StandaloneMcpHost` and ToolJournal own discovery, exact schemas/arguments,
+approval, durable unknown-before-effect and result reconciliation. Configured
+servers and builtin browser/desktop/remote/VM tools use that same owner.
+Install, save-disabled, enable, connect, discovery and successful tool effect are
+separate transitions. Frozen official filesystem, sequential-thinking and memory
+recipes retain exact lock/tree/integrity/runtime pins and recipe-specific sandbox/
+data/environment contracts. Registry publisher metadata is not an independently
+verified signature. Current local stdio recipes use `auth:none` and `oauth:false`.
 
-**MCP OS boundary:** `sandbox.ts` creates a fixed custom Seatbelt profile for
-explicitly reviewed MCP recipes on macOS, with pinned executable/code roots,
-canonical inode-bound read/write grants, private HOME/TMP and no inherited secret
-environment. Writable grants cannot overlap executable/code roots. Kernel denial
-of outside data reads/writes/new network sockets, fork inheritance while parent
-lives, and actual SDK host read/counter have separate observed evidence. The
-reported boundary explicitly exposes global filesystem metadata, ancestor/system
-library reads and selected sysctls. It uses Apple's deprecated `sandbox-exec`
-interface. Windows/Linux support, arbitrary native command execution and
-post-parent-exit descendant cleanup are not claimed; `native-policy.ts` still
-rejects the unsupported generic native executor.
+Managed skills own immutable instruction/resource versions and current-generation
+attachments. Updates never auto-attach; revoke/forget retains bytes/receipts and
+blocks future composition. Text, PNG/JPEG, restricted JS/MJS, selected Apple Python
+and selected PDF resources have separate readers/runtime admission and per-call
+ToolJournal approval. PDFKit extraction is bounded text/no OCR, not full visual
+interpretation. Seatbelt seals before loading untrusted bytes; global metadata,
+system-library/sysctl exposure and deprecated sandbox interface remain disclosed.
+Generic native execution and other-host sandbox support are unavailable.
 
-**Selected workspace outcome evidence:** `agent-workspace-evidence.cjs` is a
-main-owned signer over a stable observation action, exact picker root/path,
-task/family/generation/revision/requirement and selected existence/absence/SHA-256
-property. It rechecks root ancestry and captured revision/hash without persisting
-raw file content. `src/agent-mode/evidence.ts` retains immutable evidence history
-while explicitly superseded facts leave current coverage. The integration's
-synchronous `beforeVerify` boundary must revalidate selected current files before
-verification, including a duplicate command receipt. Actual Manual DEV UI passed
-SHA observation/Review, external drift with Verify 409 refusal, restored bytes plus
-a new observation/Review, then `verified_complete`; superseded immutable facts
-remained in history. This proves the selected file-SHA property and current-fact
-recovery, not automatic Goal or arbitrary business semantics. A file property proves only the declared property,
-not the semantic completion of every requirement.
+[PEP508 dependency policy](src/agent-tools/skill-python-requirements.ts) evaluates
+markers/normalized extras and explicit selected-artifact closure. Direct URLs are
+only URL→SHA mappings to already selected bytes, never fetch/resolution authority.
+Offline Apple pure-wheel Review/Prepare binds host marker environment, runtime,
+artifact/lock/graph/tree identities, then separate task Attach and invocation
+approval. Full tree/brand checks and signed pending publication reconciliation
+remain authoritative; no pip/site initialization/network/build hooks run on host.
 
-**Selected skill image resources:** mixed v2 retains explicit PNG/JPEG raw0400
-fsynced files with full hashes/whole-tree checks; text-only v1 IDs/digests are
-unchanged. Complete retained `bytes` include pixels and quota reservation;
-`promptBytes` includes instruction/text plus image metadata. Selected skills never
-automatically inject pixels. Static four-field `skill-resource/read` uses current
-attached version/package/path/digest and active generation/root reader, with the
-same ToolJournal exact approval and duplicate receipt. Results enter existing
-canonical Web/Native image projection, not a generic verification observer.
+The [Linux build controller](src/execution-environments/python-build.ts) performs
+explicit Review→Prepare→Attach on the same admitted VM runtime/executor. Main's
+native source picker snapshots selected source/backend/runtime bytes; its private
+selection descriptor and streaming bridge deliver only the exact opaque selection
+for current task/generation. Renderer-supplied paths cannot substitute it.
+The shared `python-build-source-policy.cjs` skips known credential names in main's
+tree snapshots and rejects them in direct core tree reviews. Selected archives
+remain raw selected artifacts; the same known-name policy runs through the guest's
+standard ZIP/TAR member checks before extraction or backend execution. This is not
+a general content-secret detector or a claim that archives were filtered on host.
+Guest-only PEP517 `build_wheel` checks actual pyproject backend, selected static and
+approved dynamic build requirements. Independent ZIP/RECORD/metadata/ELF checks
+brand supported CPython3.14 Linux ARM64 musl output; cloned/other-runtime brands
+fail. Attach returns private VM input snapshots, not host installation. Build
+reviews/selections are process-local; durable executor receipts must settle before
+another action. General `build_sdist`, broad tags/data schemes and Darwin/Xcode ABI
+are not implied by the selected compiler/CPython proof.
 
-Limits are16 resources,text32 KiB each/128 KiB incl SKILL,image160 KiB each,
-8 images/32 Mi package pixels (8192 axis/16 Mi each),mixed512 KiB. Native retains
-its distinct cumulative2/160 KiB binding cap. UI hashes bytes before local preview,
-then requires all images' successful natural-dimension decode; sticky errors/stale
-review callbacks cannot unlock import. Existing user MCP namespaces have priority,
-and attached-resource discovery works with MCP off. Store1/47,reader1/49 and
-actualHTTP/runtime/ToolJournal/fakeNative1/62 and actualChromeDOM1/31 passed.
-The DOM flow imported one valid chart/unattached and blocked a structurally/hash
-valid unknown-critical-chunk PNG after decode failure; header/CRC validation is
-not a full-codec guarantee. BothTS/renderer19619:39,CLI644exact `.9`19:41 and
-map731/finalcheck/paths passed for that image batch. Official/vendor copies, other binaries/network remain unsupported; later PDF v5 is described below. Selected
-restricted JS/MJS execution is described below. See [contract](docs/design/standalone-skills-resources.md)
-and [evidence](docs/reviews/2026-10-18-skill-image-resources.md).
+### VM ownership, host network mediation and production origin
 
-**Restricted skill scripts and SSH aliases:** v3 selected JS/MJS packages retain
-v1/v2 identity compatibility and send metadata only. Separate task-generation
-workspace grants plus existing ToolJournal per-run approval feed a trusted pinned
-Bun bootstrap/supervisor. sandbox_init precedes import; fork/exec/network operations
-are denied with scoped FS and disclosed global metadata/system-library reads.
-Readable mutable data can be interpreted; immutable entry is not all-code-origin
-proof. PID/start/permit persistence,15s/16KiB output/2live/256retained bounds and
-reaping preserve unknown/no replay. Fresh-instance live-owner restart/close P1 is fixed through bounded256 receipt
-scan/status/admission/close holds; pinnedBun1.4.0 executor3/39 passed, keeping
-original effect unknown after physical cleanup. Peer closure review closed P1 with no additional material findings. Store101/provider83,
-real macOS HTTP/runtime/ToolJournal/script61 (fakeNative), ChromeDOM58 (executor0)
-and IPC10 passed; pinnedkernel3/39 passed, peerP1closed/noadditionalfindings; bothTS20:02/renderer197/CLI648exact9 passed20:04, finalmapcheck/commitCI pending.
+`protocol.ts` defines bounded NDJSON; `storage.ts` owns one user-wide private lock,
+authenticated gate/job journal and exact pending-release reconciliation.
+`executor.ts` records helper PID/start and START intent before gated dispatch.
+Terminal release requires authenticated actual VZ-stop plus exact helper/stdio
+join, not a guest completion claim. Product coordination owns explicit preparation,
+scoped attachment and exact result rehydration. Candidate bytes use host digest
+names and acquire no destination authority.
 
-SSH explicit Host aliases now resolve a bounded data-only user-config subset at
-Connect, preserving old direct argv/fingerprints. Unsupported active directives
-refuse; compiled options still use -F /dev/null/BatchMode/strict host keys. Resolved
-config/key metadata drift fences old approvals/attachments and requires reconnect.
-Bounded connection/keepalive options and StrictHostKeyChecking=yes compile without
-weakening the fixed transport policy. A separate nonsecret configuredEndpoint
-preserves the original alias and explicit overrides when opening worktree roots;
-the resolved display endpoint never becomes replacement connection authority.
-Actual selected-host SSH/SFTP read/write, an approved command and worktree creation
-have development UI receipts; broader remote integration retains its own acceptance.
-See
-[script contract](docs/design/restricted-skill-scripts.md),
-[SSH contract](docs/design/remote-ssh-config.md) and
-[evidence](docs/reviews/2026-10-18-restricted-skill-scripts-and-ssh-aliases.md).
+The fixed helper/guest has two CPUs/2GiB, no NIC, no shares, no host credentials
+and one bounded vsock port. The producer locks GCC/Python/Alpine toolchain bytes,
+source digests and separate extracted payload provenance without package hooks.
+Accepted development shell/C/CPython results are reused for unchanged boundaries.
+[Production admission](src/execution-environments/production-runtime.ts) binds fixed
+publisher/app/helper identifiers, outer resource seal, virtualization-only helper
+entitlements and exact helper/image/source/toolchain pins. Installed fixed six-file
+layout lives below `Contents/Resources/runtime/app/execution-vm/darwin-arm64`.
+Copied versioned core origin additionally binds actual copied and bundled CLI/Bun/
+manifest bytes to the sealed app; `NEKODEX_PACKAGED_VM_ORIGIN` is a launcher claim
+revalidated against those sealed bytes, not independent trust. Missing production
+artifacts never fall back to source checkout, PATH or cached development helpers.
 
-Selected Python resources extend that owner through a separate v4 package and
-[fixed Apple runtime admission](src/agent-tools/skill-python-runtime.ts).
-The isolated no-site/no-bytecode bootstrap seals Seatbelt before compiling the
-selected `.py`; status does not spawn a child or repeatedly hash the stdlib.
-The same supervisor and ToolJournal retain per-call authority and unknown/no
-replay behavior. JS v3 identities stay unchanged. Actual kernel containment,
-rendered import/grants and a two-offer real Native invoice CSV task with one
-approved effect and independent SHA verification passed; see the
-[Python acceptance report](docs/reviews/2026-10-18-real-python-skill.md).
+[Host network broker](src/execution-environments/network.ts) is a separately
+approved narrow capability, not guest native networking. Grants bind exact task/
+generation/action, public-IP-pinned origins/methods, no DNS lookup/proxy/credentials,
+bounded cumulative bytes/requests and per-redirect authorization. The durable file
+ledger reserves before transport and quarantines uncertain effects without replay.
+Revoke/retire stops only the exact owner; external effects are not rolled back.
+The guest still has **no NIC or arbitrary subprocess sockets**. Tools/UI routes
+must expose the actual supported mediated request, never advertise unrestricted
+shell internet because the broker module exists.
 
-**Selected Python dependency environments:** `skill-python-environment.ts` owns
-offline local-wheel Review/Prepare, signed bounded registry/manifests and immutable
-runtime/artifact/lock/tree identity. Composition retains the store under
-`join(coreHome, 'skill-python-environments')` and shares one branded admitted Apple
-runtime with `SkillScriptExecutor`; full Python version comes from its protected
-canonical header. Preparation performs no pip/resolution/network/package import
-or build hook. Bounded streaming ZIP/CRC/RECORD and complete declared dependency
-checks precede publication. Pinned PEP 440 parsing has a scoped normative
-exclusive-comparison adapter; PEP 508 markers/extras/URLs, native/data-scheme/startup
-payloads and unsupported wheel features remain explicit refusals.
+The main export service is the sole workspace publisher: reviewed baseline →
+signed intent → exact candidate/scope/intent revalidation → workspace publication
+→ durable settlement. Unknown outcomes reconcile exact written-node evidence
+without publishing again. Historical original-generation receipts remain readable
+under current task scope; they restore no bindings, grants or execution authority.
+The renderer uses the original retained request even while execution is locked.
+This is application revision protection, not an adversarial OS-level CAS guarantee.
 
-A persistent canonical private Darwin advisory lock covers fresh registry reads
-and all mutations. Signed pending publication remains unknown/held across restart;
-separate explicit reconciliation validates an existing exact tree and settles the
-same action without preparation replay. Passive status creates no storage/children.
-Public projections and typed error helpers omit private environment roots.
-`skill-script-tools.ts` owns exact task-generation bindings and draining revoke;
-each invocation still needs its workspace grant and ToolJournal approval.
-The executor revalidates the branded read-only environment before dispatch;
-Seatbelt adds read authority, not executable mapping or write authority, and
-rejects overlapping writes before staging a run. Existing isolation, control-FD,
-fork/exec/network denial and physical settlement remain in force.
-See [contract](docs/design/python-skill-environments.md) and
-[focused evidence](docs/reviews/2026-10-19-python-environments.md).
-Actual GUI Review/Prepare/Attach and a real dateutil/six Native Goal produced an
-independently checked CSV with a main file observer and explicit QA verification;
-see the focused evidence above. Installed acceptance remains separate. General
-dependencies, shell/network, other OSes and the complete adoption scope remain open.
+### Browser, desktop and outcome evidence
 
-**Isolated Linux shell development leaf:** `src/execution-environments/protocol.ts`
-owns bounded scoped NDJSON and untrusted proposal capture; `storage.ts` owns a
-user-wide private advisory lock, authenticated job/gate journals and exact pending
-release reconciliation. The default authority is independent of launcher profiles.
-`executor.ts` explicitly admits pinned development helper/guest artifacts, records
-the helper PID/start and START intent before its gated write, and requires an
-authenticated VZ stop receipt plus exact helper/stdio join before settling.
-Candidate bytes use host digest names and can only be read after settlement;
-they grant no workspace destination or export authority.
+The companion popup owns explicit pairing/selection; a separate session tab owns
+one live poll loop under Web Lock. The dispatcher targets exact selected active
+tab/window/document and validates result document identity. Consumed operations
+never replay; uncertain input stops the session with a retained receipt. Typing
+does not send. Explicit fresh-ref click plus an independent fresh page observation
+is required for a message/site claim. Chrome and Firefox153+ share this transport;
+Firefox additionally pins its profile-specific canonical `moz-extension` origin
+and stable add-on ID. Different origins require Disable/re-pair; no weaker document
+fallback exists. Development archives are distinct from signed distribution.
 
-The guest producer adds a locked offline GCC/Python development closure from
-official Alpine APK payloads, with separate extracted-package provenance and no
-package hooks. Preparation uses an isolated build directory; the current app image
-is replaced only after preparation succeeds and owned operations settle. Linux
-ARM64 C/CPython build acceptance is recorded in
-[the focused report](docs/reviews/2026-10-19-vm-native-builds.md); it is not a Darwin
-ABI or arbitrary Python package/build-system claim.
+An approved `browser/observe includeImage:true` requests bounded pixels; ordinary
+text reads do not capture screenshots. Host forwards that option within the bounded
+wire envelope and Native receives typed top-level images, with missing screenshot
+reported unavailable. `outcome-observer.ts` resolves three distinct canonical
+observe/input/observe receipts with monotonic trusted order and exact page binding.
+It proves newly visible exact text at the declared URL only, not message delivery,
+purchase or arbitrary business success.
 
-`launcher/native/execution-vm-helper.swift` owns one VZ machine with fixed two CPUs,
-2 GiB, no NIC, no directory shares or storage devices and one bounded vsock port.
-Its standalone builder snapshots source/entitlements and signs only that helper.
-The separately pinned Go/Alpine guest producer creates a self-contained ARM64
-initrd with an unprivileged shell job and no host credentials/configuration.
-`scripts/dev-execution-vm.ts` is an explicit development fixture, not discovery,
-Agent tool admission or a production/installed runtime. The development product
-controller now connects explicit Review/Prepare/Attach to the existing ToolJournal;
-the fixed GCC/Python development profile also passed real C shared-library and
-CPython-extension builds. General build-system/dependency automation, network grants
-and production/installed Darwin parity remain open. See
-[contract](docs/design/execution-vm-wire.md) and
-[implementation scope](docs/design/isolated-execution-environments.md).
+macOS14+ desktop controller owns explicit enable, permission inspection, selected
+window/process epoch and serialized helper operations. AX property reads work
+without screen capture permission, exclude secure/hidden subtrees and invalidate
+old screenshot input bindings. Generic CG input checks complete stacking order,
+held mouse buttons/focus and intervening input immediately before dispatch.
+`desktop-outcome.ts` resolves separately approved exact AX scalar properties;
+missing is unknown and differing is failed. Canonical journal evidence plus
+`assertPropertyEvidenceCurrent` at resolution/completion prevents stale selection,
+attachment or later-operation acceptance. These are point-in-time declared facts;
+input receipts alone are execution-only. Real provider/vision/CG/app outcome and
+other OS support require their own evidence.
 
-**VM product coordination:** [product.ts](src/execution-environments/product.ts)
-owns preparation, scoped attachment and exact saved-result rehydration. The common
-tool composition delegates to this controller and retains approval/journal authority.
-[output.ts](src/execution-environments/output.ts) names current task access versus
-the source generation of a retained output; both renderer consumers use its selector.
-Historical reads never restore a binding or execute a command. The private
-[control route](src/execution-environments/control.ts) distinguishes review access
-from the exact already-begun export intent. [Export DTOs](src/execution-environments/export-contract.ts)
-contain no private paths, byte payloads or filesystem identity proofs.
+Main signs selected-file existence/absence/SHA observations with exact picker root,
+path/task/family/generation/revision/requirement. Pre-Verify revalidation also runs
+for duplicate command receipts. Immutable evidence history preserves superseded
+facts while corrections clear current coverage. Neither file, visible-text nor AX
+property can self-certify a broader semantic requirement; model completed is a claim.
 
-The [main export owner](launcher/electron/workspace-vm-export.cjs) keeps the one-file
-transaction visible in order: reviewed baseline, signed intent, candidate/scope and
-exact intent revalidation, workspace-owner publication, durable settlement. Unknown
-outcomes reconcile the existing written-node proof and never publish again. This is
-application-level revision protection, not an adversarial OS-level CAS guarantee.
+### OAuth, local consumers, usage and delivery
 
-An explicit Agent `refresh-execution` command resolves the current host-selected
-binding for the same provider/model after qualification. It sends no inference,
-retains completed stages/history and invalidates prior-generation grants/reviews.
-Live or unknown work must settle first. Original tasks do not retain an account
-source tuple; this refresh uses the visibly current connected account and does not
-claim historical account equality. It never weakens admission pin checks.
+OAuth credentials use a separate protected compare-and-set vault and helper scope
+from D01 tunnel credentials. Broker/launcher/service/guarded IPC own trusted issuer/
+resource/registered-client configuration, exact account/config epoch, PKCE/state/
+redirect validation, pending refresh/revoke persistence and callback lifecycle.
+Main native-picks public client registration metadata, verifies allowed live resource/issuer metadata and retains only the exact reviewed registration before a separate human Begin. Renderer sees safe status and explicit action IDs, never tokens/callback data or
+arbitrary authorization URLs. Trusted MCP use acquires a token only for its exact
+registered resource. An empty trusted provider list or unavailable protected backend
+is unavailable capability, not successful authorization. Actual provider consent
+and accepted transport/tool effect remain separate from source construction.
 
-Selected PDF resources add v5 descriptors and immutable raw files to the same
-store without changing v1–v4 identities. `skill-pdf-extractor.ts` owns shared
-preview/read parsing with a trusted Bun supervisor and fixed native PDFKit helper;
-Seatbelt and the sealed control FD precede PDF bytes and PDFKit loading. The
-resolver pins source/manifest/executable; the builder compiles an exact reviewed
-byte snapshot. Status is passive, while dispatch, retained-owner recovery,
-cancellation/EOF/reap and unknown/no-replay preserve physical ownership. HTTP
-review strips raw bytes; model selectedSkills contains metadata only. The same
-ToolJournal approves an exact requested text read. Invalidation/revoke suppress
-late text; composition activity includes held parser recovery. Limits are2 MiB
-per PDF, four documents,4 MiB package,512 KiB non-PDF part,32 pages and32 KiB text
-per document. UI shows escaped text/provenance/no-OCR limits with fresh import
-acknowledgement. Real GPT-6.1-Sol read/arithmetic acceptance passed in two offers
-and one approved read; it remains review_required without a generic business observer.
-See the [PDF contract](docs/design/selected-pdf-skill-resources.md) and
-[acceptance](docs/reviews/2026-10-19-pdf-skill-resources.md).
+Local API reads are passive and scoped by revocable bearer/Host/Origin/local peer.
+Named TaskMonitor uses stdin credentials and a private durable one-submit Pause
+journal; exact receipt reads reuse already-active Agent owner and never create/
+recover/replay one. After core restart an unopened owner is unavailable, not absent.
+Default action/receipt projections omit full task text; family/generation/revision
+remain exact.
 
-**Additional surfaces:** standalone MCP host and read-only skill library are
-composed lazily in the daemon, with guarded main IPC and mounted UI. Only explicitly
-configured recipes/granted skill roots are available. The managed installer
-prepares an official pinned npm graph (Bun lock versions 1/2), then installs the
-reviewed frozen graph with lifecycle scripts disabled. The full managed tree is
-pinned and checked again at each launch. Installation is private and separate
-from saving a disabled recipe, enabling it, connecting and proving a tool effect.
-Archive/uninstall records an exact pre-intent source/target before rename and
-reconciles interrupted outcomes; changed targets are not overwritten. The
-[official install receipt](docs/reviews/2026-10-18-agent-tools-official-install.json)
-records filesystem server 1.0.0, 104 packages/4691 tree entries and disabled
-host/server with no MCP PID. OAuth remains unsupported; native desktop source
-is described below, with observed fixture capture/input separated from installed
-delivery and real model/account execution.
-Chrome companion has explicit pair/revoke UI and an owned loopback listener; its
-selected tab/document/frame/observation contracts do not imply ChatGPT transport
-send support (`chatGptSendSupported: false`). The optional desktop MCP adapter still requires a provider implementing its
-pinned protocol; the new native macOS route is a separate implementation.
+External usage service owns consent/path/I/O, cursors, source attribution/dedup and
+commits. `external-usage-formats.cjs` is a pure metadata/warning parser for Codex,
+Claude Code and Gemini JSON(L), with explicit next parser context and no filesystem
+or state authority. Pricing uses exact model mappings, dated selectable scenario
+snapshots or user imports. Unknown/unpriced tokens are not zero; missing cache
+semantics stay unknown. Results are estimated API-equivalent, never a bill or
+proven savings; overlaps stay outside the aggregate.
 
-**Builtin browser/desktop actions:** `StandaloneBuiltinToolsProvider` defines
-trusted `serverId/discover/execute/reconcile?/invalidate?` ports. `agent-tools.ts`
-attaches the selected Chrome binding to one current task generation; the same
-`StandaloneMcpHost` validates pending-call arguments, exact approval and durable
-unknown-before-effect before invoking browser or desktop. MCP enablement and
-browser/desktop attachment gates are independent. Generation changes invalidate
-task bindings only after commit; a duplicate command does not revoke again. The
-actual Chromium/MV3 composition fixture proves five inert model requests and one
-each intended effect across duplicate/restart, not a real account turn.
+React surfaces receive explicit guarded ports. `SettingsDiagnostics` presents
+workflow/Codex/route/support/doctor controls while Settings retains save queue,
+action handlers, lifecycle guards and generation. Recovery links navigate without
+starting probes/providers. Terminal tasks expose read-only receipts and historical
+export reconciliation; execution scopes remain withheld.
 
-The macOS controller lazily resolves a pinned helper, requires macOS14+, explicit
-enable, actual permission inspection and exact listed-window attachment. It owns
-one serialized native resource and rechecks window/process/epoch/screenshot
-identity before input. Model JPEG output is bounded and matches screenshot identity;
-execution-only receipts do not prove application acceptance. Source compilation/passive evidence is now supplemented by actual DEV window
-selection, inspected permissions, JPEG capture (70027/78916 bytes) and exact literal
-AX typing confirmed in the CUA field. A valid CLI-launched app can lack
-`NSRunningApplication.launchDate`; the helper uses kernel PID start identity.
-A separate new task then captured a fresh1120×624 image, approved exact click
-coordinates(280,290), received completed/`ax-press-dispatched`, and CUA showed the
-fixture counter at1 with literal text unchanged. Its third synthetic model offer
-received canonical click output and ended `review_required`3/3 with no pending
-calls; it did not become `verified_complete`. This proves coordinate→AX hit-test/
-AXPress on the owned background fixture, not generic CG pixel fallback, real
-account/model execution or arbitrary business completion. Helper build/copy uses sibling manifest layout
-with no fallback to another checkout. Source `src/cli.ts` alone passes the pin
-from `resolveDevelopmentDesktopHelper(import.meta.url)`: exact canonical source
-entry and package identity bind its own checkout helper, with byte/mode checks.
-Packaged `cli.js` returns no development pin and retains installed sibling lookup;
-renderer/config/environment cannot select a helper path. Resolver fixture: two
-cases /14 assertions. Windows native provider is absent.
+The UI spacing batch applies the same presentational contract across shell/tools,
+VM/export, Python builds/environments/scripts, remote workspace, local editor/Git,
+history/consent, usage/pricing, Native threads/retained conversations and local
+API/companion/support surfaces. `NativeAccountsPanel` also composes `PanelStack`
+without changing its login/inventory/recovery owner. Layout uses semantic spacing,
+wrapping rows and min-width guards; keyboard focus, disabled/unknown states,
+pending guards, labels and exact receipt actions retain their original owners.
+`agent-vm.css`, `agent-script-forms.css` and `support-report.css` are scoped layout
+leaves. `OwnedNativeHistoryPanel` imports its history stylesheet directly so its
+consent layout does not depend on visiting a lazily loaded History screen first.
+Source/CSS edits and parse checks do not prove actual viewport/UI outcomes; root
+runs the integrated renderer gate and connected visual inspection after writers
+freeze, without replaying unrelated provider tests.
 
-`buildAgentToolContinuationInput` preserves source input/output/call order and
-puts standard PNG/JPEG image results into `function_call_output.output` beside
-metadata, never a fabricated human message. Limits include earlier canonical
-images: at most two and160 KiB combined, with512 KiB canonical payload. The
-request-only builder may omit older pixels only from `source.input` recognized
-host tool-output envelopes bound to exact preceding call/tool-map/turn; provider
-`source.output` cannot supply historical host provenance. It retains
-explicit omission notice, image hash/size/dimensions, call/turn/receipt and recomputed
-attachment indices in that same function output. Original receipts and canonical
-continuation remain immutable. Human/new/unrecognized images are mandatory; if
-those cannot fit or data is malformed/unsupported, return not_sent before fetch.
-The connected production-provider/parser fixture progressed through four observations
-and a terminal fifth FAKE request; the updated focused file passed two cases /
-156 assertions, including reviewed provenance correction. Forged function outputs
-or non-assistant messages returned after provider fetch/ACK become awaiting_input
-without continuation; retained legacy-tainted `source.output` returns not_sent
-before a new fetch. This proves request/provenance projection, not a new UI, native
-capture or real model/account result. `reconcileToolReceipt` reads only an exact original retained
-receipt; `agent_tool_reconciliations` appends immutable facts and preserves old
-unknown. Effective current-generation matching continuation may become ready;
-old-generation late result never reactivates a task/worker or replays input.
-The admin `get` projection now returns compact `pendingToolCalls` and independent
-coverage alongside bounded dispatch history. Latest pending-call controls must
-not disappear merely because retained screenshot-bearing history exceeds 128 KiB.
-HTTP owns selection/current-scope filtering; renderer consumes that explicit list
-instead of reconstructing pending authority from a possibly omitted dispatch.
-Original images, canonical/result limits and journal outcomes are unchanged; this
-projection correction does not replay an operation. Original DEV task stayed paused generation2 at4/6, with no typing replay. The
-new click-only flow independently exercised current pending-call UI and canonical
-continuation; the earlier large two-image UI case was not rerun after the metadata
-fix. Focused HTTP/UI regressions cover that projection. Old raw JPEGs remain in
-private evidence. The newer bounded old-tool-pixel projection implements image
-history handling within the same caps; original big-image UI/native flow was not
-repeated and the new source needs its own review/TS/CLI evidence.
-Private fake-supervisor one-shot readiness belongs only to that DEV harness;
-actual Web/tunnel readiness and the production admission gate are separate.
-
-Browser/desktop tool receipts remain excluded from task business-evidence
-projection until a separate trusted application observer establishes its outcome.
-
-**Local tool admission:** `server.ts` supplies tool/controller admission from
-`admission.accepting && !launcherDetached`, independently of Web broker/tunnel
-readiness. Agent model execution retains its existing Web admission gate. Desktop
-permission inspection, window listing and enable(true) use local admission;
-disable/revoke and cleanup remain possible while draining. The isolated actual
-server HTTP fixture observed offline-Web/MCP-off inventory without synthetic
-readiness, refused model execution and drain-time tool starts, and allowed cleanup.
-Detach refuses while either active Agent turns or active Agent tools remain;
-the actual held-MCP SDK fixture now observed counter1 with Web false and all
-other active counters zero: active_agent_tools alone refused detach409. Explicit
-release produced the terminal receipt, idle detach200 then blocked discovery until
-reattach; inert Native HTTP remained200 without real network. Duplicate approval
-kept counter1, exact SDK PID was reaped and the temporary home removed. Its pending
-call was prepared through a synthetic Agent execution port, not a real model.
-Root project TypeScript, the 245-module CLI development bundle, its exact `.9`
-version and architecture-map checks passed for this batch. Unchanged renderer
-evidence is reused; CI and installed delivery remain separate evidence.
-
-Local control routes use a separate policy/bearer and bounded passive snapshots;
-unopened sources remain unavailable rather than being started by a read. Explicit
-scoped Agent actions enter the same `store.command`/dispatch owner, never another
-sender. Cross-client usage imports only selected log roots and stores usage facts,
-not transcript content. Its pricing catalog/version/coverage stays attached to
-`estimated-api-equivalent` values; only user-declared external-only sources enter
-that comparison aggregate, separately from NEKODEX receipts.
-
-Main/preload/App register the feature surfaces and `src/server.ts` owns their lazy
-admin/runtime composition. Contract fixtures, source wiring and actual DEV/provider
-results remain separate evidence. Runtime bundling follows reachable static
-imports from CLI/browser-helper, including the CJS snapshot helper imports;
-Electron packages `electron/**`, Vite bundles renderer imports. Native PTY ABI and
-other platform helpers still need their target-specific proof. The browser
-companion extension artifact is copied beside bundled `cli.js` by the runtime
-builder; `browserCompanionArtifactDirectory` resolves that layout without fallback
-to a different checkout. This has a bundled fixture proof, separate from installed
-distribution. Actual Chrome MV3 activeTab/pair/select/observe/type/click/revoke
-was observed through a headless popup document, not a visible toolbar popup.
+Packaging copies complete Chrome/Firefox assets and signed runtime helpers,
+including distinct D01/OAuth and fixed VM closure, before outer app sealing.
+Read-only `verify-macos-install.cjs` validates exact version/architecture/signatures/
+resources and optional durable-runtime identity without launching anything. It does
+not prove current PID/source SHA, PTY ABI at runtime, VM boot/auth/provider/GUI.
+Root owns one integrated development verification pass before authorized package/
+sign/install, exact transaction/process observation and final installed acceptance.
+Source commits/CI and signed assets remain separate receipts. No full-suite or
+repeated platform audit is required by these architecture rules.
 
 ## Model and conversation state
 

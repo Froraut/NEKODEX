@@ -1,3 +1,6 @@
+import type { OAuthProviderRegistrationReview } from '../../src/agent-tools/oauth-types';
+import type { PythonBuildAction, PythonBuildSelection } from '../../src/execution-environments/python-build';
+import type { OfficialMcpRecipe } from '../../src/agent-tools/installer';
 import type { ServerRecipe } from '../../src/agent-tools/config';
 import type { ToolDescriptor, ToolScope, ToolOutcome } from '../../src/agent-tools/types';
 import type { SkillIdentity, SkillRootGrant, SelectedSkill } from '../../src/agent-tools/skills';
@@ -12,12 +15,14 @@ export type { ServerRecipe, ToolDescriptor, ToolScope, ToolOutcome, SkillIdentit
 export interface AgentToolsApi {
   request(body: Record<string, unknown>): Promise<unknown>;
   pickSkillRoot(): Promise<{ cancelled: boolean; grant?: SkillRootGrant }>;
+  pickOAuthProvider?(): Promise<{ cancelled: boolean; review?: OAuthProviderRegistrationReview }>;
   pickScriptWorkspace?(): Promise<{ cancelled: boolean; root?: string }>;
   pickPythonWheels?(): Promise<{ cancelled: boolean; wheelPaths?: string[] }>;
+  pickPythonBuild?(scope: ToolScope, config: AgentPythonBuildConfig): Promise<{ cancelled: boolean; selection?: AgentPythonBuildSelection }>;
   pickInstallRoot?(): Promise<{ cancelled: boolean; root?: string }>;
   /** Exact private pending calls come from the owned Agent-mode store through its guarded API. */
   listTasks(): Promise<{ tasks: { id: string; generation: number; status: string }[] }>;
-  getTask(taskId: string): Promise<{ task: { id: string; familyId: string; generation: number; revision: number }; dispatches: { id: string; generation: number; result?: { continuation?: { pending: AgentPendingToolCall[] } } }[]; toolOutcomes?: ToolOutcome[]; pendingToolCalls?: AgentPendingToolCall[]; coverage?: { pendingToolCalls?: { total: number; truncated: boolean } } }>;
+  getTask(taskId: string): Promise<{ task: { id: string; familyId: string; generation: number; revision: number; status?: string }; dispatches: { id: string; generation: number; result?: { continuation?: { pending: AgentPendingToolCall[] } } }[]; toolOutcomes?: ToolOutcome[]; pendingToolCalls?: AgentPendingToolCall[]; coverage?: { pendingToolCalls?: { total: number; truncated: boolean } } }>;
   attachEvidence?(taskId: string, reference: { sourceEventId: string; requirementId: string; subject: string; subjectRevision: string; property: string }): Promise<unknown>;
 }
 export interface ManagedInstallReceipt {
@@ -100,6 +105,8 @@ export interface AgentToolsStatus {
   config: { version: 1; enabled: boolean; servers: ServerRecipe[] };
   runtime: { enabled: boolean; servers: { id: string; connected: boolean; pid: number | null; sandbox?: string; boundary?: unknown }[]; sandbox: string };
   activeCount: number;
+  /** Protected OAuth owner identity only; never credentials or callback data. */
+  oauthScope?: { accountId: string; epoch: string | number };
   descriptors: ToolDescriptor[];
   vmEnvironment?: { prepared: boolean; supported: boolean; reason?: string; runtimeDigest?: string; review?: AgentVmEnvironmentReview };
   vmTools?: AgentVmToolsStatus | null;
@@ -107,7 +114,7 @@ export interface AgentToolsStatus {
   skillRoots: SkillRootGrant[];
   selections: { scope: ToolScope; skills: SkillIdentity[] }[];
   capabilities: { stdio: boolean; install: boolean; oauth: boolean; secrets: boolean; nativeSandbox: boolean; mcpSandboxAvailable?: boolean; skillWrites: boolean; managedSkillImports?: boolean; skillResourceReads?: boolean; skillScripts?: boolean; pendingToolCalls: boolean };
-  installCatalog: { id: string; label: string; package: string; version: string; integrity: string; source: string; capabilities: string }[];
+  installCatalog: readonly OfficialMcpRecipe[];
   installations: { rows: { actionId: string; catalogId: string; state: string; allowedRoot: string; graphSha256?: string; childPid?: number }[]; truncated: boolean };
   serverConfigDigests: Record<string, string>;
   managedSkills?: { versions: ManagedSkillVersionView[]; retainedVersions: number; forgottenVersions: number; cleanup: string; attachments: { scope: ToolScope; versionIds: string[] }[]; actions: { actionId: string; label: string; state: string; versionId: string; lineageId: string; reviewDigest: string }[] };
@@ -116,3 +123,17 @@ export interface AgentToolsStatus {
   remoteTools?: RemoteAgentStatus | null;
   scriptTools?: AgentSkillScriptsStatus | null;
 }
+
+export interface AgentPythonBuildSelection {
+  selectionId: string; name: string; version: string; sourceKind: 'tree' | 'zip' | 'tar.gz';
+  sourceFileCount: number; buildWheelCount: number; runtimeWheelCount: number;
+  bytes: number; snapshotDigest: string; excludedEntries: number;
+}
+export interface AgentPythonBuildStatus {
+  supported: boolean; reason?: string; selectionAvailable?: boolean; actions: PythonBuildAction[];
+  bindings: { actionId: string; taskId: string; generation: number; closureDigest: string;
+    packages: { name: string; version: string; artifactSha256: string }[] }[];
+  processLocalReviews: true; importRoot: 'python-environment'; network: false;
+}
+
+export type AgentPythonBuildConfig = Pick<PythonBuildSelection, 'name' | 'version' | 'backend' | 'backendPath' | 'buildRequires' | 'additionalBuildRequires' | 'configSettings' | 'timeoutMs'>;

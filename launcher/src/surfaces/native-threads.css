@@ -1,22 +1,28 @@
 .native-threads { display: flex; flex-direction: column; gap: var(--space-5, 20px); }
+.native-threads > .nk-surface-header { margin-bottom: 0; }
 .native-threads__layout { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: var(--space-5, 20px); align-items: start; }
 .native-threads__list-panel, .native-threads__details { min-width: 0; }
-.native-threads__list { list-style: none; padding: 0; margin: var(--space-4, 16px) 0; display: grid; gap: var(--space-2, 8px); }
-.native-threads__row { min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md, 8px); background: var(--bg-control); }
+.native-threads__panel-body { gap: var(--space-4, 16px); }
+.native-threads__panel-body > p, .native-threads__panel-body > h3 { margin: 0; overflow-wrap: anywhere; }
+.native-threads__actions { display: flex; flex-wrap: wrap; gap: var(--space-2, 8px); min-width: 0; }
+.native-threads .nk-surface-header__actions .nk-btn, .native-threads .nk-notice__action .nk-btn, .native-threads__actions .nk-btn, .native-threads__row > .nk-btn { max-width: 100%; height: auto; min-height: var(--size-control); padding-block: var(--space-2, 8px); white-space: normal; overflow-wrap: anywhere; text-align: start; }
+.native-threads .nk-surface-header__actions .nk-btn > span, .native-threads .nk-notice__action .nk-btn > span, .native-threads__actions .nk-btn > span, .native-threads__row > .nk-btn > span { min-width: 0; }
+.native-threads__list { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--space-2, 8px); }
+.native-threads__row { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2, 8px); min-width: 0; padding: var(--space-3, 12px); border: 1px solid var(--border); border-radius: var(--radius-md, 8px); background: var(--bg-control); }
 .native-threads__row.is-selected { border-color: var(--accent); background: var(--bg-accent-subtle); }
-.native-threads__row-head { display: flex; gap: var(--space-2, 8px); justify-content: space-between; align-items: start; margin-bottom: 4px; }
-.native-threads__row-head strong { min-width: 0; overflow-wrap: anywhere; }
-.native-threads__row .nk-badge { flex-shrink: 0; }
-.native-threads__row code { font-size: 11px; color: var(--text-secondary); overflow-wrap: anywhere; }
-.native-threads__row p { margin: 6px 0; font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
-.native-threads__row small { display: block; margin-top: 4px; color: var(--text-tertiary); }
-.native-threads__row .nk-btn { margin-top: 8px; }
-.native-threads__details h3 { margin: 0 0 12px; overflow-wrap: anywhere; }
-.native-threads__details dl { display: grid; gap: 12px; margin: 20px 0; }
-.native-threads__details dl > div { display: grid; gap: 4px; }
+.native-threads__row-head { display: flex; flex-wrap: wrap; gap: var(--space-2, 8px) var(--space-3, 12px); justify-content: space-between; align-items: start; min-width: 0; }
+.native-threads__row-head strong { min-width: 0; flex: 1 1 140px; overflow-wrap: anywhere; }
+.native-threads__row-head .nk-badge-row { flex: 0 1 auto; }
+.native-threads__row code { min-width: 0; font-size: 11px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.native-threads__row p { margin: 0; min-width: 0; font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.native-threads__row small { display: block; margin-top: var(--space-1, 4px); color: var(--text-tertiary); }
+.native-threads__row > .nk-btn { justify-self: start; min-height: var(--size-control-sm); }
+.native-threads__details dl { display: grid; gap: var(--space-3, 12px); margin: 0; }
+.native-threads__details dl > div { display: grid; gap: var(--space-1, 4px); min-width: 0; }
 .native-threads__details dt { color: var(--text-secondary); font-size: 12px; }
 .native-threads__details dd { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
 .native-threads__details p { overflow-wrap: anywhere; }
+.native-threads__notice-detail { display: block; margin-top: var(--space-2, 8px); overflow-wrap: anywhere; }
 .native-threads__scope, .native-threads__hint { color: var(--text-secondary); font-size: 12px; }
 @media (max-width: 900px) { .native-threads__layout { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 540px) { .native-threads__row-head { flex-direction: column; } }
+@media (max-width: 540px) { .native-threads__row-head { flex-direction: column; } .native-threads__row-head strong { flex-basis: auto; } }

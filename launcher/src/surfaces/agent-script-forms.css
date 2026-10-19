@@ -1,0 +1,169 @@
+/* Script authority forms keep review, preparation and task access visually distinct. */
+.agent-script-panels,
+.agent-script-form,
+.agent-script-form__step,
+.agent-script-form__stack,
+.agent-script-form__approval {
+  min-width: 0;
+}
+
+.agent-script-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.agent-script-form__step,
+.agent-script-form__stack,
+.agent-script-form__approval {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.agent-script-form .agent-script-form__step {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-4);
+}
+
+.agent-script-form__approval {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-control);
+}
+
+.agent-script-form :is(.nk-panel__header, p, h3, dl, dd, ul) {
+  margin-block: 0;
+}
+
+.agent-script-form dt {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.agent-script-form dd {
+  margin-inline-start: 0;
+  margin-top: var(--space-2);
+}
+
+.agent-script-form :is(code, dt, dd, small, .nk-field, .nk-badge-row, .agent-tools-state, .agent-tools-records, .agent-tools-records > *, .agent-tools-review, .nk-check > span, .nk-panel__header h2) {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.agent-script-form :is(.nk-panel__header, .nk-panel__header > *, .nk-check) {
+  min-width: 0;
+}
+
+.agent-script-form .nk-check {
+  display: flex;
+  align-items: flex-start;
+  max-width: 100%;
+}
+
+.agent-script-form .nk-check > input {
+  flex: none;
+  margin-top: 2px;
+}
+
+.agent-script-form .nk-check > span {
+  flex: 1 1 auto;
+}
+
+.agent-script-form .nk-btn {
+  align-self: flex-start;
+  justify-self: start;
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--size-control);
+  height: auto;
+  padding-block: var(--space-2);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.agent-script-form .nk-btn.nk-btn--sm {
+  min-height: var(--size-control-sm);
+  padding-block: var(--space-1);
+}
+
+.agent-script-form .nk-select {
+  display: flex;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+.agent-script-form .nk-select select {
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+
+.agent-script-form .nk-input {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+.agent-script-form textarea,
+.agent-script-form textarea.nk-input {
+  height: auto;
+  min-height: calc(3 * 20px + 2 * var(--space-2));
+  padding-block: var(--space-2);
+  resize: vertical;
+}
+
+.agent-script-form ul:not(.agent-tools-records) {
+  display: grid;
+  gap: var(--space-2);
+  padding-inline-start: var(--space-5);
+}
+
+.agent-script-form ul:not(.agent-tools-records) > li {
+  display: list-item;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-script-form pre {
+  min-width: 0;
+  max-width: 100%;
+  max-height: 24rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-script-form details > :not(summary) {
+  margin-top: var(--space-3);
+}
+
+.agent-script-form details {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.agent-script-form summary {
+  cursor: pointer;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.agent-script-form .agent-script-form__record {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.agent-script-form .agent-tools-review {
+  margin-top: 0;
+}

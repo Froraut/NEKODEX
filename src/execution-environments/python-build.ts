@@ -1,3 +1,4 @@
+import { isKnownPythonBuildCredentialName } from '../../launcher/electron/python-build-source-policy.cjs';
 import { readFileSync } from 'node:fs';
 import type { AdmittedVmRuntime, VmExecutionInput, VmExecutionResult } from './executor';
 import type { VmExecutorPort } from './types';
@@ -73,7 +74,7 @@ export class PythonBuildController {
     if (input.source.kind === 'tree') {
       vmAssert(input.source.files.length > 0 && input.source.files.length <= 2048, 'python-build-source-limit'); uniqueVmPaths(input.source.files.map(f => f.path), 2048);
       vmAssert(input.source.files.some(f => f.path === 'pyproject.toml'), 'python-build-pyproject-required');
-      for (const f of input.source.files) { vmAssert(f.bytes instanceof Uint8Array && f.bytes.length <= 16 * 1024 * 1024 && sha256(f.bytes) === f.sha256, 'python-build-artifact-pin'); const bytes = Uint8Array.from(f.bytes); files.push({ path: 'python-build/source/' + f.path, bytes, mode: 0o600 }); source.push({ path: f.path, sha256: f.sha256, bytes: bytes.length }); }
+      for (const f of input.source.files) { vmAssert(!f.path.split('/').some(isKnownPythonBuildCredentialName), 'python-build-source-credential-path'); vmAssert(f.bytes instanceof Uint8Array && f.bytes.length <= 16 * 1024 * 1024 && sha256(f.bytes) === f.sha256, 'python-build-artifact-pin'); const bytes = Uint8Array.from(f.bytes); files.push({ path: 'python-build/source/' + f.path, bytes, mode: 0o600 }); source.push({ path: f.path, sha256: f.sha256, bytes: bytes.length }); }
     } else { const bytes = artifact(input.source.artifact); vmAssert(input.source.kind === 'zip' || input.source.kind === 'tar.gz', 'python-build-source-format'); files.push({ path: 'python-build/source.archive', bytes, mode: 0o600 }); source.push({ path: safeVmPath(input.source.artifact.filename), sha256: sha256(bytes), bytes: bytes.length }); }
     input.buildWheels.forEach((w, i) => files.push({ path: `python-build/wheel-${i}.whl`, bytes: artifact(w), mode: 0o600 }));
     vmAssert(files.reduce((n, f) => n + f.bytes.length, 0) <= 48 * 1024 * 1024, 'python-build-input-limit');

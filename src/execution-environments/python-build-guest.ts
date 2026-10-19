@@ -1,6 +1,21 @@
+import { PYTHON_BUILD_CREDENTIAL_POLICY } from '../../launcher/electron/python-build-source-policy.cjs';
+
+/** The same known-name policy is used by main tree snapshots and core reviews.
+ * Archives are explicitly selected raw artifacts; their effective member paths
+ * are checked in the offline guest before extraction and backend execution. */
+export const PYTHON_BUILD_SOURCE_PATH_GUARD = String.raw`credential_names = set(${JSON.stringify(PYTHON_BUILD_CREDENTIAL_POLICY.names)})
+credential_patterns = ${JSON.stringify(PYTHON_BUILD_CREDENTIAL_POLICY.patterns)}
+def checked_path(name, source=False):
+    p = pathlib.PurePosixPath(name)
+    assert name and not p.is_absolute() and all(s not in ('', '.', '..') for s in name.rstrip('/').split('/'))
+    if source:
+        assert not any(part.lower() in credential_names or any(re.search(pattern, part, re.IGNORECASE) for pattern in credential_patterns) for part in p.parts)
+    return p
+`;
+
 /** Executed only by the admitted offline Linux VM. Selected build backends are
  * arbitrary code; the VM owner, not this Python process, supplies containment. */
-export const PYTHON_BUILD_GUEST = String.raw`import gzip, hashlib, importlib, io, json, os, pathlib, platform, shutil, sys, sysconfig, tarfile, tomllib, zipfile
+export const PYTHON_BUILD_GUEST = String.raw`import gzip, hashlib, importlib, io, json, os, pathlib, platform, re, shutil, sys, sysconfig, tarfile, tomllib, zipfile
 base = pathlib.Path.cwd()
 plan = json.loads((base / 'python-build/plan.json').read_text())
 assert platform.system() == 'Linux' and platform.machine() == 'aarch64'
@@ -8,10 +23,7 @@ assert platform.python_version() == '3.14.8' and sysconfig.get_config_var('EXT_S
 assert os.getuid() != 0
 os.environ.clear()
 os.environ.update(PATH='/usr/bin:/bin', HOME=str(base), TMPDIR=str(base), LANG='C', LC_ALL='C', SOURCE_DATE_EPOCH='0', PYTHONNOUSERSITE='1', PIP_NO_INDEX='1', PIP_DISABLE_PIP_VERSION_CHECK='1')
-def checked_path(name):
-    p = pathlib.PurePosixPath(name)
-    assert name and not p.is_absolute() and all(s not in ('', '.', '..') for s in name.rstrip('/').split('/'))
-    return p
+${PYTHON_BUILD_SOURCE_PATH_GUARD}
 
 def unpack(archive, target, kind):
     target.mkdir()
@@ -21,7 +33,7 @@ def unpack(archive, target, kind):
             rows = z.infolist()
             assert len(rows) <= 4096
             for r in rows:
-                p = checked_path(r.filename)
+                p = checked_path(r.filename, source=True)
                 key = str(p).lower()
                 assert key not in seen
                 seen.add(key)
@@ -46,7 +58,7 @@ def unpack(archive, target, kind):
             for r in t:
                 count += 1
                 assert count <= 4096 and (r.isfile() or r.isdir()) and not r.sparse
-                p = checked_path(r.name)
+                p = checked_path(r.name, source=True)
                 key = str(p).lower()
                 assert key not in seen
                 seen.add(key)

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Checkbox, Notice, Panel, TextField } from './design';
+import { Button, Checkbox, Notice, Panel, PanelStack, TextField } from './design';
 import type { Language } from './types';
 import type { NativeAccountsApi, NativeAccountsRequest, NativeInventoryRequest, NativeExecutionCloseRequest, NativeAccountsSnapshot, NativeAccountProfile } from './native-accounts-types';
 import type { NativeOwnerRecoveryPreview, NativeOwnerRecoveryReceipt } from '../electron/native-account-recovery.cjs';
@@ -140,6 +140,7 @@ export function NativeAccountsPanel({ language, api, disabled = false }: {
 
   return <Panel title={ru ? 'Аккаунты Native Codex' : 'Native Codex accounts'} className="native-accounts"
     actions={<Button disabled={disabled || busy} busy={busy} onClick={() => void read()}>{ru ? 'Обновить статус' : 'Refresh status'}</Button>}>
+    <PanelStack className="native-accounts__body">
     <p>{ru ? 'Создайте отдельный профиль и явно запустите вход через OpenAI. Вход сам по себе не подтверждает доступные модели или возможность выполнения задач.' : 'Prepare a separate profile and explicitly start OpenAI sign-in. Sign-in alone does not establish model availability or task execution readiness.'}</p>
     {error ? <Notice tone="warning" title={ru ? 'Не удалось подтвердить актуальный статус.' : 'The current status could not be confirmed.'}>{ru ? 'Обновите статус. Не подтверждённое действие не повторяется автоматически.' : 'Refresh status. An unconfirmed action is never replayed automatically.'}</Notice> : null}
     {uncertain ? <Notice tone="warning" title={ru ? 'Результат действия пока неизвестен.' : 'The action outcome is still unknown.'}>{ru ? 'Сохранён идентификатор исходного действия. Обновление сверит его с журналом; новые изменения пока заблокированы.' : 'The original action identity has been retained. Refresh checks its receipt; further changes are blocked until reconciliation.'}</Notice> : null}
@@ -174,12 +175,14 @@ export function NativeAccountsPanel({ language, api, disabled = false }: {
         {recoveryReceipt.reasonCode ? <p>{ru ? 'Причина: ' : 'Reason: '}{recoveryReceipt.reasonCode}</p> : null}
       </div> : null}
     </section> : null}
-    <div className="native-accounts__prepare">
+    <section className="native-accounts__prepare" aria-label={ru ? 'Новый профиль Native' : 'New Native profile'}>
+      <h3>{ru ? 'Новый профиль' : 'New profile'}</h3>
       <TextField label={ru ? 'Название нового профиля' : 'New profile name'} value={label} maxLength={80} disabled={locked} onChange={event => setLabel(event.target.value)} />
       <div className="native-accounts__actions"><Button disabled={locked || !label.trim()} onClick={() => void mutate({ action: 'prepare-profile', actionId: crypto.randomUUID(), label: label.trim() })}>{ru ? 'Подготовить новый профиль' : 'Prepare new profile'}</Button></div>
-    </div>
+    </section>
     {!snapshot && !error ? <p role="status">{ru ? 'Читаем статус Native…' : 'Reading Native status…'}</p> : null}
     {snapshot && !snapshot.profiles.length ? <p>{ru ? 'Подготовленных профилей пока нет.' : 'No profiles have been prepared yet.'}</p> : null}
+    {snapshot?.profiles.length ? <h3>{ru ? 'Сохранённые профили' : 'Retained profiles'}</h3> : null}
     <ul className="native-accounts__profiles">{snapshot?.profiles.map(profile => {
       const login = profile.login;
       const pending = Boolean(login && pendingStates.has(login.state));
@@ -211,5 +214,6 @@ export function NativeAccountsPanel({ language, api, disabled = false }: {
         </div>
       </li>;
     })}</ul>
+    </PanelStack>
   </Panel>;
 }

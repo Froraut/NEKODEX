@@ -1,0 +1,43 @@
+.usage-pricing { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4, 16px); min-width: 0; }
+.usage-pricing p { margin: 0; overflow-wrap: anywhere; }
+.usage-pricing details { min-width: 0; border: 1px solid var(--border); border-radius: var(--radius-md, 10px); padding: var(--space-3, 12px); }
+.usage-pricing summary { cursor: pointer; font-weight: 600; overflow-wrap: anywhere; }
+.usage-pricing details > :not(summary) { margin-top: var(--space-3, 12px); }
+.usage-pricing__choice, .usage-pricing__actions { display: flex; gap: var(--space-3, 12px); flex-wrap: wrap; align-items: center; min-width: 0; }
+.usage-pricing__choice { align-items: flex-end; }
+.usage-pricing__field { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: var(--space-1, 4px); flex: 1 1 260px; min-width: 0; }
+.usage-pricing__field > label, .usage-pricing__file > label, .usage-pricing__json > label { font-size: 14px; line-height: 20px; font-weight: 500; overflow-wrap: anywhere; }
+.usage-pricing__field .nk-select { width: 100%; min-width: 0; }
+.usage-pricing__field .nk-select select { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-pricing__button { max-width: 100%; min-height: var(--size-control); height: auto; white-space: normal; overflow-wrap: anywhere; padding-block: var(--space-2, 8px); }
+.usage-pricing__choice > :first-child { flex: 1 1 260px; min-width: 0; }
+.usage-pricing__review, .usage-pricing__provenance { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3, 12px); min-width: 0; }
+.usage-pricing__review { border-top: 1px solid var(--border); padding-top: var(--space-4, 16px); }
+.usage-pricing__review h3 { margin: 0; font-size: 16px; }
+.usage-pricing__provenance { font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
+.usage-pricing__provenance > p:first-child { color: var(--text-primary); }
+.usage-pricing__provenance strong { overflow-wrap: anywhere; }
+.usage-pricing__provenance ul { display: grid; gap: var(--space-2, 8px); margin: 0; padding-inline-start: var(--space-5, 20px); }
+.usage-pricing__provenance li { min-width: 0; overflow-wrap: anywhere; }
+.usage-pricing__scenario { padding: var(--space-3, 12px); border-inline-start: 3px solid var(--border); border-radius: var(--radius-sm, 8px); background: var(--bg-control); color: var(--text-primary); }
+.usage-pricing__table { overflow-x: auto; max-width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: var(--radius-sm, 8px); }
+.usage-pricing__table:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.usage-pricing table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.usage-pricing caption { text-align: start; padding: var(--space-3, 12px); color: var(--text-secondary); }
+.usage-pricing th, .usage-pricing td { text-align: start; padding: var(--space-2, 8px) var(--space-3, 12px); border-bottom: 1px solid var(--border); vertical-align: top; }
+.usage-pricing thead th { color: var(--text-secondary); font-weight: 500; background: var(--bg-control); overflow-wrap: anywhere; }
+.usage-pricing td, .usage-pricing thead th:not(:first-child) { text-align: end; }
+.usage-pricing td { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.usage-pricing th[scope="row"] { font-weight: 500; overflow-wrap: anywhere; min-width: 0; }
+.usage-pricing tbody tr:last-child > * { border-bottom: 0; }
+.usage-pricing small { display: block; color: var(--text-secondary); margin-top: var(--space-1, 4px); }
+.usage-pricing__json, .usage-pricing__file { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2, 8px); min-width: 0; }
+.usage-pricing__file input { width: 100%; min-width: 0; }
+.usage-pricing__json textarea { width: 100%; box-sizing: border-box; font: 12px/1.5 ui-monospace, monospace; background: var(--bg-control); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius-sm, 8px); padding: var(--space-3, 12px); resize: vertical; }
+.usage-pricing a { overflow-wrap: anywhere; }
+@container workspace (max-width: 640px) {
+  .usage-pricing__choice { align-items: stretch; flex-direction: column; }
+  .usage-pricing__choice > :first-child { flex-basis: 100%; }
+  .usage-pricing__actions { align-items: stretch; flex-direction: column; }
+  .usage-pricing th, .usage-pricing td { padding: var(--space-2, 8px); white-space: normal; overflow-wrap: anywhere; }
+}

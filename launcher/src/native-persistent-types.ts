@@ -20,8 +20,8 @@ export interface NativePersistentSnapshot {
   serverGeneration: string | null;
   models: Array<{ id: string; label?: string }>;
   conversations: NativePersistentConversation[];
-  actions: Array<{ actionId: string; kind: string; conversationId?: string; state: string; reasonCode?: string }>;
-  observedAction?: { actionId: string; kind: string; conversationId?: string; state: string; reasonCode?: string };
+  actions: Array<{ actionId: string; kind: string; conversationId?: string; state: string; ownerHeld?: boolean; reasonCode?: string }>;
+  observedAction?: { actionId: string; kind: string; conversationId?: string; state: string; ownerHeld?: boolean; reasonCode?: string };
   busy: boolean;
   retention: 'explicit-native-context';
   resumeSupported: boolean;

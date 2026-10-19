@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { Badge, Button, Checkbox, EmptyState, Notice, Page, Panel, Select, SurfaceHeader, TextField } from './design';
+import { Badge, BadgeRow, Button, Checkbox, EmptyState, Notice, Page, Panel, PanelStack, Select, SurfaceHeader, TextField } from './design';
 import type { Language } from './types';
 import type { AgentModeApi, AgentModeStatus, AgentModeDetail, AgentTask, AgentWorkspaceRoot, AgentWorkspaceGrantSummary, AgentArtifactObservation } from './agent-mode-types';
 import { agentModeCopy } from './agent-mode-copy';
@@ -7,11 +7,12 @@ import { stripIpcErrorPrefix } from './ipc-error';
 import './surfaces/agent-mode.css';
 import { NativeAccountsPanel } from './NativeAccountsPanel';
 import { OwnedNativeHistoryPanel } from './OwnedNativeHistoryPanel';
+import { NativeAttachmentsPanel, type NativeSelectedAttachment } from './NativeAttachmentsPanel';
 
 const lines = (text: string) => text.split('\n').map(value => value.trim()).filter(Boolean);
 const requirementRows = (text: string) => lines(text).map((value, index) => ({ id: `r${index + 1}`, text: value }));
-const stageRows = (text: string, requirementIds: string[]) => lines(text).map((instruction, index) => ({
-  id: `s${index + 1}`, instruction, requirementIds, dependsOn: index ? [`s${index}`] : [],
+const stageRows = (text: string, requirementIds: string[], independent = false) => lines(text).map((instruction, index) => ({
+  id: `s${index + 1}`, instruction, requirementIds, dependsOn: index && !independent ? [`s${index}`] : [],
 }));
 const errorText = (error: unknown) => stripIpcErrorPrefix(error instanceof Error ? error.message : String(error));
 const terminal = (task: AgentTask) => task.status === 'stopped' || task.status === 'verified_complete';
@@ -62,6 +63,9 @@ export function AgentModeSurface({ language, api, disabled = false }: {
   const [model, setModel] = useState('');
   const [turns, setTurns] = useState('8');
   const [concurrent, setConcurrent] = useState('1');
+  const [independentStages, setIndependentStages] = useState(false);
+  const [userReply, setUserReply] = useState('');
+  const [nativeAttachments, setNativeAttachments] = useState<NativeSelectedAttachment[]>([]);
   const [correction, setCorrection] = useState('');
   const [replacementRequirements, setReplacementRequirements] = useState('');
   const [replacementStages, setReplacementStages] = useState('');
@@ -170,7 +174,8 @@ export function AgentModeSurface({ language, api, disabled = false }: {
     const rows = requirementRows(requirements);
     const input = {
       id: createId.current, familyId: createId.current, ownerMode: 'agent', mode, recurringAuthorized: mode === 'loop' && recurring,
-      originalRequest: request.trim(), requirements: rows, stages: stageRows(stages, rows.map(row => row.id)),
+      ...(selectedModel.provider === 'owned-native' && nativeAttachments.length ? { nativeAttachments } : {}),
+      originalRequest: request.trim(), requirements: rows, stages: stageRows(stages, rows.map(row => row.id), independentStages && maxConcurrent > 1 && selectedModel.provider !== 'owned-native'),
       bounds: { maxConcurrent, maxTurns, maxSpend: null }, execution: selectedModel.provider === 'owned-native'
         ? { provider: 'owned-native', model: selectedModel.id, admissionId: selectedModel.admissionId }
         : { provider: 'local-responses', model: selectedModel.id },
@@ -178,7 +183,7 @@ export function AgentModeSurface({ language, api, disabled = false }: {
     const workspaceSelection = snapshotOptIn ? selectedWorkspace(snapshotRoot, snapshotPaths) : undefined;
     await mutate({ action: 'create', input, ...(workspaceSelection ? { workspaceSelection } : {}) });
     const created = createId.current; createId.current = crypto.randomUUID();
-    if (mounted.current) { setRequest(''); setRequirements(''); setStages(''); setRecurring(false); setSnapshotOptIn(false); setSnapshotPaths(''); }
+    if (mounted.current) { setRequest(''); setRequirements(''); setStages(''); setRecurring(false); setSnapshotOptIn(false); setSnapshotPaths(''); setNativeAttachments([]); }
     await refresh(created);
     if (mounted.current) {
       setNotice(text.saved);
@@ -196,6 +201,14 @@ export function AgentModeSurface({ language, api, disabled = false }: {
     void act(action, async () => {
       await mutate({ action: 'control', taskId, control: { action } });
       await refresh(taskId); if (mounted.current) setNotice(text.saved);
+    });
+  };
+  const reply = () => {
+    const taskId = selectedRef.current;
+    void act('reply', async () => {
+      await mutate({ action: 'control', taskId, control: { action: 'reply', text: userReply.trim() } });
+      await refresh(taskId);
+      if (mounted.current) { setUserReply(''); setNotice(language === 'ru' ? 'Ответ сохранён. Подтвердите доступ к файлам при необходимости и нажмите «Запустить».' : 'Reply saved. Renew file access if needed, then choose Run.'); }
     });
   };
   const correct = () => {
@@ -332,6 +345,7 @@ export function AgentModeSurface({ language, api, disabled = false }: {
   </>;
 
   return <Page width="wide" className="agent-mode-surface">
+    <PanelStack>
     <SurfaceHeader title={text.title} subtitle={text.subtitle} actions={<Button disabled={locked} busy={pending === 'refresh'} onClick={() => void act('refresh', () => refresh())}>{text.refresh}</Button>} />
     {api.nativeAccounts ? <NativeAccountsPanel language={language} api={api.nativeAccounts} disabled={disabled} /> : null}
     {error ? <Notice tone="error" title={text.error}>{error} {text.readAfterError}</Notice> : null}
@@ -342,9 +356,11 @@ export function AgentModeSurface({ language, api, disabled = false }: {
       <Notice tone={status.configured ? 'info' : 'warning'} title={status.configured ? text.configured : text.unconfigured}>
         {status.capabilities.tools ? text.toolsHint : text.textOnly}
       </Notice>
-      <div className="agent-mode-capabilities" aria-label={text.capability}>
+      <Panel title={text.capability} padding="compact">
+      <BadgeRow className="agent-mode-capabilities" label={text.capability}>
         {(['tools', 'workspace', 'autoSchedule', 'observedEvidence'] as const).map(key => <Badge key={key}>{text[key]}: {status.capabilities[key] ? text.available : text.unavailable}</Badge>)}
-      </div>
+      </BadgeRow>
+      </Panel>
     </> : null}
     <Panel title={text.newTask}>
       <form className="agent-mode-form" onSubmit={event => { event.preventDefault(); if (!locked) create(); }}>
@@ -353,6 +369,7 @@ export function AgentModeSurface({ language, api, disabled = false }: {
           <TextArea label={text.requirements} value={requirements} onChange={setRequirements} disabled={locked} required />
           <TextArea label={text.stages} value={stages} onChange={setStages} disabled={locked} required hint={text.stagesHint} />
         </div>
+          {Number(concurrent) > 1 && status?.models.find(row => modelChoice(row) === model)?.provider !== 'owned-native' ? <Checkbox label={language === 'ru' ? 'Этапы независимы и могут выполняться параллельно' : 'Stages are independent and may run in parallel'} checked={independentStages} onChange={setIndependentStages} disabled={locked} /> : null}
         <div className="agent-mode-columns">
           <div className="nk-field"><label htmlFor="agent-mode-select">{text.mode}</label>
             <Select id="agent-mode-select" value={mode} options={modeOptions} onChange={value => { setMode(value as typeof mode); setRecurring(false); }} disabled={locked} />
@@ -360,12 +377,17 @@ export function AgentModeSurface({ language, api, disabled = false }: {
           </div>
           <div className="nk-field"><label htmlFor="agent-mode-model">{text.model}</label>
             <Select id="agent-mode-model" value={model} options={status?.models.length ? status.models.map(row => ({ value: modelChoice(row), label: `${row.label || row.id}${row.provider === 'owned-native' ? ` · Native · ${row.imageInput ? (language === 'ru' ? 'изображения' : 'images') : (language === 'ru' ? 'текст' : 'text')}` : ''}` })) : [{ value: '', label: text.noModels }]}
-              onChange={value => { setModel(value); if (status?.models.find(row => modelChoice(row) === value)?.provider === 'owned-native') setConcurrent('1'); }} disabled={locked || !status?.models.length} />
+              onChange={value => { setModel(value); setNativeAttachments([]); if (status?.models.find(row => modelChoice(row) === value)?.provider === 'owned-native') setConcurrent('1'); }} disabled={locked || !status?.models.length} />
           </div>
           <TextField type="number" label={text.turns} value={turns} onChange={event => setTurns(event.target.value)} min={1} max={10000} step={1} required disabled={locked} />
           <TextField type="number" label={text.concurrent} value={concurrent} onChange={event => setConcurrent(event.target.value)} min={1} max={nativeSelection ? 1 : 32} step={1} required disabled={locked || nativeSelection} />
         </div>
-        {nativeSelection ? <p className="agent-mode-muted">{nativeTurnHint}</p> : null}
+        {nativeSelection ? <>
+          <p className="agent-mode-muted">{nativeTurnHint}</p>
+          <NativeAttachmentsPanel language={language} scopeKey={`${createId.current}:${model}`} attachments={nativeAttachments} onChange={setNativeAttachments}
+            modelImageInput={status?.models.find(row => modelChoice(row) === model)?.imageInput === true} disabled={locked} />
+          <p className="agent-mode-muted">{language === 'ru' ? 'Выбранные байты сохраняются вместе с задачей и используются при явном запуске. Доступ к исходным папкам не предоставляется.' : 'Selected bytes are retained with this task and used when explicitly run. Source-folder access is not granted.'}</p>
+        </> : null}
         {mode === 'loop' ? <Checkbox label={text.recurrence} checked={recurring} onChange={setRecurring} disabled={locked} /> : null}
         <Checkbox label={text.snapshotOptIn} checked={snapshotOptIn} onChange={setSnapshotOptIn} disabled={locked || !workspaceControls || !workspaceRoots.length} />
         {snapshotOptIn ? workspaceFields('create', snapshotRoot, setSnapshotRoot, snapshotPaths, setSnapshotPaths) : <p className="agent-mode-muted">{workspaceControls ? (workspaceRoots.length ? text.snapshotHint : text.noWorkspace) : text.snapshotUnavailable}</p>}
@@ -394,7 +416,7 @@ export function AgentModeSurface({ language, api, disabled = false }: {
             <div className="agent-mode-actions">
               <Badge>{taskState(task)}</Badge>
               <Button size="sm" disabled={locked || terminal(task) || task.status === 'paused'} busy={pending === 'pause'} onClick={() => control('pause')}>{text.pause}</Button>
-              <Button size="sm" disabled={locked || terminal(task) || !['paused', 'awaiting_input'].includes(task.status)} busy={pending === 'resume'} onClick={() => control('resume')}>{text.resume}</Button>
+              <Button size="sm" disabled={locked || terminal(task) || task.status !== 'paused'} busy={pending === 'resume'} onClick={() => control('resume')}>{text.resume}</Button>
               <Button size="sm" variant="danger" disabled={locked || terminal(task)} busy={pending === 'stop'} onClick={() => control('stop')}>{text.stop}</Button>
               <Button size="sm" variant="primary" disabled={locked || !canExecute}
                 busy={pending === 'step'} onClick={() => execute('step')}>{text.step}</Button>
@@ -421,11 +443,28 @@ export function AgentModeSurface({ language, api, disabled = false }: {
               {task.reason ? <div><dt>{text.reason}</dt><dd>{task.reason}</dd></div> : null}
             </dl>
             <h3>{text.original}</h3><p className="agent-mode-prose">{task.originalRequest}</p>
+            {task.nativeAttachments?.length ? <><h3>{language === 'ru' ? 'Сохранённые выбранные файлы' : 'Retained selected files'}</h3>
+              <RecordList empty={text.none}>{task.nativeAttachments.map(attachment => <li key={attachment.selectionId}>{attachment.name} · {attachment.mimeType} · {attachment.byteLength} B<br /><code>{attachment.sha256}</code></li>)}</RecordList></> : null}
             <h3>{text.requirements.split(' — ')[0]}</h3>
-            <RecordList empty={text.none}>{task.requirements.map(row => <li key={row.id}><code>{row.id}</code> {row.text}</li>)}</RecordList>
+            <RecordList empty={text.none}>{task.requirements.map(row => {
+              const superseded = new Set(task.evidence.flatMap(fact => fact.taskRevision === task.revision ? fact.supersedes ?? [] : []));
+              const facts = task.evidence.filter(fact => fact.taskRevision === task.revision && fact.requirementId === row.id && !superseded.has(fact.id));
+              const claimed = task.stages.some(stage => stage.requirementIds.includes(row.id)) && task.stages.filter(stage => stage.requirementIds.includes(row.id)).every(stage => stage.status === 'completed');
+              const observed = facts.length > 0 && facts.every(fact => fact.outcome === 'passed');
+              const label = task.status === 'verified_complete' ? (language === 'ru' ? 'Проверено' : 'Verified') : observed ? (language === 'ru' ? 'Наблюдение пройдено · нужна проверка' : 'Observed passed · review required') : facts.some(fact => fact.outcome !== 'passed') ? (language === 'ru' ? 'Исход не подтверждён' : 'Outcome unresolved') : claimed ? (language === 'ru' ? 'Заявлено моделью · нет наблюдения' : 'Model claim · no observation') : (language === 'ru' ? 'В работе · нет наблюдения' : 'Pending · no observation');
+              return <li key={row.id}><Badge tone={task.status === 'verified_complete' ? 'success' : observed ? 'neutral' : 'warning'}>{label}</Badge> <code>{row.id}</code> {row.text}</li>;
+            })}</RecordList>
             <h3>{text.stages.split(' — ')[0]}</h3>
             <RecordList empty={text.none}>{task.stages.map(row => <li key={row.id}><Badge>{text.stageStates[row.status] ?? row.status}</Badge> <strong>{row.id}</strong><p className="agent-mode-prose">{row.instruction}</p><small>{row.requirementIds.join(', ')}</small></li>)}</RecordList>
           </Panel>
+          {task.status === 'awaiting_input' && task.stages.some(stage => stage.waitingFor === 'user') ? <Panel title={language === 'ru' ? 'Нужен ваш ответ' : 'Your input is required'}>
+            <p>{language === 'ru' ? 'Прочитайте вопрос в результате этапа. Сохранение ответа не запускает модель автоматически.' : 'Read the question in the stage result. Saving your reply does not automatically run the model.'}</p>
+            {task.stages.some(stage => stage.waitingFor === 'tools') ? <Notice tone="warning">{language === 'ru' ? 'Сначала подтвердите ожидающие вызовы инструментов и дождитесь их точных результатов. Затем сохраните ответ.' : 'First resolve pending tool approvals and wait for their exact results, then save your reply.'}</Notice> : null}
+            <form className="agent-mode-form" onSubmit={event => { event.preventDefault(); if (!locked && userReply.trim() && !task.stages.some(stage => stage.waitingFor === 'tools')) reply(); }}>
+              <TextArea label={language === 'ru' ? 'Ответ' : 'Reply'} value={userReply} onChange={setUserReply} disabled={locked} required />
+              <div><Button type="submit" disabled={locked || !userReply.trim() || task.stages.some(stage => stage.waitingFor === 'tools') || detail.dispatches.some(row => ['admitted', 'offered', 'acked', 'unknown'].includes(row.state))} busy={pending === 'reply'}>{language === 'ru' ? 'Сохранить ответ' : 'Save reply'}</Button></div>
+            </form>
+          </Panel> : null}
           {task.execution?.provider === 'owned-native' && api.nativeHistory ? <OwnedNativeHistoryPanel language={language} task={task} api={api.nativeHistory} disabled={disabled} /> : null}
           {task.mode === 'loop' ? <Panel title={text.loopMailbox}>
             <p className="agent-mode-muted">{text.loopSourceHint}</p>
@@ -529,5 +568,6 @@ export function AgentModeSurface({ language, api, disabled = false }: {
         </>}
       </div>
     </div>
+    </PanelStack>
   </Page>;
 }
