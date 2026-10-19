@@ -6,6 +6,7 @@ const { StringDecoder } = require('node:string_decoder');
 const { spawn, execFileSync } = require('node:child_process');
 const { fail, digest, fileDigest, privateDirectory, regular, VERSION, SOURCE } = require('./owned-native-admission.cjs');
 const { uuid } = require('./owned-native-journal.cjs');
+const { createNativeAccountRecovery } = require('./native-account-recovery.cjs');
 const URL = 'https://auth.openai.com/codex/device';
 const ACTIVE = new Set(['prepared', 'running', 'pending', 'cancel-requested']);
 const LOGIN_STATES = new Set([...ACTIVE, 'signed-in-checking', 'failed', 'cancelled', 'auth-outcome-unknown']);
@@ -97,7 +98,7 @@ function writePrivate(file, bytes) {
   try { fs.writeFileSync(fd, bytes); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 }
 function createNativeAccountAuthority({ authorityHome, executable, executableSha256, sourceRevision = SOURCE,
-  cliVersion = VERSION, stopGraceMs = 2000, onChange, testHooks = {} } = {}) {
+  cliVersion = VERSION, stopGraceMs = 2000, onChange, recovery, testHooks = {} } = {}) {
   if (![authorityHome, executable].every(value => typeof value === 'string' && path.isAbsolute(value) && !/[\0\r\n]/.test(value))
     || !/^[a-f0-9]{64}$/.test(executableSha256 || '') || sourceRevision !== SOURCE || cliVersion !== VERSION) {
     throw fail('invalid_native_account_authority', 'Trusted Native account paths and official CLI pins are required');
@@ -108,6 +109,9 @@ function createNativeAccountAuthority({ authorityHome, executable, executableSha
   let owned = false, lastHash, destroyed = false, closing = false, destroying;
   const live = new Map(), profileOwners = new Map();
   const platform = testHooks.platform || process.platform;
+  const recoveryOwner = recovery ? createNativeAccountRecovery({ ...recovery, authorityHome, executable, executableSha256,
+    isBusy: () => owned || live.size > 0 || profileOwners.size > 0 || destroyed || closing,
+    testHooks: testHooks.recovery || {} }) : null;
   const notify = () => { try { onChange?.(); } catch { /* Observation cannot invalidate a durable outcome. */ } };
   function ownerStatus() {
     try {
@@ -163,6 +167,7 @@ function createNativeAccountAuthority({ authorityHome, executable, executableSha
   function acquire() {
     if (platform !== 'darwin') throw fail('mac_only', 'Native account mutation is currently available on macOS');
     if (destroyed || closing) throw fail('authority_destroyed', 'Native account owner is closed');
+    recoveryOwner?.assertNotRecovering();
     if (owned) return;
     privateDirectory(authorityHome);
     if (fs.realpathSync(authorityHome) !== authorityHome) throw fail('unsafe_profile_storage', 'Native account storage must use a canonical owned path');
@@ -208,7 +213,8 @@ function createNativeAccountAuthority({ authorityHome, executable, executableSha
         const profile = value.profiles.find(row => row.id === receipt.profileId);
         const login = profile && projectLogin(profile, storageOwner);
         return receipt.kind === 'device-login' && login?.actionId === receipt.actionId ? { ...receipt, state: login.state, ...(login.reasonCode ? { reasonCode: login.reasonCode } : {}) } : { ...receipt };
-      }), activeCount: live.size + profileOwners.size, executionAvailable: false, storageOwner };
+      }), activeCount: live.size + profileOwners.size + (recoveryOwner?.activeCount() || 0), executionAvailable: false, storageOwner,
+      recoverySupported: Boolean(recoveryOwner && platform === 'darwin') };
   }
   function intent(value, actionId, row) {
     uuid(actionId);
@@ -419,10 +425,11 @@ function createNativeAccountAuthority({ authorityHome, executable, executableSha
     closing = true; // Close new admission before awaiting existing physical children.
     destroying = (async () => {
       // Shutdown owns exact children and awaits close; it never logs out/revokes/deletes profiles.
-      await Promise.all([...live].map(([id, entry]) => {
+      const settlements = await Promise.allSettled([recoveryOwner?.destroy(), ...[...live].map(([id, entry]) => {
         try { updateLogin(id, 'cancel-requested', 'owner_shutdown'); } catch {}
         return stop(id, entry);
-      }));
+      })]);
+      const failed = settlements.find(row => row.status === 'rejected'); if (failed) throw failed.reason;
       if (profileOwners.size) throw fail('profile_owner_active', 'Native account cleanup awaits the inventory owner physical settlement');
       if (owned) { if (privateFile(lockFile, 4096).toString() !== owner) throw fail('owner_changed', 'Native account storage ownership changed during cleanup');
         fs.unlinkSync(lockFile); owned = false; }
@@ -446,6 +453,9 @@ function createNativeAccountAuthority({ authorityHome, executable, executableSha
   return Object.freeze({ inspect, snapshot: inspect, prepareProfile: guardedMutation(prepareProfile),
     beginDeviceLogin: guardedMutation(beginDeviceLogin), inspectLogin, cancelLogin: guardedMutation(cancelLogin), resolveProfile,
     publishProfileConfig: guardedMutation(publishProfileConfig), acquireProfileOwner, releaseProfileOwner,
-    currentOperation: () => live.size ? 'device-login' : [...profileOwners.values()].some(lease => lease.kind === 'inventory') ? 'inventory' : null, destroy });
+    previewRecovery: () => recoveryOwner ? recoveryOwner.previewRecovery() : Promise.resolve({ state: 'blocked', reasonCode: 'recovery_unavailable', observedAt: Date.now(), markers: [], unsettledActionCount: 0 }),
+    recoverOwner: input => { if (!recoveryOwner) { const error = fail('recovery_unavailable', 'Native owner recovery is unavailable'); error.actionRecorded = false; throw error; } return recoveryOwner.recoverOwner(input); },
+    inspectRecovery: actionId => recoveryOwner?.inspectRecovery(actionId),
+    currentOperation: () => recoveryOwner?.currentOperation() || (live.size ? 'device-login' : [...profileOwners.values()].some(lease => lease.kind === 'inventory') ? 'inventory' : null), destroy });
 }
 module.exports = { createNativeAccountAuthority };

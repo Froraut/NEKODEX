@@ -17,6 +17,7 @@ export interface NativeAccountSnapshot {
   available: boolean; reasonCode: string | null; profiles: NativeProfileProjection[];
   receipts: NativeAccountReceipt[]; activeCount: number; executionAvailable: false;
   storageOwner: 'current' | 'unclaimed' | 'elsewhere-or-unverified' | 'stale';
+  recoverySupported?: boolean;
 }
 /** Trusted main only. No paths, executable capabilities, environment or credentials cross IPC.
  * Mutation errors carry actionRecorded:boolean; false proves this invocation recorded no intent.
@@ -25,8 +26,12 @@ export function createNativeAccountAuthority(options: {
   authorityHome: string; executable: string; executableSha256: string;
   sourceRevision?: string; cliVersion?: string; stopGraceMs?: number;
   onChange?: () => void;
+  recovery?: import('./native-account-recovery.cjs').NativeOwnerRecoveryOptions;
 }): {
   inspect(): NativeAccountSnapshot; snapshot(): NativeAccountSnapshot;
+  previewRecovery(): Promise<import('./native-account-recovery.cjs').NativeOwnerRecoveryPreview>;
+  recoverOwner(input: {actionId: string; reviewDigest: string}): Promise<import('./native-account-recovery.cjs').NativeOwnerRecoveryReceipt>;
+  inspectRecovery(actionId: string): import('./native-account-recovery.cjs').NativeOwnerRecoveryReceipt | undefined;
   prepareProfile(input: {actionId: string; label: string}): NativeProfileProjection;
   beginDeviceLogin(input: {profileId: string; epoch: string; actionId: string}): NativeLoginProjection;
   inspectLogin(loginAttemptId: string): NativeLoginProjection;

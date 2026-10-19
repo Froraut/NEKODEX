@@ -104,6 +104,17 @@ const AUTH_HANDOFF_TIMEOUT_MS = 15_000;
 // Drawable background views are parked beyond the current content bounds. Repark
 // them when native geometry changes, including while no browser slot is mounted.
 const WINDOW_VISIBILITY_EVENTS = ["show", "hide", "minimize", "restore", "resize", "enter-full-screen", "leave-full-screen"];
+
+// A viewport registration belongs to one shell document, never to the WebContents lifetime.
+function bindRendererSurfaceInvalidation(window, getCurrentWindow, getBrowserHost) {
+  const invalidate = () => {
+    if (getCurrentWindow() === window) getBrowserHost()?.invalidateRendererSurface();
+  };
+  window.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
+    if (mainFrame === true && inPlace !== true) invalidate();
+  });
+  window.webContents.on('render-process-gone', invalidate);
+}
 const CHATGPT_BACKEND_REQUEST_FILTER = { urls: [
   `${CHATGPT_ORIGIN}/backend-api/*`,
   `${CHATGPT_ORIGIN}/api/auth/*`,
@@ -656,6 +667,7 @@ class BrowserHost {
       this.shellZoomShortcutBindings.delete(previous.webContents);
     }
     this.window = window;
+    this.invalidateRendererSurface();
     for (const event of WINDOW_VISIBILITY_EVENTS) window.on(event, this.windowVisibilityListener);
     this.bindShellZoomShortcuts(window.webContents);
     this.syncViewVisibility();
@@ -2429,6 +2441,14 @@ class BrowserHost {
     return this.snapshot();
   }
 
+  invalidateRendererSurface() {
+    if (this.destroyed) return;
+    this.boundsReady = false;
+    this.surfaceActive = false;
+    this.syncViewVisibility();
+    this.setState({ surfaceActive: false });
+  }
+
   async waitForSurfaceReady(timeoutMs = 15_000, pollMs = 50) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -4019,6 +4039,7 @@ class BrowserHost {
 }
 
 module.exports = {
+  bindRendererSurfaceInvalidation,
   allowedAuthUrl,
   allowedWorkspaceUrl,
   guardBrowserNavigation,

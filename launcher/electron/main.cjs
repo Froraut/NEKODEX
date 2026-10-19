@@ -73,7 +73,7 @@ const { applicationMenu } = require("./application-menu.cjs");
 const { reloadApplicationPage } = require("./application-reload.cjs");
 const { nativeCopyFor, rendererRecoveryCopyFor, updateCheckLabelFor } = require("./native-copy.cjs");
 const { installHermesProvider } = require("./hermes-integration.cjs");
-const { navigationErrorForLog } = require("./browser-host.cjs");
+const { navigationErrorForLog, bindRendererSurfaceInvalidation } = require("./browser-host.cjs");
 const { BrowserControlServer } = require("./control-server.cjs");
 const { getAutostart, setAutostart } = require("./autostart.cjs");
 const {
@@ -699,6 +699,7 @@ function createWindow({ logger, stateStore, windowStatePath, startHidden, foregr
   };
   window.webContents.on("will-navigate", guardRendererNavigation);
   window.webContents.on("will-redirect", guardRendererNavigation);
+  bindRendererSurfaceInvalidation(window, () => mainWindow, () => browserHost);
   window.webContents.on("did-fail-load", (_event, errorCode, _errorDescription, _validatedURL, isMainFrame) => {
     if (isMainFrame !== true || errorCode === -3 || !rendererStartupComplete || quitting || exitCommitted) return;
     void recoverMainRenderer(`main-frame-load-${errorCode}`);
@@ -1129,7 +1130,20 @@ function registerIpc({ logger, stateStore }) {
         || metadata.layoutVersion !== 1 || metadata.entrypoint !== 'bin/codex') throw new Error('Native CLI package changed');
       const executable = fs.realpathSync(path.join(root, 'bin', 'codex'));
       nativeAccountAuthority = createNativeAccountAuthority({ authorityHome: path.join(CORE_HOME, 'native-accounts'),
-        executable, executableSha256: nativeFileDigest(executable) });
+        executable, executableSha256: nativeFileDigest(executable),
+        recovery: {
+          executionRoot: path.join(CORE_HOME, 'native-account-execution'),
+          inventoryRoot: path.join(CORE_HOME, 'native-account-inventories'),
+          getWorkerPin: async () => reviewedOwnedNativeDevPin(SOURCE_ROOT),
+          getMetadataRuntimePin: async () => {
+            // Resolve the already owned runtime without running its CLI or searching PATH.
+            const invocation = runtimeHost.supervisor.runtimeCommand(['--version']);
+            if (!path.isAbsolute(invocation.executable)) throw new Error('Native recovery requires the pinned owned runtime');
+            const bunPath = fs.realpathSync(invocation.executable);
+            if (!/^bun(?:\.exe)?$/.test(path.basename(bunPath))) throw new Error('Native recovery runtime is unavailable');
+            return { bunPath, bunSha256: nativeFileDigest(bunPath) };
+          },
+        } });
       return nativeAccountAuthority;
     } catch {
       const unavailable = () => { throw new Error('The admitted official Native CLI is unavailable'); };

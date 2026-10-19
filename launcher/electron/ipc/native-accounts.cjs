@@ -3,6 +3,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const OFFICIAL_URL = 'https://auth.openai.com/codex/device';
 const ACTION_KEYS = {
   status: ['action', 'actionId'],
+  'preview-owner-recovery': ['action'],
+  'recover-owner': ['action', 'actionId', 'reviewDigest'],
   'prepare-profile': ['action', 'actionId', 'label'],
   'begin-device-login': ['action', 'actionId', 'profileId', 'epoch'],
   'cancel-login': ['action', 'actionId', 'loginAttemptId'],
@@ -20,9 +22,16 @@ function registerNativeAccounts({ handle, getAuthority, getInventory, getExecuti
       || !Object.hasOwn(ACTION_KEYS, body.action)
       || Object.keys(body).some(key => !ACTION_KEYS[body.action].includes(key))
       || Buffer.byteLength(JSON.stringify(body)) > 2048
-      || (body.action !== 'status' || body.actionId !== undefined) && !UUID.test(body.actionId)) throw new Error('Invalid Native account action');
+      || body.action !== 'preview-owner-recovery' && (body.action !== 'status' || body.actionId !== undefined) && !UUID.test(body.actionId)) throw new Error('Invalid Native account action');
     const authority = getAuthority();
-    try { if (body.action === 'prepare-profile') {
+    let recoveryPreview, recoveryReceipt;
+    try { if (body.action === 'preview-owner-recovery') {
+      if (!authority.previewRecovery) throw new Error('Native recovery is unavailable');
+      recoveryPreview = await authority.previewRecovery();
+    } else if (body.action === 'recover-owner') {
+      if (typeof body.reviewDigest !== 'string' || !/^[a-f0-9]{64}$/.test(body.reviewDigest) || !authority.recoverOwner) throw new Error('Invalid Native recovery review');
+      recoveryReceipt = await authority.recoverOwner({ actionId: body.actionId, reviewDigest: body.reviewDigest });
+    } else if (body.action === 'prepare-profile') {
       if (typeof body.label !== 'string' || !body.label.trim() || body.label.length > 80 || /\p{C}/u.test(body.label)) throw new Error('Invalid Native profile label');
       authority.prepareProfile({ actionId: body.actionId, label: body.label });
     } else if (body.action === 'begin-device-login') {
@@ -59,8 +68,10 @@ function registerNativeAccounts({ handle, getAuthority, getInventory, getExecuti
     let inventory, execution;
     try { inventory = getInventory?.().inspect(); } catch { /* No reviewed build is not model availability. */ }
     try { execution = getExecution?.().inspect(); } catch { /* No available profile is not an inference proof. */ }
+    if (body.actionId && !recoveryReceipt) recoveryReceipt = authority.inspectRecovery?.(body.actionId);
     const snapshot = authority.inspect();
     return { ...snapshot, receipts: [...snapshot.receipts, ...closed.values()], ...(inventory ? { inventory } : {}), ...(execution ? { execution } : {}),
+      ...(recoveryPreview ? { recoveryPreview } : {}), ...(recoveryReceipt ? { recoveryReceipt } : {}),
       ...(rejected.has(body.actionId) ? { rejectedAction: rejected.get(body.actionId) } : {}) };
   });
   handle('launcher:native-accounts-open', async (_event, url) => {

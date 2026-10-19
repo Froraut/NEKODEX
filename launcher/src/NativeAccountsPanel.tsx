@@ -1,12 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Notice, Panel, TextField } from './design';
+import { Button, Checkbox, Notice, Panel, TextField } from './design';
 import type { Language } from './types';
 import type { NativeAccountsApi, NativeAccountsRequest, NativeInventoryRequest, NativeExecutionCloseRequest, NativeAccountsSnapshot, NativeAccountProfile } from './native-accounts-types';
+import type { NativeOwnerRecoveryPreview, NativeOwnerRecoveryReceipt } from '../electron/native-account-recovery.cjs';
 import './surfaces/native-accounts.css';
 
 const verificationUrl = 'https://auth.openai.com/codex/device';
 const pendingStates = new Set(['prepared', 'running', 'pending', 'cancel-requested']);
-type Mutation = Exclude<NativeAccountsRequest, { action: 'status' }> | NativeInventoryRequest | NativeExecutionCloseRequest;
+type Mutation = Exclude<NativeAccountsRequest, { action: 'status' | 'preview-owner-recovery' }> | NativeInventoryRequest | NativeExecutionCloseRequest;
+const recoveryPlanKey = (preview: NativeOwnerRecoveryPreview) => JSON.stringify({
+  state: preview.state, reviewDigest: preview.reviewDigest, reasonCode: preview.reasonCode,
+  markers: preview.markers, unsettledActionCount: preview.unsettledActionCount,
+});
 
 /** Presentation only: the native authority owns profiles, login processes and receipts. */
 export function NativeAccountsPanel({ language, api, disabled = false }: {
@@ -23,6 +28,27 @@ export function NativeAccountsPanel({ language, api, disabled = false }: {
   const [uncertain, setUncertain] = useState(false);
   const [error, setError] = useState(false);
   const [auxError, setAuxError] = useState(false);
+  const [recoveryPreview, setRecoveryPreview] = useState<NativeOwnerRecoveryPreview | null>(null);
+  const recoveryPlan = useRef<string | null>(null);
+  const [recoveryAcknowledged, setRecoveryAcknowledged] = useState(false);
+  const [recoveryReceipt, setRecoveryReceipt] = useState<NativeOwnerRecoveryReceipt | null>(null);
+
+  const acceptSnapshot = (result: NativeAccountsSnapshot) => {
+    setSnapshot(result);
+    if (result.recoveryReceipt) setRecoveryReceipt(result.recoveryReceipt);
+    if (result.recoveryReceipt?.state === 'completed' && result.recoveryReceipt.terminal && !result.recoveryReceipt.ownerHeld) {
+      recoveryPlan.current = null; setRecoveryPreview(null); setRecoveryAcknowledged(false);
+    } else if (result.recoverySupported === false) {
+      recoveryPlan.current = null; setRecoveryPreview(null); setRecoveryAcknowledged(false);
+    } else if (result.recoveryPreview) {
+      const next = recoveryPlanKey(result.recoveryPreview);
+      if (next !== recoveryPlan.current) setRecoveryAcknowledged(false);
+      recoveryPlan.current = next; setRecoveryPreview(result.recoveryPreview);
+    }
+  };
+  const reconciledRecovery = (result: NativeAccountsSnapshot, body: Mutation) =>
+    result.rejectedAction?.actionId === body.actionId && result.rejectedAction.knownNotStarted
+    || result.recoveryReceipt?.actionId === body.actionId && result.recoveryReceipt.terminal && !result.recoveryReceipt.ownerHeld;
 
   const read = async () => {
     if (inFlight.current) return;
@@ -32,10 +58,10 @@ export function NativeAccountsPanel({ language, api, disabled = false }: {
       const outstanding = uncertainRequest.current;
       const result = await transport.current.request({ action: 'status', ...(outstanding ? { actionId: outstanding.actionId } : {}) });
       if (!mounted.current) return;
-      setSnapshot(result); setError(false);
-      if (outstanding && (result.receipts?.some(receipt => receipt.actionId === outstanding.actionId)
+      acceptSnapshot(result); setError(false);
+      if (outstanding && (outstanding.action === 'recover-owner' ? reconciledRecovery(result, outstanding) : (result.receipts?.some(receipt => receipt.actionId === outstanding.actionId)
         || result.inventory?.receipts.some(receipt => receipt.actionId === outstanding.actionId)
-        || result.rejectedAction?.actionId === outstanding.actionId && result.rejectedAction.knownNotStarted)) {
+        || result.rejectedAction?.actionId === outstanding.actionId && result.rejectedAction.knownNotStarted))) {
         uncertainRequest.current = null; setUncertain(false);
         if (outstanding.action === 'prepare-profile') setLabel('');
       }
@@ -69,7 +95,10 @@ export function NativeAccountsPanel({ language, api, disabled = false }: {
     try {
       const result = await transport.current.request(body);
       if (!mounted.current) return;
-      setSnapshot(result); uncertainRequest.current = null; setUncertain(false);
+      acceptSnapshot(result);
+      if (body.action !== 'recover-owner' || reconciledRecovery(result, body)) {
+        uncertainRequest.current = null; setUncertain(false);
+      } else setUncertain(true);
       if (result.rejectedAction?.actionId === body.actionId) setError(true);
       if (body.action === 'prepare-profile') setLabel('');
     } catch {
@@ -78,6 +107,16 @@ export function NativeAccountsPanel({ language, api, disabled = false }: {
       inFlight.current = false;
       if (mounted.current) setBusy(false);
     }
+  };
+
+  const previewRecovery = async () => {
+    if (inFlight.current || uncertainRequest.current || disabled) return;
+    inFlight.current = true; setBusy(true); setError(false);
+    try {
+      const result = await transport.current.request({ action: 'preview-owner-recovery' });
+      if (mounted.current) acceptSnapshot(result);
+    } catch { if (mounted.current) setError(true); }
+    finally { inFlight.current = false; if (mounted.current) setBusy(false); }
   };
 
   const externalAction = async (action: () => Promise<unknown>) => {
@@ -106,6 +145,35 @@ export function NativeAccountsPanel({ language, api, disabled = false }: {
     {uncertain ? <Notice tone="warning" title={ru ? 'Результат действия пока неизвестен.' : 'The action outcome is still unknown.'}>{ru ? 'Сохранён идентификатор исходного действия. Обновление сверит его с журналом; новые изменения пока заблокированы.' : 'The original action identity has been retained. Refresh checks its receipt; further changes are blocked until reconciliation.'}</Notice> : null}
     {auxError ? <Notice tone="error" title={ru ? 'Не удалось открыть страницу или скопировать код.' : 'Could not open the page or copy the code.'}>{ru ? 'Можно вручную открыть официальный адрес и ввести показанный код.' : 'You can manually open the official address and enter the displayed code.'}</Notice> : null}
     {snapshot && !snapshot.available ? <Notice tone="warning" title={ru ? 'Управление Native сейчас недоступно.' : 'Native account management is unavailable.'}>{ru ? 'Проверьте подключение Native и обновите статус.' : 'Check the Native connection and refresh status.'}</Notice> : null}
+    {snapshot?.recoverySupported && (!snapshot.available || recoveryPreview || recoveryReceipt) ? <section aria-label={ru ? 'Восстановление владельца Native' : 'Native owner recovery'}>
+      <h3>{ru ? 'Восстановление Native после сбоя' : 'Native recovery after a failure'}</h3>
+      <p>{ru ? 'Сначала проверьте план. Восстановление убирает подтверждённые устаревшие блокировки, сохраняя аккаунт и сеансы. Прежние запросы не повторяются; вход, каталог и модели не запускаются.' : 'Review the plan first. Recovery archives confirmed stale locks and retains the account and sessions. Prior requests are not replayed; it starts no sign-in, inventory or model.'}</p>
+      <Button disabled={disabled || busy || uncertain} onClick={() => void previewRecovery()}>{ru ? 'Проверить план восстановления' : 'Preview owner recovery'}</Button>
+      {recoveryPreview ? <>
+        <p role="status">{recoveryPreview.state === 'reviewable'
+          ? (ru ? 'Подтверждены устаревшие маркеры. Проверьте точный план перед восстановлением.' : 'Stale markers confirmed. Review the exact plan before recovery.')
+          : (ru ? 'Восстановление заблокировано. Живого или неопределённого владельца нельзя переопределить.' : 'Recovery blocked. A live or uncertain owner cannot be overridden.')}</p>
+        {recoveryPreview.reasonCode ? <p>{ru ? 'Причина: ' : 'Reason: '}{recoveryPreview.reasonCode}</p> : null}
+        <p>{ru ? `Маркеров в плане: ${recoveryPreview.markers.length}.` : `Markers in this plan: ${recoveryPreview.markers.length}.`}</p>
+        <details><summary>{ru ? 'Сведения проверки' : 'Verification details'}</summary>
+        <ul>{recoveryPreview.markers.map((marker, index) => <li key={`${marker.kind}:${marker.sha256}:${index}`}>
+          {marker.kind} · PID {marker.formerPid}{marker.profileId ? ` · profile ${marker.profileId}` : ''}{marker.epoch ? ` · epoch ${marker.epoch}` : ''} · SHA-256 {marker.sha256}
+        </li>)}</ul>
+        {recoveryPreview.reviewDigest ? <p>{ru ? 'SHA-256 плана: ' : 'Plan SHA-256: '}{recoveryPreview.reviewDigest}</p> : null}
+        </details>
+        <p>{ru ? `Прежних неподтверждённых действий: ${recoveryPreview.unsettledActionCount}. Их результат останется неизвестным; повторной отправки не будет.` : `Prior unsettled actions: ${recoveryPreview.unsettledActionCount}. Their outcome remains unknown; they will not be replayed.`}</p>
+        {recoveryPreview.state === 'reviewable' && recoveryPreview.reviewDigest ? <>
+          <Checkbox checked={recoveryAcknowledged} disabled={disabled || busy || uncertain} onChange={setRecoveryAcknowledged} label={ru ? 'Я проверил этот план и подтверждаю архивирование указанных устаревших маркеров без повтора прежних действий.' : 'I reviewed this plan and approve archiving these stale markers without replaying prior actions.'} />
+          <Button disabled={disabled || busy || uncertain || !recoveryAcknowledged} onClick={() => void mutate({ action: 'recover-owner', actionId: crypto.randomUUID(), reviewDigest: recoveryPreview.reviewDigest! })}>{ru ? 'Выполнить подтверждённое восстановление' : 'Recover reviewed owner'}</Button>
+        </> : null}
+      </> : null}
+      {recoveryReceipt ? <div role="status">
+        <p>{ru ? 'Квитанция восстановления: ' : 'Recovery receipt: '}{recoveryReceipt.state} · {recoveryReceipt.actionId}</p>
+        <p>{ru ? `Архивировано маркеров: ${recoveryReceipt.archivedCount}. Владелец удерживается: ${recoveryReceipt.ownerHeld ? 'да' : 'нет'}. Операция завершена: ${recoveryReceipt.terminal ? 'да' : 'нет'}.` : `Archived markers: ${recoveryReceipt.archivedCount}. Owner held: ${recoveryReceipt.ownerHeld ? 'yes' : 'no'}. Terminal: ${recoveryReceipt.terminal ? 'yes' : 'no'}.`}</p>
+        <p>{ru ? `Прежних неподтверждённых действий: ${recoveryReceipt.unsettledActionCount}. Результаты не восстановлены и действия не повторены.` : `Prior unsettled actions: ${recoveryReceipt.unsettledActionCount}. Their results have not been recovered and no actions have been replayed.`}</p>
+        {recoveryReceipt.reasonCode ? <p>{ru ? 'Причина: ' : 'Reason: '}{recoveryReceipt.reasonCode}</p> : null}
+      </div> : null}
+    </section> : null}
     <div className="native-accounts__prepare">
       <TextField label={ru ? 'Название нового профиля' : 'New profile name'} value={label} maxLength={80} disabled={locked} onChange={event => setLabel(event.target.value)} />
       <div className="native-accounts__actions"><Button disabled={locked || !label.trim()} onClick={() => void mutate({ action: 'prepare-profile', actionId: crypto.randomUUID(), label: label.trim() })}>{ru ? 'Подготовить новый профиль' : 'Prepare new profile'}</Button></div>

@@ -291,6 +291,7 @@ class AccountBrowserPool {
   }
   replaceShellWindow(window) {
     const previous = this.options.window;
+    this.invalidateRendererSurface();
     const moved = [];
     try {
       for (const host of this.hosts.values()) { host.replaceShellWindow(window); moved.push(host); }
@@ -673,6 +674,12 @@ class AccountBrowserPool {
     this.surfaceActive = active === true;
     for (const host of this.hosts.values()) host.setSurfaceActive(this.surfaceActive);
     return this.snapshot();
+  }
+  invalidateRendererSurface() {
+    if (this.destroyed) return;
+    this.bounds = null;
+    this.surfaceActive = false;
+    for (const host of this.hosts.values()) host.invalidateRendererSurface();
   }
   hide() { for (const host of this.hosts.values()) host.hide(); return this.snapshot(); }
   accountTunnel(accountId, mode = this.options.getBrowserInteractionMode?.() ?? 'automatic') {

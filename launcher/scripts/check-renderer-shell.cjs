@@ -5,7 +5,8 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { once } = require('node:events');
 const assert = require('node:assert/strict');
-const { BrowserHost } = require('../electron/browser-host.cjs');
+const { BrowserHost, bindRendererSurfaceInvalidation } = require('../electron/browser-host.cjs');
+const { AccountBrowserPool } = require('../electron/account-pool.cjs');
 
 const directory = mkdtempSync(join(tmpdir(), 'nekodex-shell-recovery-'));
 app.setPath('userData', directory);
@@ -27,7 +28,8 @@ app.whenReady().then(async () => {
   const session = view.webContents.session;
   const host = { window: previous, view, authView: null, turnTabs: new Map(),
     shellZoomShortcutBindings: new Map(), windowVisibilityListener() {},
-    bindShellZoomShortcuts: BrowserHost.prototype.bindShellZoomShortcuts, syncViewVisibility() {} };
+    bindShellZoomShortcuts: BrowserHost.prototype.bindShellZoomShortcuts, syncViewVisibility() {}, setState() {},
+    invalidateRendererSurface: BrowserHost.prototype.invalidateRendererSurface };
   const gone = once(previous.webContents, 'render-process-gone');
   previous.webContents.forcefullyCrashRenderer();
   await gone;
@@ -62,6 +64,48 @@ app.whenReady().then(async () => {
   });
   host.turnTabs.set('running', { view: running, status: 'running', interactionMode: 'automatic', rendererReady: false });
   host.windowVisibilityListener = () => host.syncViewVisibility();
+  if (process.env.NEKODEX_SHELL_CHECK === 'renderer-document') {
+    const pool = { hosts: new Map([['fixture', host]]), bounds: null, surfaceActive: false, rendererZoomFactor: 1,
+      invalidateRendererSurface: AccountBrowserPool.prototype.invalidateRendererSurface,
+      setBounds: AccountBrowserPool.prototype.setBounds };
+    Object.assign(host, { setBounds: BrowserHost.prototype.setBounds,
+      setSurfaceActive: BrowserHost.prototype.setSurfaceActive, snapshot: () => ({}) });
+    let currentWindow = replacement;
+    bindRendererSurfaceInvalidation(replacement, () => currentWindow, () => pool);
+    pool.setBounds({ x: 10, y: 10, width: 400, height: 300 });
+    host.setSurfaceActive(true); pool.surfaceActive = true;
+    replacement.webContents.emit('did-start-navigation', {}, 'about:blank#same', true, true);
+    replacement.webContents.emit('did-start-navigation', {}, 'about:blank', false, false);
+    assert.equal(host.boundsReady, true, 'Same-document/subframe navigation revoked the viewport');
+    const loaded = once(replacement.webContents, 'did-finish-load');
+    replacement.webContents.reload();
+    await loaded;
+    assert.equal(pool.bounds, null);
+    assert.equal(pool.surfaceActive, false);
+    assert.equal(host.boundsReady, false);
+    assert.equal(host.surfaceActive, false);
+    for (const candidate of [view, running]) {
+      const [width, height] = replacement.getContentSize();
+      assert.ok(candidate.getBounds().x >= width && candidate.getBounds().y >= height);
+      assert.equal(candidate.webContents.isDestroyed(), false);
+    }
+    host.setSurfaceActive(true);
+    assert.equal(host.boundsReady, false, 'Activation alone reused old document bounds');
+    pool.setBounds({ x: 20, y: 20, width: 500, height: 350 });
+    assert.equal(host.boundsReady, true);
+    assert.equal(pool.bounds.width, 500);
+    currentWindow = null;
+    replacement.webContents.emit('did-start-navigation', {}, 'about:blank', false, true);
+    assert.equal(host.boundsReady, true, 'An obsolete window invalidated the current registration');
+    currentWindow = replacement;
+    assert.equal(view.webContents.getOSProcessId(), processId);
+    assert.equal(view.webContents.session, session);
+    assert.equal(running.webContents.getOSProcessId(), runningProcessId);
+    assert.equal(await view.webContents.executeJavaScript('document.getElementById("draft").value'), 'retained draft');
+    assert.equal(await running.webContents.executeJavaScript('document.getElementById("draft").value'), 'running draft');
+    console.log('SHELL_DOCUMENT_RELOAD_REVOKED_VIEWPORT_AND_PRESERVED_CONTEXTS');
+    return;
+  }
   // Use the production reparent/listener path, then let real Electron resize emit.
   const resized = makeWindow();
   resized.setContentSize(700, 500);

@@ -23,6 +23,9 @@ export interface NativeAccountsSnapshot {
   profiles: NativeAccountProfile[];
   activeCount: number;
   executionAvailable: false;
+  recoverySupported?: boolean;
+  recoveryPreview?: import('../electron/native-account-recovery.cjs').NativeOwnerRecoveryPreview;
+  recoveryReceipt?: import('../electron/native-account-recovery.cjs').NativeOwnerRecoveryReceipt;
   rejectedAction?: { actionId: string; knownNotStarted: true };
   inventory?: { activeCount: number; receipts: Array<import('../electron/native-account-inventory.cjs').NativeInventoryReceipt>; models: never[]; executionAvailable: false };
   execution?: import('../electron/native-account-execution.cjs').NativeAccountExecutionSnapshot;
@@ -39,6 +42,8 @@ export interface NativeAccountsSnapshot {
 
 export type NativeAccountsRequest =
   | { action: 'status'; actionId?: string }
+  | { action: 'preview-owner-recovery' }
+  | { action: 'recover-owner'; actionId: string; reviewDigest: string }
   | { action: 'prepare-profile'; actionId: string; label: string }
   | { action: 'begin-device-login'; actionId: string; profileId: string; epoch: string }
   | { action: 'cancel-login'; actionId: string; loginAttemptId: string };

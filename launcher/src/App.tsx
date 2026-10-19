@@ -1,6 +1,7 @@
 import { useLocaleCopy } from './useLocaleCopy';
 import { LocaleNotice } from './LocaleNotice';
 import { newerBrowserState } from './snapshot-observation';
+import { enqueueBrowserSurfaceCommand } from './browser-surface-queue';
 import { createLauncherLogStore, type LauncherLogStore } from './launcher-log-store';
 import { deferredSurface } from './deferred-surface';
 import { Onboarding } from "./Onboarding";
@@ -608,13 +609,9 @@ function LauncherShell({
   const selectedManualTab = browser?.tabs.find(tab => tab.active && tab.interactionMode === "manual");
 
   const enqueueBrowserSurface = useCallback((active: boolean, intent: number, show = false) => {
-    const command = browserSurfaceCommand.current
-      .catch(() => {})
-      .then(async () => {
-        const result = await api!.setBrowserSurfaceActive(active);
-        if (show && intent === browserSurfaceIntent.current) await api!.showBrowser();
-        return result;
-      });
+    const command = enqueueBrowserSurfaceCommand(browserSurfaceCommand.current,
+      () => intent === browserSurfaceIntent.current,
+      () => api!.setBrowserSurfaceActive(active), show ? () => api!.showBrowser() : undefined);
     browserSurfaceCommand.current = command.then(() => undefined, () => undefined);
     return command.then(result => ({ intent, result }));
   }, []);
@@ -668,6 +665,7 @@ function LauncherShell({
 
     return () => {
       cancelled = true;
+      if (browserSurfaceIntent.current === intent) browserSurfaceIntent.current += 1;
       cancelAnimationFrame(animationFrame);
       observer?.disconnect();
       window.removeEventListener("resize", measure);
