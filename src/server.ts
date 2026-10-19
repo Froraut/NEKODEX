@@ -1175,7 +1175,7 @@ export function startServer(
       console.error("[server] unhandled request error", error instanceof Error ? error.message : String(error));
       return formatErrorResponse(500, "server_error", "Internal bridge error");
     },
-    async fetch(req) {
+    async fetch(req): Promise<Response> {
       const url = new URL(req.url);
       const policy = inferenceRoutePolicy(req.method, url.pathname);
       const rejection = localHttpRequestRejection(req, url, server.port!);
@@ -1248,7 +1248,7 @@ export function startServer(
           instance_id: instanceId,
           background_runtime: backgroundRuntime,
           launcher_detached: launcherDetached,
-          port: config.port,
+          port: server.port,
           uptime: (Date.now() - startedAt) / 1_000,
           accepting_turns: acceptingTurns(),
           native_accepting_turns: acceptingNative(),
