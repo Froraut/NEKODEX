@@ -58,10 +58,11 @@ Pinned Bun 1.4.0; **seven cases, 252 assertions passed**:
   the final renderer showed the corrected Native caption. The fixture quit
   normally; PID33929 is absent. Native, network and tool calls were zero.
 
-These are transport/runtime fixtures and a real UI check. **No actual SDK/model
-parallel acceptance or semantic business result is claimed.** The next relevant
-proof is one meaningful Native Goal with overlapping roots, fan-in and a reviewed
-correction in the existing authenticated development profile. The installed
+Those checks are transport/runtime fixtures and a real UI check. A subsequent
+[real Native Goal](2026-10-19-native-semantic-goal.md) supplied controlled
+overlapping-root, fan-in and substantive-correction evidence, and exposed a
+separate concurrent MCP-discovery defect fixed in that follow-up. It does not
+establish arbitrary business outcomes or installed acceptance. The installed
 profile's postponed human sign-in is separate.
 
 Raw local UI evidence is retained under

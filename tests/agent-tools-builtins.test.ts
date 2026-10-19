@@ -37,3 +37,36 @@ test("builtin observation wait returns unknown without cancelling or dropping th
     release(); await host.waitForIdle(); expect(host.getOutcome(input.idempotencyKey)?.state).toBe("completed"); expect(host.pendingBuiltinCount).toBe(0); expect(signal?.aborted).toBe(false);
   } finally { release(); await host.close(); rmSync(home, { recursive: true, force: true }); }
 });
+
+test("concurrent worker discovery publishes complete catalogs without cross-scan duplicate identities or approval drift", async () => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "nekodex-builtin-concurrent-")));
+  let releaseFirst!: () => void, firstEntered!: () => void, malicious = false, effects = 0, active = true;
+  const firstReady = new Promise<void>(resolve => { firstEntered = resolve; });
+  const firstRelease = new Promise<void>(resolve => { releaseFirst = resolve; });
+  const a = { taskId: "parallel-task", generation: 1, toolCallId: "worker-a" };
+  const b = { taskId: "parallel-task", generation: 1, toolCallId: "worker-b" };
+  const descriptor = { id: "fixture/input", serverId: "fixture", name: "input", supported: true,
+    inputSchema: { type: "object", properties: { value: { type: "string" } }, required: ["value"], additionalProperties: false } };
+  const builtin: StandaloneBuiltinToolsProvider = { serverId: "fixture", async discover(scope) {
+    if (scope.toolCallId === a.toolCallId) { firstEntered(); await firstRelease; }
+    return malicious ? [structuredClone(descriptor), structuredClone(descriptor)] : [structuredClone(descriptor)];
+  }, async execute(request) { effects++; return { state: "completed", result: { call: request.scope.toolCallId } }; } };
+  const host = new StandaloneMcpHost({ config: defaultToolsConfig(), journalPath: join(home, "tools.sqlite"), builtins: [builtin], isScopeActive: () => active });
+  try {
+    const first = host.discover(a); await firstReady;
+    expect((await host.discover(b)).map(row => row.id)).toEqual([descriptor.id]);
+    const inputB = { scope: b, tool: descriptor.id, arguments: { value: "B" } }, grantB = host.authorize(inputB);
+    releaseFirst(); expect((await first).map(row => row.id)).toEqual([descriptor.id]);
+    await expect(host.invoke({ ...inputB, scope: a, grantId: grantB, idempotencyKey: "wrong-scope" })).rejects.toThrow("Exact tool invocation approval");
+    expect(effects).toBe(0);
+    expect((await host.invoke({ ...inputB, grantId: grantB, idempotencyKey: "owned-b" })).result).toEqual({ call: b.toolCallId });
+    const inputA = { scope: a, tool: descriptor.id, arguments: { value: "A" } };
+    expect((await host.invoke({ ...inputA, grantId: host.authorize(inputA), idempotencyKey: "owned-a" })).state).toBe("completed");
+    malicious = true;
+    await expect(host.discover({ ...b, toolCallId: "malicious-catalog" })).rejects.toThrow("Builtin tool identity mismatch");
+    // A rejected candidate cannot partially replace the last complete catalog.
+    expect(() => host.authorize(inputA)).not.toThrow(); expect(effects).toBe(2);
+    expect(() => host.authorize({ ...inputA, arguments: { value: 7 } })).toThrow("schema");
+    active = false; expect(() => host.authorize(inputA)).toThrow("scope is unavailable");
+  } finally { releaseFirst(); await host.close(); rmSync(home, { recursive: true, force: true }); }
+}, 5000);

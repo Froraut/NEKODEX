@@ -100,13 +100,15 @@ export class StandaloneMcpHost implements StandaloneToolsPort {
     this.active(scope); options.signal?.throwIfAborted();
     const signal = AbortSignal.any([AbortSignal.timeout(this.timeout), ...(options.signal ? [options.signal] : [])]);
     const descriptors: ToolDescriptor[] = [];
+    // Concurrent workers build independent candidates. Only a complete, still
+    // active scan may replace the lookup catalog used by approval and invoke.
+    const builtinEntries = new Map<string, ToolEntry>();
+    const sessionEntries = new Map<Session, Map<string, ToolEntry>>();
     let descriptorBytes = 0;
-    this.builtinEntries.clear();
     for (const recipe of this.config.servers.filter(server => this.config.enabled && server.enabled)) {
       if (this.builtinProviders.has(recipe.id)) continue; // Never replace a configured source with a builtin alias.
       signal.throwIfAborted();
       const session = await this.start(recipe);
-      session.tools.clear();
       let cursor: string | undefined;
       const next = new Map<string, { descriptor: ToolDescriptor; validate?: ValidateFunction }>();
       const seenCursors = new Set<string>();
@@ -129,7 +131,7 @@ export class StandaloneMcpHost implements StandaloneToolsPort {
         cursor = result.nextCursor;
         if (cursor) { if (seenCursors.has(cursor) || seenCursors.size >= 8) throw new Error("MCP discovery pagination limit"); seenCursors.add(cursor); }
       } while (cursor);
-      session.tools = next;
+      sessionEntries.set(session, next);
     }
     for (const provider of this.builtinProviders.values()) {
       this.active(scope); signal.throwIfAborted();
@@ -140,16 +142,19 @@ export class StandaloneMcpHost implements StandaloneToolsPort {
       const discovered = await provider.discover(scope, { signal });
       if (discovered.length > 64) throw new Error("Builtin discovery tool limit exceeded");
       for (const raw of discovered) {
-        if (raw.serverId !== provider.serverId || raw.id !== `${provider.serverId}/${raw.name}` || !/^[a-zA-Z0-9_.-]{1,120}$/.test(raw.name) || this.builtinEntries.has(raw.id)) throw new Error("Builtin tool identity mismatch");
+        if (raw.serverId !== provider.serverId || raw.id !== `${provider.serverId}/${raw.name}` || !/^[a-zA-Z0-9_.-]{1,120}$/.test(raw.name) || builtinEntries.has(raw.id)) throw new Error("Builtin tool identity mismatch");
         const descriptor = structuredClone(raw); descriptor.description = descriptor.description?.slice(0, 4000);
         descriptorBytes += Buffer.byteLength(JSON.stringify(descriptor)); if (descriptors.length >= 256 || descriptorBytes > 1024 * 1024) throw new Error("Aggregate builtin discovery limit exceeded");
         let validate: ValidateFunction | undefined;
         try { if (Buffer.byteLength(JSON.stringify(descriptor.inputSchema)) > 64 * 1024) throw new Error("Schema too large"); validate = compileToolInputSchema(descriptor.inputSchema); }
         catch { descriptor.supported = false; descriptor.unsupportedReason = "Builtin input schema is unsupported by the host validator"; }
-        this.builtinEntries.set(descriptor.id, { descriptor, validate, builtin: provider }); descriptors.push(descriptor);
+        builtinEntries.set(descriptor.id, { descriptor, validate, builtin: provider }); descriptors.push(descriptor);
       }
     }
     this.active(scope);
+    signal.throwIfAborted();
+    for (const [session, entries] of sessionEntries) session.tools = entries;
+    this.builtinEntries = builtinEntries;
     return descriptors;
   }
   /** Call only after the trusted human/policy owner approved these exact arguments. */
