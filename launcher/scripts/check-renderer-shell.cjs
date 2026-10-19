@@ -44,6 +44,46 @@ app.whenReady().then(async () => {
   assert.equal(replacement.webContents.mainFrame.detached, false);
   assert.equal(replacement.contentView.children.includes(view), true);
   console.log('SHELL_RECREATION_PRESERVED_BROWSER_PROCESS_SESSION_AND_DRAFT');
+  // Non-browser screens unmount their slot observer. Native resize must keep
+  // drawable primary/running views beyond the enlarged window without closing them.
+  const running = new WebContentsView({ webPreferences: { sandbox: true, partition: 'isolated-running-task' } });
+  views.push(running);
+  replacement.contentView.addChildView(running);
+  await running.webContents.loadURL('data:text/html,<input id="draft" value="running draft">');
+  const runningProcessId = running.webContents.getOSProcessId();
+  Object.assign(host, {
+    visible: true, surfaceActive: false, boundsReady: true, bounds: { x: 0, y: 0, width: 1, height: 1 },
+    primaryRendererReady: false, primaryDeviceEmulationViewport: null,
+    isAccountVisible: () => true, selectedTurnTab: () => null,
+    hiddenTurnBounds: BrowserHost.prototype.hiddenTurnBounds,
+    presentPrimaryView: BrowserHost.prototype.presentPrimaryView,
+    presentTurnView: BrowserHost.prototype.presentTurnView,
+    syncViewVisibility: BrowserHost.prototype.syncViewVisibility,
+  });
+  host.turnTabs.set('running', { view: running, status: 'running', interactionMode: 'automatic', rendererReady: false });
+  host.windowVisibilityListener = () => host.syncViewVisibility();
+  // Use the production reparent/listener path, then let real Electron resize emit.
+  const resized = makeWindow();
+  resized.setContentSize(700, 500);
+  BrowserHost.prototype.replaceShellWindow.call(host, resized);
+  await resized.loadURL('data:text/html,<input id="shell-draft" value="usage draft">');
+  replacement.destroy();
+  const sizeChanged = once(resized, 'resize');
+  resized.setContentSize(1600, 1000);
+  await sizeChanged;
+  const [width, height] = resized.getContentSize();
+  for (const candidate of [view, running]) {
+    const bounds = candidate.getBounds();
+    assert.ok(bounds.x >= width && bounds.y >= height, 'Background view leaked into the enlarged shell');
+    assert.equal(candidate.getVisible(), true);
+    assert.equal(candidate.webContents.isDestroyed(), false);
+  }
+  assert.equal(view.webContents.getOSProcessId(), processId);
+  assert.equal(running.webContents.getOSProcessId(), runningProcessId);
+  assert.equal(await view.webContents.executeJavaScript('document.getElementById("draft").value'), 'retained draft');
+  assert.equal(await running.webContents.executeJavaScript('document.getElementById("draft").value'), 'running draft');
+  assert.equal(await resized.webContents.executeJavaScript('document.getElementById("shell-draft").value'), 'usage draft');
+  console.log('NATIVE_RESIZE_KEPT_BACKGROUND_VIEWS_OFFSCREEN_WITH_PROCESSES_AND_DRAFTS');
 }).then(() => finish(0), error => { console.error(error); finish(1); });
 
 function finish(code) {

@@ -141,6 +141,14 @@ proportionate development/release verification rules.
 
 ## Working across boundaries
 
+Native background-view geometry belongs to `BrowserHost` in
+`launcher/electron/browser-host.cjs`. Keep drawable primary/running views outside
+the current native content bounds on resize/fullscreen, even without a mounted
+React browser slot. Register and remove the same native geometry listeners when
+reparenting or destroying a shell. The focused actual Electron
+`launcher/scripts/check-renderer-shell.cjs` check covers enlargement on a
+non-browser surface while preserving view processes, sessions and drafts.
+
 PDF resource changes span `skill-resources.ts`, immutable `managed-skills.ts`,
 `skill-pdf-resources.ts` projections, the existing `skill-resource-tools.ts`/
 ToolJournal and composition/HTTP/UI. Version5 never changes v1–v4 digests or

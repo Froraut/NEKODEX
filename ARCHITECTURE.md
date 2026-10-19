@@ -161,6 +161,12 @@ owners. A failed replacement rolls back to the previous window; an explicit
 restart uses the supervisor's idle shutdown instead of requiring background
 Native route readiness.
 
+Drawable background primary/running views stay parked beyond the native window's
+current content bounds. The BrowserHost owner recomputes this placement on native
+resize and fullscreen transitions, including on non-browser pages where React
+has no browser-slot ResizeObserver. Hidden placement must not depend on a later
+navigation or close the views, sessions, processes or retained drafts.
+
 `BrowserSurface` owns the selected-account control and changes it through the account
 pool's `selectAccount` operation. `BrowserWorkspaceManager` consumes that selection;
 it has no independent account filter. Its disclosure manages separate user windows

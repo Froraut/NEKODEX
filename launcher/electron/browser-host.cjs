@@ -101,7 +101,9 @@ const PRIMARY_RENDERER_UNRESPONSIVE_GRACE_MS = 30_000;
 const PRIMARY_RENDERER_WATCHDOG_MS = 15_000;
 const PRIMARY_RENDERER_LIVE_WAIT_MS = 30_000;
 const AUTH_HANDOFF_TIMEOUT_MS = 15_000;
-const WINDOW_VISIBILITY_EVENTS = ["show", "hide", "minimize", "restore"];
+// Drawable background views are parked beyond the current content bounds. Repark
+// them when native geometry changes, including while no browser slot is mounted.
+const WINDOW_VISIBILITY_EVENTS = ["show", "hide", "minimize", "restore", "resize", "enter-full-screen", "leave-full-screen"];
 const CHATGPT_BACKEND_REQUEST_FILTER = { urls: [
   `${CHATGPT_ORIGIN}/backend-api/*`,
   `${CHATGPT_ORIGIN}/api/auth/*`,
