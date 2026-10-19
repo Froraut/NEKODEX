@@ -157,7 +157,6 @@
   {"path":"launcher/electron/native-proxy.cjs","dependencies":[]},
   {"path":"launcher/electron/native-recovery-processes.cjs","dependencies":["launcher/electron/owned-native-admission.cjs","node:child_process","node:fs","node:os","node:path"]},
   {"path":"launcher/electron/network-egress-check.cjs","dependencies":[]},
-  {"path":"launcher/electron/oauth-vault-helper/darwin-arm64/nekodex-oauth-vault-helper","dependencies":[]},
   {"path":"launcher/electron/openai-api-panel.cjs","dependencies":["launcher/electron/browser-navigation-policy.cjs"]},
   {"path":"launcher/electron/owned-native-admission.cjs","dependencies":["launcher/electron/owned-native-production-pin.cjs","node:child_process","node:crypto","node:fs","node:path"]},
   {"path":"launcher/electron/owned-native-dev-pin.cjs","dependencies":["launcher/electron/owned-native-admission.cjs","node:fs","node:path"]},
