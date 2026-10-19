@@ -68,6 +68,9 @@ jobs:
       - name: Run selected Python resource and approval flow regressions
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun test tests/agent-skill-python-flow.test.ts tests/agent-skill-script-resources.test.ts tests/agent-skill-script-tools.test.ts --timeout 10000
+      - name: Run remote Git review ownership regressions
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun test tests/remote-git-review.test.ts tests/remote-git-review-facade.test.ts --timeout 30000
       - name: Validate launcher installer with Windows PowerShell 5.1
         if: github.event_name == 'workflow_dispatch' && runner.os == 'Windows'
         shell: powershell

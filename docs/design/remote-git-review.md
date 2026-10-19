@@ -1,9 +1,12 @@
-# Remote Git Review: next implementation contract
+# Remote Git Review: implementation contract
 
-This is a planned contract, not an implementation or acceptance report. The
+This describes the implemented development source contract. The separate
+[acceptance report](../reviews/2026-10-19-remote-git-review.md) records verification;
+the isolated real SSH/UI flow and final development restart/offline-history
+observation passed. Installed delivery remains separate. The
 [adoption program](full-adoption-program.md) assigns Git Review to P07 and the
 editor/conflict boundary to P08. Existing remote SSH/SFTP editing and managed
-worktree create/Open/archive do not implement full remote Git Review.
+worktree create/Open/archive remain separate capabilities.
 
 The [local workspace owner](workspace-platform.md) supplies read-only
 `gitBases/gitStatus/gitDiff`. Its worktree/snapshot mutation service is not a
@@ -25,12 +28,14 @@ Linked worktrees resolve their actual index and Git metadata; do not assume
 `root/.git` is a directory. Mutation review identifies the affected repository,
 branch, files and index/ref changes. Selection or a read capture grants no write.
 
-Keep the existing per-host exclusive owner. Also serialize Git mutations by
-host fingerprint + SSH account + canonical common-directory identity, including
-different host profiles/worktrees that share the same repository. This does not
-lock external programs out; Git index locks and ref comparisons are still required.
+The existing per-host exclusive owner remains in force. The controller also
+serializes mutations by resolved endpoint, SSH user and canonical common-directory
+identity. A private remote common-directory gate covers aliases that reach the
+same physical repository through different endpoint names. The endpoint key
+alone does not prove server identity or lock external programs out; Git index
+locks and ref comparisons remain required.
 
-## Required connected behavior
+## Implemented connected behavior
 
 | Operation | Required behavior |
 | --- | --- |
@@ -60,6 +65,10 @@ transport protocols and inherited `GIT_*` overrides. Apply the same protections
 to writes, additionally disabling hooks, editors and signing subprocesses.
 Repository configuration must not become executable authority. Relevant Git
 attribute/conversion policy must be captured or refused, never silently changed.
+The helper refuses configured repository/worktree `core.attributesFile` and
+relevant filter, text/EOL, encoding, ident and autocrlf conversion policies.
+Global/system Git configuration and attributes are deliberately disabled and
+disclosed in the review limitations. Replacement objects are disabled as well.
 
 Stage/unstage publish an exact candidate index while owning the real Git
 `index.lock`. Revalidate the original index identity/digest, selected revisions
@@ -80,11 +89,18 @@ checks/atomic rename retain their disclosed simultaneous-writer limitation.
 
 ## Durable ownership and lost acknowledgements
 
-Each mutation has a distinct action ID and exact request digest. Persist a signed
-local intent before dispatch and a private fsynced remote action record before
-the Git effect. Bind records to the reviewed scope, before-state and intended
-index/tree/ref transition; retain known candidate/result OIDs and terminal phase.
-Use one remote action identity after disconnect, never a second command sender.
+Each mutation has a distinct action ID and exact request/review digests. The
+RemoteWorkspace v2 registry atomically publishes the signed prepared Git row and
+its matching signed started receipt before SSH dispatch. Terminal row and receipt
+publication is also one registry write; load/store validate their action, kind,
+digest and state pairing. Private immutable plans never cross IPC.
+
+Before a Git effect, the helper fsyncs its UUID action record under the worktree
+Git directory and acquires the private common-directory owner gate. Records bind
+the reviewed scope, before-state and intended index/tree/ref transition, including
+known candidate/result OIDs. Gate cleanup requires durable terminal evidence and
+exact owned lock cleanup. Persistence uncertainty stays held. One remote action
+identity survives disconnect; there is no second command sender.
 
 A lost connection after acceptance is unknown, not failed/no-effect. Reconnect
 only establishes transport: it does not restore approval or replay stage/commit.
@@ -97,21 +113,40 @@ Register ownership before asynchronous work. UI remount, host/root switching and
 late callbacks keep their original scope and cannot clear another draft/capture.
 Quit closes admission and joins accepted mutations through physical settlement
 and durable receipts; a read timeout is not authority to kill a Git mutation.
+Known remote results whose local atomic publication failed remain held until an
+exact local settlement retry. After restart, prepared rows become unknown and
+inspection reads the retained remote ledger; Apply never redispatches them.
+`listActions` is passive and works offline. Explicit local pruning accepts only
+reviewed or settled nonheld completed/failed rows, never prepared/unknown/held
+actions. It preserves remote UUID ledgers; applying a pruned ID is refused.
 
-## Implementation seam and proportional acceptance
+## Files, bounds and acceptance
 
-Add `remote-git-review.cjs/.d.cts` beside `remote-worktrees.cjs`, using the same
-RemoteWorkspace transport/receipt owner with its own fixed helper operations.
-Extend `remote-workspace.cjs/.d.cts`, guarded IPC, preload and renderer types with
+`launcher/electron/remote-git-review.cjs/.d.cts` and the fixed
+`remote-git-review-helper.cjs` use the existing RemoteWorkspace transport/receipt
+owner. The facade, guarded IPC, preload and renderer expose
 bases/capture/diff, prepare/apply stage/unstage/commit and exact action inspection.
-Add a scoped `RemoteGitReview` surface linked to the existing remote editor;
-respect parent connection/list ownership before starting child reads.
+The scoped Remote Git Review surface links conflict paths to the existing SFTP
+editor and retains explicit review/Apply and unknown-outcome ownership.
 
-Use one focused backend target with a temporary real Git repository for callback
+Bounds are 32 selected paths, 256 KiB per selected file and 384 KiB selected bytes;
+512 status entries, 512 KiB diff text, and bounded HEAD plus 128 ref choices.
+The controller retains 24 captures and 24 diff responses. Signed Git actions are
+limited to 32 records / 8 MiB within the 24 MiB RemoteWorkspace registry, reserving
+256 KiB for each prepared/unknown action. Referenced receipts remain pinned.
+Capacity refusal does not authorize automatic pruning or outcome acknowledgement.
+
+The focused backend target uses temporary real Git repositories for callback
 refusal, staged/unstaged/rename/binary/conflict views, stale index/ref and lost-ACK
-reconciliation without replay. Add one connected component flow and one actual
-isolated SSH/UI fixture: edit conflict -> deliberate save -> diff -> stage/unstage
--> reviewed commit -> independent index/tree/ref OID observation. Cover an initial
-commit and resolved-merge parent handling at the affected backend boundary.
-Reuse unchanged local/worktree/Native proofs; no broad repository suite or live
-business repository is implied. Installed delivery remains separate acceptance.
+reconciliation without replay. Initial commits and resolved-merge parent handling
+are covered at the backend boundary. A connected component fixture is covered;
+the actual isolated SSH/UI fixture also passed: conflict sides -> concurrent-save
+refusal with retained draft -> explicit new baseline/save/readback -> diff ->
+separate Stage/Unstage/Commit reviews -> independent index/tree/ref and merge-parent
+observation (24/24 checks). The fixture was disconnected and retired after all
+three signed action/receipt pairs and remote ledgers completed. Real network loss
+mid-effect was not injected; lost-ACK/restart recovery remains backend evidence.
+Unchanged local/worktree/Native proofs are reused; no broad suite or live
+business repository is implied. See the acceptance report for exact completed
+checks and remaining SSH/UI proof. Installed delivery and full P07/P08 parity
+remain separate claims.

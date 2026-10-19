@@ -7,6 +7,14 @@ function registerRemoteWorkspaceIpc({ registerIpcHandler, service }) {
   const handle = (name, fn, count) => registerIpcHandler(`launcher:remote-workspace-${name}`, (_event, ...args) => {
     if (args.length !== count) throw new Error('Invalid remote workspace argument count.'); return fn(...args);
   });
+  handle('git-bases', hostId => service.gitBases(id(hostId)), 1);
+  handle('git-capture', (hostId, input) => service.gitCapture(id(hostId), input), 2);
+  handle('git-diff', (hostId, input) => service.gitDiff(id(hostId), input), 2);
+  handle('git-prepare', (hostId, input) => service.gitPrepare(id(hostId), input), 2);
+  handle('git-apply', (hostId, input) => service.gitApply(id(hostId), input), 2);
+  handle('git-inspect-action', (hostId, actionId) => service.gitInspectAction(id(hostId), id(actionId)), 2);
+  handle('git-list-actions', hostId => service.gitListActions(id(hostId)), 1);
+  handle('git-prune-actions', (hostId, actionIds) => service.gitPruneActions(id(hostId), actionIds), 2);
   handle('worktree-inspect', hostId => service.worktreeInspect(id(hostId)), 1);
   handle('worktree-prepare', (hostId, input) => service.worktreePrepare(id(hostId), input), 2);
   handle('worktree-create', (hostId, token) => service.worktreeCreate(id(hostId), id(token)), 2);

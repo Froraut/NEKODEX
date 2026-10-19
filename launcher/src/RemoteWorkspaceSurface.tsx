@@ -4,6 +4,7 @@ import type { RemoteWorkspaceApi, RemoteHost, RemoteHostInput, RemoteListing, Re
 import { Button, Dialog, Notice, Page, Panel, Select, SurfaceHeader, TextField } from './design';
 import './surfaces/remote-workspace.css';
 import RemoteWorktreeControls from './RemoteWorktreeControls';
+import RemoteGitReview from './RemoteGitReview';
 
 const copy = {
   en: { title: 'Remote workspace', subtitle: 'Browse and edit a selected SSH folder with SFTP, then explicitly review any remote command.',
@@ -137,6 +138,7 @@ export default function RemoteWorkspaceSurface({ language, api }: { language: La
     </Panel></div>
     {drafts.length > 0 && <Panel title={c.drafts}>{drafts.map(d => <div key={d.id} className="nk-remote__actions"><code>{d.path}</code><Button size="sm" disabled={busy || !connected} onClick={() => void openFile(d.path)}>{c.recover}</Button><Button size="sm" disabled={busy} onClick={() => setDiscarding(d)}>{c.discard}</Button></div>)}</Panel>}
     <RemoteWorktreeControls key={host.id} host={host} api={api} language={language} disabled={busy} mutationBlocked={unresolved} onChanged={() => refreshHost(host.id)} onOpen={async opened => { await refreshHosts(); await choose(opened.id); }} />
+    <RemoteGitReview host={host} api={api} language={language} disabled={busy} mutationBlocked={unresolved} onOpenFile={openFile} />
     <Panel title={c.command}><p>{c.commandHint}</p>
       <textarea className="nk-remote__command" aria-label={c.command} value={command} readOnly={busy} spellCheck={false} onChange={e => { setCommand(e.target.value); setApproval(null); }} />
       <div className="nk-remote__actions"><TextField label={c.timeout} type="number" min={1} max={3600} value={timeoutSeconds} disabled={busy} onChange={e => { setTimeoutSeconds(Number(e.target.value)); setApproval(null); }} />
@@ -144,7 +146,7 @@ export default function RemoteWorkspaceSurface({ language, api }: { language: La
       {output && <><h3>{c.output} · {output.exitCode ?? '?'}</h3><pre className="nk-remote__output">{output.stdout}{output.stderr}</pre>{output.truncated && <p>{c.truncated}</p>}{output.stopped && <Notice tone="warning">{output.stopped}</Notice>}{output.receipt.state === 'unknown' && <Notice tone="warning">{c.unknown}</Notice>}</>}
     </Panel>
     <Panel title={c.history}>{receipts.slice().reverse().map(r => <div key={r.id} className="nk-remote__receipt"><p><time>{new Date(r.time).toLocaleString(language)}</time> · {r.kind} · {r.state}</p><code>{r.path ?? r.command ?? r.root}</code>{r.message && <p>{r.message}</p>}
-      {r.temporaryPath && <p><code>{r.temporaryPath}</code></p>}{r.state === 'unknown' && <><Notice tone="warning">{c.unknown}</Notice><TextField label={c.reconciliation} value={reconcileNotes[r.id] ?? ''} disabled={busy} onChange={e => setReconcileNotes({ ...reconcileNotes, [r.id]: e.target.value })} /><Button disabled={busy || (reconcileNotes[r.id]?.trim().length ?? 0) < 8} onClick={() => void act(async () => { await api.remoteWorkspaceReconcile(selected, r.id, reconcileNotes[r.id]); await refreshHost(selected); })}>{c.reconcile}</Button></>}
+      {r.temporaryPath && <p><code>{r.temporaryPath}</code></p>}{r.state === 'unknown' && <><Notice tone="warning">{c.unknown}</Notice>{r.kind.startsWith('git-') ? <p>{language === 'ru' ? 'Для Git используйте проверку точного действия в Git Review выше. Текстовое подтверждение не устанавливает результат Git.' : 'Use exact action inspection in Git Review above. A text acknowledgement cannot establish the Git outcome.'}</p> : <><TextField label={c.reconciliation} value={reconcileNotes[r.id] ?? ''} disabled={busy} onChange={e => setReconcileNotes({ ...reconcileNotes, [r.id]: e.target.value })} /><Button disabled={busy || (reconcileNotes[r.id]?.trim().length ?? 0) < 8} onClick={() => void act(async () => { await api.remoteWorkspaceReconcile(selected, r.id, reconcileNotes[r.id]); await refreshHost(selected); })}>{c.reconcile}</Button></>}</>}
     </div>)}</Panel></>}
     <Dialog open={Boolean(approval)} title={c.confirm} onClose={() => { if (!busy) setApproval(null); }} actions={<><Button disabled={busy} onClick={() => setApproval(null)}>{c.cancel}</Button><Button variant="primary" busy={busy} onClick={() => { const value = approval; if (!value) return; void act(async () => {
       setApproval(null); const result = await api.remoteWorkspaceExecuteCommand(value.hostId, value.token); if (alive.current && selection.current === value.hostId) setOutput(result); await refreshHost(value.hostId);

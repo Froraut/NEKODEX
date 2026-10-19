@@ -8,6 +8,8 @@ const { spawn } = require('node:child_process');
 const { createHash, createHmac, randomBytes, randomUUID } = require('node:crypto');
 const { writePrivateFileAtomic } = require('./atomic-file.cjs');
 const { REMOTE_GIT_HELPER, createRemoteWorktreeController } = require('./remote-worktrees.cjs');
+const { createRemoteGitReviewController, validateRemoteGitReviewRecords, REMOTE_GIT_REVIEW_LIMITS } = require('./remote-git-review.cjs');
+const { REMOTE_GIT_REVIEW_HELPER } = require('./remote-git-review-helper.cjs');
 const { resolveSshConfigAlias, assertSshConfigSnapshot } = require('./remote-ssh-config.cjs');
 const LIMITS = Object.freeze({ bytes: 256 * 1024, entries: 300, hosts: 24, receipts: 100, drafts: 40 });
 const AGENT_LIMITS = Object.freeze({ intents: 48, resultBytes: 180 * 1024, bindings: 64 });
@@ -179,28 +181,58 @@ async function runRemoteProgram(host, request, spawnProcess = spawn, program = C
 
 async function runCommand(host, request, spawnProcess = spawn) { const result = await runRemoteProgram(host, request, spawnProcess); if (!Number.isInteger(result.exitCode) || typeof result.stdout !== 'string' || typeof result.stderr !== 'string') throw new Error('Invalid command receipt.'); return result; }
 
-function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, transportFactory, commandRunner, remoteGitRunner, validateAgentTask, validateAgentIntent, agentInstanceId = randomUUID(), sshConfigContext } = {}) {
+function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, transportFactory, commandRunner, remoteGitRunner, remoteGitReviewRunner, validateAgentTask, validateAgentIntent, agentInstanceId = randomUUID(), sshConfigContext } = {}) {
   if (typeof storagePath !== 'string' || !path.isAbsolute(storagePath)) throw new Error('A private absolute remote-workspace storage path is required.');
   const hosts = new Map(); const sessions = new Map(); const approvals = new Map(); const busy = new Set();
   const active = new Map(); const owners = new Map(); const transports = new Set(); let closing = false;
   if (typeof agentInstanceId !== 'string' || !/^[a-f0-9-]{36}$/.test(agentInstanceId)) throw new Error('Invalid remote Agent main instance.');
   const mainInstanceId = agentInstanceId, agentBindings = new Map(), agentActive = new Map(), agentRevocations = new Map(), agentInvalidations = new Map();
-  let receipts = []; let drafts = []; let worktrees = []; let toolIntents = []; let key;
+  let receipts = []; let drafts = []; let worktrees = []; let toolIntents = []; let gitReviewActions = []; let key;
   const keyPath = storagePath + '.key';
   function safeRead(file, max) { const s = fs.lstatSync(file); if (!s.isFile() || s.isSymbolicLink() || s.size > max || (process.platform !== 'win32' && ((s.mode & 0o077) !== 0 || (process.getuid && s.uid !== process.getuid())))) fail('STORE', 'Remote workspace storage must be private and regular.'); return fs.readFileSync(file); }
   if (fs.existsSync(keyPath)) key = safeRead(keyPath, 64); else { key = randomBytes(32); writePrivateFileAtomic(keyPath, key, { durable: true }); }
   if (key.length !== 32) fail('STORE', 'Invalid remote receipt signing key.');
   const sign = value => createHmac('sha256', key).update(JSON.stringify(value)).digest('hex');
-  function persist() { if (fs.existsSync(storagePath)) safeRead(storagePath, 24 * 1024 * 1024);
-    const encoded = JSON.stringify({ version: 1, hosts: [...hosts.values()], drafts, receipts, worktrees, toolIntents });
+  function persist(override = {}) { if (fs.existsSync(storagePath)) safeRead(storagePath, 24 * 1024 * 1024);
+    // v2 prevents an older writer from silently dropping retained Git authority.
+    const state = { version: 2, hosts: [...hosts.values()], drafts, receipts, worktrees, toolIntents, gitReviewActions, ...override };
+    const encoded = JSON.stringify(state);
     // Reserve bounded terminal-result space before accepting a command. Other hosts/drafts
     // cannot consume the capacity required to durably settle an already started operation.
-    const reserved = toolIntents.filter(item => item.state === 'started').reduce((bytes, item) => bytes + Math.max(0, AGENT_LIMITS.resultBytes - Buffer.byteLength(JSON.stringify(item.outcome))) + 1024, 0);
+    const reserved = state.toolIntents.filter(item => item.state === 'started').reduce((bytes, item) => bytes + Math.max(0, AGENT_LIMITS.resultBytes - Buffer.byteLength(JSON.stringify(item.outcome))) + 1024, 0)
+      + state.gitReviewActions.filter(item => item.state === 'prepared' || item.state === 'unknown').reduce(bytes => bytes + 256 * 1024, 0);
     if (Buffer.byteLength(encoded) + reserved > 24 * 1024 * 1024) fail('STORE', 'Retained remote transaction storage limit reached.');
-    writePrivateFileAtomic(storagePath, encoded, { durable: true }); }
+    return writePrivateFileAtomic(storagePath, encoded, { durable: true }); }
+  function checkedGitRecords(rows, signedRows = false, availableReceipts = receipts) {
+    if (!Array.isArray(rows) || rows.length > REMOTE_GIT_REVIEW_LIMITS.actions) fail('STORE', 'Invalid retained remote Git action count.');
+    const keys = new Set(), uuid = value => typeof value === 'string' && /^[a-f0-9-]{36}$/.test(value), sha = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+    const clean = rows.map(row => {
+      if (!record(row) || row.version !== 1 || !uuid(row.actionId) || keys.has(row.actionId) || !hosts.has(row.hostId)
+        || !record(row.target) || row.target.hostId !== row.hostId || !uuid(row.target.connectionId) || !sha(row.target.fingerprint)
+        || typeof row.target.root !== 'string' || !row.target.root.startsWith('/') || /[\0\r\n]/.test(row.target.root)
+        || typeof row.target.hostname !== 'string' || typeof row.target.username !== 'string' || !Number.isInteger(row.target.port) || row.target.port < 1 || row.target.port > 65535
+        || typeof row.repoKey !== 'string' || !row.repoKey || row.repoKey.length > 8192
+        || !['stage', 'unstage', 'commit'].includes(row.operation) || !sha(row.requestDigest) || !sha(row.reviewDigest) || !sha(row.prepareDigest)
+        || !['reviewed', 'prepared', 'completed', 'failed', 'unknown'].includes(row.state) || typeof row.ownerHeld !== 'boolean'
+        || (['completed', 'failed', 'reviewed'].includes(row.state) && row.ownerHeld)
+        || typeof row.createdAt !== 'string' || !Number.isFinite(Date.parse(row.createdAt)) || typeof row.updatedAt !== 'string' || !Number.isFinite(Date.parse(row.updatedAt))
+        || !record(row.plan) || (row.receiptId !== undefined && (!uuid(row.receiptId) || !availableReceipts.some(r => r.id === row.receiptId && r.hostId === row.hostId)))) fail('STORE', 'Invalid retained remote Git action.');
+      if (signedRows && row.signature !== sign(withoutSignature(row))) fail('STORE', 'Remote Git action signature mismatch.');
+      if (row.receiptId) {
+        const linked = availableReceipts.find(value => value.id === row.receiptId);
+        const expectedState = { prepared: 'started', completed: 'completed', failed: 'failed', unknown: 'unknown' }[row.state];
+        if (!linked || linked.kind !== 'git-' + row.operation || linked.actionId !== row.actionId || linked.reviewDigest !== row.reviewDigest
+          || !expectedState || linked.state !== expectedState) fail('STORE', 'Remote Git action and transaction receipt disagree.');
+      }
+      keys.add(row.actionId); return withoutSignature(row);
+    });
+    if (Buffer.byteLength(JSON.stringify(clean)) > REMOTE_GIT_REVIEW_LIMITS.retainedBytes) fail('STORE', 'Retained remote Git action data exceeds its bound.');
+    validateRemoteGitReviewRecords(clean);
+    return structuredClone(clean);
+  }
   if (fs.existsSync(storagePath)) {
     const saved = JSON.parse(safeRead(storagePath, 24 * 1024 * 1024).toString());
-    if (saved.version !== 1 || !Array.isArray(saved.hosts) || saved.hosts.length > LIMITS.hosts || !Array.isArray(saved.receipts) || !Array.isArray(saved.drafts)) fail('STORE', 'Invalid remote workspace registry.');
+    if (![1, 2].includes(saved.version) || !Array.isArray(saved.hosts) || saved.hosts.length > LIMITS.hosts || !Array.isArray(saved.receipts) || !Array.isArray(saved.drafts)) fail('STORE', 'Invalid remote workspace registry.');
     for (const item of saved.hosts) { const checked = validateHost(item.config); if (!/^[a-f0-9-]{36}$/.test(item.id) || item.fingerprint !== hash(JSON.stringify(checked))) fail('STORE', 'Invalid remote host record.'); hosts.set(item.id, { id: item.id, config: checked, fingerprint: item.fingerprint }); }
     receipts = saved.receipts.slice(-LIMITS.receipts); drafts = saved.drafts.slice(-LIMITS.drafts);
     if (saved.worktrees !== undefined && (!Array.isArray(saved.worktrees) || saved.worktrees.length > 24)) fail('STORE', 'Invalid managed remote worktree registry.');
@@ -215,15 +247,24 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
       intentKeys.add(item.idempotencyKey);
       return item.state === 'started' ? signed({ ...withoutSignature(item), state: 'unknown', outcome: { ...item.outcome, state: 'outcome_unknown', reason: 'Application restarted without terminal remote proof; no operation was replayed.' } }) : item;
     });
+    gitReviewActions = checkedGitRecords(saved.gitReviewActions ?? [], true).map(row => signed(row.state === 'prepared'
+      ? { ...row, state: 'unknown', ownerHeld: true, updatedAt: new Date().toISOString(), reason: 'Application restarted without terminal Git proof; inspect this exact action without replay.' }
+      : row));
     // A process that disappeared has no terminal remote proof. Do not replay it.
     receipts = receipts.map(r => r.state === 'started' ? signed({ ...withoutSignature(r), state: 'unknown', message: 'Application restarted before terminal proof; inspect remote state before another action.' }) : r);
     persist();
   }
   function withoutSignature(value) { const { signature, ...payload } = value; return payload; }
   function signed(value) { return { ...value, signature: sign(value) }; }
-  function receipt(host, kind, detail, durable = true) { const r = signed({ id: randomUUID(), hostId: host.id, hostFingerprint: host.fingerprint, root: sessions.get(host.id)?.root ?? host.config.root, kind, time: new Date().toISOString(), ...detail }); if (receipts.length >= LIMITS.receipts) { const pinned = new Set(toolIntents.map(item => item.receiptId)); const removable = receipts.findIndex(entry => !['started', 'unknown'].includes(entry.state) && !pinned.has(entry.id)); if (removable < 0) fail('RECEIPTS', 'Retained transaction proof limit reached; no new operation was started.'); receipts.splice(removable, 1); } receipts.push(r); if (durable) persist(); return r; }
+  function appendReceipt(rows, value, gitRows = gitReviewActions) {
+    const next = rows.slice();
+    if (next.length >= LIMITS.receipts) { const pinned = new Set([...toolIntents, ...gitRows].map(item => item.receiptId)); const removable = next.findIndex(entry => !['started', 'unknown'].includes(entry.state) && !pinned.has(entry.id)); if (removable < 0) fail('RECEIPTS', 'Retained transaction proof limit reached; no new operation was started.'); next.splice(removable, 1); }
+    next.push(value); return next;
+  }
+  function receipt(host, kind, detail, durable = true) { const r = signed({ id: randomUUID(), hostId: host.id, hostFingerprint: host.fingerprint, root: sessions.get(host.id)?.root ?? host.config.root, kind, time: new Date().toISOString(), ...detail }); receipts = appendReceipt(receipts, r); if (durable) persist(); return r; }
   function settle(id, update) { const index = receipts.findIndex(r => r.id === id); const r = signed({ ...withoutSignature(receipts[index]), ...update }); receipts[index] = r; persist(); return r; }
   function hostOf(id) { const host = hosts.get(id); if (!host) fail('HOST', 'Select a saved SSH host.'); return host; }
+  function heldGit(id) { return gitReviewActions.some(row => row.hostId === id && (row.ownerHeld || row.state === 'prepared' || row.state === 'unknown')); }
   function connected(id) { const host = hostOf(id); const session = sessions.get(id); if (!session || session.sftp.closed || session.fingerprint !== host.fingerprint) fail('OFFLINE', 'Connect this SSH host first.'); if (session.effectiveHost?.config.sshConfigSnapshot) assertSshConfigSnapshot(session.effectiveHost.config.sshConfigSnapshot); return { host: session.effectiveHost ?? host, ...session }; }
   async function exclusive(id, action, kind = 'read') { hostOf(id); if (closing) fail('CLOSING', 'Remote workspace is closing.'); if (busy.has(id)) fail('BUSY', 'This host has an operation in progress.'); busy.add(id); owners.set(id, kind); const pending = Promise.resolve().then(action); active.set(id, pending); try { return await pending; } finally { active.delete(id); owners.delete(id); busy.delete(id); } }
   async function bounded(session, file, empty = false, missing = false) {
@@ -369,7 +410,7 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
         await checkAgentIntent(request);
         const s = connected(binding.hostId); boundAgent(request);
         if (toolIntents.length >= AGENT_LIMITS.intents) fail('RECEIPTS', 'Retained remote Agent intent limit reached; no operation was started.');
-        if (request.tool === 'remote/command' && receipts.some(r => r.hostId === binding.hostId && r.state === 'unknown')) fail('UNKNOWN', 'Reconcile this host’s uncertain transaction before another command.');
+        if (request.tool === 'remote/command' && (receipts.some(r => r.hostId === binding.hostId && r.state === 'unknown') || heldGit(binding.hostId))) fail('UNKNOWN', 'Reconcile this host’s uncertain transaction before another command.');
         const operation = receipt(s.host, request.tool === 'remote/command' ? 'command' : request.tool === 'remote/list' ? 'agent-list' : 'agent-read', {
           state: 'started', toolIdempotencyKey: request.idempotencyKey, toolFingerprint: checked.fingerprint,
           ...(request.tool === 'remote/command' ? { command: request.arguments.command, timeoutSeconds: request.arguments.timeoutSeconds } : { path: request.arguments.path ?? '' }) }, false);
@@ -404,25 +445,72 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
   function validateDraft(input) { if (!input || typeof input.text !== 'string' || Buffer.byteLength(input.text) > LIMITS.bytes || (input.expectedRevision !== null && !/^[a-f0-9]{64}$/.test(input.expectedRevision))) fail('DRAFT', 'Invalid remote text draft.'); return { path: relative(input.path), text: input.text, expectedRevision: input.expectedRevision }; }
   function retain(id, input) { const host = hostOf(id); const candidate = validateDraft(input); const old = drafts.find(d => d.hostId === id && d.path === candidate.path);
     if (!old && drafts.length >= LIMITS.drafts) fail('DRAFT', 'Recovery draft limit reached.'); const draft = { id: old?.id ?? randomUUID(), hostId: id, fingerprint: host.fingerprint, ...candidate, time: new Date().toISOString() }; drafts = drafts.filter(d => d.id !== draft.id); drafts.push(draft); persist(); return draft; }
-  const remoteWorktrees = createRemoteWorktreeController({
-    withHost: (id, action, kind, mutation = false) => exclusive(id, async () => {
+  const withRemoteGitHost = (program, runner) => (id, action, kind, mutation = false) => exclusive(id, async () => {
       const session = connected(id); await bounded(session, '', true);
-      if (mutation && receipts.some(r => r.hostId === id && r.state === 'unknown')) fail('UNKNOWN', 'Inspect and reconcile uncertain remote transactions before another mutation.');
+      if (mutation && (receipts.some(r => r.hostId === id && r.state === 'unknown') || heldGit(id))) fail('UNKNOWN', 'Inspect and reconcile uncertain remote transactions before another mutation.');
       const host = session.host; const scope = { hostId: id, fingerprint: host.fingerprint, connectionId: session.connectionId, root: session.root, hostname: host.config.hostname, username: host.config.username, port: host.config.port };
-      const run = (action, payload) => remoteGitRunner ? remoteGitRunner(host.config, { root: session.root, scope, action, payload }) : runRemoteProgram(host.config, { root: session.root, scope, action, payload }, spawnProcess, REMOTE_GIT_HELPER);
+      const run = (action, payload) => runner ? runner(host.config, { root: session.root, scope, action, payload }) : runRemoteProgram(host.config, { root: session.root, scope, action, payload }, spawnProcess, program);
       return action(scope, run);
-    }, kind),
+    }, kind);
+  const remoteWorktrees = createRemoteWorktreeController({
+    withHost: withRemoteGitHost(REMOTE_GIT_HELPER, remoteGitRunner),
     getRecords: () => worktrees, storeRecords: rows => { worktrees = rows; persist(); },
     begin: (id, kind, detail) => receipt(connected(id).host, kind, detail), finish: settle,
+  });
+  const cleanGitRows = () => structuredClone(gitReviewActions.map(withoutSignature));
+  function signedGitRows(rows, receiptRows = receipts) { return checkedGitRecords(rows, false, receiptRows).map(signed); }
+  function replaceGitRow(next) {
+    const previous = gitReviewActions.find(row => row.actionId === next.actionId);
+    if (!previous || previous.hostId !== next.hostId || previous.requestDigest !== next.requestDigest || previous.reviewDigest !== next.reviewDigest) fail('STORE', 'Remote Git action identity changed during settlement.');
+    return cleanGitRows().map(row => row.actionId === next.actionId ? next : row);
+  }
+  const remoteGitReview = createRemoteGitReviewController({
+    withHost: withRemoteGitHost(REMOTE_GIT_REVIEW_HELPER, remoteGitReviewRunner),
+    getRecords: cleanGitRows,
+    storeRecords(rows) {
+      const next = signedGitRows(rows); persist({ gitReviewActions: next }); gitReviewActions = next;
+    },
+    begin: (id, kind, detail) => receipt(connected(id).host, kind, detail), finish: settle,
+    storePrepared(value) {
+      const previous = gitReviewActions.find(row => row.actionId === value.actionId);
+      if (!previous || previous.state !== 'reviewed' || previous.ownerHeld || value.state !== 'prepared' || !value.ownerHeld || value.receiptId) fail('STORE', 'Review this exact Git action before admission.');
+      const host = connected(value.hostId).host;
+      const operation = signed({ id: randomUUID(), hostId: value.hostId, hostFingerprint: host.fingerprint, root: value.target.root,
+        kind: 'git-' + value.operation, time: new Date().toISOString(), state: 'started', actionId: value.actionId, reviewDigest: value.reviewDigest });
+      const nextRecord = { ...value, receiptId: operation.id };
+      const receiptRows = appendReceipt(receipts, operation, [...gitReviewActions, nextRecord]);
+      const actionRows = signedGitRows(replaceGitRow(nextRecord), receiptRows);
+      persist({ gitReviewActions: actionRows, receipts: receiptRows });
+      gitReviewActions = actionRows; receipts = receiptRows;
+      return structuredClone(nextRecord);
+    },
+    storeTerminal(value, detail) {
+      const nextRows = replaceGitRow(value);
+      if (!value.receiptId) {
+        const previous = gitReviewActions.find(row => row.actionId === value.actionId);
+        if (previous.state !== 'reviewed' || value.state !== 'failed' || value.ownerHeld) fail('STORE', 'Git settlement has no original admitted receipt.');
+        const actionRows = signedGitRows(nextRows); persist({ gitReviewActions: actionRows }); gitReviewActions = actionRows; return;
+      }
+      const previous = receipts.find(row => row.id === value.receiptId && row.hostId === value.hostId);
+      if (!previous || previous.actionId !== value.actionId || previous.kind !== 'git-' + value.operation || !record(detail) || Buffer.byteLength(JSON.stringify(detail)) > 65536) fail('STORE', 'Git terminal receipt identity changed.');
+      const terminal = signed({ ...withoutSignature(previous), ...detail, id: previous.id, hostId: previous.hostId, hostFingerprint: previous.hostFingerprint,
+        root: previous.root, kind: previous.kind, time: previous.time, actionId: value.actionId, reviewDigest: value.reviewDigest });
+      const receiptRows = receipts.map(row => row.id === previous.id ? terminal : row), actionRows = signedGitRows(nextRows, receiptRows);
+      persist({ gitReviewActions: actionRows, receipts: receiptRows }); gitReviewActions = actionRows; receipts = receiptRows;
+    },
   });
   return {
     agentStatus, attachAgent, revokeAgent, invalidateAgentTask, executeAgentTool,
     agentReceipt(input) { const retained = existingAgent(agentInvocation(input)); return retained ? structuredClone(retained.outcome) : null; },
     worktreeInspect: remoteWorktrees.inspect, worktreePrepare: remoteWorktrees.prepare, worktreeCreate: remoteWorktrees.create, worktreeList: remoteWorktrees.list,
     worktreeInspectOwned: remoteWorktrees.inspectOwned, worktreePrepareArchive: remoteWorktrees.prepareArchive, worktreeArchive: remoteWorktrees.archive,
+    gitBases: remoteGitReview.bases, gitCapture: remoteGitReview.capture, gitDiff: remoteGitReview.diff, gitPrepare: remoteGitReview.prepare,
+    gitApply: remoteGitReview.apply, gitInspectAction: remoteGitReview.inspectAction,
+    gitListActions(id) { hostOf(id); return remoteGitReview.listActions(id); },
+    gitPruneActions(id, actionIds) { hostOf(id); return remoteGitReview.pruneActions(id, actionIds); },
     listHosts: () => [...hosts.values()].map(publicHost),
     addHost(input) { if (hosts.size >= LIMITS.hosts) fail('HOST', 'Remote host limit reached.'); const config = validateHost(input); const host = { id: randomUUID(), config, fingerprint: hash(JSON.stringify(config)) }; hosts.set(host.id, host); persist(); return publicHost(host); },
-    forgetHost(id) { hostOf(id); if (busy.has(id)) fail('BUSY', 'Wait for the remote operation to settle.'); if (worktrees.some(w => w.hostId === id)) fail('WORKTREE', 'This host retains managed worktree ownership records.'); if (drafts.some(d => d.hostId === id)) fail('DRAFT', 'Recover or discard this host’s drafts before removing it.'); retireHostBindings(id); sessions.get(id)?.sftp.close(); sessions.delete(id); hosts.delete(id); for (const [token, a] of approvals) if (a.hostId === id) approvals.delete(token); persist(); return { removed: true }; },
+    forgetHost(id) { hostOf(id); if (busy.has(id)) fail('BUSY', 'Wait for the remote operation to settle.'); if (worktrees.some(w => w.hostId === id)) fail('WORKTREE', 'This host retains managed worktree ownership records.'); if (gitReviewActions.some(r => r.hostId === id)) fail('GIT', 'This host retains Git action and recovery records.'); if (drafts.some(d => d.hostId === id)) fail('DRAFT', 'Recover or discard this host’s drafts before removing it.'); retireHostBindings(id); sessions.get(id)?.sftp.close(); sessions.delete(id); hosts.delete(id); for (const [token, a] of approvals) if (a.hostId === id) approvals.delete(token); persist(); return { removed: true }; },
     connect: id => exclusive(id, async () => { const host = hostOf(id); retireHostBindings(id); for (const [token, approval] of approvals) if (approval.hostId === id) approvals.delete(token); sessions.get(id)?.sftp.close(); sessions.delete(id);
       let effectiveHost;
       if (host.config.connectionMode === 'ssh-config-alias') { const snapshot = resolveSshConfigAlias(host.config, sshConfigContext); assertSshConfigSnapshot(snapshot);
@@ -436,7 +524,7 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
     retainDraft: (id, input) => retain(id, input),
     listDrafts(id) { hostOf(id); return drafts.filter(d => d.hostId === id); },
     discardDraft(id, draftId) { hostOf(id); const draft = drafts.find(d => d.id === draftId && d.hostId === id); if (!draft) fail('DRAFT', 'Draft not found.'); drafts = drafts.filter(d => d !== draft); persist(); return { discarded: true }; },
-    save: (id, input) => exclusive(id, async () => { const candidate = validateDraft(input); if (receipts.some(r => r.hostId === id && r.state === 'unknown')) fail('UNKNOWN', 'Reconcile this host’s uncertain transaction before another write.'); const draft = retain(id, candidate); const s = connected(id); const operation = receipt(s.host, 'write', { state: 'started', path: candidate.path, expectedRevision: candidate.expectedRevision, candidateRevision: hash(candidate.text), draftId: draft.id }); let temp = null; let renameSent = false;
+    save: (id, input) => exclusive(id, async () => { const candidate = validateDraft(input); if (receipts.some(r => r.hostId === id && r.state === 'unknown') || heldGit(id)) fail('UNKNOWN', 'Inspect this host’s exact uncertain transaction before another write.'); const draft = retain(id, candidate); const s = connected(id); const operation = receipt(s.host, 'write', { state: 'started', path: candidate.path, expectedRevision: candidate.expectedRevision, candidateRevision: hash(candidate.text), draftId: draft.id }); let temp = null; let renameSent = false;
       try { const target = await bounded(s, candidate.path, false, true); const before = await s.sftp.read(target); const revision = before === null ? null : hash(before);
         if (revision !== candidate.expectedRevision) return { state: 'conflict', draftId: draft.id, receipt: settle(operation.id, { state: 'conflict', message: 'Remote file changed; draft retained.' }) };
         if (before !== null) { if (before.includes(0)) fail('FILE', 'Binary files cannot be edited here.'); try { new TextDecoder('utf-8', { fatal: true }).decode(before); } catch { fail('FILE', 'Binary files cannot be edited here.'); } }
@@ -448,19 +536,19 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
       } catch (error) { if (temp && !renameSent && !s.sftp.closed) await s.sftp.remove(temp).catch(() => {}); return { state: renameSent ? 'unknown' : 'failed', draftId: draft.id, receipt: settle(operation.id, { state: renameSent ? 'unknown' : 'failed', message: error.message, ...(temp ? { temporaryPath: temp } : {}) }) }; }
     }, 'write'),
     approveCommand(id, input) { const s = connected(id); if (busy.has(id)) fail('BUSY', 'Wait for this host’s current operation.'); if (!input || typeof input.command !== 'string' || !input.command.trim() || Buffer.byteLength(input.command) > 16384 || input.command.includes('\0') || !Number.isInteger(input.timeoutSeconds) || input.timeoutSeconds < 1 || input.timeoutSeconds > 3600) fail('COMMAND', 'Provide a command and a 1–3600 second execution limit.');
-      if (receipts.some(r => r.hostId === id && r.state === 'unknown')) fail('UNKNOWN', 'A previous command has an unknown outcome. Reconcile it in transaction history first.');
+      if (receipts.some(r => r.hostId === id && r.state === 'unknown') || heldGit(id)) fail('UNKNOWN', 'Inspect the exact uncertain operation before reviewing another command.');
       for (const [token, previous] of approvals) if (previous.hostId === id) approvals.delete(token);
       const approval = { token: randomUUID(), hostId: id, connectionId: s.connectionId, fingerprint: s.host.fingerprint, hostname: s.host.config.hostname, username: s.host.config.username, port: s.host.config.port, root: s.root, command: input.command, timeoutSeconds: input.timeoutSeconds };
       approvals.set(approval.token, approval); return approval; },
-    executeCommand: (id, token) => exclusive(id, async () => { const s = connected(id); const approval = approvals.get(token); if (!approval || approval.hostId !== id || approval.fingerprint !== s.host.fingerprint || approval.root !== s.root || approval.connectionId !== s.connectionId) fail('APPROVAL', 'Review this exact host, root and command before executing.'); if (receipts.some(r => r.hostId === id && r.state === 'unknown')) fail('UNKNOWN', 'Reconcile this host’s uncertain transaction before another command.'); approvals.delete(token);
+    executeCommand: (id, token) => exclusive(id, async () => { const s = connected(id); const approval = approvals.get(token); if (!approval || approval.hostId !== id || approval.fingerprint !== s.host.fingerprint || approval.root !== s.root || approval.connectionId !== s.connectionId) fail('APPROVAL', 'Review this exact host, root and command before executing.'); if (receipts.some(r => r.hostId === id && r.state === 'unknown') || heldGit(id)) fail('UNKNOWN', 'Inspect the exact uncertain operation before another command.'); approvals.delete(token);
       await bounded(s, '', true); const operation = receipt(s.host, 'command', { state: 'started', approvalId: approval.token, command: approval.command, timeoutSeconds: approval.timeoutSeconds });
       try { const result = await (commandRunner ?? ((h, r) => runCommand(h, r, spawnProcess)))(s.host.config, { root: s.root, command: approval.command, timeoutSeconds: approval.timeoutSeconds }); return { ...result, receipt: settle(operation.id, { state: 'completed', exitCode: result.exitCode, stopped: result.stopped }) }; }
       catch (error) { return { exitCode: null, stdout: '', stderr: '', receipt: settle(operation.id, { state: 'unknown', message: error.message }) }; }
     }, 'command'),
     listReceipts(id) { hostOf(id); return receipts.filter(r => r.hostId === id); },
-    reconcile(id, receiptId, note) { hostOf(id); if (busy.has(id)) fail('BUSY', 'The host operation is still active.'); const r = receipts.find(r => r.id === receiptId && r.hostId === id); if (!r || r.state !== 'unknown' || typeof note !== 'string' || note.trim().length < 8 || note.length > 2000) fail('RECONCILE', 'Provide the observed remote outcome before acknowledging an uncertain transaction.'); return settle(r.id, { state: 'reconciled', reconciliation: note, reconciledAt: new Date().toISOString() }); },
-    currentOperation() { const entry = [...owners].find(([, kind]) => (['connect', 'write', 'command'].includes(kind) || kind.startsWith('worktree-'))); return entry ? `SSH ${entry[1]} · ${hostOf(entry[0]).config.label} (${hostOf(entry[0]).config.hostname})` : null; },
-    async destroy() { closing = true; agentBindings.clear(); await Promise.allSettled([...active.values(), ...[...agentActive.values()].map(item => item.promise)]); const owned = [...transports]; for (const sftp of owned) sftp.close(); await Promise.all(owned.map(sftp => sftp.exited ?? Promise.resolve())); sessions.clear(); approvals.clear(); transports.clear(); },
+    reconcile(id, receiptId, note) { hostOf(id); if (busy.has(id)) fail('BUSY', 'The host operation is still active.'); const r = receipts.find(r => r.id === receiptId && r.hostId === id); if (r?.kind?.startsWith('git-')) fail('RECONCILE', 'Inspect the exact Git action; a note cannot settle an index or commit outcome.'); if (!r || r.state !== 'unknown' || typeof note !== 'string' || note.trim().length < 8 || note.length > 2000) fail('RECONCILE', 'Provide the observed remote outcome before acknowledging an uncertain transaction.'); return settle(r.id, { state: 'reconciled', reconciliation: note, reconciledAt: new Date().toISOString() }); },
+    currentOperation() { const entry = [...owners].find(([, kind]) => (['connect', 'write', 'command'].includes(kind) || kind.startsWith('worktree-') || kind.startsWith('git-'))); return entry ? `SSH ${entry[1]} · ${hostOf(entry[0]).config.label} (${hostOf(entry[0]).config.hostname})` : remoteGitReview.currentOperation(); },
+    async destroy() { closing = true; agentBindings.clear(); const settlements = await Promise.allSettled([...active.values(), ...[...agentActive.values()].map(item => item.promise), remoteGitReview.destroy()]); const failed = settlements.find(row => row.status === 'rejected'); if (failed) throw failed.reason; const owned = [...transports]; for (const sftp of owned) sftp.close(); await Promise.all(owned.map(sftp => sftp.exited ?? Promise.resolve())); sessions.clear(); approvals.clear(); transports.clear(); },
     dispose() { if (busy.size || agentActive.size) fail('BUSY', 'Remote operations still own their terminal outcomes.'); for (const session of sessions.values()) session.sftp.close(); sessions.clear(); approvals.clear(); agentBindings.clear(); },
   };
 }
