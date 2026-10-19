@@ -62,6 +62,9 @@ export function AgentToolsSurface({ api, language, disabled = false }: { api: Ag
   const [calls, setCalls] = useState<{ toolCallId: string; tool: string; arguments: Record<string, unknown> }[]>([]);
   const [pendingCallsTruncated, setPendingCallsTruncated] = useState(false);
   const [callId, setCallId] = useState(''); const selectedCall = calls.find(call => call.toolCallId === callId);
+  const selectedDesktopHandoff = !!selectedCall && ['desktop/observe', 'desktop/click', 'desktop/type'].includes(selectedCall.tool) && selectedCall.arguments.waitForForeground === true;
+  const [foregroundHandoffScope, setForegroundHandoffScope] = useState<ToolScope | null>(null);
+  const [handoffCancelling, setHandoffCancelling] = useState(false);
   const [result, setResult] = useState<ToolOutcome | null>(null);
   const [receiptKey, setReceiptKey] = useState(''); const [requirementId, setRequirementId] = useState('r1');
   const [evidenceReference, setEvidenceReference] = useState<{ sourceEventId: string; requirementId: string; subject: string; subjectRevision: string; property: string } | null>(null);
@@ -179,7 +182,32 @@ export function AgentToolsSurface({ api, language, disabled = false }: { api: Ag
       {status?.descriptors.length ? <ul className="agent-tools-records agent-tools-main-records">{status.descriptors.map(tool => <li key={tool.id}><BadgeRow><strong>{tool.id}</strong><Badge tone={tool.supported ? 'neutral' : 'warning'}>{tool.supported ? choose('Schema available; approval required', 'Схема доступна; требуется подтверждение') : choose('Unsupported schema', 'Схема не поддерживается')}</Badge></BadgeRow><span>{tool.description ?? tool.unsupportedReason}</span></li>)}</ul> : null}
       <Select label={choose('Saved model tool request', 'Сохранённый запрос инструмента модели')} value={callId} disabled={locked || !calls.length} onChange={value => { setCallId(value); setResult(null); }} options={[{ value: '', label: choose('Select an exact pending call', 'Выберите точный ожидающий вызов') }, ...calls.map(call => ({ value: call.toolCallId, label: `${call.tool} · ${call.toolCallId}` }))]} />
       {pendingCallsTruncated ? <Notice tone="warning">{choose('The current pending-call projection is bounded. Additional retained calls are outside this view; the saved task history is preserved.', 'Список текущих вызовов ограничен. Дополнительные сохранённые вызовы не входят в эту выборку; история задачи сохранена.')}</Notice> : null}
-      {selectedCall ? <><pre className="agent-tools-call">{JSON.stringify(selectedCall, null, 2)}</pre><Button className="agent-tools-button" disabled={locked || historical || !selectedCallEnabled} onClick={() => void act(async () => { const outcome = await transport.current.request({ action: 'approveInvoke', scope: scope(selectedCall.toolCallId), explicitUserAction: true }) as ToolOutcome; if (mounted.current) setResult(outcome); await refresh(); })}>{choose('Approve and invoke this exact call', 'Подтвердить и выполнить этот вызов')}</Button></> : <p className="agent-tools-muted">{choose('The model must first return a tool call in this task. The host resolves arguments from its saved dispatch; this panel cannot invent a call.', 'Сначала модель должна вернуть вызов инструмента в этой задаче. Host берёт аргументы из сохранённого dispatch; панель не создаёт произвольные вызовы.')}</p>}
+      {selectedCall ? <>
+        <pre className="agent-tools-call">{JSON.stringify(selectedCall, null, 2)}</pre>
+        {selectedDesktopHandoff ? <Notice tone="info">{choose('This exact call includes a manual return to the selected window. After approval, return through its title bar or Dock without changing its content, size or focused control, then release keys and mouse buttons. NEKODEX will wait without activating the window. Input still requires the original image, frame, focus and owner to match.', 'Этот точный вызов включает ручной возврат в выбранное окно. После подтверждения вернитесь через его заголовок или Dock, не меняя содержимое, размер и выбранный элемент, затем отпустите клавиши и кнопки мыши. NEKODEX будет ждать без активации окна. Для ввода должны совпасть исходное изображение, положение, фокус и владелец.')}</Notice> : null}
+        <Button className="agent-tools-button" disabled={locked || historical || !selectedCallEnabled} onClick={() => void act(async () => {
+          const approvedScope = scope(selectedCall.toolCallId);
+          if (selectedDesktopHandoff) setForegroundHandoffScope(approvedScope);
+          const outcome = await transport.current.request({ action: 'approveInvoke', scope: approvedScope, explicitUserAction: true }) as ToolOutcome;
+          if (mounted.current) { setResult(outcome); if (selectedDesktopHandoff && outcome.state !== 'outcome_unknown') setForegroundHandoffScope(null); }
+          await refresh();
+        })}>{selectedDesktopHandoff ? choose('Approve this call and wait for the selected window', 'Подтвердить вызов и ждать выбранное окно') : choose('Approve and invoke this exact call', 'Подтвердить и выполнить этот вызов')}</Button>
+      </> : <p className="agent-tools-muted">{choose('The model must first return a tool call in this task. The host resolves arguments from its saved dispatch; this panel cannot invent a call.', 'Сначала модель должна вернуть вызов инструмента в этой задаче. Host берёт аргументы из сохранённого dispatch; панель не создаёт произвольные вызовы.')}</p>}
+      {foregroundHandoffScope ? <div className="agent-tools-actions" role="status">
+        <span>{choose('Approved desktop wait for task', 'Подтверждено ожидание окна для задачи')} {foregroundHandoffScope.taskId.slice(0, 8)} · {foregroundHandoffScope.generation}</span>
+        <Button className="agent-tools-button" variant="secondary" disabled={disabled || handoffCancelling} onClick={() => {
+          const cancelledScope = foregroundHandoffScope;
+          setHandoffCancelling(true);
+          // Cancellation bypasses only the UI's in-flight lock. The backend still
+          // checks the exact frozen task scope and retires its native owner.
+          void transport.current.request({ action: 'revokeDesktopTools', scope: cancelledScope, explicitUserAction: true }).then(() => {
+            if (mounted.current) setForegroundHandoffScope(null);
+          }).catch(() => {
+            if (mounted.current) setError(choose('Window revocation is unconfirmed. Inspect the retained operation before another action.', 'Отзыв привязки окна не подтверждён. Проверьте сохранённую операцию перед следующим действием.'));
+          }).finally(() => { if (mounted.current) setHandoffCancelling(false); });
+        }}>{choose('Cancel waiting and revoke this task window', 'Отменить ожидание и отозвать окно задачи')}</Button>
+        <span>{choose('Revocation stops further access; it does not undo input that may already have been dispatched.', 'Отзыв прекращает дальнейший доступ и не откатывает ввод, который мог уже произойти.')}</span>
+      </div> : null}
       {result ? <div className="agent-tools-result" aria-live="polite"><BadgeRow><Badge tone={result.state === 'completed' ? 'success' : 'warning'}>{result.state}</Badge></BadgeRow><AgentToolOutcomeView outcome={result} choose={choose} />{result.state === 'outcome_unknown' ? <Notice tone="warning">{choose('The effect may already have occurred. The retained receipt blocks automatic replay.', 'Действие могло уже произойти. Сохранённая квитанция блокирует автоматический повтор.')}</Notice> : null}</div> : null}
       <TextField label={choose('Retained receipt key', 'Ключ сохранённой квитанции')} value={receiptKey} onChange={event => { setReceiptKey(event.target.value); setEvidenceReference(null); }} />
       <Button className="agent-tools-button" disabled={locked || !receiptKey} onClick={() => void act(async () => { const receipt = await transport.current.request({ action: 'receipt', idempotencyKey: receiptKey }) as ToolOutcome | null; if (mounted.current) setResult(receipt); })}>{choose('Inspect saved receipt', 'Посмотреть сохранённую квитанцию')}</Button>

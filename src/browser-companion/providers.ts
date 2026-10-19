@@ -36,8 +36,8 @@ export const desktopObservationSchema = desktopBindingSchema.extend({
   screenshotResource: z.string().min(1).max(1024),
 }).strict();
 export const desktopActionSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("click"), x: z.number().int().nonnegative(), y: z.number().int().nonnegative() }).strict(),
-  z.object({ kind: z.literal("type"), text: z.string().max(8000) }).strict(),
+  z.object({ kind: z.literal("click"), x: z.number().int().nonnegative(), y: z.number().int().nonnegative(), waitForForeground: z.literal(true).optional() }).strict(),
+  z.object({ kind: z.literal("type"), text: z.string().max(8000), waitForForeground: z.literal(true).optional() }).strict(),
 ]);
 export type DesktopBinding = z.infer<typeof desktopBindingSchema>;
 export type DesktopObservation = z.infer<typeof desktopObservationSchema>;
@@ -45,7 +45,7 @@ export type DesktopAction = z.infer<typeof desktopActionSchema>;
 export interface DesktopReceipt { operationId: string; outcome: "completed" | "rejected" | "unknown" | "not_sent"; executed: boolean; reason?: string }
 export interface DesktopProviderPort {
   capabilities(scope: ToolScope, signal?: AbortSignal): Promise<{ available: boolean; platform: "darwin" | "win32"; reason?: string }>;
-  observe(scope: ToolScope, signal?: AbortSignal): Promise<DesktopObservation>;
+  observe(scope: ToolScope, signal?: AbortSignal, waitForForeground?: true): Promise<DesktopObservation>;
   act(scope: ToolScope, binding: DesktopBinding, action: DesktopAction, signal?: AbortSignal): Promise<DesktopReceipt>;
   invalidate(): void;
 }
@@ -102,7 +102,8 @@ export function createMcpDesktopProvider(options: McpDesktopProviderOptions): De
   }
   return {
     capabilities,
-    async observe(scope, signal) {
+    async observe(scope, signal, waitForForeground) {
+      if (waitForForeground) throw new Error("Foreground handoff requires the owned native desktop provider");
       if (busy || uncertain) throw new Error("Desktop provider is active or has an uncertain input outcome");
       busy = true; const revision = generation;
       latest = undefined;
@@ -121,6 +122,7 @@ export function createMcpDesktopProvider(options: McpDesktopProviderOptions): De
       if (busy || uncertain) throw new Error("Desktop provider is active or has an uncertain input outcome");
       const binding = desktopBindingSchema.parse(bindingValue);
       const action = desktopActionSchema.parse(actionValue);
+      if (action.waitForForeground) throw new Error("Foreground handoff requires the owned native desktop provider");
       if (!latest || scopeKey !== key(scope) || JSON.stringify(desktopBindingOf(latest)) !== JSON.stringify(binding)) throw new Error("Stale or foreign desktop observation");
       if (action.kind === "click" && (action.x >= binding.width || action.y >= binding.height)) throw new Error("Input coordinates lie outside the observed screenshot");
       busy = true;

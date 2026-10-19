@@ -11,15 +11,20 @@ const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest(
 function fixture() {
   let enabled = false; let selected = false; let uncertain = false; let active = true; let corrupt = false;
   let foreign = false; let foreignProperties = false; let closed = 0; const calls: string[] = [];
-  let expired = false; let pendingOperation: { operationId: string; binding: unknown } | undefined; let lateReceipt: unknown;
+  const requests: { command: string; body: Record<string, unknown> }[] = [];
+  let holdForeground = false; let expired = false; let pendingOperation: { operationId: string; binding: unknown } | undefined; let lateReceipt: unknown;
   // Marker-only synthetic bytes exercise dimension/hash ownership; native codec/rendering is a separate Cua flow.
   const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0, 8, 8, 0, 1, 0, 1, 0, 0xff, 0xd9]);
   const selection = { windowId: '1', processId: '1:100', windowEpoch: 'a'.repeat(64) };
   const window = { ...selection, owner: 'Owned fixture', title: 'Synthetic window', foreground: false, frame: { x: 10, y: 10, width: 1, height: 1 } };
   const transport: NativeDesktopTransport = {
     get activeCount() { return pendingOperation && !lateReceipt ? 1 : 0; },
-    async request(command, body = {}) {
-      calls.push(command);
+    async request(command, body = {}, signal) {
+      calls.push(command); requests.push({ command, body: structuredClone(body) });
+      if (command === 'observe' && body.waitForForeground === true && holdForeground) return new Promise((_resolve, reject) => {
+        const abort = () => reject(new Error('fixture foreground wait aborted'));
+        signal?.addEventListener('abort', abort, { once: true }); if (signal?.aborted) abort();
+      });
       if (command === 'enable') { enabled = body.enabled as boolean; return { enabled }; }
       if (command === 'status') return { providerId: 'nekodex-macos-desktop-v1', enabled, uncertain: false,
         selected: selected ? window : null, selectionCurrent: selected, inputWindowBound: selected,
@@ -45,9 +50,9 @@ function fixture() {
   };
   const provider = createMacosDesktopProvider({ helperExecutable: '/unlaunched-fixture-helper', helperSha256: 'a'.repeat(64),
     platform: 'darwin', isScopeActive: () => active, transportFactory: () => transport });
-  return { provider, calls, selection, unknown: () => { uncertain = true; }, foreign: () => { foreign = true; },
+  return { provider, calls, requests, selection, unknown: () => { uncertain = true; }, foreign: () => { foreign = true; },
     corrupt: () => { corrupt = true; }, foreignProperties: () => { foreignProperties = true; }, stop: () => { active = false; }, closed: () => closed,
-    expireWait: () => { expired = true; }, completeLate: () => { lateReceipt = { operationId: pendingOperation!.operationId, outcome: 'completed', executed: true, reason: 'late ax dispatch receipt; result-unverified' }; } };
+    holdForeground: () => { holdForeground = true; }, expireWait: () => { expired = true; }, completeLate: () => { lateReceipt = { operationId: pendingOperation!.operationId, outcome: 'completed', executed: true, reason: 'late ax dispatch receipt; result-unverified' }; } };
 }
 
 test('native provider defaults off and preserves exact observation ownership; AX input does not require post-event permission', async () => {
@@ -167,3 +172,30 @@ test.skipIf(process.platform !== 'darwin' || !existsSync(helper))('compiled nati
   } finally { await client.close(); }
   await expect(client.request('status')).rejects.toThrow('closed');
 }, 5000);
+
+
+test('explicit foreground handoff remains in native payload and operation identity without replacing the observation binding', async () => {
+  const f = fixture(); await f.provider.setEnabled(true, true); await f.provider.selectWindow(f.selection, true);
+  const observed = await f.provider.observe(scope, undefined, true), binding = desktopBindingOf(observed);
+  expect(f.requests.find(row => row.command === 'observe')?.body).toEqual({ scopeId: `${scope.taskId}\0${scope.generation}`, waitForForeground: true });
+  const operationId = randomUUID();
+  const action = { kind: 'click' as const, x: 0, y: 0, waitForForeground: true as const };
+  expect((await f.provider.actWithOperation(scope, binding, action, operationId)).outcome).toBe('completed');
+  expect(f.requests.find(row => row.command === 'act')?.body).toEqual({ operationId, binding, action });
+  await expect(f.provider.actWithOperation(scope, binding, { kind: 'click', x: 0, y: 0 }, operationId)).rejects.toThrow('original payload');
+  expect(f.calls.filter(command => command === 'act')).toHaveLength(1);
+  expect(f.provider.readExistingReceipt(operationId, binding, { kind: 'click', x: 0, y: 0 })).toBeUndefined();
+  await f.provider.close();
+});
+
+
+test('revoking an explicit foreground observation aborts its exact waiting request without another capture or input', async () => {
+  const f = fixture(); await f.provider.setEnabled(true, true); await f.provider.selectWindow(f.selection, true); f.holdForeground();
+  const pending = f.provider.observe(scope, undefined, true);
+  f.provider.invalidate();
+  await expect(pending).rejects.toThrow('foreground wait aborted');
+  expect(f.calls.filter(command => command === 'observe')).toHaveLength(1);
+  expect(f.calls.filter(command => command === 'act')).toHaveLength(0);
+  expect(f.provider.passiveStatus().activeCount).toBe(0);
+  await f.provider.close();
+});

@@ -10,6 +10,7 @@ import type { ToolScope } from "../src/agent-tools/types";
 test("desktop controller is passive/off until explicit controls and binds bounded image/input to one task generation", async () => {
   const scope: ToolScope = { taskId: "controller-task", generation: 1, toolCallId: "observe-1" };
   const calls: string[] = []; let creates = 0, enabled = false, selected = false, closed = 0, activeGeneration = 1;
+  let observedForegroundMode: unknown, dispatchedAction: unknown;
   let expire = false, failNextStatus = false, corruptNextImage = false, pendingOperation: { id: string; binding: unknown } | undefined, late: unknown;
   const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0, 8, 8, 0, 1, 0, 1, 0, 0xff, 0xd9]);
   const pngId = "c".repeat(64);
@@ -22,6 +23,8 @@ test("desktop controller is passive/off until explicit controls and binds bounde
     get activeCount() { return pendingOperation && !late ? 1 : 0; },
     async request(command, body = {}) {
       calls.push(command);
+      if (command === "observe") observedForegroundMode = body.waitForForeground;
+      if (command === "act") dispatchedAction = body.action;
       if (command === "status" && failNextStatus) { failNextStatus = false; throw new Error("synthetic post-selection status failure"); }
       if (command === "status") return { providerId: "nekodex-macos-desktop-v1", enabled, uncertain: false, selected: selected ? window : null,
         selectionCurrent: selected, inputWindowBound: selected, screenCaptureGranted: screenGranted, accessibilityGranted: true, postEventGranted: false };
@@ -114,10 +117,17 @@ test("desktop controller is passive/off until explicit controls and binds bounde
     const beforeForeignProperties = calls.length;
     expect((await invoke("readProperties", { selection: { ...selection, processId: "999:1" } })).state).toBe("failed");
     expect(calls).toHaveLength(beforeForeignProperties);
+    const foreground = await invoke("observe", { selection, waitForForeground: true });
+    expect(foreground.state).toBe("completed");
+    expect(observedForegroundMode).toBe(true);
+    expect((foreground.result as any).structuredContent.foregroundHandoff).toBe("explicit-manual-return");
+    const foregroundBinding = (foreground.result as any).structuredContent.binding;
+    expect((await invoke("click", { binding: foregroundBinding, x: 0, y: 0, waitForForeground: true })).state).toBe("completed");
+    expect(dispatchedAction).toEqual({ kind: "click", x: 0, y: 0, waitForForeground: true });
     const fresh = await invoke("observe", { selection });
     const freshBinding = (fresh.result as any).structuredContent.binding;
     expire = true;
-    const request = { scope: { ...scope, toolCallId: "retained-call" }, tool: "desktop/type", arguments: { binding: freshBinding, text: "offered text" }, idempotencyKey: "retained-exact-desktop-op" };
+    const request = { scope: { ...scope, toolCallId: "retained-call" }, tool: "desktop/type", arguments: { binding: freshBinding, text: "offered text", waitForForeground: true }, idempotencyKey: "retained-exact-desktop-op" };
     expect((await controller.execute(request)).state).toBe("outcome_unknown");
     expect(pendingOperation?.id).toMatch(/^[0-9a-f-]{36}$/);
     const beforeRead = calls.length;
@@ -127,6 +137,7 @@ test("desktop controller is passive/off until explicit controls and binds bounde
     late = { operationId: pendingOperation!.id, outcome: "completed", executed: true, reason: "synthetic late receipt" };
     expect((await controller.reconcile(request))?.state).toBe("completed");
     expect(await controller.reconcile({ ...request, arguments: { ...request.arguments, text: "changed payload" } })).toBeUndefined();
+    expect(await controller.reconcile({ ...request, arguments: { binding: freshBinding, text: "offered text" } })).toBeUndefined();
     expect(calls).toHaveLength(beforeRead); expect(controller.status().activeCount).toBe(0);
     expect(controller.status(scope).bindings).toEqual([]);
     await controller.selectAndBind(scope, selection, true);

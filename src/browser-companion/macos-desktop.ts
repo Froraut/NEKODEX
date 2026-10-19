@@ -115,11 +115,14 @@ export class NativeDesktopHelperClient implements NativeDesktopTransport {
     const child = this.start();
     return new Promise((resolve, reject) => {
       const abort = () => this.fail(new Error('Native desktop request aborted; owned helper is stopping'));
-      const timeout = setTimeout(() => {
+      // Human foreground handoff has no consent deadline. Abort/close still stops its exact child.
+      const waitsForForeground = (command === 'observe' && body.waitForForeground === true)
+        || (command === 'act' && desktopActionSchema.parse(body.action).waitForForeground === true);
+      const timeout = waitsForForeground ? undefined : setTimeout(() => {
         if (operationId) reject(new Error('Native input wait elapsed; exact owner and late receipt remain retained'));
         else this.fail(new Error('Native desktop observation timed out; owned helper is stopping'));
       }, this.options.requestTimeoutMs ?? 12000);
-      this.pending = { id, operationId, resolve, reject, cleanup: () => { clearTimeout(timeout); signal?.removeEventListener('abort', abort); } };
+      this.pending = { id, operationId, resolve, reject, cleanup: () => { if (timeout !== undefined) clearTimeout(timeout); signal?.removeEventListener('abort', abort); } };
       signal?.addEventListener('abort', abort, { once: true });
       child.stdin.write(line, error => { if (error) this.fail(new Error('Native desktop request delivery failed')); });
       if (signal?.aborted) abort();
@@ -167,6 +170,7 @@ export function createMacosDesktopProvider(options: { helperExecutable: string; 
   const platform = options.platform ?? process.platform;
   let enabled = false; let closed = false; let busy = false; let uncertain = false; let generation = 0;
   let closingOwners = 0;
+  let foregroundWaitAbort: AbortController | undefined;
   let selectedSelection: MacosWindowSelection | undefined;
   let latest: DesktopObservation | undefined; let transport: NativeDesktopTransport | undefined;
   const operations = new Map<string, { binding: DesktopBinding; actionHash: string; receipt?: DesktopReceipt }>();
@@ -226,16 +230,19 @@ export function createMacosDesktopProvider(options: { helperExecutable: string; 
         return { available, platform: 'darwin', ...(!available ? { reason: 'Enable the provider, grant OS permissions externally and select the exact accessible window; post-event permission is needed only for foreground pixel fallback' } : {}) };
       } catch { return { available: false, platform: 'darwin', reason: 'Native macOS desktop owner or permissions are unavailable; no capture/input was sent' }; }
     },
-    async observe(scope, signal) {
+    async observe(scope, signal, waitForForeground) {
       active(scope); if (busy) throw new Error('Native desktop operation is active');
       const revision = generation; busy = true; latest = undefined;
+      const waitAbort = waitForForeground ? new AbortController() : undefined;
+      if (waitAbort) foregroundWaitAbort = waitAbort;
+      const requestSignal = waitAbort ? signal ? AbortSignal.any([signal, waitAbort.signal]) : waitAbort.signal : signal;
       try {
-        const value = desktopObservationSchema.parse(await native().request('observe', { scopeId: scopeKey(scope) }, signal));
+        const value = desktopObservationSchema.parse(await native().request('observe', { scopeId: scopeKey(scope), ...(waitForForeground ? { waitForForeground: true } : {}) }, requestSignal));
         active(scope);
         if (generation !== revision || value.providerId !== PROVIDER_ID || value.platform !== 'darwin' || value.scopeId !== scopeKey(scope)
           || !/^[a-f0-9]{64}$/.test(value.screenshotId) || !value.screenshotResource.startsWith('native-desktop:')) throw new Error('Native observation changed owner, scope or generation');
         latest = value; return structuredClone(value);
-      } finally { busy = false; settleIdle(); }
+      } finally { if (foregroundWaitAbort === waitAbort) foregroundWaitAbort = undefined; busy = false; settleIdle(); }
     },
     async image(scope, observationValue, signal) {
       active(scope); const observation = desktopObservationSchema.parse(observationValue);
@@ -298,9 +305,12 @@ export function createMacosDesktopProvider(options: { helperExecutable: string; 
       if (operations.size >= 128) throw new Error('Native receipt capacity reached; retained operations are preserved');
       operations.set(operationId, { binding, actionHash });
       let offered = false; busy = true;
+      const waitAbort = action.waitForForeground ? new AbortController() : undefined;
+      if (waitAbort) foregroundWaitAbort = waitAbort;
+      const requestSignal = waitAbort ? signal ? AbortSignal.any([signal, waitAbort.signal]) : waitAbort.signal : signal;
       try {
-        signal?.throwIfAborted(); active(scope); latest = undefined; offered = true;
-        const value: DesktopReceipt = receiptSchema.parse(await native().request('act', { operationId, binding, action }, signal));
+        requestSignal?.throwIfAborted(); active(scope); latest = undefined; offered = true;
+        const value: DesktopReceipt = receiptSchema.parse(await native().request('act', { operationId, binding, action }, requestSignal));
         if (value.operationId !== operationId || value.outcome === 'completed' && !value.executed || value.outcome === 'rejected' && value.executed) throw new Error('Native input receipt changed operation identity/outcome');
         uncertain = value.outcome === 'unknown'; operations.get(operationId)!.receipt = value; return value;
       } catch (error) {
@@ -311,7 +321,7 @@ export function createMacosDesktopProvider(options: { helperExecutable: string; 
         uncertain ||= offered;
         const receipt: DesktopReceipt = { operationId, outcome: offered ? 'unknown' : 'not_sent', executed: false, reason: 'Native input delivery lacks a terminal receipt; reconcile this exact operation before further input' };
         operations.get(operationId)!.receipt = receipt; return receipt;
-      } finally { busy = false; settleIdle(); }
+      } finally { if (foregroundWaitAbort === waitAbort) foregroundWaitAbort = undefined; busy = false; settleIdle(); }
     },
     readExistingReceipt(operationIdValue, bindingValue, actionValue) {
       const operationId = z.string().uuid().parse(operationIdValue); const binding = desktopBindingSchema.parse(bindingValue);
@@ -328,7 +338,7 @@ export function createMacosDesktopProvider(options: { helperExecutable: string; 
       settleIdle();
       return existing.receipt ? structuredClone(existing.receipt) : undefined;
     },
-    invalidate() { generation++; latest = undefined; if (!busy && transport) void transport.request('invalidate').catch(() => {}); },
+    invalidate() { foregroundWaitAbort?.abort(); generation++; latest = undefined; if (!busy && transport) void transport.request('invalidate').catch(() => {}); },
     async close() {
       closed = true; enabled = false; generation++; latest = undefined; selectedSelection = undefined; const previous = transport; transport = undefined;
       if (previous) { closingOwners++; try { await previous.close(); } finally { closingOwners--; settleIdle(); } }

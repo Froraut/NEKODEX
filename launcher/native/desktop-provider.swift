@@ -16,6 +16,11 @@ func number(_ value: Any?) -> Double? {
     guard let n = value as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(), n.doubleValue.isFinite else { return nil }
     return n.doubleValue
 }
+func foregroundMode(_ value: [String: Any]) throws -> Bool {
+    guard let raw = value["waitForForeground"] else { return false }
+    guard let flag = raw as? NSNumber, CFGetTypeID(flag) == CFBooleanGetTypeID(), flag.boolValue else { try reject("invalid-foreground-mode") }
+    return true
+}
 func string(_ value: Any?, max: Int = 160) -> String? {
     guard let value = value as? String, !value.isEmpty, value.utf8.count <= max else { return nil }; return value
 }
@@ -144,8 +149,33 @@ func lastInputTime() -> TimeInterval {
               !CGEventSource.buttonState(.combinedSessionState, button: .right),
               !CGEventSource.buttonState(.combinedSessionState, button: .center) else { try reject("human-mouse-button-held") }
     }
-    func inputOwner(_ row: WindowRow, expectedFocus: AXUIElement?) throws {
-        guard AXIsProcessTrusted(), CGPreflightPostEventAccess(), NSWorkspace.shared.frontmostApplication?.processIdentifier == row.pid,
+    // An exact approved call may explicitly wait for a human to return this window.
+    // This loop never captures, activates, accepts a caller clock or expires consent.
+    func waitForForeground(_ original: WindowRow, expectedFocus: AXUIElement? = nil, enforceFocus: Bool = false) async throws {
+        while true {
+            try Task.checkCancellation()
+            guard getppid() == initialParent, enabled, !uncertain else { try reject("foreground-owner-unavailable") }
+            var input = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
+            guard Darwin.poll(&input, 1, 0) >= 0,
+                  input.revents & Int16(POLLHUP | POLLERR | POLLNVAL) == 0 else { try reject("foreground-parent-port-closed") }
+            let row = try currentWindow()
+            guard sameFrame(row.frame, original.frame) else { try reject("foreground-window-frame-changed") }
+            let target = try boundWindow(row)
+            let focused = attribute(AXUIElementCreateApplication(row.pid), kAXFocusedWindowAttribute as CFString)
+            let currentFocus = focusElement(row)
+            let matchingFocus = !enforceFocus || (expectedFocus == nil ? currentFocus == nil : currentFocus.map { CFEqual($0, expectedFocus!) } == true)
+            let released = !CGEventSource.buttonState(.combinedSessionState, button: .left)
+                && !CGEventSource.buttonState(.combinedSessionState, button: .right)
+                && !CGEventSource.buttonState(.combinedSessionState, button: .center)
+                && CGEventSource.flagsState(.combinedSessionState).intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift]).isEmpty
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier == row.pid,
+               let focused = focused, CFEqual(focused, target), windows().first?.id == row.id,
+               matchingFocus, released, ProcessInfo.processInfo.systemUptime - lastInputTime() >= 0.15 { return }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+    }
+    func inputOwner(_ row: WindowRow, expectedFocus: AXUIElement?, requirePostEvent: Bool = true) throws {
+        guard AXIsProcessTrusted(), (!requirePostEvent || CGPreflightPostEventAccess()), NSWorkspace.shared.frontmostApplication?.processIdentifier == row.pid,
               let target = selectedAX, axWindows(row).contains(where: { CFEqual($0, target) }),
               let frame = axFrame(target), sameFrame(frame, row.frame),
               let focused = attribute(AXUIElementCreateApplication(row.pid), kAXFocusedWindowAttribute as CFString), CFEqual(focused, target),
@@ -315,9 +345,19 @@ func lastInputTime() -> TimeInterval {
             guard sameFrame(current.frame, row.frame), token(properties) == token(try applicationProperties(current)) else { try reject("property-state-changed-during-read") }
             return ["selection": selection, "observedAt": ISO8601DateFormatter().string(from: Date()), "properties": properties]
         case "observe":
-            guard exact(request, base + ["scopeId"]), !uncertain, let scope = string(request["scopeId"]) else { try reject("observation-unavailable") }
+            let waits = try foregroundMode(request)
+            guard exact(request, base + ["scopeId"] + (waits ? ["waitForForeground"] : [])), !uncertain,
+                  let scope = string(request["scopeId"]) else { try reject("observation-unavailable") }
             captured = nil; image = nil
-            let value = try await capture(try currentWindow(), scope: scope); captured = value; image = value
+            let row = try currentWindow()
+            if waits { try await waitForForeground(row) }
+            let foregroundBaseline = lastInputTime()
+            let value = try await capture(try currentWindow(), scope: scope)
+            if waits {
+                try inputOwner(try currentWindow(), expectedFocus: value.focusedElement, requirePostEvent: false)
+                guard value.lastInput <= foregroundBaseline + 0.005, lastInputTime() <= foregroundBaseline + 0.005 else { try reject("human-input-changed") }
+            }
+            captured = value; image = value
             return value.binding.merging(["kind": "desktop", "screenshotResource": value.resource]) { _, new in new }
         case "image":
             guard exact(request, base + ["binding", "resource", "encoding"]), let value = image,
@@ -341,13 +381,25 @@ func lastInputTime() -> TimeInterval {
             guard getppid() == initialParent, enabled, !uncertain, let original = captured, NSDictionary(dictionary: binding).isEqual(to: original.binding) else { return receipt("rejected", false, "stale-observation") }
             captured = nil // One attempt owns this observation even if later validation refuses input.
             let row = try currentWindow()
-            let fresh = try await capture(row, scope: binding["scopeId"] as! String)
+            let waits = try foregroundMode(action)
+            if waits && !sameFrame(row.frame, original.frame) { return receipt("rejected", false, "owner-or-frame-changed") }
+            if waits { try await waitForForeground(row, expectedFocus: original.focusedElement, enforceFocus: true) }
+            let foregroundBaseline = lastInputTime()
+            let fresh = try await capture(try currentWindow(), scope: binding["scopeId"] as! String)
             guard fresh.binding["screenshotId"] as? String == binding["screenshotId"] as? String,
                   fresh.binding["frameEpoch"] as? String == binding["frameEpoch"] as? String else { return receipt("rejected", false, "screen-or-frame-changed") }
             let current = try currentWindow()
             guard sameFrame(current.frame, original.frame) else { return receipt("rejected", false, "owner-or-frame-changed") }
+            // Only exact same-image/frame/focus handoff can establish a new private input
+            // boundary. Original binding is unchanged and never replaced with fresh.binding.
+            let inputBaseline: TimeInterval
+            if waits {
+                try inputOwner(current, expectedFocus: original.focusedElement, requirePostEvent: false)
+                guard fresh.lastInput <= foregroundBaseline + 0.005, lastInputTime() <= foregroundBaseline + 0.005 else { return receipt("rejected", false, "human-input-changed") }
+                inputBaseline = fresh.lastInput
+            } else { inputBaseline = original.lastInput }
             if action["kind"] as? String == "click" {
-                guard exact(action, ["kind", "x", "y"]), let x = number(action["x"]), let y = number(action["y"]),
+                guard exact(action, ["kind", "x", "y"] + (waits ? ["waitForForeground"] : [])), let x = number(action["x"]), let y = number(action["y"]),
                       x.rounded() == x, y.rounded() == y, x >= 0, y >= 0,
                       x < Double(binding["width"] as! Int), y < Double(binding["height"] as! Int) else { return receipt("rejected", false, "coordinates-outside-observation") }
                 let point = CGPoint(x: row.frame.minX + x * row.frame.width / Double(binding["width"] as! Int),
@@ -360,13 +412,17 @@ func lastInputTime() -> TimeInterval {
                     _ = try boundWindow(current)
                     guard let last = controls(current).first(where: { CFEqual($0.element, target.element) }), last.signature == target.signature else { return receipt("rejected", false, "ax-target-changed-before-input") }
                     guard getppid() == initialParent else { return receipt("rejected", false, "parent-owner-exited") }
+                    if waits {
+                        try inputOwner(try currentWindow(), expectedFocus: original.focusedElement, requirePostEvent: false)
+                        guard lastInputTime() <= inputBaseline + 0.005 else { return receipt("rejected", false, "human-input-changed") }
+                    }
                     let status = AXUIElementPerformAction(target.element, kAXPressAction as CFString)
                     if status == .success { return receipt("completed", true, "ax-press-dispatched; application-result-unverified") }
                     uncertain = status == .cannotComplete; return receipt(uncertain ? "unknown" : "rejected", false, "ax-press-not-confirmed")
                 }
                 // Generic event input is available only when the selected exact window is already foreground.
                 try inputOwner(current, expectedFocus: original.focusedElement)
-                guard fresh.lastInput <= original.lastInput + 0.005, lastInputTime() <= original.lastInput + 0.005 else { return receipt("rejected", false, "human-input-changed") }
+                guard fresh.lastInput <= inputBaseline + 0.005, lastInputTime() <= inputBaseline + 0.005 else { return receipt("rejected", false, "human-input-changed") }
                 guard let source = CGEventSource(stateID: .privateState),
                       let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
                       let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) else { return receipt("rejected", false, "event-unavailable") }
@@ -375,10 +431,10 @@ func lastInputTime() -> TimeInterval {
                 // close to dispatch as possible; no activation or click-through.
                 try inputOwner(try currentWindow(), expectedFocus: original.focusedElement)
                 try pixelTarget(current, point: point)
-                guard lastInputTime() <= original.lastInput + 0.005 else { return receipt("rejected", false, "human-input-changed") }
+                guard lastInputTime() <= inputBaseline + 0.005 else { return receipt("rejected", false, "human-input-changed") }
                 down.flags = []; up.flags = []; down.postToPid(row.pid); up.postToPid(row.pid)
             } else if action["kind"] as? String == "type" {
-                guard exact(action, ["kind", "text"]), let text = action["text"] as? String, !text.isEmpty, text.utf16.count <= 8000 else { return receipt("rejected", false, "invalid-literal-text") }
+                guard exact(action, ["kind", "text"] + (waits ? ["waitForForeground"] : [])), let text = action["text"] as? String, !text.isEmpty, text.utf16.count <= 8000 else { return receipt("rejected", false, "invalid-literal-text") }
                 if let focused = original.focusedElement, let target = original.targets.first(where: { CFEqual($0.element, focused) && $0.text }) {
                     guard let currentTarget = fresh.targets.first(where: { CFEqual($0.element, target.element) }), currentTarget.signature == target.signature,
                           let currentFocus = focusElement(current), CFEqual(currentFocus, target.element),
@@ -388,6 +444,10 @@ func lastInputTime() -> TimeInterval {
                           let last = controls(current).first(where: { CFEqual($0.element, target.element) }), last.signature == target.signature else { return receipt("rejected", false, "text-target-changed-before-input") }
                     let status: AXError
                     guard getppid() == initialParent else { return receipt("rejected", false, "parent-owner-exited") }
+                    if waits {
+                        try inputOwner(try currentWindow(), expectedFocus: original.focusedElement, requirePostEvent: false)
+                        guard lastInputTime() <= inputBaseline + 0.005 else { return receipt("rejected", false, "human-input-changed") }
+                    }
                     if target.selectedTextWritable { status = AXUIElementSetAttributeValue(target.element, kAXSelectedTextAttribute as CFString, text as CFString) }
                     else {
                         let replacement = (oldValue as NSString).replacingCharacters(in: NSRange(location: range.location, length: range.length), with: text)
