@@ -49,6 +49,10 @@ export function AgentOAuthPanel({ api, scopeKey, choose, locked = false }: {
       <p>{choose('Issuer', 'Издатель')}: <code>{review.issuer}</code></p>
       <p>{choose('Resource', 'Ресурс')}: <code>{review.resource}</code></p>
       <p>{choose('Public client ID', 'Публичный ID клиента')}: <code>{review.clientId}</code></p>
+      {review.redirectUriMode === 'loopback-exact' ? <>
+        <p>{choose('Exact registered callback URI', 'Точный зарегистрированный URI возврата')}: <code>{review.redirectUri ?? choose('Unavailable', 'Недоступен')}</code></p>
+        <p>{choose('This local loopback callback receives the authorization redirect only on this computer. Its host, port and path must match the URI registered with the provider.', 'Этот локальный loopback-адрес принимает возврат авторизации только на этом компьютере. Его хост, порт и путь должны совпадать с URI, зарегистрированным у провайдера.')}</p>
+      </> : review.redirectUriMode === 'loopback-port-variable' ? <p>{choose('The authorization redirect uses a local loopback callback on this computer; its port is selected for each sign-in.', 'Возврат авторизации использует локальный loopback-адрес на этом компьютере; порт выбирается для каждого входа.')}</p> : null}
       <p>{choose('Requested scopes', 'Запрашиваемые разрешения')}: {review.scopes.join(', ') || choose('Provider default', 'По умолчанию провайдера')}</p>
       <p>{choose('Authorization endpoint', 'Адрес авторизации')}: <code>{review.authorizationEndpoint}</code></p>
       <p>{choose('Token endpoint', 'Адрес обмена токенов')}: <code>{review.tokenEndpoint}</code></p>
@@ -57,7 +61,7 @@ export function AgentOAuthPanel({ api, scopeKey, choose, locked = false }: {
       <p>{choose('Validated metadata digest', 'Хеш проверенных метаданных')}: <code>{review.metadataDigest}</code></p>
       <Notice>{choose('The provider metadata was checked. The client ID comes from your selected registration file; only provider sign-in can verify its acceptance. Registration does not start sign-in or approve tool calls.', 'Метаданные провайдера проверены. ID клиента указан в выбранном вами файле; его принятие проверяется только при авторизации у провайдера. Сохранение регистрации не запускает вход и не подтверждает вызовы инструментов.')}</Notice>
       <Checkbox checked={registrationConsent} onChange={setRegistrationConsent} label={choose('I selected this public client registration and these exact endpoints and scopes for the current account.', 'Я выбрал эту публичную регистрацию клиента, эти адреса и разрешения для текущего аккаунта.')} />
-      <Button className="agent-tools-button" disabled={busy || locked || !registrationConsent || !api?.registerProvider || review.state !== 'reviewed'} onClick={() => void act(async () => {
+      <Button className="agent-tools-button" disabled={busy || locked || !registrationConsent || !api?.registerProvider || review.state !== 'reviewed' || review.redirectUriMode === 'loopback-exact' && !review.redirectUri} onClick={() => void act(async () => {
         const epoch = generation.current;
         const result = await api!.registerProvider!({ reviewId: review.reviewId, reviewDigest: review.reviewDigest, explicitUserAction: true });
         if (generation.current === epoch) { setReview(result); setRegistrationConsent(false); }

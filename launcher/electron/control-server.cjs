@@ -53,7 +53,8 @@ class BrowserControlServer {
     getAgentNativeBridge, getAgentNativeInstance, validateNativeInvalidation,
     getAgentRemoteService, getAgentRemoteInstance, validateRemoteInvalidation,
     getVmExportService, getVmExportInstance, getPythonBuildSelectionService, getPythonBuildSelectionInstance,
-    getAgentOAuthMcpController, getAgentOAuthMcpInstance }) {
+    getAgentOAuthMcpController, getAgentOAuthMcpInstance,
+    getOwnedConversationHistoryService, getOwnedConversationHistoryInstance }) {
     this.logger = logger;
     this.getBrowserHost = getBrowserHost;
     this.getPreferences = getPreferences;
@@ -70,6 +71,8 @@ class BrowserControlServer {
     this.getPythonBuildSelectionInstance = getPythonBuildSelectionInstance;
     this.getAgentOAuthMcpController = getAgentOAuthMcpController;
     this.getAgentOAuthMcpInstance = getAgentOAuthMcpInstance;
+    this.getOwnedConversationHistoryService = getOwnedConversationHistoryService;
+    this.getOwnedConversationHistoryInstance = getOwnedConversationHistoryInstance;
     this.token = randomBytes(32).toString("base64url");
     this.automaticMutationReceipts = new Map();
     this.port = 0;
@@ -167,6 +170,29 @@ class BrowserControlServer {
     ]).get(request.url);
     if (nativeAction) {
       await this.handleAgentNative(request, response, nativeAction);
+      return;
+    }
+    if (request.url === '/v1/owned-conversation/resolve-scope') {
+      if (request.method !== 'POST') { writeJson(response,405,{error:'method_not_allowed'});return; }
+      try {
+        const instanceId = this.getOwnedConversationHistoryInstance?.();
+        if (!instanceId || request.headers['x-nekodex-owned-conversation-instance'] !== instanceId) throw new Error('stale');
+        const body = await readJson(request,4096);
+        if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).sort().join(',') !== 'conversationId,expectedContext,revision'
+          || typeof body.conversationId !== 'string' || !Number.isSafeInteger(body.revision) || body.revision < 0
+          || !body.expectedContext || Object.keys(body.expectedContext).sort().join(',') !== 'epoch,profileId,serverGeneration'
+          || !['profileId','epoch','serverGeneration'].every(key=>typeof body.expectedContext[key] === 'string' && body.expectedContext[key].length<=128)) throw new Error('invalid');
+        const service = this.getOwnedConversationHistoryService?.();
+        if (!service || typeof service.resolveHistoryScope !== 'function') throw new Error('unavailable');
+        const value = await service.resolveHistoryScope(body);
+        if (value !== null && value !== undefined) {
+          const {validateOwnedConversationScope} = require('./owned-conversation-transcript.cjs');
+          validateOwnedConversationScope(value);
+          if (value.conversationId !== body.conversationId || value.profileId !== body.expectedContext.profileId || value.authEpoch !== body.expectedContext.epoch || value.serverGeneration !== body.expectedContext.serverGeneration) throw new Error('changed');
+        }
+        if (instanceId !== this.getOwnedConversationHistoryInstance?.()) throw new Error('changed');
+        writeJson(response,200,{ok:true,instanceId,value:value ?? null});
+      } catch { writeJson(response,409,{error:'owned_conversation_scope_unavailable'}); }
       return;
     }
     const oauthMcpAction = new Map(['discover', 'execute', 'receipt', 'invalidate'].map(action => [`/v1/agent-oauth-mcp/${action}`, action])).get(request.url);

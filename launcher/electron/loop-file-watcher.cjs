@@ -63,8 +63,17 @@ function createLoopFileWatcher({ directory, resolveProject, getTask, enqueueWork
   if (!path.isAbsolute(directory) || typeof resolveProject !== 'function' || typeof getTask !== 'function' || typeof enqueueWork !== 'function') throw new Error('Loop file source owner unavailable');
   directory = path.resolve(directory); privateDirectory(directory);
   const registryPath = path.join(directory, 'watchers.json'), lockPath = path.join(directory, 'owner.lock');
+  const recoveryPath = path.join(directory, 'recovery.lock');
+  const assertNotRecovering = () => {
+    try { fs.lstatSync(recoveryPath); }
+    catch (error) { if (error.code === 'ENOENT') return; throw error; }
+    throw Object.assign(new Error('Loop source owner recovery is retained; inspect its receipt before acquiring a new watcher owner'), { code: 'LOOP_SOURCE_RECOVERY_IN_PROGRESS' });
+  };
+  assertNotRecovering();
   const lockBytes = JSON.stringify({ pid: process.pid, nonce: randomUUID() });
   const lockFd = fs.openSync(lockPath, 'wx', 0o600); fs.writeFileSync(lockFd, lockBytes); fs.fsyncSync(lockFd); fs.closeSync(lockFd);
+  try { assertNotRecovering(); }
+  catch (error) { if (fs.readFileSync(lockPath, 'utf8') === lockBytes) fs.unlinkSync(lockPath); throw error; }
   let rows = [], registryDigest = null, closed = false, closing = false, closingPromise;
   const live = new Map(), pending = new Set(), taskEpochs = new Map(), projectEpochs = new Map(), starting = new Set();
   const currentState = (row, state) => !closed && !closing && !state?.cancelled && (!state

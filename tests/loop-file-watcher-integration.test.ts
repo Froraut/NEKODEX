@@ -73,7 +73,7 @@ test('project/owner teardown fences sources and close retains an already committ
   expect(f.calls.filter(body => body.action === 'enqueue-work')).toHaveLength(1); expect(f.integration.currentOperation()).toBeNull();
 }, 3000);
 
-test('unclean owner exit isolates the optional source without reading files, changing receipts or claiming Disable', async () => {
+test('unclean owner exit supports guarded explicit recovery through the same IPC facade without Run or source reads', async () => {
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'nekodex-loop-unclean-'))), project = join(home, 'project'), directory = join(home, 'private');
   mkdirSync(project); const file = join(project, 'selected.txt'); writeFileSync(file, 'retained selected file');
   cleanups.push(async () => { rmSync(home, { recursive: true, force: true }); });
@@ -91,18 +91,46 @@ test('unclean owner exit isolates the optional source without reading files, cha
   expect(child.error).toBeUndefined(); expect(child.status).toBe(23); expect(child.stderr).toBe('');
   const lock = readFileSync(join(directory, 'owner.lock')), journal = readFileSync(join(directory, 'watchers.json'));
   expect(JSON.parse(lock.toString()).pid).toBeGreaterThan(0); expect(JSON.parse(journal.toString()).rows).toHaveLength(1);
-  let accesses = 0, picks = 0; const handlers = new Map<string, any>();
+  let accesses = 0, picks = 0, version = 'current'; const handlers = new Map<string, any>(), lifecycle = createLifecycleAdmission();
   const unavailable = createLoopFileWatcherIntegration({ directory,
     workspaceService: { resolveGrant: () => { accesses++; throw new Error('Must not resolve/read a source'); } },
-    runtimeHost: { supervisor: { readConfig: () => { accesses++; throw new Error('Must not dispatch core work'); } } },
-    getApplicationVersion: () => 'current' });
-  unavailable.register({ privacyHandle: (channel: string, handler: any) => handlers.set(channel, handler),
+    runtimeHost: { supervisor: { launcherProfile: 'production', readConfig: () => ({ releaseVersion: version }),
+      ownedAgentRuntimeReady: () => { accesses++; throw new Error('Must not probe or dispatch core work'); } } },
+    getApplicationVersion: () => 'current', canRequest: () => !lifecycle.busy() });
+  cleanups.push(async () => { await unavailable.close(); });
+  const stable = unavailable.service;
+  unavailable.register({ privacyHandle: (channel: string, handler: any, privacy: any) => handlers.set(channel,
+    (event: any, body: any) => privacy(body) ? handler(event, body) : lifecycle.guard(channel, handler)(event, body)),
     dialog: { showOpenDialog: () => { picks++; throw new Error('Must not open a picker'); } } });
   const call = (body: any) => Promise.resolve().then(() => handlers.get('launcher:loop-file-watcher')(undefined, body));
-  await expect(call({ action: 'status' })).rejects.toMatchObject({ code: 'LOOP_SOURCE_OWNER_RECOVERY_REQUIRED' });
+  expect(await call({ action: 'status' })).toMatchObject({ availability: 'recovery_required', recoveryRequired: true, retainedRowsLoaded: false });
   await expect(call({ action: 'select', taskId: 'task', scope: { familyId: 'family', generation: 1, revision: 1 }, projectId: 'project', explicitUserAction: true })).rejects.toThrow('physical owner and unfinished work have not been reconciled');
   await expect(call({ action: 'disable', watcherId: 'retained' })).rejects.toThrow('Explicit owner recovery is required');
-  unavailable.beforeTaskAuthorityChange({ action: 'run', taskId: 'task' }); unavailable.beforeForget('project'); unavailable.beforeOwnerTeardown(); await unavailable.close();
+  unavailable.beforeTaskAuthorityChange({ action: 'run', taskId: 'task' }); unavailable.beforeForget('project'); unavailable.beforeOwnerTeardown();
   expect(accesses).toBe(0); expect(picks).toBe(0);
   expect(readFileSync(join(directory, 'owner.lock'))).toEqual(lock); expect(readFileSync(join(directory, 'watchers.json'))).toEqual(journal);
+  // The selected project no longer exists. Recovery still must not inspect it,
+  // resume watching or issue a task/model request.
+  rmSync(project, { recursive: true });
+  const transition = lifecycle.acquire('replacement');
+  await expect(call({ action: 'recovery-review' })).rejects.toThrow('Wait for replacement'); lifecycle.release(transition);
+  const review = await call({ action: 'recovery-review' });
+  expect(review).toMatchObject({ recoverable: true, owner: { state: 'absent', proof: 'pid-signal-zero' }, sourceCount: 1, contentIncluded: false, startsRun: false });
+  const recover = { action: 'recover', reviewId: review.reviewId, reviewDigest: review.reviewDigest, explicitUserAction: true };
+  await expect(call({ ...recover, explicitUserAction: false })).rejects.toThrow('Invalid Loop file source request');
+  version = 'older'; await expect(call(recover)).rejects.toThrow('automatic safe runtime switch'); version = 'current';
+  expect(readFileSync(join(directory, 'owner.lock'))).toEqual(lock); expect(readFileSync(join(directory, 'watchers.json'))).toEqual(journal);
+  const result = await call(recover);
+  expect(result).toMatchObject({ state: 'completed', terminal: true, ownerHeld: false, recovered: true, ownerAcquired: true, enabled: false, startsRun: false });
+  expect(unavailable.service).toBe(stable);
+  const status = await call({ action: 'status' });
+  expect(status).toMatchObject({ availability: 'owned', recoveryRequired: false, retainedRowsLoaded: true });
+  expect(status.rows).toHaveLength(1); expect(status.rows[0]).toMatchObject({ enabled: false, emitted: 0, events: [], baseline: null });
+  const ownedLock = readFileSync(join(directory, 'owner.lock')), ownedJournal = readFileSync(join(directory, 'watchers.json'));
+  expect(JSON.parse(ownedLock.toString()).pid).toBe(process.pid); expect(ownedLock.equals(lock)).toBe(false);
+  expect((await call({ action: 'recovery-status', reviewId: review.reviewId })).receipt).toMatchObject({ recoveryId: review.reviewId, state: 'completed', terminal: true });
+  expect((await call(recover)).ownerAcquired).toBe(true);
+  expect(readFileSync(join(directory, 'owner.lock'))).toEqual(ownedLock); expect(readFileSync(join(directory, 'watchers.json'))).toEqual(ownedJournal);
+  expect(accesses).toBe(0); expect(picks).toBe(0);
+  await unavailable.close(); expect(JSON.parse(readFileSync(join(directory, 'watchers.json'), 'utf8')).rows[0].enabled).toBe(false);
 }, 3000);

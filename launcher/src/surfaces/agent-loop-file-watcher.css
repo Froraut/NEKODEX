@@ -2,9 +2,10 @@
 .agent-loop-file-watcher .nk-panel {display:grid;grid-template-columns:minmax(0,1fr);gap:var(--space-4);min-width:0;}
 .agent-loop-file-watcher :is(p,h4,dl,ul) {margin-block:0;}
 .agent-loop-file-watcher :is(p,li,dd,dt,summary,.nk-notice strong) {min-width:0;overflow-wrap:anywhere;}
-.agent-loop-file-watcher__source,.agent-loop-file-watcher__enable {display:grid;grid-template-columns:minmax(0,1fr);gap:var(--space-3);min-width:0;padding:var(--space-4);border:1px solid var(--border);border-radius:var(--radius-md);}
+.agent-loop-file-watcher__source,.agent-loop-file-watcher__enable,.agent-loop-file-watcher__recovery {display:grid;grid-template-columns:minmax(0,1fr);gap:var(--space-3);min-width:0;padding:var(--space-4);border:1px solid var(--border);border-radius:var(--radius-md);}
+.agent-loop-file-watcher__recovery-receipt {display:grid;gap:var(--space-3);min-width:0;}
 .agent-loop-file-watcher__actions {display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3);min-width:0;}
-.agent-loop-file-watcher__actions .nk-btn {height:auto;min-height:var(--size-control);max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:start;padding-block:var(--space-2);}
+.agent-loop-file-watcher :is(.agent-loop-file-watcher__actions,.agent-loop-file-watcher__recovery) .nk-btn {height:auto;min-height:var(--size-control);max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:start;padding-block:var(--space-2);}
 .agent-loop-file-watcher__metadata {display:grid;grid-template-columns:minmax(60px,.2fr) minmax(0,1fr);gap:var(--space-2) var(--space-3);}
 .agent-loop-file-watcher__metadata dt {color:var(--text-secondary);}
 .agent-loop-file-watcher__metadata dd {margin:0;}
@@ -19,4 +20,4 @@
 .agent-loop-file-watcher .nk-check > span {min-width:0;overflow-wrap:anywhere;}
 .agent-loop-file-watcher :is(textarea,.nk-field,.nk-select) {min-width:0;max-width:100%;}
 .agent-loop-file-watcher textarea {resize:vertical;}
-@container workspace (max-width:640px) {.agent-loop-file-watcher__metadata {grid-template-columns:minmax(0,1fr);gap:var(--space-1);} .agent-loop-file-watcher__metadata dd + dt {margin-block-start:var(--space-2);} .agent-loop-file-watcher__source,.agent-loop-file-watcher__enable {padding:var(--space-3);}}
+@container workspace (max-width:640px) {.agent-loop-file-watcher__metadata {grid-template-columns:minmax(0,1fr);gap:var(--space-1);} .agent-loop-file-watcher__metadata dd + dt {margin-block-start:var(--space-2);} .agent-loop-file-watcher__source,.agent-loop-file-watcher__enable,.agent-loop-file-watcher__recovery {padding:var(--space-3);}}

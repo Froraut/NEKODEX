@@ -86,9 +86,10 @@ function readJson(file, limit, privateFile = false) {
   } finally { fs.closeSync(fd); }
 }
 function validateRegistrationFile(input) {
-  if (!exact(input, ['version', 'providerId', 'label', 'resource', 'issuer', 'clientId', 'scopes', 'registrationEvidenceUrl',
-    'redirectUriMode', 'resourceMetadataUrl', 'authorizationServerMetadataUrl']) || input.version !== 1
-    || input.redirectUriMode !== 'loopback-port-variable') fail();
+  const keys = ['version', 'providerId', 'label', 'resource', 'issuer', 'clientId', 'scopes', 'registrationEvidenceUrl',
+    'redirectUriMode', 'resourceMetadataUrl', 'authorizationServerMetadataUrl'];
+  if (input?.redirectUriMode === 'loopback-exact') keys.push('redirectUri');
+  if (!exact(input, keys) || input.version !== 1 || !['loopback-port-variable', 'loopback-exact'].includes(input.redirectUriMode)) fail();
   const resource = publicUrl(input.resource), issuer = publicUrl(input.issuer);
   publicUrl(input.registrationEvidenceUrl);
   const protectedMetadata = publicUrl(input.resourceMetadataUrl), authorizationMetadata = publicUrl(input.authorizationServerMetadataUrl);
@@ -99,7 +100,8 @@ function validateRegistrationFile(input) {
   // Validate all public client fields before any metadata request. Endpoints below are temporary validators only.
   validateProvider({ providerId: input.providerId, label: input.label, accountId: 'validation', epoch: 1,
     resource: input.resource, issuer: input.issuer, clientId: input.clientId, scopes: input.scopes,
-    authorizationEndpoint: input.issuer, tokenEndpoint: input.issuer, codeChallengeMethodsSupported: ['S256'] });
+    authorizationEndpoint: input.issuer, tokenEndpoint: input.issuer, codeChallengeMethodsSupported: ['S256'],
+    ...(input.redirectUriMode === 'loopback-exact' ? { redirectUriMode: input.redirectUriMode, redirectUri: input.redirectUri } : {}) });
   return structuredClone(input);
 }
 /** getAuthority is the real main-owned current-account/epoch projection, or null.
@@ -142,6 +144,8 @@ function createAgentOAuthService({ coreHome, getAuthority, openExternal, approve
       const configKeys = ['providerId', 'label', 'accountId', 'epoch', 'issuer', 'resource', 'clientId', 'scopes',
         'authorizationEndpoint', 'tokenEndpoint', 'codeChallengeMethodsSupported', 'authorizationResponseIssParameterSupported'];
       if (row.config?.revocationEndpoint !== undefined) configKeys.push('revocationEndpoint');
+      if (row.config?.redirectUriMode !== undefined) configKeys.push('redirectUriMode');
+      if (row.config?.redirectUri !== undefined) configKeys.push('redirectUri');
       if (!exact(row.config, configKeys)) fail();
       validateProvider(row.config); publicUrl(row.registrationEvidenceUrl); publicUrl(row.resourceMetadataUrl); publicUrl(row.authorizationServerMetadataUrl);
       const key = `${row.config.accountId}:${row.config.providerId}`; if (keys.has(key)) fail(); keys.add(key);
@@ -194,6 +198,7 @@ function createAgentOAuthService({ coreHome, getAuthority, openExternal, approve
       authorizationEndpoint: config.authorizationEndpoint, tokenEndpoint: config.tokenEndpoint,
       ...(config.revocationEndpoint ? { revocationEndpoint: config.revocationEndpoint } : {}),
       clientId: config.clientId, scopes: [...config.scopes], metadataDigest: review.row.metadataDigest,
+      redirectUriMode: config.redirectUriMode ?? 'loopback-port-variable', ...(config.redirectUri ? { redirectUri: config.redirectUri } : {}),
       registrationEvidenceUrl: review.row.registrationEvidenceUrl, resourceMetadataUrl: review.row.resourceMetadataUrl,
       authorizationServerMetadataUrl: review.row.authorizationServerMetadataUrl,
       state: 'reviewed', authorizationStarted: false, toolApprovalRequired: true };
@@ -241,6 +246,7 @@ function createAgentOAuthService({ coreHome, getAuthority, openExternal, approve
         const config = validateProvider({ providerId: selected.providerId, label: selected.label, accountId: current.current.accountId,
           epoch: (previous?.config.epoch ?? 0) + 1, issuer: selected.issuer, resource: selected.resource, clientId: selected.clientId,
           scopes: selected.scopes, authorizationEndpoint: authorizationMetadata.authorization_endpoint,
+          ...(selected.redirectUriMode === 'loopback-exact' ? { redirectUriMode: selected.redirectUriMode, redirectUri: selected.redirectUri } : {}),
           tokenEndpoint: authorizationMetadata.token_endpoint,
           ...(authorizationMetadata.revocation_endpoint ? { revocationEndpoint: authorizationMetadata.revocation_endpoint } : {}),
           codeChallengeMethodsSupported: [...authorizationMetadata.code_challenge_methods_supported],

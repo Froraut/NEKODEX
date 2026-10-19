@@ -14,8 +14,11 @@ const { createLocalWorkspaceService } = require('./local-workspace.cjs');
 const { registerWorkspaceIpc } = require('./ipc/workspace.cjs');
 const { registerConversationHistory } = require('./ipc/conversation-history.cjs');
 const { createCanonicalNativeHistoryRecorder } = require('./canonical-native-history.cjs');
+const { createOwnedConversationDescriptorPublisher } = require('./owned-conversation-descriptor.cjs');
+const { createOwnedNativeTranscriptProducer } = require('./owned-conversation-transcript.cjs');
 const { registerAgentMode } = require('./ipc/agent-mode.cjs');
 const { createLoopFileWatcherIntegration } = require('./loop-file-watcher-integration.cjs');
+const { registerAgentLoopProducers } = require('./ipc/agent-loop-producers.cjs');
 const { createCodexClientControl } = require('./codex-client-control.cjs');
 const { createAgentNativeBridge } = require('./agent-native-bridge.cjs');
 const { createAgentNativeDescriptorPublisher } = require('./agent-native-descriptor.cjs');
@@ -178,6 +181,9 @@ let agentOAuthService = null;
 let agentOAuthMcpController = null;
 let agentOAuthMcpDescriptor = null;
 let loopFileWatcher = null;
+let loopProducerController = null;
+let ownedConversationDescriptor = null;
+let ownedConversationTranscript = null;
 let workspaceVmExportService = null;
 async function vmCoreControl(action, body) {
   if (quitting || shutdownInProgress || exitCommitted || lifecycleAdmission.busy()) throw new Error('VM export admission is closed');
@@ -203,12 +209,83 @@ async function oauthMcpCoreControl(action, body) {
 }
 function invalidateAgentSourceOwners() {
   try { loopFileWatcher?.beforeOwnerTeardown(); }
-  finally { agentOAuthMcpController?.invalidate(); }
+  finally {
+    try { agentOAuthMcpController?.invalidate(); }
+    finally {
+      // Deny in-memory capture even if another owner's persistence or the
+      // descriptor write fails; such a failure must not skip local revocation.
+      void ownedConversationTranscript?.revoke().catch(() => {});
+      ownedConversationDescriptor?.publish({ scopes: [], accepting: false });
+    }
+  }
 }
 let nativeAccountAuthority = null;
 let nativeAccountInventory = null;
 let nativeAccountExecution = null;
 let persistentNativeConversations = null;
+function publishOwnedConversationScopes() {
+  if (!ownedConversationDescriptor) return;
+  const accepting = !quitting && !shutdownInProgress && !exitCommitted && !lifecycleAdmission.busy();
+  ownedConversationDescriptor.publish({ scopes: accepting ? persistentNativeConversations?.currentHistoryScopes() ?? [] : [], accepting });
+}
+async function ownedConversationHistoryCore(action, input) {
+  const allowDraining = action === 'owned-conversation-release';
+  if (!ownedConversationDescriptor || !allowDraining && (quitting || shutdownInProgress || exitCommitted || lifecycleAdmission.busy())) {
+    throw new Error('Owned conversation recording admission is closed');
+  }
+  const config = runtimeSupervisor.readConfig(), captured = JSON.stringify(config);
+  if (!config || !allowDraining && runtimeSupervisor.launcherProfile === 'production' && config.releaseVersion !== app.getVersion()) {
+    throw new Error('Owned conversation recording is waiting for the safe runtime switch');
+  }
+  if (!await runtimeSupervisor.ownedAgentRuntimeReady(config, { allowDraining })
+      || JSON.stringify(runtimeSupervisor.readConfig()) !== captured) throw new Error('Owned conversation recording runtime changed');
+  const receipt = await runtimeSupervisor.control(config, 'owned-conversation-history', {
+    body: { action, instanceId: ownedConversationDescriptor.instanceId, input }, returnErrorReceipt: true,
+  });
+  if (receipt?.ok !== true) throw new Error('Owned conversation recording was not confirmed');
+  return receipt.value;
+}
+function getOwnedConversationTranscript() {
+  return ownedConversationTranscript ??= createOwnedNativeTranscriptProducer({
+    history: {
+      begin: input => ownedConversationHistoryCore('owned-conversation-begin', input),
+      record: input => ownedConversationHistoryCore('owned-conversation-record', input),
+      release: lease => ownedConversationHistoryCore('owned-conversation-release', { lease }),
+    },
+    resolveScope: scope => persistentNativeConversations?.transcriptScope(scope.conversationId) ?? null,
+  });
+}
+async function revokeOwnedConversationRecording(body) {
+  const producer = getOwnedConversationTranscript();
+  if (body.action === 'set-recording') { await producer.revoke(); return; }
+  // The conversation row can exist before its Native thread ACK and scope.
+  // Retain an ID-level tombstone even when no capture has been created yet.
+  await producer.revokeConversation(body.conversationId);
+}
+function beginOwnedConversationRecordingConsent(body) {
+  const producer = getOwnedConversationTranscript();
+  const scope = body.action === 'owned-conversation-consent' ? persistentNativeConversations?.transcriptScope(body.conversationId) ?? null : undefined;
+  return scope === null ? null : { scope, authority: producer.recordingAuthority(scope) };
+}
+function allowOwnedConversationRecording(body, value, attempt) {
+  if (!ownedConversationTranscript || !attempt) return;
+  if (body.action === 'set-recording' && value?.recordingEnabled === true) {
+    ownedConversationTranscript.allowRecording(undefined, attempt.authority); return;
+  }
+  if (body.action === 'owned-conversation-consent' && value?.enabled === true) {
+    const scope = persistentNativeConversations?.transcriptScope(body.conversationId);
+    if (scope && value.scope && attempt.scope && Object.keys(scope).length === Object.keys(value.scope).length
+        && Object.keys(scope).every(key => scope[key] === value.scope[key] && scope[key] === attempt.scope[key])) {
+      ownedConversationTranscript.allowRecording(scope, attempt.authority);
+    }
+  }
+}
+function projectOwnedConversationRecordingStatus(body, value) {
+  if (!['owned-conversation-status', 'owned-conversation-consent'].includes(body.action) || !value || typeof value !== 'object') return value;
+  const local = ownedConversationTranscript?.recordingStatus(body.conversationId);
+  return { ...value, localCaptureDenied: local?.locallyDenied ?? true,
+    localCaptureReason: !local ? 'main-source-unavailable' : local.locallyDenied ? 'local-capture-held' : null };
+}
 async function closeNativeConversationOwners(execution = nativeAccountExecution) {
   const conversations = persistentNativeConversations;
   // Stop admission synchronously in both owners, then let account transport
@@ -226,6 +303,7 @@ async function validateRemoteCoreAuthority(action, body, allowDraining = false) 
   return receipt.value;
 }
 function publishNativeAccountModels() {
+  publishOwnedConversationScopes();
   if (!agentNativeDescriptor) return;
   const models = nativeAccountExecution?.models() ?? [];
   const value = { models, accepting: models.length > 0 && !quitting && !shutdownInProgress && !exitCommitted };
@@ -1139,7 +1217,10 @@ function registerIpc({ logger, stateStore }) {
       return receipt.value;
     },
   });
-  registerConversationHistory({ handle, runtimeHost, clipboard, dialog, canonicalRecorder });
+  registerConversationHistory({ handle, runtimeHost, clipboard, dialog, canonicalRecorder,
+    getApplicationVersion: () => app.getVersion(), beforeRecordingRevoke: revokeOwnedConversationRecording,
+    beforeRecordingConsent: beginOwnedConversationRecordingConsent,
+    afterRecordingConsent: allowOwnedConversationRecording, projectRecordingStatus: projectOwnedConversationRecordingStatus });
   remoteWorkspaceService ??= createRemoteWorkspaceService({ storagePath: path.join(CORE_HOME, 'remote-workspaces', 'registry.json'),
     agentInstanceId: agentRemoteDescriptor?.instanceId,
     validateAgentTask: scope => validateRemoteCoreAuthority('validate-task', { scope }),
@@ -1166,6 +1247,14 @@ function registerIpc({ logger, stateStore }) {
   registerAgentMode({ handle, runtimeHost, workspaceService: localWorkspaceService, workspaceEvidenceService,
     beforeTaskAuthorityChange: body => loopFileWatcher.beforeTaskAuthorityChange(body),
     getApplicationVersion: () => app.getVersion() });
+  loopProducerController = registerAgentLoopProducers({
+    handle: (channel, handler) => privacyHandle(channel, handler, body => body?.action === 'revoke'),
+    runtimeHost, clipboard, getApplicationVersion: () => app.getVersion(),
+  });
+  registerLifecycleParticipant('agent-loop-producers', {
+    currentOperation: () => loopProducerController?.currentOperation() ?? null,
+    destroy: () => loopProducerController?.close(),
+  });
   workspaceVmExportService ??= createWorkspaceVmExportService({ home: path.join(app.getPath('userData'), 'workspace-vm-export'), workspaceService: localWorkspaceService,
     protectedRoots: [CORE_HOME, app.getPath('userData'), process.env.CODEX_CHATGPT_WEB_HOME || path.join(os.homedir(), '.codex-chatgpt-web'), path.join(os.homedir(), '.nekodex-execution-vm'),
       process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), ...['.ssh', '.aws', '.config', 'Library/Keychains', 'Library/Application Support/Google/Chrome'].map(name => path.join(os.homedir(), name))],
@@ -1296,8 +1385,16 @@ function registerIpc({ logger, stateStore }) {
       persistentNativeConversations ??= createPersistentNativeConversations({
         getExecution: () => nativeAccountExecution?.persistentContext() ?? null,
         storageRoot: path.join(CORE_HOME, 'native-conversations'),
+        transcript: getOwnedConversationTranscript(), onChange: publishOwnedConversationScopes,
       });
       return persistentNativeConversations;
+    },
+  });
+  registerLifecycleParticipant('owned-conversation-transcript', {
+    currentOperation: () => ownedConversationTranscript?.currentOperation() ?? null,
+    destroy: async () => {
+      ownedConversationDescriptor?.publish({ scopes: [], accepting: false });
+      await ownedConversationTranscript?.close();
     },
   });
   registerLifecycleParticipant('native-account-inventory', {
@@ -2475,6 +2572,8 @@ async function start() {
     getPythonBuildSelectionInstance: () => agentPythonBuildDescriptor?.instanceId,
     getAgentOAuthMcpController: () => agentOAuthMcpController,
     getAgentOAuthMcpInstance: () => agentOAuthMcpDescriptor?.instanceId,
+    getOwnedConversationHistoryService: () => persistentNativeConversations,
+    getOwnedConversationHistoryInstance: () => ownedConversationDescriptor?.instanceId,
     validateRemoteInvalidation: body => {
       if (!body || typeof body !== 'object' || Array.isArray(body)
         || Object.keys(body).some(key => !['taskId', 'familyId', 'beforeGeneration'].includes(key))) throw new Error('Invalid remote invalidation');
@@ -2587,6 +2686,14 @@ async function start() {
   } catch {
     agentOAuthMcpDescriptor = null;
     logger.warn('agent_oauth_mcp.descriptor_unavailable', { reasonCode: 'private-profile-unavailable' });
+  }
+  try {
+    ownedConversationDescriptor = createOwnedConversationDescriptorPublisher({ coreHome: CORE_HOME,
+      profile: LAUNCHER_PROFILE.kind, control: browserControl.descriptor() });
+    publishOwnedConversationScopes();
+  } catch {
+    ownedConversationDescriptor = null;
+    logger.warn('owned_conversation.descriptor_unavailable', { reasonCode: 'private-profile-unavailable' });
   }
   contextChangeQueue?.stop();
   contextChangeQueue = createContextChangeQueue({

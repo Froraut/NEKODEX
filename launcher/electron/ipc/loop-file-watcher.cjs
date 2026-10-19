@@ -10,6 +10,13 @@ function registerLoopFileWatcher({ handle, service, dialog, getWindow, resolvePr
   handle('launcher:loop-file-watcher', async (_event, body) => {
     if (!record(body) || Buffer.byteLength(JSON.stringify(body)) > 12 * 1024) throw new Error('Invalid Loop file source request');
     if (body.action === 'status' && exact(body, ['action'])) return service.status();
+    if (body.action === 'recovery-review' && exact(body, ['action']) && typeof service.recoveryReview === 'function') return service.recoveryReview();
+    if (body.action === 'recovery-status' && exact(body, ['action', 'reviewId']) && /^[a-f0-9-]{36}$/.test(body.reviewId)
+        && typeof service.recoveryStatus === 'function') return service.recoveryStatus(body.reviewId);
+    if (body.action === 'recover' && exact(body, ['action', 'reviewId', 'reviewDigest', 'explicitUserAction'])
+        && typeof body.reviewId === 'string' && /^[a-f0-9-]{36}$/.test(body.reviewId)
+        && typeof body.reviewDigest === 'string' && /^[a-f0-9]{64}$/.test(body.reviewDigest) && body.explicitUserAction === true
+        && typeof service.recover === 'function') return service.recover({ reviewId: body.reviewId, reviewDigest: body.reviewDigest, explicitUserAction: true });
     if (body.action === 'select' && exact(body, ['action', 'taskId', 'scope', 'projectId', 'explicitUserAction']) && body.explicitUserAction === true && dialog) {
       const project = await resolveProject(body.projectId);
       if (!project || project.id !== body.projectId || typeof project.path !== 'string' || !path.isAbsolute(project.path)) throw new Error('Select an existing granted local project');

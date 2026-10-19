@@ -8,19 +8,20 @@ export interface CaptureRecord extends MessageIdentity {
   turnId: string | null;
   compactionId: string | null;
   role: "user" | "assistant";
-  author: "human" | "assistant" | "agent" | "unknown";
+  author: "human" | "assistant" | "agent" | "automatic-host" | "unknown";
   source: "responses" | "native" | "chatgpt-web" | "manual-import" | "unknown";
   text: string;
   timestamp: number;
   /** Describes this message's text only, never the entire thread or transcript. */
   coverage: "complete" | "partial";
   coverageReason?: string;
-  capturePolicy: "user-assistant-text-v1" | "canonical-thread-text-v1" | "owned-native-final-summary-v1" | "canonical-events-v1";
+  capturePolicy: "user-assistant-text-v1" | "canonical-thread-text-v1" | "owned-native-final-summary-v1" | "canonical-events-v1" | "owned-conversation-text-v1";
   /** Caller assertion, not a redaction claim. Unknown sensitivity retains metadata only. */
   sensitivity: "caller-validated" | "unknown" | "known-pattern-filtered";
   canonical?: {policyVersion:"known-pattern-filter-v1";fingerprint:string;observedAt:number;timestampSource:"native"|"observed-at";originalBytes:number;exclusionReason:string|null;sourceCoverage:"complete"|"partial"};
   ownedNative?: OwnedNativeHistoryMetadata;
   transcript?: TranscriptHistoryMetadata;
+  ownedConversation?: OwnedConversationHistoryMetadata;
 }
 
 /** Main-admitted source identity, never renderer-supplied account proof. */
@@ -102,4 +103,28 @@ export interface TranscriptHistoryMetadata {
   scope: OwnedNativeHistoryScope;
   provenance: OwnedNativeHistoryProvenance;
   sourceRevision: string; originalBytes: number; exclusionReason: string | null;
+}
+
+/** A retained conversation is a different authority family from an AgentTask. */
+export interface OwnedConversationHistoryScope {
+  kind: "owned-conversation"; mode: "canonical-text-v1";
+  conversationId: string; threadId: string; sourceId: string; profileId: string;
+  backendAccountId: string; authEpoch: string; serverGeneration: string;
+  workerBindingId: string; workerGeneration: number;
+}
+export type HistoryCaptureScope = { kind: "agent-task"; scope: OwnedNativeHistoryScope } | OwnedConversationHistoryScope;
+export interface OwnedConversationHistoryProvenance {
+  actionId: string; nativeActionId: string; serverGeneration: string;
+  workerBindingId: string; workerGeneration: number;
+  messageId: string; turnId: string; threadId: string; timestampMs: number;
+}
+export interface OwnedConversationHistoryMetadata {
+  policyVersion: "owned-conversation-text-v1"; filterPolicyVersion: "known-pattern-filter-v1";
+  scope: OwnedConversationHistoryScope; provenance: OwnedConversationHistoryProvenance;
+  sourceRevision: string; cursor: number; captureEpoch: string;
+  /** These are producer observation positions, not vendor sequence/revision IDs. */
+  positionAuthority: "local-observation";
+  attribution: "direct-human" | "automatic-host" | "assistant" | "unknown";
+  phase: "commentary" | "final_answer" | null;
+  originalBytes: number; exclusionReason: "known-secret-content" | "generated-instructions-or-schema" | null;
 }

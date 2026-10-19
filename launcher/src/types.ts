@@ -623,6 +623,7 @@ export interface LauncherApi extends NativeThreadsApi, NativePersistentApi, Work
   saveConversationHistoryMarkdown(markdown: string): Promise<{ saved: boolean; path?: string }>;
   agentMode(body: Record<string, unknown>): Promise<unknown>;
   loopFileWatcherRequest(body: import('./AgentLoopFileWatcher').LoopFileWatcherRequest): Promise<import('./AgentLoopFileWatcher').LoopFileWatcherResponse>;
+  loopProducerRequest(body: import('./AgentLoopExternalProducer').LoopExternalProducerRequest): Promise<import('./AgentLoopExternalProducer').LoopExternalProducerResponse>;
   nativeAccountsRequest(body: import('./native-accounts-types').NativeAccountsRequest | import('./native-accounts-types').NativeInventoryRequest | import('./native-accounts-types').NativeExecutionCloseRequest): Promise<import('./native-accounts-types').NativeAccountsSnapshot>;
   openNativeAccountVerification(url: string): Promise<unknown>;
   copyNativeAccountCode(code: string): Promise<unknown>;

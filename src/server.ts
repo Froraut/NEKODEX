@@ -3,9 +3,12 @@ import { createAgentOAuthMcpToolsProvider } from './agent-tools/oauth-mcp-provid
 import { createLauncherOAuthMcpBridge } from './agent-tools/oauth-mcp-bridge';
 import { ConversationHistoryStore } from "./conversation-history";
 import { conversationHistoryRequest } from "./conversation-history/http";
+import { createOwnedConversationHistoryBridge } from './conversation-history/owned-conversation-bridge';
+import { createOwnedConversationHistoryControlRoutes } from './conversation-history/owned-conversation-control';
 import { AgentModeStore, AgentModeRuntime, activeTaskEvidence, createAgentModeRoutes, createLocalResponsesExecutionPort, createOwnedNativeExecutionPort, createAgentExecutionRouter } from "./agent-mode";
 import { createLauncherNativeBridge } from "./agent-mode/launcher-native-bridge";
 import { createAgentNativeControlRoutes } from "./agent-mode/native-control";
+import { createAgentLoopProducerRoutes } from "./agent-mode/external-producer-http";
 import { createAgentRemoteControlRoutes } from "./agent-tools/remote-control";
 import { createLauncherRemoteBridge } from "./remote-workspace/launcher-bridge";
 import { createAgentRemoteToolsProvider, type AgentRemoteToolsProvider } from "./remote-workspace/agent-tools";
@@ -877,12 +880,17 @@ export function startServer(
   }
   const historyHome = getConfigDir();
   let historyStore: ConversationHistoryStore | undefined;
-  const getHistoryStore = () => historyStore ??= new ConversationHistoryStore({ coreHome: historyHome, trustedCurrentScope: taskId => nativeHistoryScope(taskId) });
+  const getHistoryStore = () => historyStore ??= new ConversationHistoryStore({ coreHome: historyHome,
+    trustedCurrentScope: taskId => nativeHistoryScope(taskId),
+    trustedCurrentConversationScope: conversationId => ownedConversationHistoryBridge.currentScope(conversationId) });
   // Standalone Agent mode has its own task owner and private store. Typical inference never opens it.
   let agentRuntime: AgentModeRuntime | undefined;
   let agentRoutes: ReturnType<typeof createAgentModeRoutes> | undefined;
   const nativeBridge = createLauncherNativeBridge({ descriptorPath: join(historyHome, "runtime", AGENT_NATIVE_DESCRIPTOR_FILE),
     expectedProfile: dependencies.nativeLauncherProfile ?? (process.env.CODEX_CHATGPT_WEB_LAUNCHER_PROFILE === "development" ? "development" : "production") });
+  const ownedConversationHistoryBridge = createOwnedConversationHistoryBridge({
+    descriptorPath: join(historyHome, 'runtime', 'launcher-owned-conversation-history.json'),
+    expectedProfile: dependencies.nativeLauncherProfile ?? (process.env.CODEX_CHATGPT_WEB_LAUNCHER_PROFILE === 'development' ? 'development' : 'production') });
   const nativeHistoryScope = (taskId: string) => {
     try {
       const task = agentRuntime?.store.getTask(taskId), execution = task?.execution;
@@ -906,6 +914,9 @@ export function startServer(
       .finally(() => { current.pending = undefined; });
   };
   const nativeControlRoutes = createAgentNativeControlRoutes({ runtime: () => { getAgentRoutes(); return agentRuntime!; }, authorize: request => controlAuthorized(request) });
+  const ownedConversationHistoryControl = createOwnedConversationHistoryControlRoutes({ history: getHistoryStore,
+    bridge: ownedConversationHistoryBridge, authorize: request => controlAuthorized(request),
+    canStart: () => !stopPrepared && !admission.draining });
   const remoteControlRoutes = createAgentRemoteControlRoutes({ runtime: () => { getAgentRoutes(); return agentRuntime!; }, tools: () => getAgentTools(),
     authorize: request => controlAuthorized(request), canStart: () => !stopPrepared && acceptingAgentTools() });
   const oauthMcpControlRoutes = createAgentOAuthMcpControlRoutes({ runtime: () => { getAgentRoutes(); return agentRuntime!; }, tools: () => getAgentTools(),
@@ -922,6 +933,7 @@ export function startServer(
   let agentDesktopTools: AgentDesktopToolsProvider | undefined;
   let agentRemoteTools: AgentRemoteToolsProvider | undefined;
   let localControlRoutes: ReturnType<typeof createLocalControlApiRoutes> | undefined;
+  let loopProducerRoutes: ReturnType<typeof createAgentLoopProducerRoutes> | undefined;
   let agentSnapshots: ReturnType<typeof createAgentWorkspaceSnapshots> | undefined;
   let agentEvidence: ReturnType<typeof createAgentWorkspaceEvidence> | undefined;
   startNativeUsageDelivery();
@@ -1258,6 +1270,16 @@ export function startServer(
       const policy = inferenceRoutePolicy(req.method, url.pathname);
       const rejection = localHttpRequestRejection(req, url, server.port!);
       if (rejection) return rejection;
+      if (url.pathname === "/admin/agent-loop-producers" || url.pathname.startsWith("/api/loop-events/v1/")
+          || /^Bearer nk-loop-/i.test(req.headers.get("authorization") ?? "")) {
+        // External observations use a separate scoped credential. Neither
+        // publication nor receipt lookup opens a stopped Agent owner.
+        loopProducerRoutes ??= createAgentLoopProducerRoutes({ runtime: () => agentRuntime,
+          authorizeAdmin: controlAuthorized, localGuard: localHttpRequestRejection,
+          port: () => server.port!, peerAddress: request => server.requestIP(request)?.address,
+          canStart: () => !stopPrepared && !admission.draining });
+        const response = await loopProducerRoutes(req); if (response) return response;
+      }
       if (url.pathname.startsWith("/api/v1/") || url.pathname.startsWith("/admin/local-control-api") || /^Bearer nk-read-/i.test(req.headers.get("authorization") ?? "")) {
         const response = await getLocalControlRoutes()(req); if (response) return response;
       }
@@ -1280,6 +1302,7 @@ export function startServer(
         return (await getAgentRoutes()(req))!;
       }
       if (url.pathname === "/admin/agent-native") return nativeControlRoutes(req);
+      if (url.pathname === '/admin/owned-conversation-history') return ownedConversationHistoryControl(req);
       if (url.pathname === "/admin/agent-oauth-mcp") return oauthMcpControlRoutes(req);
       if (url.pathname === "/admin/agent-remote") return remoteControlRoutes(req);
       if (url.pathname === '/admin/agent-vm-export') return vmExportControlRoutes(req);
@@ -1359,6 +1382,10 @@ export function startServer(
           if (task.familyId !== input.scope.familyId || task.generation !== input.scope.generation || task.revision !== input.scope.revision) throw new Error("History task generation changed");
           if (stopPrepared && ["owned-native-consent", "transcript-native-consent"].includes(input.action) && input.enabled !== false) throw new Error("Native history admission is draining");
           return nativeHistoryScope(task.id);
+        }, resolveOwnedConversationScope: input => {
+          if (stopPrepared && input.action === 'owned-conversation-consent' && input.enabled !== false) throw new Error('Owned conversation recording admission is draining');
+          return ownedConversationHistoryBridge.resolveScope({ conversationId: input.conversationId,
+            revision: input.revision, expectedContext: input.expectedContext });
         } });
       }
       if (req.method === "POST" && url.pathname === "/admin/runtime-session") {

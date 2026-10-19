@@ -1,3 +1,4 @@
+import { producerCheck, producerHashesEqual, producerReviewSchema, producerRegistrationSchema, producerRotationSchema, producerEventSchema, type ExternalProducerRecord } from './external-producer-types';
 import { randomUUID } from "node:crypto";
 import { AgentModeRunner } from "./runner";
 import { AgentModeStore } from "./store";
@@ -62,7 +63,7 @@ export class AgentModeRuntime {
   }
   status() {
     return { configured: this.options.configured?.() ?? this.options.models().length > 0,
-      models: this.options.models(), capabilities: { tools: this.options.toolsAvailable?.() ?? false, workspace: false, autoSchedule: true, monetaryQuotes: Boolean(this.options.reserveSpend), loopSource: "mailbox", externalWatchers: false, toolReconciliation: Boolean(this.options.reconcileToolReceipt),
+      models: this.options.models(), capabilities: { tools: this.options.toolsAvailable?.() ?? false, workspace: false, autoSchedule: true, monetaryQuotes: Boolean(this.options.reserveSpend), loopSource: "mailbox", externalWatchers: false, externalEventProducers: true, toolReconciliation: Boolean(this.options.reconcileToolReceipt),
         ownedNative: { configured: this.options.models().some(row => row.provider === "owned-native" && row.available === true && Boolean(row.admissionId)), imageInput: this.options.models().some(row => row.provider === "owned-native" && row.imageInput === true), turnUnit: "native-offers", actualProviderRequestCount: null } },
       ownerId: this.runner.ownerId, activeDispatchIds: this.runner.liveDispatchIds, accepting: !this.stopping && (this.options.canStart?.() ?? true) };
   }
@@ -343,6 +344,65 @@ export class AgentModeRuntime {
     });
     if (!command.duplicate) this.advanceLoop(taskId);
     return { ...command.result, task: this.store.getTask(taskId) };
+  }
+  private assertExternalProducerRun(row: ExternalProducerRecord): AgentLoopSourceAuthority {
+    const authority = this.loopSourceAuthority(row.taskId), old = row.authority;
+    producerCheck(authority && !row.revoked, 'producer_run_inactive');
+    const delta = authority.cycle - old.cycle;
+    producerCheck(authority.runId === old.runId && authority.ownerId === old.ownerId && authority.familyId === old.familyId
+      && delta >= 0 && authority.generation - old.generation === delta && authority.revision - old.revision === delta, 'producer_run_changed');
+    return authority;
+  }
+  private externalProducerPublic(row: ExternalProducerRecord) {
+    let reason = row.revoked ? 'revoked' : row.acceptedEvents >= row.eventBound ? 'event_bound' : 'active';
+    if (reason === 'active') { try { this.assertExternalProducerRun(row); } catch { reason = 'run_inactive'; } }
+    const { credentialHash: _credentialHash, registrationActionId: _registrationActionId,
+      registrationFingerprint: _registrationFingerprint, rotationActions: _rotationActions, version: _version, ...publicRow } = row;
+    const receipts = this.store.externalProducerReceipts(row.producerId).map(({ fingerprint: _fingerprint, ...receipt }) => receipt);
+    return { ...publicRow, remainingEvents: row.eventBound - row.acceptedEvents, active: reason === 'active', reason, credentialConfigured: true as const, receipts: receipts.slice(-100), receiptCount: receipts.length, receiptsTruncated: receipts.length > 100 };
+  }
+  externalProducerStatus(taskId?: string) { const rows = this.store.externalProducers(taskId); return { rows: rows.slice(-16).map(row => this.externalProducerPublic(row)), total: rows.length, truncated: rows.length > 16 }; }
+  externalProducerActionReceipt(actionId: string) {
+    const row = this.store.externalProducers().find(row => row.registrationActionId === actionId || row.rotationActions.some(action => action.actionId === actionId));
+    return row ? { found: true, producer: this.externalProducerPublic(row), status: this.externalProducerStatus(row.taskId) } : { found: false };
+  }
+  reviewExternalProducer(value: unknown) {
+    const input = producerReviewSchema.parse(value); this.assertScope(input.taskId, input.scope);
+    const authority = this.loopSourceAuthority(input.taskId); producerCheck(authority, 'producer_live_run_required');
+    return { review: { taskId: input.taskId, scope: input.scope, label: input.label, instruction: input.instruction, eventBound: input.eventBound, authority } };
+  }
+  registerExternalProducer(value: unknown) {
+    const input = producerRegistrationSchema.parse(value);
+    const prior = this.store.externalProducers().find(row => row.registrationActionId === input.actionId);
+    const authority = prior?.authority ?? this.loopSourceAuthority(input.taskId);
+    producerCheck(authority, 'producer_live_run_required');
+    const result = this.store.registerExternalProducer(input, authority, () => {
+      this.assertScope(input.taskId, input.scope); const current = this.loopSourceAuthority(input.taskId);
+      producerCheck(current?.runId === input.runId && current.runId === authority.runId, 'producer_live_run_changed');
+    });
+    return { created: result.created, producer: this.externalProducerPublic(result.producer), status: this.externalProducerStatus(input.taskId) };
+  }
+  rotateExternalProducer(value: unknown) {
+    const input = producerRotationSchema.parse(value), result = this.store.rotateExternalProducer(input, row => { this.assertExternalProducerRun(row); });
+    return { rotated: result.rotated, producer: this.externalProducerPublic(result.producer), status: this.externalProducerStatus(result.producer.taskId) };
+  }
+  revokeExternalProducer(producerId: string) {
+    const row = this.store.revokeExternalProducer(producerId); return { status: this.externalProducerStatus(row.taskId) };
+  }
+  publishExternalProducerEvent(credentialHash: string, value: unknown) {
+    const input = producerEventSchema.parse(value);
+    const result = this.store.publishExternalProducerEvent(input, credentialHash, row => this.assertExternalProducerRun(row));
+    // Durable packet/receipt already committed. A scheduling failure cannot turn it into not-started.
+    if (!result.duplicate && result.receipt.state === 'accepted') { try { this.advanceLoop(result.receipt.taskId); } catch {} }
+    const { fingerprint: _fingerprint, ...receipt } = result.receipt;
+    return { receipt, duplicate: result.duplicate };
+  }
+  externalProducerReceipt(credentialHash: string, producerId: string, eventId: string) {
+    const row = this.store.externalProducer(producerId);
+    producerCheck(row && !row.revoked && producerHashesEqual(row.credentialHash, credentialHash), 'producer_credential_rejected');
+    const value = this.store.externalProducerReceipt(producerId, eventId);
+    if (!value) return { found: false as const, producerId, eventId };
+    const { fingerprint: _fingerprint, ...receipt } = value; return { found: true as const, receipt };
   }
   cycle(taskId: string, actionId: string, scope: AgentActionScope, workId?: string): AgentTask {
     const command = this.store.command(taskId, actionId, "mailbox_cycle", { scope, workId }, () => {

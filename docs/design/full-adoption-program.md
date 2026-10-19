@@ -305,3 +305,87 @@ workspace с принятым CSV оставлен для повторной п�
 read-only проверки не запускают свои GUI, серверы или модельные задачи. Каждая
 новая проверка использует сохранённый профиль и текущего owner; история и credentials
 не копируются между инсталляциями.
+
+### Новая source-партия поверх установленной .12 — 19 октября 2026 года
+
+Установленная `6.1.32-nekodex.12` и её исходный commit
+`4ea88cccb901811e6054c228faac6058ee9f772c` остаются отдельным delivery baseline.
+Эта source-партия продолжает указанный baseline:
+связанные source reviews и focused checks приняты, root выполнил указанные ниже
+DEV GUI сценарии. Их сборка/установка как новой версии и real-provider acceptance
+не заявлены. Этот checkpoint дополняет прежние состояния, не переписывая их.
+
+- **DW11 / явное восстановление selected-file owner:** реализованы Review и
+  отдельное подтверждённое Recover при доказанном отсутствии прежнего JS PID.
+  Проверенные lock/registry архивируются с сохранением идентичности; источники
+  остаются OFF, `pending` становится `unknown`, повторной enqueue нет. Живой,
+  reused или непроверенный PID и изменённые metadata приводят к отказу.
+  Прерванная recovery-транзакция сохраняет gate и точный recovery ID/receipt,
+  обнаруживаемые после restart для read-only inspection; автоматического
+  продолжения нет. Root принял actual DEV GUI восстановление отсутствующего
+  child owner `31377`: receipt `8b87ee39-cb1a-4042-bcb4-20fe2cd537db` —
+  `completed`, новый source owner получен, выбранный источник выключен.
+  [GUI receipt observation](/Users/alex/Documents/ChatGPT/Nekodex/reviews/evidence/native-integrated-20261019/source-next-20261019/dev-acceptance/loop-recovery-after-ax.txt).
+  Recovery не создаёт Run/Enable; последующее чтение требует отдельного Enable
+  и текущего действующего explicit Run.
+- **DW11 / зарегистрированный внешний producer:** root прошёл actual DEV GUI
+  Run → Review/Register/Copy, затем передал credential через no-echo native PTY
+  и piped stdin настоящему CLI. Реальные source HTTP/runtime/SQLite приняли
+  ровно одно событие при `eventBound:1`; сохранились один packet и естественный
+  переход cycle1 → cycle2. GUI Revoke/Pause завершили сценарий, CLI вышел с 0,
+  terminal закрыт, credential не печатался. Модель была controlled: два synthetic
+  offers, **ноль external provider calls**. Это конечный зарегистрированный
+  ingress с Run/bound/receipt, не generic network discovery/watcher и не
+  доказательство indefinite recurring business outcome.
+  [Acceptance receipt](/Users/alex/Documents/ChatGPT/Nekodex/reviews/evidence/native-integrated-20261019/source-next-20261019/dev-acceptance/external-acceptance.json).
+- **DW2/DW7 / owned canonical text/history:** новый explicit text mode,
+  canonical human/assistant text, private current-principal/worker claims,
+  отдельные recording consents, sticky revoke и pre-offer first-capture fences
+  реализованы и имеют focused source/controlled evidence. Найденный revoke
+  до thread ACK закрыт; полный исторический transcript, external exclusive
+  handoff и реальный provider результат этим не доказаны. Actual real-provider
+  проверка сейчас **заблокирована**: прежний Native lock PID отсутствует, но два
+  действующих production tunnel-client app-server делают process census
+  неоднозначным. Эти процессы и retained state сохранены; новый real-provider
+  model turn и capture не получены.
+  [Physical-owner observation](/Users/alex/Documents/ChatGPT/Nekodex/reviews/evidence/native-integrated-20261019/source-next-20261019/dev-acceptance/native-recovery-process-proof.json).
+- **P03–P08 / реальные remote mutation faults:** на unchanged source `4ea88cc`
+  подтверждены три границы: exclusive SFTP temp WRITE до ACK, final atomic
+  rename до ACK и managed Git worktree create с живыми remote children перед
+  TCP loss. Production service использовал настоящий OpenSSH/SFTP/Python/Git
+  через изолированный loopback sshd, без transport/runner mocks. `unknown`
+  пережил restart, новые mutations отказывались без resend; реальные reconnect
+  reads, независимые filesystem/Git observations и отдельная проверка physical
+  exit предшествовали явной reconciliation. Это source-service real-network
+  evidence, не installed GUI или внешний remote account acceptance; долгие
+  lifecycle и остальные fault boundaries остаются отдельными.
+  [Scope and provenance](/Users/alex/Documents/ChatGPT/Nekodex/reviews/evidence/native-integrated-20261019/local-app12-final/remote-mutation-faults/README.md),
+  [combined receipt](/Users/alex/Documents/ChatGPT/Nekodex/reviews/evidence/native-integrated-20261019/local-app12-final/remote-mutation-faults/receipt.json).
+
+Таким образом, прежнее ограничение DW11 «stale-owner recovery unsupported»
+снято для явно проверенного отсутствующего JS owner; registered external ingress
+также имеет отдельное DEV acceptance. Generic watchers, произвольное продолжение
+прерванной recovery, бесконечная надёжность, полный transcript/внешний handoff и
+новая installed/real-provider acceptance не объявляются завершёнными. Все 44 ID
+и оставшийся объём программы сохранены.
+
+
+**P15 / подготовка реального OAuth-провайдера.** По поручению пользователя
+выбран официальный Linear MCP read-only endpoint и только scope `read`.
+Один public Dynamic Client Registration запрос завершён HTTP201; отдельный
+публичный client ID и exact loopback redirect сохранены в локальном файле
+регистрации. NEKODEX теперь проверяет и сохраняет `loopback-exact`, связывает
+listener с зарегистрированными host/port/path и отказывает при занятом порте
+без fallback. Broker независимо проверяет URI; прежний variable-port mode
+сохранён. Три focused actual-loopback/occupied-port/persistence cases и
+независимый review приняты; core/renderer TypeScript прошли. Это регистрация
+публичного клиента, а не вход в Linear, account grant, refresh/revoke или
+выполненный MCP tool. Импорт в текущий аккаунт и реальный OAuth callback ещё
+требуют admitted Native authority и отдельного пользовательского consent.
+[Official Linear MCP](https://linear.app/docs/mcp),
+[Public setup receipt](/Users/alex/Documents/ChatGPT/Nekodex/reviews/evidence/native-integrated-20261019/source-next-20261019/oauth-linear/configuration-readiness.json).
+
+DEV core31382 и main31387 после этой приёмки штатно закрыты, без force signals;
+исходные config/launcher-state восстановлены byte-for-byte, source owner lock
+снят. Действующие production процессы сохранены.
+[Cleanup receipt](/Users/alex/Documents/ChatGPT/Nekodex/reviews/evidence/native-integrated-20261019/source-next-20261019/dev-acceptance/cleanup-restoration.json).

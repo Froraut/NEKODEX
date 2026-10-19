@@ -55,7 +55,7 @@ separate facts.
 | Tunnel | [installation/control](src/tunnel.ts), [status interpretation](src/tunnel-status.ts), [service](src/tunnel-service.ts) with [LaunchAgent helpers](src/launch-agent.ts) | Inventory/diagnostics parsing has no process authority. Scoped stopped proof requires successful inspection, an explicitly non-running process and stopped state; the SDK's missing/null/empty error values mean no status error. Installation, credentials and readiness remain separate steps. |
 | Electron composition | [main](launcher/electron/main.cjs), [preload](launcher/electron/preload.cjs), [IPC registrars](launcher/electron/ipc), [control server](launcher/electron/control-server.cjs) | Main owns guarded IPC and composition. Renderer inputs and helper calls cross validation/admission boundaries. |
 | Native plan content | [source observer](src/adapters/chatgpt-web/task-plan-observation.ts), [capture policy](src/adapters/chatgpt-web/task-plan-policy.ts), [wire validator](launcher/electron/task-plan-observation.cjs), [store](launcher/electron/task-plans.cjs), [requirements](launcher/electron/task-plan-requirements.cjs), [TaskPlans](launcher/src/TaskPlans.tsx) | Separate opt-in content store, never the metadata ledger. `/v1/turn/plan` validates the exact live trace/helper/surface/task and recorded native thread/turn before capture; observed plan claims remain unverified. Explicit requirements/corrections and CAS-bound associations retain trusted action metadata separately from personal user confirmation; property verification is unavailable here. |
-| Conversation text history | [store](src/conversation-history/store.ts), [event owner](src/conversation-history/transcript.ts), [HTTP](src/conversation-history/http.ts), [owned source](src/conversation-history/owned-native.ts), [IPC](launcher/electron/ipc/conversation-history.cjs), [surface](launcher/src/ConversationHistorySurface.tsx) | One Bun SQLite/FTS writer; separate default-off selected text, page refresh, final-summary and authenticated partial Native event policies. Exact task/account/recording epochs, pre-offer consent leases, revisions/deletion watermarks and revoke fencing govern capture. Full external transcript/background feeds remain unavailable. |
+| Conversation text history | [store](src/conversation-history/store.ts), [Agent events](src/conversation-history/transcript.ts), [owned conversation events](src/conversation-history/owned-conversation.ts), [private claim bridge](src/conversation-history/owned-conversation-bridge.ts), [HTTP](src/conversation-history/http.ts), [IPC](launcher/electron/ipc/conversation-history.cjs), [surface](launcher/src/ConversationHistorySurface.tsx) | One Bun SQLite/FTS writer; selected text, page refresh, partial Agent summaries and future canonical owned-conversation text have separate default-off policies and scope families. Exact current claims, pre-offer leases, recording/consent epochs, deletion watermarks and deny-first revocation govern capture. Full independently owned external-client feeds remain unavailable. |
 | Local project workspace | [service](launcher/electron/local-workspace.cjs), [IPC](launcher/electron/ipc/workspace.cjs), [surface](launcher/src/WorkspaceSurface.tsx), [editor leaf](launcher/src/WorkspaceEditor.tsx) | Native picker grants opaque roots; main owns bounded reads/drafts/revision-aware writes. Surface owns navigation; editor leaf preserves the same per-file queue/editorPort/save/recovery lifecycle. Read-only comparisons, snapshots and explicit Git mutations are distinct owners. |
 | Native Codex thread control | [client](launcher/electron/codex-client-control.cjs), [IPC](launcher/electron/ipc/codex-client-control.cjs), [surface](launcher/src/NativeThreadsSurface.tsx), [projection](launcher/src/native-threads-model.ts) | Supported metadata and explicit exact-turn fork use a durable journal; returned boundary starts no execution. Server/idle metadata is not exclusive authority. External resume/handoff remains unavailable without cooperative owner-release contract. |
 | Retained owned Native conversations | [owner](launcher/electron/persistent-native-conversations.cjs), [worker](launcher/electron/owned-native-worker.cjs), [IPC](launcher/electron/ipc/native-persistent-conversations.cjs), [panel](launcher/src/NativePersistentConversationsPanel.tsx) | Exact conversation/thread reservations and synchronous quota writer permit independent known operations. Fork reserves source; alias/unknown creation holds owner. Explicit identity-checked Resume sends no turn; per-selection UI never bypasses account/uncertain-owner gates. |
@@ -365,7 +365,9 @@ plan and final instructions for each new substantive packet. Duplicate/unchanged
 packets do not produce an empty Continue. Unknown sends remain held, late results
 stay with their original dispatch, and corrections retire old-generation authority.
 The real two-cycle mailbox proof establishes scheduling, not a recurring business
-outcome; external generic watchers remain unavailable.
+outcome. Selected local metadata and explicitly registered external observations
+are separate producers; the runtime does not turn a timer tick or unchanged
+observation into an empty Continue.
 
 **Explicit selected-file source:** [the main-owned producer](launcher/electron/loop-file-watcher.cjs),
 [owned-core adapter](launcher/electron/loop-file-watcher-integration.cjs) and
@@ -384,14 +386,42 @@ serialized command boundary. Historical reconciliation uses exact retained
 `workId`, independently of the bounded mailbox list, and never resends an unknown
 effect. Main invalidates before explicit task/project/lifecycle changes and joins
 already committed enqueue work before closure. An unreconciled existing owner
-lock makes this optional source unavailable without blocking other launcher IPC;
-it is not deleted or silently adopted. This is a bounded metadata producer, not a
-generic external watcher or restored background Run consent.
+lock makes this optional source unavailable without blocking other launcher IPC.
+The [recovery owner](launcher/electron/loop-file-watcher-recovery.cjs) supports an
+explicit review and recovery only after the old JS process is proven absent and
+the reviewed directory/lock/registry identities still match. It archives original
+metadata, preserves pending deliveries as unknown and leaves every source OFF.
+Live, reused or unprovable PIDs refuse recovery. A crash during recovery retains
+the exact transaction ID, private writer gate and read-only receipt inspection;
+restart discovery neither resumes the transaction nor steals that gate. Recovery
+never reads the selected project, enqueues work or grants Run/Enable authority.
+
+**Authenticated external observations:** [producer routes](src/agent-mode/external-producer-http.ts),
+[CLI](src/agent-mode/external-producer-cli.ts), [main registrar](launcher/electron/ipc/agent-loop-producers.cjs)
+and [panel](launcher/src/AgentLoopExternalProducer.tsx) register one named source
+against an existing live Run and a fixed human instruction. Main generates and
+copies the submission key; core retains only its hash and renderer receives no
+secret. The separate key cannot use task/history/admin/tool/network routes.
+Existing direct-loopback/Host/Origin guards remain in force; read-only API keys do
+not gain publication permission. Registration/status/revocation do not start work.
+
+The existing Agent SQLite owner atomically stores observation receipt, cumulative
+source usage and mailbox packet while rechecking the same live Run at commit.
+Exact duplicates return their prior receipt; unchanged content with a fresh clock
+or event ID creates no work. Natural cycles retain the same Run, while explicit
+control, restart, owner loss and exhausted bounds retire its authority. Source
+limits are user-selected within the existing 512-packet bound; Rotate preserves
+identity and remaining budget. The CLI reads a bounded regular event file with a
+nonblocking descriptor, takes the key through stdin and durably records one POST
+intent. Lost responses permit only exact receipt GET, never resend. Published
+observations are untrusted data, not verified evidence or a tool approval. This
+supports existing external monitors; it does not add an implicit web fetch or
+renew a VM network grant after a generation change.
 
 Both providers use [bounded historical context](src/agent-mode/prior-tool-context.ts)
 with original task/stage/dispatch/generation/revision/receipt provenance. Historical
 values are inert data, never continuation, permission or verification authority.
-Native's fixed protocol separates `tool_request`, `final` and `awaiting_input`;
+Native's Agent protocol separates `tool_request`, `final` and `awaiting_input`;
 a waiting result has no pending tool authority. Bun validates proposals against
 the shared draft-07/2020-12 schema compiler; Native tools remain closed and only
 the existing ToolJournal can approve and execute an external effect.
@@ -463,8 +493,8 @@ event projections have separate default-off policies. The
 [event owner](src/conversation-history/transcript.ts) binds a pre-offer subscription
 to global recording, exact future task-generation consent, risk acknowledgement,
 recording epoch, account/auth epoch and authenticated source revisions. Legacy
-final-summary consent cannot authorize the new policy. Current transport projects
-partial assistant `final`/`awaiting_input` summaries; envelopes, tool requests,
+final-summary consent cannot authorize the new policy. The legacy Agent transport
+projects partial assistant `final`/`awaiting_input` summaries; envelopes, tool requests,
 reasoning and raw media are excluded. Unknown secrets remain possible despite
 known-pattern filtering.
 
@@ -474,7 +504,46 @@ retains stored content. Reads/restart never restore subscriptions. Enable action
 respect draining admission; revoke/status remain available for cleanup. Markdown
 export/search retain provenance and explicit partial coverage. Selected external
 page reads are not an authenticated event feed: full client transcript/background
-subscription remains unavailable.
+subscription for independently owned external clients remains unavailable.
+
+### Owned canonical text conversations
+
+New retained conversations can explicitly select `canonical-text-v1`; existing
+rows remain `neko-json-v1`. The [Native owner](launcher/electron/owned-native-worker.cjs)
+uses the same admitted account, fixed never/read-only policy and disabled tools.
+Text mode omits the Agent JSON output schema; its full canonical user and assistant
+text is distinct from both `lastSummary` and the bounded registry preview. Exact
+selected-turn fork and metadata/items reads use that same owned worker; observing
+does not resume, fork, start a turn or claim external exclusive ownership.
+
+The [main producer](launcher/electron/owned-conversation-transcript.cjs) forwards
+completed canonical user/assistant items with actual thread/turn/item IDs and
+timestamps, preserving direct-human versus automatic-host attribution. Its bounded
+queue has explicit persisted gap events. Local cursors/revisions are labelled
+observation positions, never vendor sequence numbers. [The history leaf](src/conversation-history/owned-conversation.ts)
+shares the existing SQLite/FTS writer, with a distinct owned-conversation scope,
+future consent, pre-offer lease, filtering and persistent edit/deletion watermarks.
+Ordering follows retained canonical positions even when native timestamps tie.
+
+The [private descriptor](launcher/electron/owned-conversation-descriptor.cjs) advertises
+current scope claims without text, separately from strict Agent-v1 descriptors.
+The [core bridge](src/conversation-history/owned-conversation-bridge.ts) rereads the
+private profile/PID/instance and exact claim on every write; public UI selection
+resolves metadata through one fixed same-main route. Only the [private capture route](src/conversation-history/owned-conversation-control.ts)
+can begin/record/release. Renderer history IPC cannot submit canonical events or
+assert an account binding. Exact lease cleanup remains possible after claim removal
+under the same main instance and grants no new capture authority.
+
+Global recording, Native context retention and future text capture are separate
+consents. A requested first-turn capture is admitted after thread creation ACK but
+before `turn/start`; unavailable recording preserves the created idle thread and
+draft without sending. Revoke denies local admission before waiting, fences pending
+begins and queued writes, and remains locally sticky if the core response is lost.
+Only a confirmed explicit enable with the unchanged ordering authority can clear
+that denial. Close/account/context changes remove claims before late writes.
+Retained text stays readable after revoke; earlier, omitted or missing intervals
+remain outside coverage. Complete supported messages are not a claim of a complete
+external transcript or a complete conversation with no known gaps.
 
 ### Workspace, Git, restore and remote uncertainty
 

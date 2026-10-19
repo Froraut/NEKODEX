@@ -15,6 +15,7 @@ export interface OAuthProtectedVault {
 export interface AgentOAuthBroker extends Omit<AgentOAuthPanelPort, 'begin'> {
   status(providerId: string): Promise<OAuthProviderStatus>;
   hasOwner(providerId?: string): boolean;
+  registeredRedirect(providerId: string): string | undefined;
   begin(input: { providerId: string; explicitUserAction: true }, redirectUri: string): Promise<{ authorizationUrl: string; status: OAuthProviderStatus }>;
   callback(providerId: string, callbackUrl: string): Promise<OAuthProviderStatus>;
   withAccessToken<T>(providerId: string, resource: string, use: (accessToken: string) => Promise<T>): Promise<T>;
@@ -27,3 +28,5 @@ export function createAgentOAuthBroker(options: {
 }): AgentOAuthBroker;
 export function validateProvider(config: OAuthProviderConfig): Readonly<OAuthProviderConfig>;
 export function scopeOf(config: OAuthProviderConfig): OAuthCredentialScope;
+
+export function validateExactRedirectUri(raw: string): string;

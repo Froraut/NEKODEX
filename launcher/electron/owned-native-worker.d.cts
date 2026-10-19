@@ -5,7 +5,7 @@ export interface OwnedNativeCanonicalItem {
   text: string;
   timestampMs: number;
   phase?: string | null;
-  authorship: 'automatic-host' | 'direct-user' | 'native-assistant';
+  authorship: 'automatic-host' | 'direct-user' | 'native-assistant' | 'unknown';
   imageAttachments?: import('./owned-native-images.cjs').OwnedNativeImageMetadata[];
 }
 export interface OwnedNativeUsage {
@@ -68,6 +68,9 @@ export function createOwnedNativeWorkerService(options: {
   offerOwnedTurn(input: { workerHandle: string; actionId: string; text: string;
     images?: import('./owned-native-images.cjs').OwnedNativeImage[];
     outputSchema?: Record<string, unknown> }): Promise<OwnedNativeReceipt>;
+  /** Only available on explicitly versioned owned text conversations; no new subscription or sender. */
+  observeCanonical(observer:(event:{actionId:string;threadId:string;item:OwnedNativeCanonicalItem})=>void):()=>void;
+  readCanonicalPage(input:{threadId:string;turnId?:string;cursor?:string|null;limit?:number}):Promise<{threadId:string;items:Array<Omit<OwnedNativeCanonicalItem,'timestampMs'> & {threadId:string;timestampMs:number|null;coverage:'complete'|'partial';coverageReason?:string}>;nextCursor:string|null;excludedItems:number;complete:boolean}>;
   /** Passive: no profile/CLI creation; inspect durable receipts rather than re-offering actions. */
   inspectOwnedWorker(workerHandle?: string): OwnedNativeSnapshot;
   retireOwnedWorker(input: { workerHandle: string; actionId: string }): Promise<OwnedNativeSnapshot>;
@@ -86,7 +89,7 @@ export function createOwnedNativeAccountServer(options:{
   createWorker(binding:import('./agent-native-bridge.cjs').AgentNativeBinding,onReceipt?:(receipt:OwnedNativeReceipt)=>void):ReturnType<typeof createOwnedNativeWorkerService>;
   /** Main-only exact-conversation operation. Independent known persistent owners may overlap within account capacity; uncertain ownership blocks new mutations. No raw RPC or foreign-thread adoption. */
   persistentOperation<T>(action:(operation:{
-    createWorker(binding:import('./agent-native-bridge.cjs').AgentNativeBinding,onReceipt?:(receipt:OwnedNativeReceipt)=>void,forkThreadId?:string):ReturnType<typeof createOwnedNativeWorkerService>;
+    createWorker(binding:import('./agent-native-bridge.cjs').AgentNativeBinding,onReceipt?:(receipt:OwnedNativeReceipt)=>void,forkThreadId?:string,options?:{mode?:'neko-json-v1'|'canonical-text-v1';lastTurnId?:string}):ReturnType<typeof createOwnedNativeWorkerService>;
     useWorker(worker:ReturnType<typeof createOwnedNativeWorkerService>):ReturnType<typeof createOwnedNativeWorkerService>;
     prepareResume(input:{registryPath:string;conversationId:string;revision:number}):(binding:import('./agent-native-bridge.cjs').AgentNativeBinding,onReceipt?:(receipt:OwnedNativeReceipt)=>void)=>ReturnType<typeof createOwnedNativeWorkerService>;
   })=>Promise<T>):Promise<T>;

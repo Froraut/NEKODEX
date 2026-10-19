@@ -124,7 +124,7 @@ async function boundedResponse(response: Response): Promise<string> {
 }
 /** A literal TCP destination and private one-shot Agent bypass proxy environment
  * routing without changing global environment or another consumer's Agent. */
-async function directLoopbackRequest(url: string, init: RequestInit): Promise<Response> {
+export async function directLoopbackRequest(url: string, init: RequestInit): Promise<Response> {
   const target = new URL(url), hostname = target.hostname.replace(/^\[|\]$/g, ""), port = Number(target.port || "80");
   const agent = new Agent({ keepAlive: false });
   agent.createConnection = () => connect({ host: hostname, port });

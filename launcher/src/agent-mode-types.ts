@@ -28,6 +28,7 @@ export interface AgentToolReconciliationView {
 export interface AgentModeApi {
   request(body: Record<string, unknown>): Promise<unknown>;
   loopFileWatcherRequest?(body: import('./AgentLoopFileWatcher').LoopFileWatcherRequest): Promise<import('./AgentLoopFileWatcher').LoopFileWatcherResponse>;
+  loopProducerRequest?(body: import('./AgentLoopExternalProducer').LoopExternalProducerRequest): Promise<import('./AgentLoopExternalProducer').LoopExternalProducerResponse>;
   nativeAccounts?: import('./native-accounts-types').NativeAccountsApi;
   nativeHistory?: Pick<import('./conversation-history-types').ConversationHistoryApi, 'request'>;
   workspaceRoots?(): Promise<AgentWorkspaceRoot[]>;

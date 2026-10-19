@@ -56,6 +56,7 @@ const historyApi = {
 };
 const agentModeApi = { request: (body: Record<string, unknown>) => api!.agentMode(body),
   ...(typeof api?.loopFileWatcherRequest === 'function' ? { loopFileWatcherRequest: (body: import('./AgentLoopFileWatcher').LoopFileWatcherRequest) => api!.loopFileWatcherRequest(body) } : {}),
+  ...(typeof api?.loopProducerRequest === 'function' ? { loopProducerRequest: (body: import('./AgentLoopExternalProducer').LoopExternalProducerRequest) => api!.loopProducerRequest(body) } : {}),
   nativeHistory: { request: historyApi.request },
   nativeAccounts: { request: (body: import('./native-accounts-types').NativeAccountsRequest | import('./native-accounts-types').NativeInventoryRequest | import('./native-accounts-types').NativeExecutionCloseRequest) => api!.nativeAccountsRequest(body),
     openVerificationUrl: (url: string) => api!.openNativeAccountVerification(url), copyCode: (code: string) => api!.copyNativeAccountCode(code) },
@@ -1028,7 +1029,7 @@ function LauncherShell({
             {surface === 'workspace' ? <WorkspaceSurface loadCopy={copy} language={language} /> : null}
             {surface === 'remote-workspace' ? <RemoteWorkspaceSurface loadCopy={copy} language={language} api={api!} /> : null}
             {surface === 'history' ? <ConversationHistorySurface loadCopy={copy} language={language} api={historyApi} /> : null}
-            {surface === 'native-threads' ? <NativeThreadsSurface loadCopy={copy} language={language} api={api!} disabled={transitionBusy} /> : null}
+            {surface === 'native-threads' ? <NativeThreadsSurface loadCopy={copy} language={language} api={api!} historyApi={historyApi} disabled={transitionBusy} /> : null}
             {surface === 'agent-mode' ? <AgentModeSurface loadCopy={copy} language={language} api={agentModeApi} disabled={transitionBusy} /> : null}
             {surface === 'external-usage' ? <ExternalUsageSurface loadCopy={copy} language={language} api={externalUsageApi} /> : null}
             {surface === 'agent-tools' ? <AgentToolsSurface loadCopy={copy} language={language} api={agentToolsApi} oauthMcpRequest={api?.oauthMcpRequest} disabled={transitionBusy} /> : null}

@@ -1,4 +1,4 @@
-/** Browser-safe projections only. Credentials and authorization callbacks never cross IPC. */
+/** Browser-safe projections only. Credentials and authorization response parameters never cross IPC. */
 export interface OAuthProviderConfig {
   providerId: string;
   label: string;
@@ -10,6 +10,9 @@ export interface OAuthProviderConfig {
   tokenEndpoint: string;
   revocationEndpoint?: string;
   clientId: string;
+  redirectUriMode?: 'loopback-port-variable' | 'loopback-exact';
+  /** Public registered callback URI; never an authorization response URL. */
+  redirectUri?: string;
   scopes: string[];
   codeChallengeMethodsSupported: string[];
   authorizationResponseIssParameterSupported?: boolean;
@@ -44,6 +47,7 @@ export interface OAuthProviderRegistrationReview {
   providerId: string; label: string; resource: string; issuer: string;
   authorizationEndpoint: string; tokenEndpoint: string; revocationEndpoint?: string;
   clientId: string; scopes: string[]; metadataDigest: string;
+  redirectUriMode?: 'loopback-port-variable' | 'loopback-exact'; redirectUri?: string;
   registrationEvidenceUrl: string; resourceMetadataUrl: string; authorizationServerMetadataUrl: string;
   state: 'reviewed' | 'registered'; authorizationStarted: false; toolApprovalRequired: true;
 }

@@ -4,6 +4,7 @@ import { clientConnectionsCommand } from "./client-connections";
 import { claudeIntegrationCommand } from "./claude-integration";
 import { localApiCommand } from "./local-api-access";
 import { localControlApiCommand } from "./local-control-api/client";
+import { loopEventProducerCommand } from './agent-mode/external-producer-cli';
 import { localControlTaskMonitorCommand } from "./local-control-api/task-monitor-command";
 import { codexProviderCommand } from "./codex-provider-command";
 import { createInterface } from "node:readline/promises";
@@ -65,6 +66,7 @@ Usage:
   codex-chatgpt-web provider <status|mixed|web-only> [--catalog PATH]
   codex-chatgpt-web api <status|enable|disable|rotate|key>
   codex-chatgpt-web local-api <status|tasks|agent-tasks|history-coverage|action|action-receipt> --origin http://127.0.0.1:PORT --token-stdin
+  codex-chatgpt-web loop-events <publish|receipt> --origin http://127.0.0.1:PORT --journal-dir PATH --token-stdin; publish --event-file PATH; receipt --producer-id ID --event-id ID
   codex-chatgpt-web task-monitor <snapshot|pause|reconcile> --origin http://127.0.0.1:PORT --journal-dir PATH --token-stdin
   codex-chatgpt-web local-api action --operation pause|resume|stop|step|review --task-id ID --action-id ID --family-id ID --generation N --revision N --origin http://127.0.0.1:PORT --token-stdin
   codex-chatgpt-web claude <status|connect|disconnect>
@@ -692,6 +694,7 @@ async function main(): Promise<void> {
   else if (command === "claude") claudeIntegrationCommand(args);
   else if (command === "api") localApiCommand(args);
   else if (command === "local-api") { if (!await localControlApiCommand(args)) process.exitCode = 1; }
+  else if (command === "loop-events") { if (!await loopEventProducerCommand(args)) process.exitCode = 1; }
   else if (command === "task-monitor") { if (!await localControlTaskMonitorCommand(args)) process.exitCode = 1; }
   else if (command === "provider") codexProviderCommand(args);
   else if (command === "subagents") await subagentsCommand(args);

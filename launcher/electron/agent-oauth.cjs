@@ -14,6 +14,20 @@ function httpsUrl(raw) {
   if (url.protocol !== 'https:' || url.username || url.password || url.hash || url.search) fail('invalid_configuration');
   return url;
 }
+/** A pre-registered native redirect pins its path and port; no wildcards or URL normalization. */
+function validateExactRedirectUri(raw) {
+  if (typeof raw !== 'string' || raw.length > 256 || !/^http:\/\/127\.0\.0\.1:([1-9][0-9]{0,4})\/oauth\/callback\/[a-f0-9]{32}$/.test(raw)) fail('invalid_registered_redirect');
+  let url; try { url = new URL(raw); } catch { fail('invalid_registered_redirect'); }
+  if (!url.port || Number(url.port) > 65535 || raw !== url.href || url.search || url.hash || url.username || url.password) fail('invalid_registered_redirect');
+  return raw;
+}
+function registeredRedirect(config) {
+  if (config.redirectUriMode === undefined || config.redirectUriMode === 'loopback-port-variable') {
+    if (config.redirectUri !== undefined) fail('invalid_registered_redirect'); return undefined;
+  }
+  if (config.redirectUriMode !== 'loopback-exact') fail('invalid_registered_redirect');
+  return validateExactRedirectUri(config.redirectUri);
+}
 function validateProvider(config) {
   if (!config || !ID.test(config.providerId) || !ID.test(config.accountId)
     || !Number.isSafeInteger(config.epoch) || config.epoch < 1
@@ -27,6 +41,7 @@ function validateProvider(config) {
     || !Array.isArray(config.codeChallengeMethodsSupported) || !config.codeChallengeMethodsSupported.includes('S256')) fail('invalid_configuration');
   for (const field of ['issuer', 'resource', 'authorizationEndpoint', 'tokenEndpoint']) httpsUrl(config[field]);
   if (config.revocationEndpoint) httpsUrl(config.revocationEndpoint);
+  registeredRedirect(config);
   return Object.freeze({ ...config, scopes: Object.freeze([...config.scopes]) });
 }
 function callbackBase(raw) {
@@ -115,6 +130,7 @@ function createAgentOAuthBroker({ providers, vault, authority, transport, now = 
     },
     status,
     /** Trusted lifecycle observation only; includes browser consent and code exchange ownership. */
+    registeredRedirect(providerId) { return registeredRedirect(current(providerId)); },
     hasOwner(providerId) { return providerId ? pending.has(providerId) || busy.has(providerId) : pending.size > 0 || busy.size > 0; },
     /** Returns an authorization URL ONLY to the trusted browser opener. It must not cross IPC. */
     async begin(input, redirectUri) {
@@ -122,7 +138,9 @@ function createAgentOAuthBroker({ providers, vault, authority, transport, now = 
       return exclusive(config, async () => {
         const entry = await read(config);
         if (pending.has(config.providerId) || entry?.record.phase && entry.record.phase !== 'ready') fail('operation_owned');
-        const redirect = callbackBase(redirectUri), state = randomBytes(32).toString('base64url');
+        const redirect = callbackBase(redirectUri);
+        if (registeredRedirect(config) !== undefined && redirect !== registeredRedirect(config)) fail('registered_redirect_mismatch');
+        const state = randomBytes(32).toString('base64url');
         const verifier = randomBytes(48).toString('base64url');
         const challenge = createHash('sha256').update(verifier).digest('base64url');
         const url = new URL(config.authorizationEndpoint);
@@ -207,4 +225,4 @@ function createAgentOAuthBroker({ providers, vault, authority, transport, now = 
     },
   };
 }
-module.exports = { createAgentOAuthBroker, validateProvider, scopeOf };
+module.exports = { createAgentOAuthBroker, validateProvider, validateExactRedirectUri, scopeOf };

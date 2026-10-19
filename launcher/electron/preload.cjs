@@ -4,6 +4,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 // These are narrow lifecycle routes; the main registrar still validates every action and payload.
 const HISTORY_REVOKE_ACTIONS = new Set([
   'set-recording', 'owned-native-consent', 'transcript-native-consent', 'canonical-consent',
+  'owned-conversation-consent',
 ]);
 const AGENT_TOOLS_REVOKE_ACTIONS = new Set([
   'revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools', 'revokeScriptWorkspace',
@@ -15,7 +16,7 @@ const AGENT_TOOLS_OBSERVE_ACTIONS = new Set([
   'pythonEnvironmentStatus', 'pythonEnvironmentAction', 'pythonBuildStatus', 'vmNetworkStatus', 'oauthList',
 ]);
 function conversationHistoryChannel(body) {
-  return body?.enabled === false && HISTORY_REVOKE_ACTIONS.has(body?.action)
+  return body?.action === 'owned-conversation-revoke' || body?.enabled === false && HISTORY_REVOKE_ACTIONS.has(body?.action)
     ? 'launcher:conversation-history-revoke' : 'launcher:conversation-history';
 }
 function agentToolsChannel(body) {
@@ -84,6 +85,7 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   saveConversationHistoryMarkdown: markdown => ipcRenderer.invoke('launcher:conversation-history-save', markdown),
   agentMode: body => ipcRenderer.invoke('launcher:agent-mode', body),
   loopFileWatcherRequest: body => ipcRenderer.invoke('launcher:loop-file-watcher', body),
+  loopProducerRequest: body => ipcRenderer.invoke('launcher:loop-producers', body),
   oauthMcpRequest: body => ipcRenderer.invoke('launcher:oauth-mcp', body),
   nativeAccountsRequest: body => ipcRenderer.invoke('launcher:native-accounts', body),
   openNativeAccountVerification: url => ipcRenderer.invoke('launcher:native-accounts-open', url),

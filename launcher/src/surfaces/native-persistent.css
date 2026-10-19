@@ -24,4 +24,12 @@
 .native-persistent__answer { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; padding: var(--space-3, 12px); border: 1px solid var(--border); border-radius: var(--radius-md, 8px); max-height: 320px; overflow-y: auto; }
 .native-persistent__prompt { min-height: 96px; padding: var(--space-2, 8px) var(--space-3, 12px); resize: vertical; width: 100%; box-sizing: border-box; font: inherit; }
 .native-persistent__actions { display: flex; flex-wrap: wrap; gap: var(--space-2, 8px); min-width: 0; }
+.native-persistent__first-recording, .native-persistent__history { display: grid; gap: var(--space-3, 12px); min-width: 0; }
+.native-persistent__first-recording { padding: var(--space-3, 12px); border: 1px solid var(--border); border-radius: var(--radius-md, 8px); }
+.native-persistent__first-recording > p, .native-persistent__history > p { margin: 0; overflow-wrap: anywhere; }
+.native-persistent__history { border-top: 1px solid var(--border); padding-top: var(--space-4, 16px); margin-top: var(--space-2, 8px); }
+.native-persistent__history > h3 { margin: 0; font-size: 14px; }
+.native-persistent__history-messages { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-4, 16px); min-width: 0; }
+.native-persistent__history-messages > li { display: grid; gap: var(--space-2, 8px); min-width: 0; }
+.native-persistent__history-messages small, .native-persistent__first-recording small { color: var(--text-secondary); overflow-wrap: anywhere; }
 @media (max-width: 720px) { .native-persistent__layout { grid-template-columns: minmax(0, 1fr); } }

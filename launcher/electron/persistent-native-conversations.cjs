@@ -12,7 +12,7 @@ const textInput = value => {
 };
 /** Main-only. Native retains full context by explicit consent; this registry contains
  * ownership/receipts and the last summary only, never credentials or raw rollouts. */
-function createPersistentNativeConversations({ getExecution, storageRoot, storagePath, onChange } = {}) {
+function createPersistentNativeConversations({ getExecution, storageRoot, storagePath, onChange, transcript } = {}) {
   if (typeof getExecution !== 'function' || !path.isAbsolute(storagePath || storageRoot || '')) throw fail('invalid_configuration', 'Persistent Native conversations require an existing main account owner');
   const file = storagePath || path.join(storageRoot, 'registry.json'), directory = path.dirname(file), lock = path.join(directory, 'owner.lock');
   const owner = JSON.stringify({ pid: process.pid, nonce: randomUUID() });
@@ -57,7 +57,7 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
   }
   const sameScope = (row, context) => context && row.profileId === context.profileId && row.epoch === context.epoch && row.serverGeneration === context.serverGeneration;
   function resumeReason(row, context) {
-    if (row.contextVersion !== 2 || !isAgentNativeHistorySource(row.historySource)) return 'legacy_identity_unproven';
+    if (![2, 3].includes(row.contextVersion) || row.contextVersion === 3 && row.conversationMode !== 'canonical-text-v1' || !isAgentNativeHistorySource(row.historySource)) return 'legacy_identity_unproven';
     if (state.actions.some(action => action.conversationId === row.id && (['prepared', 'unknown'].includes(action.state) || action.ownerHeld === true))) return 'prior_outcome_unresolved';
     if (!row.threadId || !['idle', 'unloaded'].includes(row.status)) return 'retained_context_unavailable';
     if (!context || destroyed || !context.server.inspect().accepting) return 'account_owner_unavailable';
@@ -74,7 +74,9 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
       return { id: row.id, revision: row.revision, threadId: row.threadId, model: row.model,
         status: available ? row.status : row.status === 'unloaded' ? 'unloaded' : 'unavailable', ownerAvailable: Boolean(available), createdAt: row.createdAt, updatedAt: row.updatedAt,
         resumeAvailable: resumeReason(row, context) === null, resumeReason: resumeReason(row, context),
-        ...(row.parentId ? { parentId: row.parentId } : {}), ...(row.lastSummary ? { lastSummary: row.lastSummary } : {}) };
+        ...(row.parentId ? { parentId: row.parentId } : {}), ...(row.lastSummary ? { lastSummary: row.lastSummary } : {}), conversationMode: row.conversationMode ?? 'neko-json-v1',
+        ...(row.lastTextPreview !== undefined ? { lastTextPreview: row.lastTextPreview, lastTextTruncated: row.lastTextTruncated === true } : {}),
+        ...(typeof row.lastTurnId === 'string' ? { lastTurnId: row.lastTurnId } : {}), recordingRequiredBeforeFirstSend: row.requireCaptureUntilFirstSent === true };
     });
     const ids = new Set(conversations.map(row => row.id));
     return { conversations, actions: state.actions.filter(row => ids.has(row.conversationId)).map(row => ({ actionId: row.actionId, kind: row.kind,
@@ -85,7 +87,21 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
     if (receipt.actionId !== action.turnActionId) return;
     if (row.revision !== action.revision || row.activeActionId !== action.actionId) return;
     action.nativeReceiptId = receipt.actionId; action.ownerHeld = receipt.ownerHeld;
-    if (receipt.state === 'completed') {
+    if (['acknowledged', 'completed'].includes(receipt.state) && receipt.turnId) row.requireCaptureUntilFirstSent = false;
+    if (receipt.state === 'completed' && typeof receipt.turnId === 'string' && receipt.turnId.length > 0 && receipt.turnId.length <= 128) { action.turnId = receipt.turnId; row.lastTurnId = receipt.turnId; }
+    if (receipt.state === 'completed' && row.conversationMode === 'canonical-text-v1') {
+      const items = receipt.canonicalItems;
+      const human = Array.isArray(items) && items.find(item => item.role === 'user' && item.authorship === 'direct-user' && item.turnId === receipt.turnId);
+      const finals = Array.isArray(items) && items.filter(item => item.role === 'assistant' && item.authorship === 'native-assistant' && item.turnId === receipt.turnId && [null, undefined, 'final_answer'].includes(item.phase));
+      if (!human || !finals.length || !finals.every(item => typeof item.text === 'string')) {
+        action.state = 'failed'; action.reasonCode = 'canonical_text_unavailable'; row.status = 'unavailable';
+      } else {
+        action.state = 'completed'; delete action.reasonCode; row.status = 'idle';
+        action.turnId = receipt.turnId;
+        action.canonicalUser = { turnId: receipt.turnId, clientUserMessageId: receipt.clientUserMessageId, inputHash: receipt.inputHash };
+        const text = finals.at(-1).text; row.lastTextPreview = text.slice(0, 2048); row.lastTextTruncated = text.length > 2048;
+      }
+    } else if (receipt.state === 'completed') {
       const result = receipt.structuredOutput;
       if (!result || result.kind !== 'final' || typeof result.summary !== 'string' || !result.summary.trim()) {
         action.state = 'failed'; action.reasonCode = 'invalid_final_result'; row.status = 'unavailable';
@@ -99,10 +115,15 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
   }
   function execute(kind, input) {
     let recorded = false;
+    // Capture the initial intent ordering before account/thread creation awaits.
+    const initialRecordingAuthority = input?.recordFutureText ? transcript?.recordingAuthority() : undefined;
     const run = async () => {
-      const allowed = kind === 'create' ? ['actionId', 'model', 'text', 'retainContext', 'expectedContext'] : kind === 'send' ? ['actionId', 'conversationId', 'revision', 'text', 'expectedContext'] : ['actionId', 'conversationId', 'revision', 'expectedContext'];
+      const allowed = kind === 'create' ? ['actionId', 'model', 'text', 'retainContext', 'expectedContext', 'conversationMode', 'recordFutureText'] : kind === 'send' ? ['actionId', 'conversationId', 'revision', 'text', 'expectedContext'] : ['actionId', 'conversationId', 'revision', 'expectedContext', ...(kind === 'fork' ? ['lastTurnId'] : [])];
       if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !allowed.includes(key))) throw fail('invalid_intent', 'Unsupported persistent Native input');
       uuid(input.actionId);
+      if (kind === 'create' && input.conversationMode !== undefined && !['neko-json-v1', 'canonical-text-v1'].includes(input.conversationMode)) throw fail('invalid_intent', 'Unsupported conversation text mode');
+      if (input.recordFutureText !== undefined && (kind !== 'create' || input.conversationMode !== 'canonical-text-v1' || !input.recordFutureText || Object.keys(input.recordFutureText).sort().join(',') !== 'acknowledgeUnknownSecrets,consent' || input.recordFutureText.consent !== true || input.recordFutureText.acknowledgeUnknownSecrets !== true)) throw fail('invalid_intent', 'Explicit future text consent requires the new canonical text mode');
+      if (input.lastTurnId !== undefined && (kind !== 'fork' || typeof input.lastTurnId !== 'string' || !input.lastTurnId || input.lastTurnId.length > 128 || /[\u0000-\u001f]/.test(input.lastTurnId))) throw fail('invalid_intent', 'Invalid exact fork turn');
       if (!input.expectedContext || Object.keys(input.expectedContext).sort().join(',') !== 'epoch,profileId,serverGeneration') throw fail('stale_account', 'Select the exact current account generation');
       for (const key of ['profileId', 'epoch', 'serverGeneration']) uuid(input.expectedContext[key]);
       const fingerprint = digest(canonical({ kind, input }));
@@ -121,6 +142,7 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
       if (kind !== 'create') {
         uuid(input.conversationId); source = state.conversations.find(row => row.id === input.conversationId);
         if (!source || source.revision !== input.revision) throw fail('stale_conversation', 'Select the exact current conversation revision');
+        if (input.lastTurnId !== undefined && !state.actions.some(action => action.conversationId === source.id && action.state === 'completed' && action.turnId === input.lastTurnId)) throw fail('invalid_intent', 'Fork point requires an exact completed owned turn');
         if (kind === 'resume') { const reason = resumeReason(source, context); if (reason) throw fail('resume_unavailable', reason); }
         else {
           if (!sameScope(source, context) || !live.has(source.id)) throw fail('owner_unavailable', 'This retained conversation has no current owner; explicitly Resume first');
@@ -146,11 +168,12 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
           if (state.actions.length >= 512 || ['create', 'fork'].includes(kind) && state.conversations.length >= 128) throw fail('registry_quota', 'Persistent Native registry quota reached');
           acquire();
           const makeResumedWorker = kind === 'resume' ? operation.prepareResume({ registryPath: file, conversationId: source.id, revision: source.revision }) : null;
-          const now = Date.now();
+          const now = Date.now(), conversationMode = kind === 'create' ? input.conversationMode ?? 'neko-json-v1' : source.conversationMode ?? 'neko-json-v1';
           const row = !['create', 'fork'].includes(kind) ? source : { id: randomUUID(), revision: 0, threadId: null, model: selectedModel.id,
             profileId: context.profileId, epoch: context.epoch, serverGeneration: context.serverGeneration, status: 'running', createdAt: now, updatedAt: now,
-            contextVersion: 2, historySource: structuredClone(selectedModel.historySource), forkedFromThreadId: kind === 'fork' ? source.threadId : null,
+            contextVersion: conversationMode === 'canonical-text-v1' ? 3 : 2, conversationMode, requireCaptureUntilFirstSent: kind === 'create' && !!input.recordFutureText, historySource: structuredClone(selectedModel.historySource), forkedFromThreadId: kind === 'fork' ? source.threadId : null,
             ...(kind === 'fork' ? { parentId: source.id } : {}) };
+          const firstRecordingAuthority = input.recordFutureText ? transcript?.recordingAuthorityForConversation(row.id, initialRecordingAuthority) : undefined;
           const action = { actionId: input.actionId, kind, fingerprint, conversationId: row.id, state: 'prepared', ownerHeld: false,
             createActionId: randomUUID(), turnActionId: randomUUID(), closeActionId: randomUUID(), createdAt: now };
           if (['create', 'fork'].includes(kind)) state.conversations.push(row);
@@ -167,7 +190,7 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
                 const currentAction = state.actions.find(value => value.turnActionId === receipt.actionId && value.conversationId === row.id);
                 if (currentAction) recordNative(currentAction, row, receipt);
               };
-              worker = makeResumedWorker ? makeResumedWorker(binding, onReceipt) : operation.createWorker(binding, onReceipt, kind === 'fork' ? source.threadId : undefined);
+              worker = makeResumedWorker ? makeResumedWorker(binding, onReceipt) : operation.createWorker(binding, onReceipt, kind === 'fork' ? source.threadId : undefined, { mode: conversationMode, ...(input.lastTurnId ? { lastTurnId: input.lastTurnId } : {}) });
               live.set(row.id, worker);
               assertContext();
               const created = await worker.createOwnedWorker({ actionId: action.createActionId });
@@ -181,9 +204,23 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
             else if (kind === 'fork' || kind === 'resume') { action.state = 'completed'; row.status = 'idle'; row.updatedAt = Date.now(); save(); }
             else {
               assertContext();
-              const receipt = await worker.offerOwnedTurn({ workerHandle: worker.inspectOwnedWorker().workerHandle, actionId: action.turnActionId,
-                text: input.text, outputSchema: FINAL_SCHEMA });
-              recordNative(action, row, receipt);
+              let capture, unsubscribe; const requireCapture = row.requireCaptureUntilFirstSent === true;
+              try {
+                if (requireCapture && !transcript) throw Object.assign(fail('recording_unavailable', 'Requested first-turn recording is unavailable; the created thread is retained without sending'), { nativeTurnNotStarted: true });
+                if (conversationMode === 'canonical-text-v1' && transcript) {
+                  const scope = transcriptScope(row.id);
+                  try { capture = await transcript.begin({ scope, actionId: action.actionId, nativeActionId: action.turnActionId, ...(input.recordFutureText ? { enableConsent: input.recordFutureText, expectedAuthority: firstRecordingAuthority } : {}), ...(requireCapture ? { requireCapture: true } : {}) }); } catch (reason) { if (requireCapture) throw Object.assign(fail('recording_unavailable', 'Requested first-turn recording is unavailable; the created thread is retained without sending'), { nativeTurnNotStarted: true }); }
+                  assertContext();
+                  if (capture) unsubscribe = worker.observeCanonical(event => transcript.observe(capture, event));
+                }
+                if (requireCapture && !capture) throw Object.assign(fail('recording_unavailable', 'Requested first-turn recording is unavailable; the created thread is retained without sending'), { nativeTurnNotStarted: true });
+                const receipt = await worker.offerOwnedTurn({ workerHandle: worker.inspectOwnedWorker().workerHandle, actionId: action.turnActionId,
+                  text: input.text, ...(conversationMode === 'canonical-text-v1' ? {} : { outputSchema: FINAL_SCHEMA }) });
+                recordNative(action, row, receipt);
+              } finally {
+                unsubscribe?.();
+                try { if (capture) await transcript.release(capture); } catch { /* Capture failure cannot repeat a Native offer. */ }
+              }
             }
             return list();
           } catch (reason) {
@@ -199,8 +236,8 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
               } catch { /* Receipt storage uncertainty is never permission to retry. */ }
             }
             if (action.state !== 'completed') {
-              action.state = reason.authoritative || provablyNotSent || knownLeafFailure ? 'failed' : 'unknown'; action.reasonCode = reason.code || 'native_outcome_unknown';
-              row.status = action.state === 'unknown' ? 'unknown' : kind === 'resume' ? 'unloaded' : 'unavailable';
+              action.state = reason.authoritative || provablyNotSent || knownLeafFailure ? 'failed' : 'unknown'; if (reason.nativeTurnNotStarted === true) action.nativeTurnNotStarted = true; action.reasonCode = reason.code || 'native_outcome_unknown';
+              row.status = action.state === 'unknown' ? 'unknown' : reason.nativeTurnNotStarted && row.threadId && worker ? 'idle' : kind === 'resume' ? 'unloaded' : 'unavailable';
               if (kind === 'resume' && action.state === 'failed') live.delete(row.id);
               row.updatedAt = Date.now(); save();
             }
@@ -212,8 +249,31 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
     const result = run().then(() => list()).catch(reason => { reason.actionRecorded = recorded; throw reason; });
     pending.add(result); result.finally(() => { pending.delete(result); }).catch(() => {}); return result;
   }
+  function transcriptScope(conversationId) {
+    uuid(conversationId);
+    const context = getExecution(), row = state.conversations.find(row => row.id === conversationId), worker = live.get(conversationId);
+    if (destroyed || !row || row.conversationMode !== 'canonical-text-v1' || row.contextVersion !== 3 || !sameScope(row, context)
+      || !worker || !context.server.inspect().ready || !context.server.inspect().accepting
+      || !['ready', 'offering'].includes(worker.inspectOwnedWorker().state) || !isAgentNativeHistorySource(row.historySource)) return null;
+    return { kind: 'owned-conversation', mode: 'canonical-text-v1', conversationId: row.id, threadId: row.threadId,
+      ...structuredClone(row.historySource), serverGeneration: row.serverGeneration, workerBindingId: row.bindingId, workerGeneration: 1 };
+  }
+  function currentHistoryScopes() { return state.conversations.map(row => transcriptScope(row.id)).filter(Boolean); }
+  function resolveHistoryScope({ conversationId, revision, expectedContext } = {}) {
+    uuid(conversationId); const row = state.conversations.find(row => row.id === conversationId), current = getExecution();
+    if (!row || row.revision !== revision || !expectedContext || !current
+      || ['profileId', 'epoch', 'serverGeneration'].some(key => expectedContext[key] !== current[key])) throw fail('stale_conversation', 'Select the exact current text conversation revision and account');
+    const scope = transcriptScope(conversationId); if (!scope) throw fail('canonical_unavailable', 'Owned text history source is unavailable'); return scope;
+  }
+  async function readTranscriptPage({ scope, turnId, cursor, limit } = {}) {
+    if (!scope || canonical(transcriptScope(scope.conversationId)) !== canonical(scope)) throw fail('canonical_unavailable', 'Exact current owned text scope is unavailable');
+    const worker = live.get(scope.conversationId);
+    const page = await worker.readCanonicalPage({ threadId: scope.threadId, ...(turnId ? { turnId } : {}), ...(cursor !== undefined ? { cursor } : {}), ...(limit !== undefined ? { limit } : {}) });
+    if (canonical(transcriptScope(scope.conversationId)) !== canonical(scope)) throw fail('canonical_unavailable', 'Owned transcript scope changed during read');
+    return page;
+  }
   function destroy() {
-    if (closing) return closing; destroyed = true;
+    if (closing) return closing; destroyed = true; notify();
     closing = (async () => {
       await Promise.allSettled([...pending]);
       for (const worker of live.values()) await worker.destroy();
@@ -221,12 +281,12 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
     })().catch(reason => { closing = undefined; throw reason; });
     return closing;
   }
-  return Object.freeze({ list, create: input => execute('create', input), send: input => execute('send', input), fork: input => execute('fork', input),
+  return Object.freeze({ list, transcriptScope, currentHistoryScopes, resolveHistoryScope, readTranscriptPage, create: input => execute('create', input), send: input => execute('send', input), fork: input => execute('fork', input),
     closeIdle: input => execute('closeIdle', input), resume: input => execute('resume', input),
     inspectAction: actionId => {
       uuid(actionId); const row = state.actions.find(value => value.actionId === actionId);
       return row ? { actionId: row.actionId, kind: row.kind, conversationId: row.conversationId, state: row.state,
-        ownerHeld: row.ownerHeld === true, ...(row.reasonCode ? { reasonCode: row.reasonCode } : {}) } : undefined;
+        ownerHeld: row.ownerHeld === true, ...(row.reasonCode ? { reasonCode: row.reasonCode } : {}), ...(row.nativeTurnNotStarted ? { nativeTurnNotStarted: true } : {}) } : undefined;
     },
     currentOperation: () => operations.size ? 'Native persistent conversation' : [...live.values()].some(worker => worker.currentOperation()) ? 'Awaiting persistent Native ownership settlement' : null,
     destroy });

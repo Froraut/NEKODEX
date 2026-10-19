@@ -1,4 +1,5 @@
 import { TranscriptHistoryCapture, validatedTranscriptMetadata } from "./transcript";
+import { OwnedConversationHistoryCapture, validatedOwnedConversationMetadata } from "./owned-conversation";
 import { CanonicalHistoryCapture } from "./canonical";
 import { OwnedNativeHistoryCapture, validatedOwnedNativeMetadata } from "./owned-native";
 import { Database } from "bun:sqlite";
@@ -7,7 +8,7 @@ import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import type {
   CaptureRecord, HistoryMarkdownExport, HistoryMessage, HistoryPage, HistoryPageOptions,
-  HistorySearch, HistoryStatus, HistoryThread, MessageIdentity, OwnedNativeHistoryScope, RecordResult, ThreadIdentity,
+  HistorySearch, HistoryStatus, HistoryThread, MessageIdentity, OwnedNativeHistoryScope, OwnedConversationHistoryScope, RecordResult, ThreadIdentity,
 } from "./types";
 
 const owners = new Set<string>();
@@ -37,10 +38,11 @@ function validate(record: CaptureRecord) {
   integer(record.timestamp, "timestamp");
   for (const field of ["turnId", "compactionId"] as const) if (record[field] !== null) identifier(record[field], field);
   if (!["user", "assistant"].includes(record.role)) throw new Error("Only user/assistant message text is accepted");
-  if (!["human", "assistant", "agent", "unknown"].includes(record.author)) throw new Error("Explicit author required");
+  if (!["human", "assistant", "agent", "automatic-host", "unknown"].includes(record.author)) throw new Error("Explicit author required");
   if (!["responses", "native", "chatgpt-web", "manual-import", "unknown"].includes(record.source)) throw new Error("Explicit source required");
   if (!["caller-validated", "unknown", "known-pattern-filtered"].includes(record.sensitivity)) throw new Error("Explicit sensitivity state required");
-  if (!["user-assistant-text-v1","canonical-thread-text-v1","owned-native-final-summary-v1","canonical-events-v1"].includes(record.capturePolicy)) throw new Error("Explicit capture policy required");
+  if (!["user-assistant-text-v1","canonical-thread-text-v1","owned-native-final-summary-v1","canonical-events-v1","owned-conversation-text-v1"].includes(record.capturePolicy)) throw new Error("Explicit capture policy required");
+  if (record.capturePolicy !== "owned-conversation-text-v1" && record.ownedConversation !== undefined) throw new Error("Other capture policies cannot claim owned conversation provenance");
   if(record.capturePolicy === "canonical-thread-text-v1") {
     const canonical=record.canonical;
     if(record.sensitivity!=="known-pattern-filtered"||record.source!=="native"||record.author!=="unknown"||record.coverage!=="partial"||!canonical||canonical.policyVersion!=="known-pattern-filter-v1"||!/^[a-f0-9]{64}$/.test(canonical.fingerprint)||!["native","observed-at"].includes(canonical.timestampSource)||!["complete","partial"].includes(canonical.sourceCoverage))throw new Error("Invalid canonical text policy");
@@ -58,6 +60,14 @@ function validate(record: CaptureRecord) {
       || record.clientId !== `canonical-events:${transcript.scope.sourceId}:${digest(JSON.stringify(transcript.scope)).slice(0,16)}`
       || record.messageId !== transcript.provenance.messageId || record.threadId !== transcript.provenance.threadId || record.turnId !== transcript.provenance.turnId
       || record.timestamp !== transcript.provenance.timestampMs || transcript.exclusionReason && record.text !== "" || !transcript.exclusionReason && transcript.originalBytes !== bytes(record.text)) throw new Error("Invalid canonical event text policy");
+  } else if(record.capturePolicy === "owned-conversation-text-v1") {
+    const owned = validatedOwnedConversationMetadata(record.ownedConversation!);
+    const author = owned.attribution === "direct-human" ? "human" : owned.attribution;
+    if (record.sensitivity !== "known-pattern-filtered" || record.source !== "native" || record.author !== author || record.canonical !== undefined || record.ownedNative !== undefined || record.transcript !== undefined || record.compactionId !== null
+      || record.clientId !== `owned-conversation:${digest(JSON.stringify(owned.scope))}` || record.threadId !== owned.scope.threadId || record.threadId !== owned.provenance.threadId || record.messageId !== owned.provenance.messageId || record.turnId !== owned.provenance.turnId || record.timestamp !== owned.provenance.timestampMs
+      || owned.scope.serverGeneration !== owned.provenance.serverGeneration || owned.scope.workerBindingId !== owned.provenance.workerBindingId || owned.scope.workerGeneration !== owned.provenance.workerGeneration
+      || record.role === "assistant" && owned.attribution !== "assistant" || record.role === "user" && owned.attribution === "assistant"
+      || owned.exclusionReason && record.text !== "" || !owned.exclusionReason && owned.originalBytes !== bytes(record.text)) throw new Error("Invalid owned conversation text policy");
   } else if(record.sensitivity==="known-pattern-filtered"||record.canonical!==undefined||record.ownedNative!==undefined||record.transcript!==undefined)throw new Error("Manual records cannot claim Native filtering");
   if (!["complete", "partial"].includes(record.coverage) || typeof record.text !== "string") throw new Error("Invalid text coverage");
   if (record.coverageReason !== undefined && (typeof record.coverageReason !== "string" || bytes(record.coverageReason) > 1024)) throw new Error("Invalid coverageReason");
@@ -75,6 +85,14 @@ function message(row: StoredRow): HistoryMessage {
   const record = JSON.parse(row.record_json) as HistoryMessage;
   return { ...record, originalBytes: row.original_bytes, link: historyMessageLink(record) };
 }
+// Native completion timestamps may be identical for user/commentary/final.
+// Preserve the producer's first observation position, including after edits;
+// do not fabricate timestamps or reorder older items by their latest edit.
+function threadOrder(clientId: string) {
+  return clientId.startsWith("owned-conversation:")
+    ? "(SELECT MIN(CAST(json_extract(initial.record_json,'$.ownedConversation.cursor') AS INTEGER)) FROM revisions initial WHERE initial.message_key=m.message_key),m.timestamp,m.message_key"
+    : "m.timestamp,m.message_key";
+}
 
 /** Synchronous single-owner writer. Composition roots own and close one instance.
  * No transcript discovery, background jobs, automatic retention/purge, or network. */
@@ -83,12 +101,13 @@ export class ConversationHistoryStore {
   readonly canonical: CanonicalHistoryCapture;
   readonly ownedNative: OwnedNativeHistoryCapture;
   readonly transcript: TranscriptHistoryCapture;
+  readonly ownedConversation: OwnedConversationHistoryCapture;
   private db: Database;
   private closed = false;
   private maxMessageBytes: number;
   private maxStoredBytes: number;
 
-  constructor(options: { coreHome: string; maxMessageBytes?: number; maxStoredBytes?: number; trustedCurrentScope?: (taskId: string) => OwnedNativeHistoryScope | null }) {
+  constructor(options: { coreHome: string; maxMessageBytes?: number; maxStoredBytes?: number; trustedCurrentScope?: (taskId: string) => OwnedNativeHistoryScope | null; trustedCurrentConversationScope?: (conversationId: string) => OwnedConversationHistoryScope | null }) {
     if (!options.coreHome?.trim()) throw new Error("Explicit coreHome required");
     this.maxMessageBytes = integer(options.maxMessageBytes ?? DEFAULT_MESSAGE_BYTES, "maxMessageBytes", 1);
     this.maxStoredBytes = integer(options.maxStoredBytes ?? DEFAULT_STORED_BYTES, "maxStoredBytes", 1);
@@ -119,13 +138,14 @@ export class ConversationHistoryStore {
       this.ownedNative = new OwnedNativeHistoryCapture({db:this.db,record:record=>this.record(record),getMessage:identity=>this.getMessage(identity),status:()=>this.status(),trustedCurrentScope:options.trustedCurrentScope});
       this.transcript = new TranscriptHistoryCapture({ db:this.db, record:record=>this.record(record), getMessage:identity=>this.getMessage(identity), deleteMessage:identity=>this.deleteMessage(identity), status:()=>this.status(), trustedCurrentScope:options.trustedCurrentScope });
       this.ownedNative.transcript = this.transcript;
+      this.ownedConversation = new OwnedConversationHistoryCapture({db:this.db,record:record=>this.record(record),getMessage:identity=>this.getMessage(identity),deleteMessage:identity=>this.remove("message_key=?",[key(identity)],false),status:()=>this.status(),trustedCurrentScope:options.trustedCurrentConversationScope});
       owners.add(this.path);
     } catch (error) { this.db.close(); throw error; }
   }
   private assertOpen() { if (this.closed) throw new Error("Conversation history is closed"); }
   close() {
     if (this.closed) return;
-    this.transcript.close(); this.db.close(); this.closed = true; owners.delete(this.path);
+    this.transcript.close(); this.ownedConversation.close(); this.db.close(); this.closed = true; owners.delete(this.path);
   }
   status(): HistoryStatus {
     this.assertOpen();
@@ -152,10 +172,10 @@ export class ConversationHistoryStore {
     const canonical: CaptureRecord = { clientId: record.clientId, threadId: record.threadId, messageId: record.messageId,
       revisionId: record.revisionId, revisionNumber: record.revisionNumber, turnId: record.turnId, compactionId: record.compactionId,
       role: record.role, author: record.author, source: record.source, text: record.text, timestamp: record.timestamp,
-      coverage: record.coverage, ...(record.coverageReason === undefined ? {} : { coverageReason: record.coverageReason }), capturePolicy: record.capturePolicy, sensitivity: record.sensitivity, ...(record.canonical?{canonical:record.canonical}:{}), ...(record.ownedNative?{ownedNative:validatedOwnedNativeMetadata(record.ownedNative)}:{}), ...(record.transcript?{transcript:validatedTranscriptMetadata(record.transcript)}:{}) };
+      coverage: record.coverage, ...(record.coverageReason === undefined ? {} : { coverageReason: record.coverageReason }), capturePolicy: record.capturePolicy, sensitivity: record.sensitivity, ...(record.canonical?{canonical:record.canonical}:{}), ...(record.ownedNative?{ownedNative:validatedOwnedNativeMetadata(record.ownedNative)}:{}), ...(record.transcript?{transcript:validatedTranscriptMetadata(record.transcript)}:{}), ...(record.ownedConversation?{ownedConversation:validatedOwnedConversationMetadata(record.ownedConversation)}:{}) };
     const messageKey = key(record);
-    const originalBytes = record.canonical?.originalBytes ?? record.ownedNative?.originalBytes ?? record.transcript?.originalBytes ?? bytes(record.text);
-    const rejectionReason = record.canonical?.exclusionReason ?? record.ownedNative?.exclusionReason ?? record.transcript?.exclusionReason ?? (record.sensitivity === "unknown" ? "sensitivity-unverified" : originalBytes > this.maxMessageBytes ? "message-size-limit" : null);
+    const originalBytes = record.canonical?.originalBytes ?? record.ownedNative?.originalBytes ?? record.transcript?.originalBytes ?? record.ownedConversation?.originalBytes ?? bytes(record.text);
+    const rejectionReason = record.canonical?.exclusionReason ?? record.ownedNative?.exclusionReason ?? record.transcript?.exclusionReason ?? record.ownedConversation?.exclusionReason ?? (record.sensitivity === "unknown" ? "sensitivity-unverified" : originalBytes > this.maxMessageBytes ? "message-size-limit" : null);
     const rejected = rejectionReason !== null;
     const stored = rejected ? { ...canonical, text: null, coverage: "rejected", coverageReason: rejectionReason } : canonical;
     const recordJson = JSON.stringify(stored);
@@ -204,7 +224,7 @@ export class ConversationHistoryStore {
   getThread(options: ThreadIdentity & HistoryPageOptions): HistoryPage<HistoryMessage> {
     this.assertOpen(); validateIdentity(options); const { limit, offset } = pagination(options, 200);
     const total = (this.db.query("SELECT COUNT(*) AS n FROM messages WHERE client_id=? AND thread_id=?").get(options.clientId, options.threadId) as { n: number }).n;
-    const rows = this.db.query("SELECT r.record_json,r.original_bytes FROM messages m JOIN revisions r ON r.id=m.revision_row WHERE m.client_id=? AND m.thread_id=? ORDER BY m.timestamp,m.message_key LIMIT ? OFFSET ?").all(options.clientId, options.threadId, limit, offset) as StoredRow[];
+    const rows = this.db.query(`SELECT r.record_json,r.original_bytes FROM messages m JOIN revisions r ON r.id=m.revision_row WHERE m.client_id=? AND m.thread_id=? ORDER BY ${threadOrder(options.clientId)} LIMIT ? OFFSET ?`).all(options.clientId, options.threadId, limit, offset) as StoredRow[];
     return this.page(rows.map(message), total, limit, offset);
   }
   getMessage(identity: MessageIdentity & { revisionId?: string }): HistoryMessage | null {
@@ -238,11 +258,12 @@ export class ConversationHistoryStore {
   deleteThread(identity: ThreadIdentity): { deletedMessages: number } {
     validateIdentity(identity); return this.remove("client_id=? AND thread_id=?", [identity.clientId, identity.threadId]);
   }
-  private remove(where: string, args: string[]): { deletedMessages: number } {
+  private remove(where: string, args: string[], localDeletion = true): { deletedMessages: number } {
     this.assertOpen();
     return this.db.transaction(() => {
       const rows = this.db.query(`SELECT message_key FROM messages WHERE ${where}`).all(...args) as Array<{ message_key: string }>;
       for (const row of rows) {
+        if (localDeletion) this.ownedConversation.markLocallyDeleted(row.message_key);
         const removed = this.db.query("SELECT COALESCE(SUM(stored_bytes),0) AS bytes FROM revisions WHERE message_key=?").get(row.message_key) as {bytes:number};
         this.db.query("UPDATE settings SET stored_bytes=stored_bytes-? WHERE id=1").run(removed.bytes);
         this.db.query("DELETE FROM message_search WHERE message_key=?").run(row.message_key);
@@ -268,13 +289,13 @@ export class ConversationHistoryStore {
     let records: Iterable<StoredRow>;
     if (exact) {
       total = exact.length;
-      records = this.db.query(`SELECT r.record_json,r.original_bytes FROM messages m JOIN revisions r ON r.message_key=m.message_key WHERE m.client_id=? AND m.thread_id=? AND (m.message_id,r.revision_id) IN (${exact.map(() => "(?,?)").join(",")}) ORDER BY m.timestamp,m.message_key,r.revision_number`).iterate(options.clientId, options.threadId, ...exact.flatMap(item => [item.messageId,item.revisionId])) as Iterable<StoredRow>;
+      records = this.db.query(`SELECT r.record_json,r.original_bytes FROM messages m JOIN revisions r ON r.message_key=m.message_key WHERE m.client_id=? AND m.thread_id=? AND (m.message_id,r.revision_id) IN (${exact.map(() => "(?,?)").join(",")}) ORDER BY ${threadOrder(options.clientId)},r.revision_number`).iterate(options.clientId, options.threadId, ...exact.flatMap(item => [item.messageId,item.revisionId])) as Iterable<StoredRow>;
     } else if (selected) {
       const ids = [...selected]; total = selected.size;
-      records = this.db.query(`SELECT r.record_json,r.original_bytes FROM messages m JOIN revisions r ON r.id=m.revision_row WHERE m.client_id=? AND m.thread_id=? AND m.message_id IN (${ids.map(() => "?").join(",")}) ORDER BY m.timestamp,m.message_key`).iterate(options.clientId, options.threadId, ...ids) as Iterable<StoredRow>;
+      records = this.db.query(`SELECT r.record_json,r.original_bytes FROM messages m JOIN revisions r ON r.id=m.revision_row WHERE m.client_id=? AND m.thread_id=? AND m.message_id IN (${ids.map(() => "?").join(",")}) ORDER BY ${threadOrder(options.clientId)}`).iterate(options.clientId, options.threadId, ...ids) as Iterable<StoredRow>;
     } else {
       total = (this.db.query("SELECT COUNT(*) AS n FROM messages WHERE client_id=? AND thread_id=?").get(options.clientId,options.threadId) as {n:number}).n;
-      records = this.db.query("SELECT r.record_json,r.original_bytes FROM messages m JOIN revisions r ON r.id=m.revision_row WHERE m.client_id=? AND m.thread_id=? ORDER BY m.timestamp,m.message_key LIMIT ?").iterate(options.clientId,options.threadId,MAX_EXPORT_MESSAGES) as Iterable<StoredRow>;
+      records = this.db.query(`SELECT r.record_json,r.original_bytes FROM messages m JOIN revisions r ON r.id=m.revision_row WHERE m.client_id=? AND m.thread_id=? ORDER BY ${threadOrder(options.clientId)} LIMIT ?`).iterate(options.clientId,options.threadId,MAX_EXPORT_MESSAGES) as Iterable<StoredRow>;
     }
     const rows: HistoryMessage[] = [];
     let selectionBytes = 0;
@@ -287,13 +308,13 @@ export class ConversationHistoryStore {
     const hasMore = rows.length < total;
     const partial = true; // Full transcript coverage cannot be inferred from recorded rows.
     const lines = ["# NEKODEX conversation text export", "", `Client: ${JSON.stringify(options.clientId)}`, `Thread: ${JSON.stringify(options.threadId)}`, "",
-      "Scope: explicitly retained user/assistant text. Manual selections are caller-checked. Native canonical capture excludes structured machine items and known sensitive/generated patterns; owned Native summary capture stores explicitly consented future final summaries. Canonical event capture uses a separate future-text consent and authenticated source revision; omitted earlier messages remain unknown. Unknown secrets may remain. The store does not certify exhaustive redaction.",
+      "Scope: explicitly retained user/assistant text. Manual selections are caller-checked. Native canonical capture excludes structured machine items and known sensitive/generated patterns; owned Native summary capture stores explicitly consented future final summaries. Owned conversation text uses separate future-text consent and exact authenticated conversation/worker scope, with direct-human/automatic-host/assistant attribution. Its cursors and revision numbers describe local observations; native item/turn IDs and timestamps retain their source identity. Omitted earlier, filtered, inactive or missing messages remain outside coverage. Unknown secrets may remain. The store does not certify exhaustive redaction.",
       "PARTIAL CORPUS — transcript coverage is unknown. Recording may have been disabled or messages may not have reached the capture boundary.",
       `Selection: ${exact ? "selected exact revisions" : selected ? "selected messages" : "thread latest messages"}; exported ${rows.length}/${total}; incomplete text ${incompleteMessages}${hasMore ? "; PARTIAL: some selected messages are unavailable or the 1000-message export limit was reached" : ""}.`, ""];
     for (const row of rows) lines.push(`## ${row.role} — ${JSON.stringify(row.messageId)}`, "", `[Open exact message revision](${row.link})`, "",
       `Author: ${row.author}; source: ${row.source}; revision: ${JSON.stringify(row.revisionId)} (${row.revisionNumber}); turn: ${JSON.stringify(row.turnId)}; compaction: ${JSON.stringify(row.compactionId)}.`,
       `Text coverage: ${row.coverage}${row.coverageReason ? ` (${row.coverageReason})` : ""}.`,
-      ...(row.ownedNative ? [`Owned Native provenance: ${JSON.stringify(row.ownedNative)}.`] : []), ...(row.transcript ? [`Canonical event provenance: ${JSON.stringify(row.transcript)}.`] : []), "", row.text ?? `[Text rejected: ${row.originalBytes} UTF-8 bytes; ${row.coverageReason}.]`, "");
+      ...(row.ownedNative ? [`Owned Native provenance: ${JSON.stringify(row.ownedNative)}.`] : []), ...(row.transcript ? [`Canonical event provenance: ${JSON.stringify(row.transcript)}.`] : []), ...(row.ownedConversation ? [`Owned conversation provenance (observation positions are local): ${JSON.stringify(row.ownedConversation)}.`] : []), "", row.text ?? `[Text rejected: ${row.originalBytes} UTF-8 bytes; ${row.coverageReason}.]`, "");
     const markdown = lines.join("\n");
     if (bytes(markdown) > MAX_EXPORT_BYTES) throw new Error("Export exceeds 8 MiB; select fewer messages");
     return { markdown, exportedMessages: rows.length, totalMessages: total, incompleteMessages, partial, hasMore };

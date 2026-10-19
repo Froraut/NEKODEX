@@ -9,6 +9,7 @@ import { NativeAccountsPanel } from './NativeAccountsPanel';
 import { OwnedNativeHistoryPanel } from './OwnedNativeHistoryPanel';
 import { NativeAttachmentsPanel, type NativeSelectedAttachment } from './NativeAttachmentsPanel';
 import { AgentLoopFileWatcher } from './AgentLoopFileWatcher';
+import { AgentLoopExternalProducer } from './AgentLoopExternalProducer';
 
 const lines = (text: string) => text.split('\n').map(value => value.trim()).filter(Boolean);
 const requirementRows = (text: string) => lines(text).map((value, index) => ({ id: `r${index + 1}`, text: value }));
@@ -463,6 +464,9 @@ export function AgentModeSurface({ language, api, disabled = false }: {
       <div className="agent-mode-detail" aria-busy={pending === 'get' || undefined}>
         {api.loopFileWatcherRequest ? <AgentLoopFileWatcher task={task ?? null} projects={workspaceRoots.map(root => ({ id: root.id, label: root.name }))}
           request={api.loopFileWatcherRequest} language={language} disabled={locked}
+          observationKey={JSON.stringify([task?.id, task?.familyId, task?.generation, task?.revision, task?.status, task?.updatedAt, loopAuthority?.runId])} /> : null}
+        {api.loopProducerRequest ? <AgentLoopExternalProducer task={task ?? null} authority={loopAuthority}
+          request={api.loopProducerRequest} language={language} disabled={locked}
           observationKey={JSON.stringify([task?.id, task?.familyId, task?.generation, task?.revision, task?.status, task?.updatedAt, loopAuthority?.runId])} /> : null}
         {!task ? <p className="agent-mode-muted">{text.noSelection}</p> : <>
           <Panel>
