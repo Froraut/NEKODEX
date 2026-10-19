@@ -241,8 +241,11 @@ function createWorkspaceVmExportService({ home, workspaceService, readCandidate,
         }
         relative(name);
         const grant = workspaceService.resolveGrant(workspaceId), target = path.join(grant.path, name);
+        // macOS and Windows volumes are case-insensitive by default: `.SSH/config`
+        // reaches `.ssh/config`. Folding case can only refuse more destinations.
+        const fold = value => process.platform === 'darwin' || process.platform === 'win32' ? value.toLowerCase() : value;
         for (const forbidden of protectedPaths) {
-            const r = path.relative(forbidden, target);
+            const r = path.relative(fold(forbidden), fold(target));
             if (r === '' || !r.startsWith('..' + path.sep) && r !== '..' && !path.isAbsolute(r)) {
                 fail('protected-destination');
             }
@@ -615,17 +618,23 @@ function createWorkspaceVmExportService({ home, workspaceService, readCandidate,
 
     function list(task) {
         scope(task);
-        return {
-            reviews: entries('reviews').filter(UUID.test.bind(UUID)).map(readReview).filter(r => r.scope.taskId === task.taskId && r.scope.generation === task.generation).map(publicReview),
-            receipts: entries('actions').map(name => {
-                const dir = actionDir(name);
-                if (!fs.existsSync(path.join(dir, 'intent.json'))) {
-                    return null;
-                }
-                const i = read(path.join(dir, 'intent.json'));
-                return i.scope.taskId === task.taskId && i.scope.generation === task.generation ? { ...terminal(dir, i), request: structuredClone(i.request) } : null;
-            }).filter(Boolean)
-        };
+        const consumed = new Set(), receipts = [];
+        for (const name of entries('actions')) {
+            const dir = actionDir(name);
+            if (!fs.existsSync(path.join(dir, 'intent.json'))) {
+                continue;
+            }
+            const i = read(path.join(dir, 'intent.json'));
+            consumed.add(i.reviewId);
+            if (i.scope.taskId === task.taskId && i.scope.generation === task.generation) {
+                receipts.push({ ...terminal(dir, i), request: structuredClone(i.request) });
+            }
+        }
+        // A review bound by any accepted intent is refused as `review-consumed`;
+        // offering it to the model again would only produce a refused call.
+        const reviews = entries('reviews').filter(UUID.test.bind(UUID)).map(readReview)
+            .filter(r => r.scope.taskId === task.taskId && r.scope.generation === task.generation && !consumed.has(r.reviewId));
+        return { reviews: reviews.map(publicReview), receipts };
     }
 
     function hasRetainedState(workspaceId) {

@@ -3,6 +3,7 @@ import { basename, dirname, isAbsolute } from "node:path";
 import { z } from "zod";
 import { readRequestBodyBytes } from "../http-body";
 import type { ToolInvocation, ToolOutcome } from "../agent-tools/types";
+import type * as Contract from "./export-contract";
 
 const descriptorSchema = z.object({ version: z.literal(1), kind: z.literal("nekodex-agent-vm-export"), profile: z.enum(["production", "development"]),
   pid: z.number().int().positive(), instanceId: z.string().uuid(), createdAt: z.string().datetime(),
@@ -54,7 +55,7 @@ const reviewSchema = z.object({ reviewId: z.string().uuid(), reviewDigest: hash,
   scope: taskScope.extend({ familyId: z.string().uuid() }).strict(), workspaceId: z.string().uuid(), destinationPath: path,
   operationId: identity, candidatePath: path, candidateSha256: hash, bytes: z.number().int().min(0).max(16 * 1024 * 1024),
   expectedRevision: identity.nullable(), currentSha256: hash.nullable(), currentBytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-}).strict();
+}).strict() satisfies z.ZodType<Contract.VmExportReview>; // wire schema stays bound to the shared renderer/main contract
 const resultSchema = z.object({ receiptId: z.string().uuid().nullable().optional(), reviewId: z.string().uuid().nullable().optional(),
   reviewDigest: hash.optional(), workspaceId: z.string().uuid().optional(), path: path.optional(), revision: identity.optional(),
   sha256: hash.optional(), bytes: z.number().int().min(0).max(16 * 1024 * 1024).optional(), ownerHeld: z.boolean().optional(), reconciled: z.boolean().optional(),

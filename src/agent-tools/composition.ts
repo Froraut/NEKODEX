@@ -255,7 +255,7 @@ export class AgentToolsComposition {
   cancelVmOperation(scope: ToolScope, operationId: string, explicit: boolean) { return this.vm.provider.cancel(scope, operationId, explicit); }
   reconcileVmOperation(scope: ToolScope, operationId: string, explicit: boolean) { return this.vm.provider.reconcileOperation(scope, operationId, explicit); }
   readVmCandidate(scope: { taskId: string; generation: number }, operationId: string, path: string, sha256: string) {
-    return this.vm.provider.readCandidate(scope, operationId, path, sha256);
+    return this.vm.readCandidate(scope, operationId, path, sha256);
   }
   validateBegunVmExportInvocation(request: Omit<ToolInvocation, 'grantId'>): void {
     if (request.tool !== 'vm-shell/export') throw new Error('Unsupported VM export source'); this.scope(request.scope);
