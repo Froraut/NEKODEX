@@ -15,6 +15,8 @@ const networkGrant = z.object({ scope: networkScope, destinations: z.array(z.obj
 // arbitrary vm-network errors as proof that a grant was not admitted.
 const preGrantRefusals = new Set(["vm-network-destination-invalid", "vm-network-origin-invalid", "vm-network-limits-invalid", "vm-network-address-mismatch", "vm-network-url-invalid"]);
 class PublicNetworkGrantRefusal extends Error {}
+const pythonBuildBackendClosureMessage = 'Python source build has no backend wheels. Set backendPath to the selected in-tree backend (for example ["."]) or select its backend wheels, then select and review again.';
+class PublicPythonBuildReviewRefusal extends Error {}
 const requestBody = z.discriminatedUnion("action", [
   z.object({ action: z.literal("status") }).strict(),
   z.object({ action: z.literal("reviewServer"), input: z.unknown(), explicitUserAction: z.literal(true) }).strict(),
@@ -144,7 +146,13 @@ export function createAgentToolsRoutes(composition: AgentToolsComposition, path 
         }
         case 'revokeVmNetwork': value = await composition.revokeVmNetwork(body.scope, body.grantId, body.explicitUserAction); break;
         case 'pythonBuildStatus': value = composition.pythonBuildStatus(body.scope); break;
-        case 'reviewPythonBuild': value = await composition.reviewPythonBuild(body.actionId, body.selectionId, body.scope, body.explicitUserAction); break;
+        case 'reviewPythonBuild':
+          try { value = await composition.reviewPythonBuild(body.actionId, body.selectionId, body.scope, body.explicitUserAction); }
+          catch (error) {
+            if (error instanceof Error && error.message === 'python-build-backend-closure-missing') throw new PublicPythonBuildReviewRefusal(pythonBuildBackendClosureMessage);
+            throw error;
+          }
+          break;
         case 'preparePythonBuild': value = await composition.preparePythonBuild(body.actionId, body.reviewDigest, body.scope, body.explicitUserAction); break;
         case 'attachPythonBuild': value = composition.attachPythonBuild(body.actionId, body.scope, body.explicitUserAction); break;
         case 'revokePythonBuild': value = await composition.revokePythonBuild(body.scope, body.explicitUserAction); break;
@@ -173,7 +181,7 @@ export function createAgentToolsRoutes(composition: AgentToolsComposition, path 
     } catch (error) {
       const invalid = error instanceof z.ZodError;
       // Fixed domain strings are safe; arbitrary filesystem/SDK errors can contain private paths.
-      const message = error instanceof PublicNetworkGrantRefusal ? error.message : isPythonEnvironmentError(error) ? pythonEnvironmentPublicReason(error)
+      const message = error instanceof PublicNetworkGrantRefusal || error instanceof PublicPythonBuildReviewRefusal ? error.message : isPythonEnvironmentError(error) ? pythonEnvironmentPublicReason(error)
         : error instanceof Error && /^(?:Explicit |Current owned|Local tools admission|No exact |Pending Agent|Wait for owned|Configuration review|Reserved (?:builtin|browser|desktop|remote)|Installers,|Interpreter recipes|Pinned server|Tools host|Standalone tool|Tool |Selected skill|Skill root|Skill source|Managed skill|Exact reviewed managed|Official\/vendor plugin|Native OS|Invalid secret|Unsupported server)/.test(error.message) ? error.message : "The tools action could not be completed. Inspect the current saved configuration and receipt before retrying.";
       return Response.json({ ok: false, error: invalid ? "invalid_request" : "agent_tools_conflict", message }, { status: invalid ? 400 : 409 });
     }

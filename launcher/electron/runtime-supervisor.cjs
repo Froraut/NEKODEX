@@ -2242,9 +2242,9 @@ class RuntimeSupervisor {
         signal: controller.signal,
       });
       if (!response.ok) {
-        // Only these proven pre-insertion grant refusals may reach the UI.
+        // Only these exact action-bound public diagnostics may reach the UI.
         // Other tools errors, late failures and lost ACKs retain generic errors.
-        if (action === 'agent-tools' && options.body?.action === 'grantVmNetwork' && response.status === 409) {
+        if (action === 'agent-tools' && ['grantVmNetwork', 'reviewPythonBuild'].includes(options.body?.action) && response.status === 409) {
           const reader = response.body?.getReader();
           if (reader) {
             const chunks = []; let size = 0;
@@ -2256,7 +2256,9 @@ class RuntimeSupervisor {
                 chunks.push(Buffer.from(part.value));
               }
               const receipt = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-              const refusals = new Set(['vm-network-destination-invalid', 'vm-network-origin-invalid', 'vm-network-limits-invalid', 'vm-network-address-mismatch', 'vm-network-url-invalid']);
+              const refusals = options.body.action === 'reviewPythonBuild'
+                ? new Set(['Python source build has no backend wheels. Set backendPath to the selected in-tree backend (for example ["."]) or select its backend wheels, then select and review again.'])
+                : new Set(['vm-network-destination-invalid', 'vm-network-origin-invalid', 'vm-network-limits-invalid', 'vm-network-address-mismatch', 'vm-network-url-invalid']);
               if (receipt && Object.keys(receipt).sort().join(',') === 'error,message,ok' && receipt.ok === false
                 && receipt.error === 'agent_tools_conflict' && refusals.has(receipt.message)) return { ok: false, error: receipt.error, message: receipt.message };
             } catch { /* Malformed, oversized or generic errors cannot prove pre-admission refusal. */ }
