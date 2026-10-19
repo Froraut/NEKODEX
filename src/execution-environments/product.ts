@@ -45,7 +45,9 @@ export class VmProductController {
         if (this.restored.has(fingerprint) || !this.options.existingOutcome(request)) continue;
         // Original request + journal identity, then the real retained executor
         // receipt. No runtime preparation, snapshot, grant or execution replay.
-        const observed = await this.provider.reconcile?.(request);
+        // Status stays passive: a busy or locked owner (a live run, another
+        // profile) is retried on the next status instead of failing it.
+        const observed = await this.provider.reconcile?.(request).catch(() => undefined);
         if (observed && observed.state !== 'outcome_unknown') this.restored.add(fingerprint);
       }
     }

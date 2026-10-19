@@ -14,6 +14,11 @@ export function createVmExportTools(bridge: ReturnType<typeof createLauncherVmEx
         inputSchema: { type: 'object', oneOf: reviews.map(row => ({ type: 'object', properties: { reviewId: { const: row.reviewId }, reviewDigest: { const: row.reviewDigest } }, required: ['reviewId', 'reviewDigest'], additionalProperties: false })) } }];
     },
     execute: request => bridge.execute(request),
-    reconcile: request => bridge.receipt(request),
+    // The passive receipt cannot settle a publication whose written-node proof
+    // was retained before a lost response; only main's reconcile confirms it.
+    async reconcile(request) {
+      const receipt = await bridge.receipt(request);
+      return receipt?.state === 'outcome_unknown' ? await bridge.reconcile(request) ?? receipt : receipt;
+    },
   };
 }
