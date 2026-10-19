@@ -6,9 +6,21 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 const require = createRequire(import.meta.url);
 const { createRemoteWorkspaceService } = require('../launcher/electron/remote-workspace.cjs');
-const { REMOTE_GIT_HELPER } = require('../launcher/electron/remote-worktrees.cjs');
+const { REMOTE_GIT_HELPER, createRemoteWorktreeController } = require('../launcher/electron/remote-worktrees.cjs');
 const sftpServer = ['/usr/libexec/sftp-server', '/usr/lib/openssh/sftp-server', '/usr/lib/ssh/sftp-server'].find(existsSync);
 const providerTest = sftpServer ? test : test.skip;
+test('retained worktree recovery records remain readable offline without taking remote authority', async () => {
+  const records = [{ id: 'worktree', hostId: 'saved-host', hostFingerprint: 'effective-ssh-alias-snapshot', state: 'needs-inspection', path: '/retained/checkout' }];
+  let remoteCalls = 0;
+  const controller = createRemoteWorktreeController({
+    getHostScope(id: string) { if (id !== 'saved-host') throw Error('Unknown host'); return { hostId: id }; },
+    withHost() { remoteCalls++; throw Error('Offline'); }, getRecords: () => records,
+    storeRecords() { throw Error('Observation cannot write'); }, begin() { throw Error('Observation cannot admit'); }, finish() { throw Error('Observation cannot settle'); },
+  });
+  const retained = await controller.list('saved-host'); expect(retained).toEqual(records); retained[0].state = 'archived';
+  expect(records[0].state).toBe('needs-inspection'); expect(remoteCalls).toBe(0);
+  await expect(controller.list('unknown-host')).rejects.toThrow('Unknown host');
+});
 function fixture(extra: Record<string, unknown> = {}) {
   const parent = realpathSync(mkdtempSync(join(tmpdir(), 'nekodex-remote-git-'))); const root = join(parent, 'repo'); mkdirSync(root);
   const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } }).trim();
@@ -66,8 +78,10 @@ providerTest('lost remote creation response retains ownership intent, blocks rep
   try {
     const host = service.addHost(f.host); await service.connect(host.id); const capture = await service.worktreeInspect(host.id); const plan = await service.worktreePrepare(host.id, { captureId: capture.captureId, name: 'lost-response' });
     const uncertain = await service.worktreeCreate(host.id, plan.token); expect(existsSync(join(plan.record.path, 'note.txt'))).toBe(true); expect(uncertain.receipt.state).toBe('unknown'); expect(uncertain.worktree.state).toBe('needs-inspection');
-    await expect(service.worktreeCreate(host.id, plan.token)).rejects.toThrow('reconcile'); await service.destroy(); restarted = f.open(); await restarted.connect(host.id);
-    const retained = (await restarted.worktreeList(host.id))[0]; expect(retained.state).toBe('needs-inspection'); const observed = await restarted.worktreeInspectOwned(host.id, retained.id); expect(observed.state).toBe('ready');
+    await expect(service.worktreeCreate(host.id, plan.token)).rejects.toThrow('reconcile'); await service.destroy(); restarted = f.open();
+    const retained = (await restarted.worktreeList(host.id))[0]; expect(retained.state).toBe('needs-inspection');
+    expect(restarted.listReceipts(host.id).find((r: any) => r.id === uncertain.receipt.id).state).toBe('unknown');
+    await restarted.connect(host.id); const observed = await restarted.worktreeInspectOwned(host.id, retained.id); expect(observed.state).toBe('ready');
     restarted.reconcile(host.id, uncertain.receipt.id, 'Inspected the exact marker, common directory, branch and retained checkout.'); expect(restarted.listReceipts(host.id).find((r: any) => r.id === uncertain.receipt.id).state).toBe('reconciled');
     expect((await restarted.worktreeList(host.id))).toHaveLength(1); expect(f.git('worktree', 'list', '--porcelain').split('worktree ').length - 1).toBe(2);
   } finally { await service.destroy(); if (restarted) await restarted.destroy(); f.close(); }

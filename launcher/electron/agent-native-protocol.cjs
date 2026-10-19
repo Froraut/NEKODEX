@@ -15,7 +15,7 @@ function isAgentNativeHistorySource(value) {
 function freeze(value) { if (value && typeof value === 'object') { for (const item of Object.values(value)) freeze(item); Object.freeze(value); } return value; }
 // Fixed main-owned schema. Caller task text, skill files and renderer cannot select a different schema.
 const AGENT_NATIVE_OUTPUT_SCHEMA = freeze({ type: 'object', properties: {
-  protocol: { type: 'string', enum: [AGENT_NATIVE_PROTOCOL] }, kind: { type: 'string', enum: ['tool_request', 'final'] },
+  protocol: { type: 'string', enum: [AGENT_NATIVE_PROTOCOL] }, kind: { type: 'string', enum: ['tool_request', 'final', 'awaiting_input'] },
   requestId: { type: ['string', 'null'] }, toolId: { type: ['string', 'null'] }, argumentsJson: { type: ['string', 'null'] }, summary: { type: ['string', 'null'] },
 }, required: ['protocol', 'kind', 'requestId', 'toolId', 'argumentsJson', 'summary'], additionalProperties: false });
 const AGENT_NATIVE_OUTPUT_SCHEMA_HASH = createHash('sha256').update(JSON.stringify(AGENT_NATIVE_OUTPUT_SCHEMA)).digest('hex');

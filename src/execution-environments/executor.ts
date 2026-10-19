@@ -2,13 +2,14 @@ import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:chil
 import { createHash, randomBytes } from 'node:crypto';
 import { lstatSync, mkdirSync, openSync, closeSync, readSync, readFileSync, realpathSync, fstatSync } from 'node:fs';
 import { join } from 'node:path';
+import { productionVmRuntimePaths, resolveProductionVmOrigin, validateProductionVmRuntimeManifest, VM_APP_IDENTIFIER, VM_BUNDLE_FILES, VM_HELPER_IDENTIFIER, VM_PUBLISHER_TEAM_ID, type ProductionVmOriginPins, type ProductionVmRuntimePins } from './production-runtime';
 import { base64, checkedScope, isActionId, isSha256, keys, record, sha256, validateVmInput, VM_LIMITS, VM_PROTOCOL, VmGuestCapture, VmJsonLines, vmAssert,
   type VmFile, type VmScope, type VmStopReason } from './protocol';
 import { createPrivateFile, readPrivate, syncDirectory, VmJobStore, vmProcessIdentity, type VmJobRecord } from './storage';
 
 export interface VmRuntimeSelection { helperPath: string; helperSha256: string; helperManifestPath: string; helperManifestSha256: string;
-  kernelPath: string; kernelSha256: string; initrdPath: string; initrdSha256: string; guestManifestPath: string; guestManifestSha256: string }
-export interface AdmittedVmRuntime { readonly kind: 'development-linux-vm'; readonly runtimeDigest: string }
+  kernelPath: string; kernelSha256: string; initrdPath: string; initrdSha256: string; guestManifestPath: string; guestManifestSha256: string; production?: ProductionVmRuntimePins }
+export interface AdmittedVmRuntime { readonly kind: 'development-linux-vm' | 'production-linux-vm'; readonly runtimeDigest: string }
 interface Pin { path: string; sha256: string; dev: bigint; ino: bigint; size: bigint; mtimeNs: bigint; ctimeNs: bigint; mode: bigint }
 const runtimes = new WeakMap<AdmittedVmRuntime, { selection: VmRuntimeSelection; pins: Pin[] }>();
 function artifact(path: string, expected: string, max: number): Pin {
@@ -27,6 +28,22 @@ function artifact(path: string, expected: string, max: number): Pin {
   vmAssert(['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs', 'mode'].every(k => after[k as keyof typeof after] === before[k as keyof typeof before]), 'vm-artifact-changed');
   return { path, sha256: expected, dev: before.dev, ino: before.ino, size: before.size, mtimeNs: before.mtimeNs, ctimeNs: before.ctimeNs, mode: before.mode };
 }
+function productionOriginArtifactPins(origin: ProductionVmOriginPins): Pin[] {
+  const files: [string, string, number][] = [
+    [origin.runtimeEntryPath, origin.entrySha256, 64 * 1024 * 1024],
+    [origin.bundledEntryPath, origin.entrySha256, 64 * 1024 * 1024],
+    [origin.runtimeExecutablePath, origin.executableSha256, 256 * 1024 * 1024],
+    [origin.bundledExecutablePath, origin.executableSha256, 256 * 1024 * 1024],
+    [origin.runtimeManifestPath, origin.manifestSha256, 16 * 1024 * 1024],
+    [origin.bundledManifestPath, origin.manifestSha256, 16 * 1024 * 1024],
+  ];
+  return [...new Map(files.map(file => [file[0], file])).values()].map(([path, hash, max]) => artifact(path, hash, max));
+}
+/** Verifies only the copied execution identity, without granting a runtime brand
+ * or launching signature tools/helpers. Admission uses these same file pins. */
+export function verifyProductionVmOriginFiles(origin: ProductionVmOriginPins): void {
+  productionOriginArtifactPins(origin);
+}
 function assertRuntime(runtime: AdmittedVmRuntime): VmRuntimeSelection {
   const entry = runtimes.get(runtime); vmAssert(entry, 'vm-runtime-not-admitted');
   for (const pin of entry.pins) {
@@ -40,33 +57,85 @@ function assertRuntime(runtime: AdmittedVmRuntime): VmRuntimeSelection {
  * model descriptor or renderer result. No helper/process is started. */
 export function vmRuntimeProtectedPaths(runtime: AdmittedVmRuntime): readonly string[] {
   const selection = assertRuntime(runtime);
-  return Object.freeze([selection.helperPath, selection.helperManifestPath, selection.kernelPath, selection.initrdPath, selection.guestManifestPath]);
+  return Object.freeze([selection.helperPath, selection.helperManifestPath, selection.kernelPath, selection.initrdPath, selection.guestManifestPath,
+    ...(selection.production ? [selection.production.runtimeManifestPath, selection.production.appBundlePath,
+      ...(selection.production.origin ? [selection.production.origin.runtimeEntryPath, selection.production.origin.runtimeExecutablePath, selection.production.origin.runtimeManifestPath] : [])] : [])]);
 }
 /** Explicit development preparation only. Not called by discovery/status; no VM is booted. */
 export function admitDevelopmentVmRuntime(selection: VmRuntimeSelection): AdmittedVmRuntime {
+  vmAssert(!selection.production, 'vm-development-selection-required');
+  return admitVmRuntime(selection);
+}
+
+/** Explicit fixed-bundle preparation, sharing the same private runtime brand and
+ * physical lifecycle as development. No launch or automatic fallback occurs. */
+export function admitVmRuntime(original: VmRuntimeSelection): AdmittedVmRuntime {
+  const selection: VmRuntimeSelection = { ...original, ...(original.production ? { production: Object.freeze({ ...original.production, ...(original.production.origin ? { origin: Object.freeze({ ...original.production.origin }) } : {}) }) } : {}) };
   vmAssert(process.platform === 'darwin' && process.arch === 'arm64', 'vm-platform-unavailable');
   const limits = { helper: 32 * 1024 * 1024, manifest: 2 * 1024 * 1024, kernel: 128 * 1024 * 1024, initrd: 512 * 1024 * 1024 };
+  if (selection.production) {
+    const p = selection.production, paths = productionVmRuntimePaths(join(p.appBundlePath, 'Contents/Resources/runtime/app/cli.js'));
+    vmAssert(paths && [
+      [selection.helperPath, VM_BUNDLE_FILES.helper], [selection.helperManifestPath, VM_BUNDLE_FILES.helperManifest],
+      [selection.guestManifestPath, VM_BUNDLE_FILES.guestManifest], [selection.kernelPath, VM_BUNDLE_FILES.kernel],
+      [selection.initrdPath, VM_BUNDLE_FILES.initrd], [p.runtimeManifestPath, VM_BUNDLE_FILES.manifest],
+    ].every(([path, name]) => path === join(paths.directory, name!)), 'vm-production-layout-invalid');
+    vmAssert(realpathSync(p.appBundlePath) === p.appBundlePath, 'vm-production-app-path-invalid');
+    // The app seal authenticates the fixed manifests and image provenance. A
+    // signed helper alone cannot authenticate an attacker-selected Linux image.
+    verifyPublisherSignature(p.appBundlePath, VM_APP_IDENTIFIER, true);
+    const origin = p.origin;
+    vmAssert(origin && origin.runtimeExecutablePath === process.execPath && process.argv[1] === origin.runtimeEntryPath, 'vm-production-running-origin-required');
+    const resolved = resolveProductionVmOrigin(origin.runtimeEntryPath, process.execPath, JSON.stringify({ version: 1,
+      bundledEntryPath: origin.bundledEntryPath, runtimeEntryPath: origin.runtimeEntryPath, runtimeExecutablePath: origin.runtimeExecutablePath,
+      runtimeManifestSha256: origin.manifestSha256 }));
+    vmAssert(resolved && resolved.appBundlePath === p.appBundlePath && JSON.stringify(resolved.origin) === JSON.stringify(origin), 'vm-production-origin-changed');
+  }
   const pins = [artifact(selection.helperPath, selection.helperSha256, limits.helper), artifact(selection.helperManifestPath, selection.helperManifestSha256, limits.manifest),
     artifact(selection.kernelPath, selection.kernelSha256, limits.kernel), artifact(selection.initrdPath, selection.initrdSha256, limits.initrd),
-    artifact(selection.guestManifestPath, selection.guestManifestSha256, limits.manifest)];
+    artifact(selection.guestManifestPath, selection.guestManifestSha256, limits.manifest),
+    ...(selection.production ? [artifact(selection.production.runtimeManifestPath, selection.production.runtimeManifestSha256, limits.manifest)] : []),
+    ...(selection.production?.origin ? productionOriginArtifactPins(selection.production.origin) : [])];
   // The caller selected and pinned both manifests; verify their directly executed closure too.
   const read = (path: string) => record(JSON.parse(readFileSync(path, 'utf8')));
   const helper = read(selection.helperManifestPath), guest = read(selection.guestManifestPath);
   vmAssert(helper.version === 1 && helper.protocol === VM_PROTOCOL && helper.provider === 'macos-virtualization' && helper.target === 'darwin-arm64'
-    && helper.development === true && helper.executableSha256 === selection.helperSha256 && isSha256(helper.sourceSha256) && isSha256(helper.entitlementsSha256)
+    && helper.development === !selection.production && helper.executableSha256 === selection.helperSha256 && isSha256(helper.sourceSha256) && isSha256(helper.entitlementsSha256)
     && helper.cpuCount === 2 && helper.memoryBytes === 2147483648 && helper.guestPort === 4041, 'vm-helper-manifest-invalid');
   vmAssert(guest.version === 1 && guest.protocol === VM_PROTOCOL && guest.architecture === 'arm64'
     && record(guest.kernel).sha256 === selection.kernelSha256 && record(guest.initrd).sha256 === selection.initrdSha256, 'vm-guest-manifest-invalid');
   const run = (args: string[], input?: string) => spawnSync('/usr/bin/codesign', args, { encoding: 'utf8', timeout: 15000, maxBuffer: 128 * 1024, ...(input ? { input } : {}) });
   const verify = run(['--verify', '--strict', selection.helperPath]); vmAssert(!verify.error && verify.status === 0, 'vm-helper-signature-invalid');
-  const signature = run(['-dvvv', selection.helperPath]); vmAssert(!signature.error && signature.status === 0 && signature.stderr.includes('Signature=adhoc')
-    && signature.stderr.includes('Identifier=com.nekodex.execution-vm-helper.dev\n'), 'vm-helper-development-signature-required');
+  if (selection.production) {
+    validateProductionVmRuntimeManifest(read(selection.production.runtimeManifestPath), readFileSync(selection.helperManifestPath), readFileSync(selection.guestManifestPath));
+    verifyPublisherSignature(selection.helperPath, VM_HELPER_IDENTIFIER, false);
+  } else {
+    const signature = run(['-dvvv', selection.helperPath]); vmAssert(!signature.error && signature.status === 0 && signature.stderr.includes('Signature=adhoc')
+      && signature.stderr.includes('Identifier=com.nekodex.execution-vm-helper.dev\n'), 'vm-helper-development-signature-required');
+  }
   const entitlements = run(['-d', '--entitlements', ':-', selection.helperPath]); vmAssert(!entitlements.error && entitlements.status === 0);
   const xml = entitlements.stdout;
   const plist = spawnSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', '--', '-'], { input: xml, encoding: 'utf8', maxBuffer: 128 * 1024, timeout: 15000 });
   vmAssert(!plist.error && plist.status === 0, 'vm-helper-entitlements-invalid'); const e = record(JSON.parse(plist.stdout)); keys(e, ['com.apple.security.virtualization']); vmAssert(e['com.apple.security.virtualization'] === true);
-  const admitted: AdmittedVmRuntime = Object.freeze({ kind: 'development-linux-vm', runtimeDigest: sha256(JSON.stringify(selection)) });
+  const admitted: AdmittedVmRuntime = Object.freeze({ kind: selection.production ? 'production-linux-vm' : 'development-linux-vm', runtimeDigest: sha256(JSON.stringify(selection)) });
   runtimes.set(admitted, { selection: { ...selection }, pins }); assertRuntime(admitted); return admitted;
+}
+/** Fixed Apple trust anchor and team/identifier requirement, in addition to
+ * signature verification. Environment-selected certificates never define trust. */
+export function assertVmPublisherDetails(details: string, identifier: string): void {
+  const lines = details.split('\n');
+  vmAssert(lines.includes(`Identifier=${identifier}`) && lines.includes(`TeamIdentifier=${VM_PUBLISHER_TEAM_ID}`)
+    && lines.some(line => /^Authority=Developer ID Application: .+ \(CNMWGJF2CG\)$/.test(line))
+    && lines.some(line => line.startsWith('Timestamp=') && line.length > 10) && !lines.includes('Signature=adhoc'), 'vm-publisher-signature-required');
+}
+function verifyPublisherSignature(path: string, identifier: string, deep: boolean): void {
+  const requirement = `anchor apple generic and identifier "${identifier}" and certificate leaf[subject.OU] = "${VM_PUBLISHER_TEAM_ID}"`;
+  const verified = spawnSync('/usr/bin/codesign', ['--verify', '--strict', ...(deep ? ['--deep'] : []), '-R', requirement, path],
+    { encoding: 'utf8', timeout: 15000, maxBuffer: 128 * 1024 });
+  vmAssert(!verified.error && verified.status === 0, 'vm-publisher-seal-invalid');
+  const signature = spawnSync('/usr/bin/codesign', ['--display', '--verbose=4', path], { encoding: 'utf8', timeout: 15000, maxBuffer: 128 * 1024 });
+  vmAssert(!signature.error && signature.status === 0, 'vm-publisher-signature-invalid');
+  assertVmPublisherDetails(signature.stderr, identifier);
 }
 export interface VmExecutionInput {
   actionId: string; scope: { taskId: string; generation: number; toolCallId: string }; runtime: AdmittedVmRuntime;

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { AgentModeRunner } from "./runner";
 import { AgentModeStore } from "./store";
+import { projectNativeSelectedAttachments } from "./native-images";
 import { activeTaskEvidence } from "./evidence";
 import { agentModelConfigured, agentModelAccepting, type AgentModelOption } from "./provider";
 import { nativeScopeOf, sameNativeScope, type AgentNativeScope } from "./native-protocol";
@@ -68,7 +69,14 @@ export class AgentModeRuntime {
   create(actionId: string, input: CreateAgentTask): AgentTask {
     if (!input.id) throw new Error("Stable task identity required");
     if (!agentModelConfigured(input, this.options.models())) throw new Error("Select a configured Agent model");
-    return this.store.command(input.id, actionId, "create", input, () => this.store.createTask(input)).result;
+    return this.store.command(input.id, actionId, "create", input, () => {
+      if (input.nativeAttachments !== undefined) {
+        const model = this.options.models().find(row => row.id === input.execution?.model && row.provider === "owned-native" && input.execution?.provider === "owned-native" && row.admissionId === input.execution.admissionId);
+        if (!model) throw new Error("Task selected attachments require Native execution");
+        projectNativeSelectedAttachments({ attachments: input.nativeAttachments, modelImageInput: model.imageInput === true });
+      }
+      return this.store.createTask(input);
+    }).result;
   }
   control(taskId: string, actionId: string, control: AgentControl, scope?: AgentActionScope): AgentTask {
     const command = this.store.command(taskId, actionId, "control", scope ? { control, scope } : control, () => { this.assertScope(taskId, scope); return this.runner.control(taskId, control); });
@@ -126,7 +134,10 @@ export class AgentModeRuntime {
     if (!command.duplicate) {
       if (input.automatic) this.rememberAutomaticRun(this.store.getTask(taskId));
       else this.automaticRuns.delete(taskId);
-      if (command.result) this.launch(command.result, input.automatic === true);
+      if (command.result) {
+        this.launch(command.result, input.automatic === true);
+        if (input.automatic) this.continueAutomatic(command.result);
+      }
     }
     return { task: this.store.getTask(taskId), dispatchId: command.result?.id, duplicate: command.duplicate };
   }
@@ -160,13 +171,26 @@ export class AgentModeRuntime {
     if (!this.hasAutomaticRun(task) || this.stopping || this.options.canStart?.() === false || this.options.canExecute?.(task) === false
       || !agentModelAccepting(task, this.options.models()) || task.generation !== dispatch.generation || task.revision !== dispatch.taskRevision || dispatch.ownerId !== this.runner.ownerId) return;
     if (task.mode === "loop" && task.status === "review_required") { this.advanceLoop(task.id); return; }
-    if (task.status !== "ready") return;
-    const input = { explicitUserAction: false, workerName: this.store.listWorkers(task.id).find(row => row.id === dispatch.workerId)?.name };
-    try {
-      const next = this.store.command(task.id, `auto:${dispatch.id}`, "auto_step", input, () => this.prepare(task.id, input));
-      if (!next.duplicate && next.result) this.launch(next.result, true);
-    } catch { this.pauseAtBound(task.id); }
+    if (!["ready", "running"].includes(task.status)) return;
+    // Fill only dependency-ready stages through the same durable sender. No worker
+    // can make a waiting/failed sibling eligible or exceed reserved offer slots.
+    for (let slot = 0; slot < task.bounds.maxConcurrent; slot++) {
+      const current = this.store.getTask(task.id);
+      if (!this.hasAutomaticRun(current) || !["ready", "running"].includes(current.status)) return;
+      const active = this.store.listDispatches(task.id).filter(row => ["admitted", "offered", "acked", "unknown"].includes(row.state));
+      if (active.length >= current.bounds.maxConcurrent) return;
+      const stage = current.stages.find(row => row.status === "pending" && !row.waitingFor && (row.dependsOn ?? []).every(key => current.stages.find(dependency => dependency.id === key)?.status === "completed"));
+      if (!stage) return;
+      if (current.turns + active.filter(row => row.state === "admitted").length >= current.bounds.maxTurns) { if (!active.length) this.pauseAtBound(task.id); return; }
+      const input = { explicitUserAction: false };
+      try {
+        const next = this.store.command(task.id, `auto:${dispatch.id}:${stage.id}`, "auto_step", input, () => this.prepare(task.id, input));
+        if (next.duplicate || !next.result) return;
+        this.launch(next.result, true);
+      } catch { this.pauseAtBound(task.id); return; }
+    }
   }
+
   /** Bounded local evidence helper; no extra, unmetered model call and no auto-send. */
   review(taskId: string, actionId: string, scope?: AgentActionScope): AgentTask {
     const task = this.store.getTask(taskId);
@@ -217,7 +241,7 @@ export class AgentModeRuntime {
     const task = this.store.recordToolOutcome(outcome);
     if (outcome.state === "outcome_unknown") this.automaticRuns.delete(task.id);
     // Only this live callback may continue a previously authorized run. Passive receipt reads and reconciliation never send.
-    if (outcome.state !== "outcome_unknown" && task.status === "ready" && this.hasAutomaticRun(task)) {
+    if (outcome.state !== "outcome_unknown" && ["ready", "running"].includes(task.status) && this.hasAutomaticRun(task)) {
       const source = this.store.listDispatches(task.id).find(row => row.state === "settled" && row.result?.continuation?.pending
         .some(call => call.toolCallId === outcome.scope.toolCallId && call.tool === outcome.tool)
         && row.generation === outcome.scope.generation && this.store.toolCallReceiptKey(row.id, outcome.scope.toolCallId) === outcome.idempotencyKey);
@@ -298,7 +322,7 @@ export class AgentModeRuntime {
     this.rememberAutomaticRun(next);
     try {
       const dispatch = this.prepare(taskId, { explicitUserAction: false });
-      if (dispatch) this.launch(dispatch, true);
+      if (dispatch) { this.launch(dispatch, true); this.continueAutomatic(dispatch); }
     } catch { this.pauseAtBound(taskId); }
   }
   verify(taskId: string, actionId: string, reviewId: string, scope?: AgentActionScope): AgentTask {

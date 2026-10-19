@@ -37,7 +37,7 @@ function validateEnvelope(value) {
 function compileAgentNativeOutputSchema(schema) {
   if (!plain(schema) || exactDigest(schema) !== AGENT_NATIVE_OUTPUT_SCHEMA_HASH) throw new Error('Native bridge accepts only its fixed output schema');
   return value => closedKeys(value, ['protocol', 'kind', 'requestId', 'toolId', 'argumentsJson', 'summary'])
-    && value.protocol === AGENT_NATIVE_PROTOCOL && ['tool_request', 'final'].includes(value.kind)
+    && value.protocol === AGENT_NATIVE_PROTOCOL && ['tool_request', 'final', 'awaiting_input'].includes(value.kind)
     && ['requestId', 'toolId', 'argumentsJson', 'summary'].every(key => value[key] === null || typeof value[key] === 'string');
 }
 const leafSchemaHash = digest(canonical(AGENT_NATIVE_OUTPUT_SCHEMA));

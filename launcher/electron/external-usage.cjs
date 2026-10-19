@@ -2,16 +2,12 @@
 // Explicit picker grants only. Never discover homes, credentials, or configurations.
 const fs = require('node:fs');
 const path = require('node:path');
-const { createHash, randomUUID } = require('node:crypto');
+const { randomUUID } = require('node:crypto');
+const { parseUsageLine, supportsUsageFilename, adapters, clients, normalizeUsage, hash, token, safeId, safeModel, plain } = require('./external-usage-formats.cjs');
 const { writePrivateFileAtomic } = require('./atomic-file.cjs');
 const LIMITS = Object.freeze({ sources: 12, files: 512, entries: 4096, depth: 8, batchBytes: 8 * 1024 * 1024,
   lineBytes: 256 * 1024, records: 20000, stateBytes: 24 * 1024 * 1024 });
-const hash = value => createHash('sha256').update(String(value)).digest('hex');
-const token = value => Number.isSafeInteger(value) && value >= 0 && value <= 1e12;
-const safeId = value => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,160}$/.test(value);
-const safeModel = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_./:-]{0,127}$/.test(value) && !value.includes('://') ? value : null;
 const scopes = ['external-only', 'may-overlap-nekodex', 'unknown'];
-const plain = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 const digestId = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 function fail(message) { throw new Error(message); }
 function fields(value, allowed) {
@@ -20,64 +16,13 @@ function fields(value, allowed) {
 }
 function validateSelection(value) {
   fields(value, ['client', 'accountPseudonym', 'scope', 'consent']);
-  if (!['codex', 'claude'].includes(value.client) || !scopes.includes(value.scope) || value.consent !== true
+  if (!clients.includes(value.client) || !scopes.includes(value.scope) || value.consent !== true
     || typeof value.accountPseudonym !== 'string' || !/^[A-Za-z0-9_-]{1,40}$/.test(value.accountPseudonym)) {
     fail('Choose a client, a local account pseudonym, a scope and metadata consent');
   }
   return value;
 }
-function validateCatalog(value) {
-  if (value === null) return null;
-  fields(value, ['version', 'effectiveDate', 'currency', 'models']);
-  if (!safeId(value.version) || !/^\d{4}-\d{2}-\d{2}$/.test(value.effectiveDate) || !Number.isFinite(Date.parse(value.effectiveDate))
-      || value.currency !== 'USD' || !Array.isArray(value.models) || value.models.length > 80) fail('Invalid dated USD price catalog');
-  const models = value.models.map(row => {
-    fields(row, ['model', 'priceModel', 'inputPerMillion', 'cachedInputPerMillion', 'cacheWritePerMillion', 'outputPerMillion']);
-    if (!safeModel(row.model) || !safeModel(row.priceModel)) fail('Use exact model IDs in the price catalog');
-    const result = { model: row.model, priceModel: row.priceModel };
-    for (const key of ['inputPerMillion', 'cachedInputPerMillion', 'cacheWritePerMillion', 'outputPerMillion']) {
-      if (row[key] !== null && (typeof row[key] !== 'number' || !Number.isFinite(row[key]) || row[key] < 0 || row[key] > 1e6)) fail('Prices must be nonnegative USD per million tokens, or null when unknown');
-      result[key] = row[key];
-    }
-    return result;
-  });
-  if (new Set(models.map(row => row.model)).size !== models.length) fail('Each recorded model needs exactly one explicit price mapping');
-  return { version: value.version, effectiveDate: value.effectiveDate, currency: 'USD', models };
-}
-function normalizeUsage(raw, client) {
-  if (!raw || !token(raw.input_tokens) || !token(raw.output_tokens)) return null;
-  const read = client === 'claude' ? raw.cache_read_input_tokens : raw.cached_input_tokens;
-  const write = client === 'claude' ? raw.cache_creation_input_tokens : raw.cache_write_input_tokens;
-  if ((read !== undefined && !token(read)) || (write !== undefined && !token(write))) return null;
-  // Missing cache detail is unknown, not zero. Claude documents input as uncached;
-  // Codex input includes cached input. Cache-write pricing is intentionally explicit.
-  const input = client === 'claude' ? raw.input_tokens + (read ?? 0) + (write ?? 0) : raw.input_tokens;
-  if (!token(input) || (read ?? 0) + (write ?? 0) > input) return null;
-  return { inputTokens: input, outputTokens: raw.output_tokens,
-    cachedInputTokens: read ?? null, cacheWriteTokens: write ?? null };
-}
-function estimateRecords(records, catalog) {
-  let amount = 0, unpricedTokens = 0, knownTokens = 0, unknownRecords = 0, pricedTokens = 0;
-  const mapping = new Map((catalog?.models ?? []).map(row => [row.model, row]));
-  for (const record of records) {
-    const usage = record.usage;
-    if (!usage) { unknownRecords++; continue; }
-    const total = usage.inputTokens + usage.outputTokens; knownTokens += total;
-    const price = mapping.get(record.model);
-    if (!price) { unpricedTokens += total; continue; }
-    const add = (count, rate) => { if (rate === null) unpricedTokens += count; else { amount += count * rate / 1e6; pricedTokens += count; } };
-    add(usage.outputTokens, price.outputPerMillion);
-    if (usage.cachedInputTokens === null || usage.cacheWriteTokens === null) unpricedTokens += usage.inputTokens;
-    else {
-      add(usage.inputTokens - usage.cachedInputTokens - usage.cacheWriteTokens, price.inputPerMillion);
-      add(usage.cachedInputTokens, price.cachedInputPerMillion); add(usage.cacheWriteTokens, price.cacheWritePerMillion);
-    }
-  }
-  return { kind: 'estimated-api-equivalent', amount: catalog && pricedTokens ? amount : null, currency: 'USD',
-    catalogVersion: catalog?.version ?? null, effectiveDate: catalog?.effectiveDate ?? null,
-    knownTokens, pricedTokens, unpricedTokens, unknownRecords,
-    complete: Boolean(catalog && !unpricedTokens && !unknownRecords && records.length) };
-}
+const { validateUsagePricingCatalog: validateCatalog, estimateUsageRecords: estimateRecords } = require('./usage-pricing.cjs');
 function ancestry(directory) {
   const nodes = [];
   for (let current = directory; ; current = path.dirname(current)) {
@@ -113,7 +58,7 @@ function createExternalUsageService({ statePath = null, pickDirectory } = {}) {
     const sourceIds = new Set(saved.sources.map(source => source.id));
     for (const [key, row] of Object.entries(saved.records)) {
       if (!digestId(key) || !plain(row) || row.eventId !== key || !sourceIds.has(row.sourceId)
-        || !['codex', 'claude'].includes(row.client) || !digestId(row.sessionId)
+        || !clients.includes(row.client) || !digestId(row.sessionId)
         || (row.turnId !== null && !digestId(row.turnId)) || (row.model !== null && !safeModel(row.model))
         || (row.clientVersion !== null && !safeId(row.clientVersion))
         || (row.usage !== null && (!plain(row.usage) || !token(row.usage.inputTokens) || !token(row.usage.outputTokens)
@@ -148,7 +93,7 @@ function createExternalUsageService({ statePath = null, pickDirectory } = {}) {
     const sources = state.sources.map(source => {
       const rows = rowsFor(source.id), reported = rows.filter(row => row.usage);
       return { id: source.id, client: source.client, accountPseudonym: source.accountPseudonym, scope: source.scope,
-        enabled: source.enabled, directoryName: path.basename(source.path), adapter: source.client === 'codex' ? 'codex-rollout-v1' : 'claude-transcript-v1',
+        enabled: source.enabled, directoryName: path.basename(source.path), adapter: adapters[source.client],
         clientVersions: [...new Set(rows.map(row => row.clientVersion).filter(Boolean))],
         records: rows.length, reportedRecords: reported.length, unknownRecords: rows.length - reported.length,
         inputTokens: reported.reduce((n, row) => n + row.usage.inputTokens, 0), outputTokens: reported.reduce((n, row) => n + row.usage.outputTokens, 0),
@@ -161,7 +106,7 @@ function createExternalUsageService({ statePath = null, pickDirectory } = {}) {
     return { schemaVersion: 1, sources, catalog: state.catalog, limits: LIMITS,
       aggregate: { scope: 'user-declared-external-only', excludedSources: sources.filter(source => source.scope !== 'external-only').length,
         ...estimateRecords(eligible, state.catalog) },
-      coverage: 'Selected JSONL roots only; token coverage, account identity and source scope are not provider verified. No NEKODEX receipt is added to these totals.' };
+      coverage: 'Selected supported JSONL/session JSON roots only; token coverage, account identity and source scope are not provider verified. No NEKODEX receipt is added to these totals.' };
   }
   async function exclusive(work) {
     if (busy) fail('An external usage operation is already running'); busy = true;
@@ -175,6 +120,7 @@ function createExternalUsageService({ statePath = null, pickDirectory } = {}) {
       if (typeof selected !== 'string' || !path.isAbsolute(selected)) fail('Native picker did not return an absolute directory');
       const real = fs.realpathSync(selected), nodes = ancestry(real);
       if (state.sources.some(source => source.path === real)) fail('This directory is already registered; edit its scope instead');
+      if (state.sources.some(source => source.client === selection.client && (real.startsWith(source.path + path.sep) || source.path.startsWith(real + path.sep)))) fail('Overlapping log roots for the same client are already registered; choose one root');
       if (state.sources.length >= LIMITS.sources) fail('Source limit reached');
       const next = structuredClone(state);
       next.sources.push({ id: randomUUID(), path: real, ancestry: nodes, client: selection.client,
@@ -198,7 +144,7 @@ function createExternalUsageService({ statePath = null, pickDirectory } = {}) {
           if (entry.isDirectory()) {
             if (directory.depth < LIMITS.depth) queue.push({ relative, depth: directory.depth + 1 });
             else warnings.add('depth-limit: choose a narrower log root');
-          } else if (entry.isFile() && entry.name.endsWith('.jsonl') && (source.client !== 'codex' || /^rollout-.*\.jsonl$/.test(entry.name))) {
+          } else if (entry.isFile() && supportsUsageFilename(source.client, entry.name)) {
             files.push(relative); if (files.length >= LIMITS.files) { warnings.add('file-limit: choose a narrower log root'); break; }
           }
         }
@@ -208,70 +154,63 @@ function createExternalUsageService({ statePath = null, pickDirectory } = {}) {
     return files.sort();
   }
   function parseLine(next, source, cursor, line, warnings, recordBudget) {
-    let row; try { row = JSON.parse(line); } catch { warnings.add('malformed-jsonl'); return; }
-    if (!row || typeof row !== 'object') { warnings.add('unsupported-record'); return; }
-    const put = (identity, usage, model, clientVersion, turnId) => {
-      const eventId = hash(`${source.client}:${cursor.session}:${identity}`);
-      const old = next.records[eventId];
-      if (!old) {
-        if (recordBudget.count >= LIMITS.records) recordBudget.count = Object.keys(next.records).length;
-        if (recordBudget.count >= LIMITS.records) fail('Metadata record limit reached; saved records and resume offsets preserved');
-        recordBudget.count++;
-      }
-      if (old && old.sourceId !== source.id) { warnings.add('duplicate-session-in-another-source: original attribution retained'); return; }
-      if (old?.usage && !usage) return;
-      if (old?.usage && usage && (usage.inputTokens < old.usage.inputTokens || usage.outputTokens < old.usage.outputTokens)) { warnings.add('conflicting-usage-snapshot'); return; }
-      next.records[eventId] = { eventId, sourceId: source.id, client: source.client,
-        sessionId: cursor.session, turnId: turnId ? hash(turnId) : null,
-        model: safeModel(model), clientVersion, usage, timestamp: typeof row.timestamp === 'string' && /^\d{4}-\d\d-\d\dT/.test(row.timestamp) && Number.isFinite(Date.parse(row.timestamp)) ? new Date(row.timestamp).toISOString() : null };
-    };
-    if (source.client === 'codex') {
-      const p = row.payload;
-      if (row.type === 'session_meta') {
-        if (!safeId(p?.id)) { warnings.add('unsupported-session-identity'); return; }
-        cursor.session = hash(`codex:${p.id}`); cursor.clientVersion = safeId(p.cli_version) ? p.cli_version : null;
-        cursor.supported = /^0\.\d+\.\d+(?:[-+].*)?$/.test(cursor.clientVersion ?? '');
-        if (!next.sessions[cursor.session]) put('session-without-usage', null, null, cursor.clientVersion, null);
-        if (!cursor.supported) warnings.add('unsupported-client-version');
-      } else if (row.type === 'turn_context') {
-        cursor.model = safeModel(p?.model); cursor.turn = safeId(p?.turn_id) ? p.turn_id : safeId(p?.id) ? p.id : null;
-        if (cursor.session && cursor.turn) {
-          delete next.records[hash(`${source.client}:${cursor.session}:session-without-usage`)];
-          if (!next.knownTurns[hash(`${cursor.session}:${cursor.turn}`)]) put(`turn:${cursor.turn}`, null, cursor.model, cursor.clientVersion, cursor.turn);
+    const parsed = parseUsageLine({ client: source.client, line, context: {
+      session: cursor.session, model: cursor.model, turn: cursor.turn,
+      clientVersion: cursor.clientVersion, supported: cursor.supported,
+    } });
+    Object.assign(cursor, parsed.context);
+    for (const event of parsed.events) {
+      if (event.kind === 'warning') { warnings.add(event.code); continue; }
+      const cursor = event.context;
+      const put = (identity, usage, model, clientVersion, turnIdHash) => {
+        const owner = recordBudget.sessionOwners.get(cursor.session);
+        if (owner && owner !== source.id) { warnings.add('duplicate-session-in-another-source: original attribution retained'); return false; }
+        const eventId = hash(`${source.client}:${cursor.session}:${identity}`);
+        const old = next.records[eventId];
+        if (!old) {
+          if (recordBudget.count >= LIMITS.records) recordBudget.count = Object.keys(next.records).length;
+          if (recordBudget.count >= LIMITS.records) fail('Metadata record limit reached; saved records and resume offsets preserved');
+          recordBudget.count++;
         }
-      } else if (row.type === 'event_msg' && p?.type === 'token_count') {
-        if (!cursor.session) { warnings.add('missing-session-identity'); return; }
-        const raw = p.info?.total_token_usage;
-        const usage = cursor.supported ? normalizeUsage(raw, 'codex') : null;
-        if (!usage) { warnings.add(cursor.supported ? 'missing-or-unsupported-usage' : 'unsupported-client-version'); return; }
+        if (old && old.sourceId !== source.id) { warnings.add('duplicate-session-in-another-source: original attribution retained'); return; }
+        if (old?.usage && !usage) return;
+        if (old?.usage && usage && (usage.inputTokens < old.usage.inputTokens || usage.outputTokens < old.usage.outputTokens)) { warnings.add('conflicting-usage-snapshot'); return; }
+        recordBudget.sessionOwners.set(cursor.session, source.id);
+        next.records[eventId] = { eventId, sourceId: source.id, client: source.client,
+          sessionId: cursor.session, turnId: turnIdHash,
+          model, clientVersion, usage, timestamp: event.timestamp };
+      };
+      if (event.kind === 'session') {
+        if (!next.sessions[cursor.session]) put('session-without-usage', null, null, cursor.clientVersion, null);
+      } else if (event.kind === 'turn') {
+        delete next.records[hash(`${source.client}:${cursor.session}:session-without-usage`)];
+        if (!next.knownTurns[hash(`${cursor.session}:${cursor.turn}`)]) put(`turn:${cursor.turn}`, null, cursor.model, cursor.clientVersion, hash(cursor.turn));
+      } else if (event.kind === 'cumulative') {
+        const usage = event.usage;
+        const owner = recordBudget.sessionOwners.get(cursor.session);
+        if (owner && owner !== source.id) { warnings.add('duplicate-session-in-another-source: original attribution retained'); continue; }
         const session = next.sessions[cursor.session];
-        if (session && (usage.inputTokens < session.inputTokens || usage.outputTokens < session.outputTokens)) { warnings.add('older-or-reset-cumulative-counter'); return; }
+        if (session && (usage.inputTokens < session.inputTokens || usage.outputTokens < session.outputTokens)) { warnings.add('older-or-reset-cumulative-counter'); continue; }
         if (session && usage.inputTokens === session.inputTokens && usage.outputTokens === session.outputTokens) {
           delete next.records[hash(`${source.client}:${cursor.session}:session-without-usage`)];
           if (cursor.turn && next.knownTurns[hash(`${cursor.session}:${cursor.turn}`)]) delete next.records[hash(`${source.client}:${cursor.session}:turn:${cursor.turn}`)];
-          return;
+          continue;
         }
         const delta = { inputTokens: usage.inputTokens - (session?.inputTokens ?? 0), outputTokens: usage.outputTokens - (session?.outputTokens ?? 0),
           cachedInputTokens: usage.cachedInputTokens === null || (session && session.cachedInputTokens === null) ? null : usage.cachedInputTokens - (session?.cachedInputTokens ?? 0),
           cacheWriteTokens: usage.cacheWriteTokens === null || (session && session.cacheWriteTokens === null) ? null : usage.cacheWriteTokens - (session?.cacheWriteTokens ?? 0) };
-        if ((delta.cachedInputTokens ?? 0) < 0 || (delta.cacheWriteTokens ?? 0) < 0 || (delta.cachedInputTokens ?? 0) + (delta.cacheWriteTokens ?? 0) > delta.inputTokens) { warnings.add('unsupported-cumulative-cache-counter'); return; }
+        if ((delta.cachedInputTokens ?? 0) < 0 || (delta.cacheWriteTokens ?? 0) < 0 || (delta.cachedInputTokens ?? 0) + (delta.cacheWriteTokens ?? 0) > delta.inputTokens) { warnings.add('unsupported-cumulative-cache-counter'); continue; }
         const key = `cumulative:${usage.inputTokens}:${usage.outputTokens}`;
-        put(key, delta, cursor.model, cursor.clientVersion, cursor.turn);
+        put(key, delta, cursor.model, cursor.clientVersion, cursor.turn ? hash(cursor.turn) : null);
         delete next.records[hash(`${source.client}:${cursor.session}:session-without-usage`)];
         if (cursor.turn) {
           delete next.records[hash(`${source.client}:${cursor.session}:turn:${cursor.turn}`)];
           next.knownTurns[hash(`${cursor.session}:${cursor.turn}`)] = source.id;
         }
         next.sessions[cursor.session] = usage;
+      } else if (event.kind === 'message') {
+        put(event.identity, event.usage, event.model, event.clientVersion, event.turnIdHash);
       }
-    } else if (row.type === 'assistant') {
-      if (!safeId(row.sessionId) || !safeId(row.message?.id)) { warnings.add('unsupported-message-identity'); return; }
-      cursor.session = hash(`claude:${row.sessionId}`);
-      const version = safeId(row.version) ? row.version : null;
-      const supported = /^[12]\.\d+\.\d+(?:[-+].*)?$/.test(version ?? '');
-      const usage = supported ? normalizeUsage(row.message.usage, 'claude') : null;
-      if (!supported) warnings.add('unsupported-client-version'); else if (!usage) warnings.add('missing-or-unsupported-usage');
-      put(`message:${row.message.id}`, usage, row.message.model, version, row.uuid);
     }
   }
   async function importSource(id) {
@@ -281,7 +220,8 @@ function createExternalUsageService({ statePath = null, pickDirectory } = {}) {
       const warnings = new Set(), files = inventory(source, warnings);
       if (!files.length) warnings.add('no-supported-jsonl-files: usage unknown');
       let budget = LIMITS.batchBytes;
-      const recordBudget = { count: Object.keys(next.records).length };
+      const recordBudget = { count: Object.keys(next.records).length,
+        sessionOwners: new Map(Object.values(next.records).map(record => [record.sessionId, record.sourceId])) };
       const after = source.afterFile ?? '';
       const ordered = [...files.filter(file => file > after), ...files.filter(file => file <= after)];
       for (const relative of ordered) {
@@ -297,6 +237,17 @@ function createExternalUsageService({ statePath = null, pickDirectory } = {}) {
           fd = fs.openSync(absolute, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
           const stat = fs.fstatSync(fd);
           if (!stat.isFile() || fs.realpathSync(absolute) !== absolute) fail('Not a selected-root regular file');
+          if (source.client === 'gemini' && relative.endsWith('.json')) {
+            if (stat.size > LIMITS.batchBytes) { warnings.add('oversized-session-json-excluded'); continue; }
+            if (stat.size > budget) { warnings.add('batch-limit: import again to continue'); break; }
+            const bytes = Buffer.alloc(stat.size); const read = fs.readSync(fd, bytes, 0, bytes.length, 0); budget -= read;
+            const afterRead = fs.fstatSync(fd);
+            if (read !== stat.size || afterRead.size !== stat.size || afterRead.mtimeMs !== stat.mtimeMs) { warnings.add('changing-session-json: import again'); continue; }
+            const cursor = { session: null };
+            parseLine(next, source, cursor, bytes.toString('utf8'), warnings, recordBudget);
+            source.afterFile = relative;
+            continue;
+          }
           const cursorKey = hash(`${source.id}:${relative}`), identity = `${stat.dev}:${stat.ino}`;
           let cursor = next.cursors[cursorKey];
           if (!cursor || cursor.identity !== identity || stat.size < cursor.offset) {

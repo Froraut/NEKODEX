@@ -1,3 +1,7 @@
+import { z } from 'zod';
+import { parseVmExportRequest, parseVmExportTaskScope } from '../../launcher/electron/vm-export-contract.cjs';
+export { VM_EXPORT_LIMITS } from '../../launcher/electron/vm-export-contract.cjs';
+
 /** Renderer-safe DTOs. Candidate bytes, private paths and filesystem identity
  * proofs stay in their owning process and are never part of this contract. */
 export interface VmExportTaskScope { taskId: string; generation: number }
@@ -17,3 +21,12 @@ export interface VmExportOutcome {
     path?: string; revision?: string; sha256?: string; bytes?: number; ownerHeld?: boolean; reconciled?: boolean };
 }
 export interface VmExportStatus { reviews: VmExportReview[]; receipts: Array<VmExportOutcome & { request: VmExportRequest }> }
+
+function wire<T>(parse: (value: unknown) => T) {
+  return z.unknown().transform((value, context): T => {
+    try { return parse(value); }
+    catch { context.addIssue({ code: 'custom', message: 'Invalid VM export request' }); return z.NEVER; }
+  });
+}
+export const vmExportRequestSchema = wire(parseVmExportRequest);
+export const vmExportTaskScopeSchema = wire(parseVmExportTaskScope);

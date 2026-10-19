@@ -4,6 +4,7 @@ import { z } from "zod";
 import { readRequestBodyBytes } from "../http-body";
 import type { ToolInvocation, ToolOutcome } from "../agent-tools/types";
 import type * as Contract from "./export-contract";
+import { vmExportRequestSchema as requestSchema, vmExportTaskScopeSchema, VM_EXPORT_LIMITS } from "./export-contract";
 
 const descriptorSchema = z.object({ version: z.literal(1), kind: z.literal("nekodex-agent-vm-export"), profile: z.enum(["production", "development"]),
   pid: z.number().int().positive(), instanceId: z.string().uuid(), createdAt: z.string().datetime(),
@@ -62,20 +63,26 @@ const resultSchema = z.object({ receiptId: z.string().uuid().nullable().optional
 }).passthrough();
 const outcomeSchema = z.object({ state: z.enum(['completed', 'failed', 'outcome_unknown']),
   reason: z.string().max(4096).optional(), result: resultSchema.optional() }).strict();
-const requestSchema = z.object({ scope: taskScope.extend({ toolCallId: identity }).strict(), tool: z.literal('vm-shell/export'),
-  arguments: z.object({ reviewId: z.string().uuid(), reviewDigest: hash }).strict(), idempotencyKey: identity }).strict();
 const listedReceiptSchema = outcomeSchema.extend({ request: requestSchema.optional() }).strict();
 export type VmExportListedReceipt = z.infer<typeof listedReceiptSchema>;
 export type VmExportReview = z.infer<typeof reviewSchema>;
-export type VmExportScope = z.infer<typeof taskScope>;
+export type VmExportTaskScope = Contract.VmExportTaskScope;
 export type VmExportOutcome = Pick<ToolOutcome, 'state' | 'reason' | 'result'>;
-export type VmExportRequest = Omit<ToolInvocation, 'grantId'>;
+type VmExportInput = Omit<ToolInvocation, 'grantId'>;
+export type VmExportRequest = Contract.VmExportRequest;
 export interface LauncherVmExportBridge {
-  list(scope: VmExportScope): Promise<{ reviews: VmExportReview[]; receipts: VmExportListedReceipt[] }>;
-  execute(request: VmExportRequest): Promise<VmExportOutcome>;
-  receipt(request: VmExportRequest): Promise<VmExportOutcome | undefined>;
+  list(scope: VmExportTaskScope): Promise<{ reviews: VmExportReview[]; receipts: VmExportListedReceipt[] }>;
+  execute(request: VmExportInput): Promise<VmExportOutcome>;
+  receipt(request: VmExportInput): Promise<VmExportOutcome | undefined>;
   /** Main may reconcile its existing publication proof; this never reoffers export. */
-  reconcile(request: VmExportRequest): Promise<VmExportOutcome | undefined>;
+  reconcile(request: VmExportInput): Promise<VmExportOutcome | undefined>;
+}
+
+/** Only constructed before calling fetch. A transport rejection is never evidence
+ * that main did not receive an export offer. */
+export class VmExportNotSentError extends Error {
+  readonly code = 'vm-export-not-sent';
+  constructor(message: string) { super(message); this.name = 'VmExportNotSentError'; }
 }
 
 /** Private fixed-action bridge. It never starts a VM or retries a publication offer. */
@@ -85,10 +92,12 @@ export function createLauncherVmExportBridge(options: LauncherVmExportBridgeOpti
   const offeredScopes = new Set<string>(), offeredKeys = new Set<string>();
   const reviews = new Map<string, { instanceId: string; taskId: string; generation: number }>();
   async function post(action: 'list' | 'execute' | 'receipt' | 'reconcile', body: unknown, expectedInstance?: string) {
-    const source = readDescriptor(options);
-    if (expectedInstance && source.instanceId !== expectedInstance) throw new Error('VM export launcher instance changed; no request was sent');
+    let source: Descriptor;
+    try { source = readDescriptor(options); }
+    catch { throw new VmExportNotSentError('VM export launcher descriptor unavailable; no request was sent'); }
+    if (expectedInstance && source.instanceId !== expectedInstance) throw new VmExportNotSentError('VM export launcher instance changed; no request was sent');
     const encoded = JSON.stringify(body);
-    if (Buffer.byteLength(encoded) > 64 * 1024) throw new Error('VM export request exceeds its bound');
+    if (Buffer.byteLength(encoded) > VM_EXPORT_LIMITS.requestBytes) throw new VmExportNotSentError('VM export request exceeds its bound');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), waitMs);
     try {
@@ -104,15 +113,18 @@ export function createLauncherVmExportBridge(options: LauncherVmExportBridgeOpti
     } catch { throw new Error('VM export response unavailable; reconcile the exact request without replay'); }
     finally { clearTimeout(timer); }
   }
-  async function outcome(action: 'execute' | 'receipt' | 'reconcile', input: VmExportRequest) {
+  async function outcome(action: 'execute' | 'receipt' | 'reconcile', input: VmExportInput) {
     const request = requestSchema.parse(input);
     let instanceId: string | undefined;
     if (action === 'execute') {
-      const review = reviews.get(JSON.stringify([request.arguments.reviewId, request.arguments.reviewDigest]));
-      if (!review || review.taskId !== request.scope.taskId || review.generation !== request.scope.generation) throw new Error('VM export requires a listed exact review');
-      instanceId = review.instanceId;
       const scopeKey = JSON.stringify([request.scope.taskId, request.scope.generation, request.scope.toolCallId]);
-      if (offeredScopes.has(scopeKey) || offeredKeys.has(request.idempotencyKey) || offeredKeys.size >= 512) throw new Error('VM export offer already consumed or capacity reached; reconcile without replay');
+      // A prior offer may have reached main even when this snapshot no longer
+      // lists its review. Never downgrade that uncertainty to a no-send refusal.
+      if (offeredScopes.has(scopeKey) || offeredKeys.has(request.idempotencyKey)) throw new Error('VM export offer already consumed; reconcile without replay');
+      const review = reviews.get(JSON.stringify([request.arguments.reviewId, request.arguments.reviewDigest]));
+      if (!review || review.taskId !== request.scope.taskId || review.generation !== request.scope.generation) throw new VmExportNotSentError('VM export requires a listed exact review');
+      instanceId = review.instanceId;
+      if (offeredKeys.size >= 512) throw new VmExportNotSentError('VM export offer capacity reached; no request was sent');
       // Consume before any asynchronous boundary, including descriptor/transport failure.
       offeredScopes.add(scopeKey); offeredKeys.add(request.idempotencyKey);
     }
@@ -125,10 +137,10 @@ export function createLauncherVmExportBridge(options: LauncherVmExportBridgeOpti
   }
   return {
     async list(input) {
-      const scope = taskScope.parse(input), response = await post('list', scope);
-      const result = z.object({ reviews: z.array(reviewSchema).max(64), receipts: z.array(listedReceiptSchema).max(64) }).strict().parse(response.value);
+      const scope = vmExportTaskScopeSchema.parse(input), response = await post('list', scope);
+      const result = z.object({ reviews: z.array(reviewSchema).max(VM_EXPORT_LIMITS.rows), receipts: z.array(listedReceiptSchema).max(VM_EXPORT_LIMITS.rows) }).strict().parse(response.value);
       if (result.reviews.some(review => review.scope.taskId !== scope.taskId || review.scope.generation !== scope.generation)) throw new Error('VM export review scope differs');
-      if (result.receipts.some(receipt => receipt.request && (receipt.request.scope.taskId !== scope.taskId || receipt.request.scope.generation !== scope.generation
+      if (result.receipts.some(receipt => receipt.request && (receipt.request.scope.taskId !== scope.taskId || receipt.request.scope.generation > scope.generation
         || receipt.result?.reviewId != null && receipt.result.reviewId !== receipt.request.arguments.reviewId
         || receipt.result?.reviewDigest != null && receipt.result.reviewDigest !== receipt.request.arguments.reviewDigest))) throw new Error('VM export listed receipt scope differs');
       // One bounded snapshot per task; stale instance observations never authorize execute.
@@ -137,7 +149,16 @@ export function createLauncherVmExportBridge(options: LauncherVmExportBridgeOpti
       for (const review of result.reviews) reviews.set(JSON.stringify([review.reviewId, review.reviewDigest]), { instanceId: response.instanceId, ...scope });
       return result;
     },
-    async execute(request) { const result = await outcome('execute', request); if (!result) throw new Error('VM export returned no receipt'); return result; },
+    async execute(request) {
+      try {
+        const result = await outcome('execute', request);
+        if (!result) throw new Error('VM export returned no receipt');
+        return result;
+      } catch (error) {
+        if (!(error instanceof VmExportNotSentError)) throw error;
+        return { state: 'failed', reason: error.code, result: { ownerHeld: false } };
+      }
+    },
     receipt: request => outcome('receipt', request),
     reconcile: request => outcome('reconcile', request),
   };

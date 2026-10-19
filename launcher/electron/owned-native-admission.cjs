@@ -70,6 +70,7 @@ function fileDigest(file, maxBytes = 512 * 1024 * 1024) {
   } finally { fs.closeSync(fd); }
 }
 function verifyWrapper(executable, executableSha256, pin) {
+  if (pin?.kind === 'publisher-signed-app') return require('./owned-native-production-pin.cjs').verifyOwnedNativeProductionWrapper(executable, executableSha256, pin);
   const sourceRoot = pin.sourceRoot;
   if (fs.realpathSync(sourceRoot) !== sourceRoot) throw fail('invalid_admission', 'Wrapper source root must be canonical');
   const target = { arm64: 'aarch64-apple-darwin', x64: 'x86_64-apple-darwin' }[process.arch];
@@ -304,4 +305,4 @@ function freeze(value) {
   if (value && typeof value === 'object') { for (const entry of Object.values(value)) freeze(entry); Object.freeze(value); }
   return value;
 }
-module.exports = { makeAdmission, digest, fileDigest, canonical, fail, plain, freeze, privateDirectory, regular, VERSION, SOURCE, verifyWrapper, probeManagedPreferences, DISABLED_FEATURES, toml, contains, absent };
+module.exports = { makeAdmission, digest, fileDigest, canonical, fail, plain, freeze, privateDirectory, regular, VERSION, SOURCE, verifyWrapper, probeManagedPreferences, DISABLED_FEATURES, toml, contains, absent, WRAPPER_INFO };

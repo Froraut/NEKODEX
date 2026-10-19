@@ -3,8 +3,9 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { VmRuntimeSelection } from './executor';
 import { isSha256, sha256, vmAssert } from './protocol';
+import { VM_HELPER_SOURCE_SHA256 } from './production-runtime';
 
-const SOURCE_SHA256 = '19458105ceaa89cdafbf6f62d33d424a76e2401f55e4af8395cc8388c1616936';
+const SOURCE_SHA256 = VM_HELPER_SOURCE_SHA256;
 function read(path: string, max = 2 * 1024 * 1024): Buffer {
   const before = lstatSync(path, { bigint: true });
   vmAssert(realpathSync(path) === path && before.isFile() && !(before.mode & 0o022n) && before.size <= BigInt(max), 'vm-development-input-invalid');

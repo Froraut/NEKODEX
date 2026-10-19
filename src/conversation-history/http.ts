@@ -3,7 +3,7 @@ import type { ConversationHistoryStore } from "./store";
 import type { MessageIdentity, ThreadIdentity } from "./types";
 import type { OwnedNativeHistoryScope } from "./types";
 import { z } from "zod";
-const ownedAction = z.object({ action: z.enum(["owned-native-status", "owned-native-consent"]), taskId: z.string().min(1).max(128),
+const ownedAction = z.object({ action: z.enum(["owned-native-status", "owned-native-consent", "transcript-native-status", "transcript-native-consent"]), taskId: z.string().min(1).max(128),
   scope: z.object({ familyId: z.string().min(1).max(128), generation: z.number().int().positive(), revision: z.number().int().positive() }).strict(),
   enabled: z.boolean().optional(), consent: z.boolean().optional(), acknowledgeUnknownSecrets: z.boolean().optional() }).strict();
 
@@ -15,10 +15,19 @@ export async function conversationHistoryRequest(req: Request, getStore: () => C
   try {
     const body = await readJsonRequestBody(req, 600_000, 600_000) as Record<string, unknown>;
     if (!body || typeof body !== "object" || Array.isArray(body) || typeof body.action !== "string") throw new Error("History action required");
-    if (["owned-native-status", "owned-native-consent"].includes(body.action) && !options.resolveOwnedNativeScope) throw new Error("Owned Native history task authority is unavailable");
+    if (["owned-native-status", "owned-native-consent", "transcript-native-status", "transcript-native-consent"].includes(body.action) && !options.resolveOwnedNativeScope) throw new Error("Owned Native history task authority is unavailable");
     const store = getStore();
-    if (["owned-native-status", "owned-native-consent"].includes(body.action)) {
+    if (["owned-native-status", "owned-native-consent", "transcript-native-status", "transcript-native-consent"].includes(body.action)) {
       const input = ownedAction.parse(body), scope = options.resolveOwnedNativeScope?.(input);
+      if (input.action.startsWith("transcript-")) {
+        const revoked = input.action === "transcript-native-consent" && input.enabled === false
+          ? store.transcript.revokeTaskGeneration({ taskId: input.taskId, generation: input.scope.generation }) : undefined;
+        if (!scope && input.action === "transcript-native-consent" && input.enabled !== false) throw new Error("The current transcript source is unavailable");
+        const value = scope ? input.action === "transcript-native-status" || revoked ? store.transcript.status(scope)
+          : store.transcript.setConsent({ scope, enabled: z.boolean().parse(input.enabled), consent: input.consent, acknowledgeUnknownSecrets: input.acknowledgeUnknownSecrets }) : { enabled: false };
+        return Response.json({ ok: true, value: { ...value, ...(revoked ?? {}), available: !!scope, recordingEnabled: store.status().recordingEnabled, quotaReached: store.status().quotaReached, mode: "future-authenticated-events", transcriptCoverage: "partial", unknownSecretsPossible: true,
+          sourceBoundary: "Native currently provides authenticated assistant summary projections only; complete client transcript and background feed are unavailable" } });
+      }
       if (!scope) {
         const revoked = input.action === "owned-native-consent" && input.enabled === false
           ? store.ownedNative.revokeTaskGeneration({ taskId: input.taskId, generation: input.scope.generation }) : undefined;
@@ -41,6 +50,8 @@ export async function conversationHistoryRequest(req: Request, getStore: () => C
       case "canonical-consent": value=store.canonical.setConsent({sourceId:body.sourceId as string,threadId:body.threadId as string,enabled:body.enabled as boolean,consent:body.consent as boolean,acknowledgeUnknownSecrets:body.acknowledgeUnknownSecrets as boolean}); break;
       case "canonical-lease": value=store.canonical.lease(body.sourceId as string,body.threadId as string); break;
       case "canonical-record": value=store.canonical.recordPage(body.lease as import("./canonical").CanonicalCaptureLease,body.page as import("../../launcher/electron/canonical-history-policy.cjs").SanitizedCanonicalPage); break;
+      case "transcript-subscriptions": value = store.transcript.list(); break;
+      case "transcript-revoke": value = store.transcript.revokeTaskGeneration({ taskId: z.string().min(1).max(512).parse(body.taskId), generation: z.number().int().positive().parse(body.generation) }); break;
       case "status": value = { ...store.status(), captureMode: "explicit-selected-text", automaticCaptureAvailable: false }; break;
       case "set-recording":
         if (typeof body.enabled !== "boolean" || (body.enabled && body.consent !== true)) throw new Error("Explicit consent to private selected-text history is required");

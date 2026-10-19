@@ -1,8 +1,10 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { constants, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, realpathSync, renameSync, chmodSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
+import { machine, release, version as osVersion } from "node:os";
 import { Inflate } from "fflate";
-import { clean as cleanVersion, valid as validVersion, validRange, satisfies as pep440Satisfies, explain as parseVersion, compare as compareVersion } from "@renovatebot/pep440";
+import { clean as cleanVersion, valid as validVersion } from "@renovatebot/pep440";
+import { PythonRequirementError, pythonVersionSatisfies as satisfies, validatePythonDependencyGraph, normalizePythonName, type PythonDependencyGraph, type PythonDirectArtifactPin } from "./skill-python-requirements";
 import { assertAdmittedPythonRuntime, pythonRuntimeStatus, type AdmittedPythonRuntime } from "./skill-python-runtime";
 
 export const SKILL_PYTHON_ENVIRONMENT_LIMITS = Object.freeze({ wheels: 16, artifactBytes: 8 * 1024 * 1024, artifactTotalBytes: 32 * 1024 * 1024,
@@ -22,9 +24,10 @@ export interface AdmittedPythonEnvironment {
   readonly kind: "python-environment"; readonly environmentId: string; readonly runtimeClosureDigest: string;
   readonly closureDigest: string; readonly readRoot: string; readonly packages: readonly SkillPythonEnvironmentPackage[];
 }
+export interface SkillPythonEnvironmentReviewInput { wheelPaths: string[]; requirements?: string[]; directArtifacts?: PythonDirectArtifactPin[] }
 interface FileRow { path: string; sha256: string; bytes: number }
 interface Manifest { version: 1; policyVersion: 1; environmentId: string; runtimeClosureDigest: string; lockDigest: string;
-  packages: SkillPythonEnvironmentPackage[]; files: FileRow[]; bytes: number }
+  packages: SkillPythonEnvironmentPackage[]; files: FileRow[]; bytes: number; dependencyGraph?: PythonDependencyGraph; markerEnvironment?: Record<string, string> }
 interface PrivateAction { actionId: string; reviewDigest: string; state: SkillPythonEnvironmentAction["state"]; manifest: Manifest; reason?: string }
 interface Registry { version: 1; actions: PrivateAction[] }
 interface Pin { path: string; dev: bigint; ino: bigint; mtimeNs: bigint; ctimeNs: bigint; size: bigint; mode: bigint }
@@ -40,13 +43,13 @@ function reject(reason: string): never { throw new PythonEnvironmentError(reason
 /** Only fixed owner validation reasons are public; filesystem/runtime/parser
  * exceptions may contain private paths and must never become UI/model output. */
 export function pythonEnvironmentPublicReason(error: unknown): string {
-  return error instanceof PythonEnvironmentError ? error.reason : "Python environment runtime or storage is unavailable; inspect the exact action receipt";
+  return error instanceof PythonEnvironmentError || error instanceof PythonRequirementError ? error.message : "Python environment runtime or storage is unavailable; inspect the exact action receipt";
 }
 export function asPythonEnvironmentPublicError(cause: unknown): Error {
   return new PythonEnvironmentError(pythonEnvironmentPublicReason(cause));
 }
 export function isPythonEnvironmentError(cause: unknown): boolean {
-  return cause instanceof PythonEnvironmentError;
+  return cause instanceof PythonEnvironmentError || cause instanceof PythonRequirementError;
 }
 function pin(path: string, directory = false): Pin {
   const s = lstatSync(path, { bigint: true });
@@ -83,23 +86,11 @@ function plainVersion(value: string): string {
 function normalizedName(value: string): string {
   if (!/^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,100}[A-Za-z0-9])?$/.test(value)) reject("Unsupported Python distribution name"); return value.toLowerCase().replace(/[-_.]+/g, "-");
 }
-/** Maintained PEP 440 implementation. PEP 508 markers/extras/direct URLs remain
- * explicitly unsupported; they are rejected before accepting a wheel closure. */
-function satisfies(version: string, spec: string): boolean {
-  if (spec.length > 512 || !validRange(spec)) reject("Invalid PEP 440 dependency constraint");
-  // Explicit artifact selection opts into that artifact's prerelease; it is not
-  // resolver discovery. Fix the dependency's documented simplified exclusive
-  // comparison using its maintained version parser/order and PyPA rules:
-  // https://packaging.python.org/en/latest/specifications/version-specifiers/#exclusive-ordered-comparison
-  // In particular >1.7.post2 must accept 1.7.post3, and <1.0rc2 accepts 1.0rc1.
-  return spec.split(",").every(part => {
-    const exclusive = /^\s*([<>])\s*([^=].*?)\s*$/.exec(part);
-    if (!exclusive) return pep440Satisfies(version, part, { prereleases: true });
-    const candidate = parseVersion(version), bound = parseVersion(exclusive[2]!); if (!candidate || !bound) reject("Invalid exclusive Python version bound");
-    const sameBase = compareVersion(candidate.base_version, bound.base_version) === 0, order = compareVersion(version, exclusive[2]!);
-    return exclusive[1] === "<" ? order < 0 && !(sameBase && candidate.is_prerelease && !bound.is_prerelease)
-      : order > 0 && !(sameBase && (candidate.local !== null || candidate.is_postrelease && !bound.is_postrelease));
-  });
+/** Marker values describe the exact fixed Apple CPython route. No Python startup. */
+function markerEnvironment(runtime: Pick<AdmittedPythonRuntime, "pythonVersion">): Record<string, string> {
+  return { os_name: "posix", sys_platform: "darwin", platform_machine: machine(), platform_python_implementation: "CPython",
+    platform_release: release(), platform_system: "Darwin", platform_version: osVersion(), python_version: runtime.pythonVersion.split(".").slice(0, 2).join("."),
+    python_full_version: runtime.pythonVersion, implementation_name: "cpython", implementation_version: runtime.pythonVersion };
 }
 function headers(bytes: Buffer): Map<string, string[]> {
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); if (text.includes("\0") || bytes.length > 128 * 1024) reject("Malformed wheel metadata");
@@ -166,7 +157,7 @@ function unpack(data: Buffer, budget: { bytes: number; files: number }): Map<str
   for (const name of fileNames) { const parts = name.split("/"); parts.pop(); while (parts.length) { if (fileNames.has(parts.join("/"))) reject("Wheel file/directory collision"); parts.pop(); } }
   return files;
 }
-interface Wheel { pkg: SkillPythonEnvironmentPackage; files: Map<string, Buffer>; requires: string[] }
+interface Wheel { pkg: SkillPythonEnvironmentPackage; files: Map<string, Buffer>; requires: string[]; providesExtra: string[] }
 function wheel(bytes: Buffer, filename: string, runtime: AdmittedPythonRuntime, budget: { bytes: number; files: number }): Wheel {
   const m = /^([A-Za-z0-9_.]+)-([A-Za-z0-9_.+!]+)-(py3|py2\.py3)-none-any\.whl$/.exec(filename); if (!m) reject("Only selected pure py3/py2.py3-none-any wheels without build tags are supported");
   const name = normalizedName(m[1]!), version = plainVersion(m[2]!), files = unpack(bytes, budget);
@@ -176,7 +167,7 @@ function wheel(bytes: Buffer, filename: string, runtime: AdmittedPythonRuntime, 
   const base = dist[0]!, metadata = files.get(base + "/METADATA"), wh = files.get(base + "/WHEEL"), record = files.get(base + "/RECORD");
   if (!metadata || !wh || !record) reject("Wheel requires METADATA, WHEEL and RECORD");
   const h = headers(metadata), w = headers(wh), mv = one(h, "metadata-version")!;
-  if (!/^(1\.[12]|2\.[0-4])$/.test(mv) || normalizedName(one(h, "name")!) !== name || plainVersion(one(h, "version")!) !== version || one(w, "wheel-version") !== "1.0" || one(w, "root-is-purelib") !== "true" || w.has("build") || h.has("dynamic") || h.has("requires-external")) reject("Unsupported or inconsistent wheel metadata");
+  if (!/^(1\.[12]|2\.[0-5])$/.test(mv) || normalizedName(one(h, "name")!) !== name || plainVersion(one(h, "version")!) !== version || one(w, "wheel-version") !== "1.0" || one(w, "root-is-purelib") !== "true" || w.has("build") || h.has("dynamic") || h.has("requires-external")) reject("Unsupported or inconsistent wheel metadata");
   const tags = w.get("tag") ?? []; const expectedTags = m[3] === "py3" ? ["py3-none-any"] : ["py2-none-any", "py3-none-any"];
   if (tags.length !== expectedTags.length || new Set(tags).size !== tags.length || tags.some(tag => !expectedTags.includes(tag))) reject("Wheel compatibility tags do not match its filename");
   const py = one(h, "requires-python", false); if (py && (!runtime.pythonVersion || !satisfies(runtime.pythonVersion, py))) reject("Wheel does not support the exact admitted Python version");
@@ -192,15 +183,17 @@ function wheel(bytes: Buffer, filename: string, runtime: AdmittedPythonRuntime, 
     if (path === base + "/RECORD") { if (r[0] || r[1]) reject("Wheel RECORD self-row must be unhashed"); }
     else if (r[0] !== "sha256=" + createHash("sha256").update(data).digest("base64url") || r[1] !== String(data.length)) reject("Wheel RECORD hash or size mismatch");
   }
-  return { pkg: { name, version, artifactSha256: digest(bytes) }, files, requires: h.get("requires-dist") ?? [] };
+  const providesExtra = h.get("provides-extra") ?? [], normalizedExtras = providesExtra.map(normalizePythonName);
+  if (new Set(normalizedExtras).size !== providesExtra.length || Number(mv) >= 2.3 && providesExtra.some((e, i) => e !== normalizedExtras[i])) reject("Invalid or ambiguous Provides-Extra metadata");
+  return { pkg: { name, version, artifactSha256: digest(bytes) }, files, requires: h.get("requires-dist") ?? [], providesExtra: normalizedExtras };
 }
 function validateManifest(m: Manifest): void {
   if (!m || m.version !== 1 || m.policyVersion !== 1 || !HASH.test(m.environmentId) || !HASH.test(m.runtimeClosureDigest) || !HASH.test(m.lockDigest) || !Array.isArray(m.packages) || !m.packages.length || m.packages.length > L.wheels || !Array.isArray(m.files) || !m.files.length || m.files.length > L.files) reject("Malformed Python environment manifest");
   const names = new Set<string>(); for (const p of m.packages) { if (normalizedName(p.name) !== p.name || plainVersion(p.version) !== p.version || !HASH.test(p.artifactSha256) || names.has(p.name)) reject("Malformed Python environment lock"); names.add(p.name); }
   let bytes = 0; const seen = new Set<string>(); for (const f of m.files) { pathName(f.path); if (!HASH.test(f.sha256) || !Number.isSafeInteger(f.bytes) || f.bytes < 0 || f.bytes > L.fileBytes || seen.has(f.path.toLowerCase())) reject("Malformed Python environment tree"); seen.add(f.path.toLowerCase()); bytes += f.bytes; }
-  if (bytes !== m.bytes || bytes > L.expandedBytes || digest(encoded(m.packages)) !== m.lockDigest || manifestId(m) !== m.environmentId) reject("Python environment manifest digest mismatch");
+  if (bytes !== m.bytes || bytes > L.expandedBytes || digest(encoded(m.dependencyGraph ? { packages: m.packages, dependencyGraph: m.dependencyGraph, markerEnvironment: m.markerEnvironment } : m.packages)) !== m.lockDigest || manifestId(m) !== m.environmentId) reject("Python environment manifest digest mismatch");
 }
-function manifestId(m: Omit<Manifest, "environmentId"> | Manifest): string { return digest(encoded({ version: m.version, policyVersion: m.policyVersion, runtimeClosureDigest: m.runtimeClosureDigest, lockDigest: m.lockDigest, packages: m.packages, files: m.files, bytes: m.bytes })); }
+function manifestId(m: Omit<Manifest, "environmentId"> | Manifest): string { return digest(encoded({ version: m.version, policyVersion: m.policyVersion, runtimeClosureDigest: m.runtimeClosureDigest, lockDigest: m.lockDigest, packages: m.packages, files: m.files, bytes: m.bytes, ...(m.dependencyGraph ? { dependencyGraph: m.dependencyGraph, markerEnvironment: m.markerEnvironment } : {}) })); }
 function metadataUnchanged(pins: Pin[]): void { for (const old of pins) { const now = pin(old.path, (old.mode & 0o170000n) === 0o040000n); if (["dev", "ino", "size", "mtimeNs", "ctimeNs", "mode"].some(k => old[k as keyof Pin] !== now[k as keyof Pin])) reject("Admitted Python environment changed"); } }
 export function assertAdmittedPythonEnvironment(environment: AdmittedPythonEnvironment, runtime: AdmittedPythonRuntime): void {
   const brand = brands.get(environment); if (!brand || brand.runtime !== runtime || environment.runtimeClosureDigest !== runtime.closureDigest) reject("Python environment requires an exact owner-created runtime admission");
@@ -298,6 +291,7 @@ export class SkillPythonEnvironmentStore {
   }
   private envRoot(id: string): string { if (!HASH.test(id)) reject("Invalid Python environment identity"); return join(this.home, "environments", id); }
   private verifyTree(root: string, m: Manifest): Pin[] {
+    if (m.markerEnvironment && encoded(m.markerEnvironment) !== encoded(markerEnvironment({ pythonVersion: m.markerEnvironment.python_full_version! }))) reject("Reviewed Python marker environment changed; review the selected artifacts again");
     privateDir(root); const stored = this.verified<Manifest>(join(root, "manifest.json")); validateManifest(stored); if (encoded(stored) !== encoded(m)) reject("Python environment published manifest differs");
     const data = join(root, "data"), pins: Pin[] = [pin(root, true), pin(join(root, "manifest.json")), pin(data, true)]; const actual: string[] = [], expectedDirs = new Set<string>();
     if (pins[1]!.mode & 0o222n || pins[2]!.mode & 0o222n || dirname(root) === join(this.home, "environments") && pins[0]!.mode & 0o222n) reject("Python environment code/data must remain read-only");
@@ -314,11 +308,11 @@ export class SkillPythonEnvironmentStore {
     const state = held ? "unknown" : a.state, reason = held ? "Preparation outcome requires explicit reconciliation; never replay" : a.reason;
     return { actionId: a.actionId, reviewDigest: a.reviewDigest, state, ownerHeld: state === "prepared" || state === "unknown", terminal: state === "ready" || state === "failed", environment: this.descriptor(a.manifest, state === "ready", reason), ...(reason ? { reason } : {}) };
   }
-  review(actionId: string, input: { wheelPaths: string[] }, explicitUserAction: true): SkillPythonEnvironmentReview {
+  review(actionId: string, input: SkillPythonEnvironmentReviewInput, explicitUserAction: true): SkillPythonEnvironmentReview {
     if (explicitUserAction !== true || !UUID.test(actionId)) reject("Wheel review requires an explicit user action and opaque action ID");
     return this.mutation(() => this.reviewLocked(actionId, input, explicitUserAction));
   }
-  private reviewLocked(actionId: string, input: { wheelPaths: string[] }, explicitUserAction: true): SkillPythonEnvironmentReview {
+  private reviewLocked(actionId: string, input: SkillPythonEnvironmentReviewInput, explicitUserAction: true): SkillPythonEnvironmentReview {
     if (explicitUserAction !== true || !UUID.test(actionId)) reject("Wheel review requires an explicit user action and opaque action ID");
     const runtime = this.runtime(), previous = this.registry().actions.find(a => a.actionId === actionId); if (previous) reject("Python environment action ID was already consumed; inspect its exact outcome");
     if (!input || !Array.isArray(input.wheelPaths) || !input.wheelPaths.length || input.wheelPaths.length > L.wheels || new Set(input.wheelPaths).size !== input.wheelPaths.length) reject("Select one to sixteen wheel artifacts");
@@ -330,17 +324,14 @@ export class SkillPythonEnvironmentStore {
       try { const s = fstatSync(fd, { bigint: true }); if (s.dev !== before.dev || s.ino !== before.ino) reject("Selected wheel changed"); bytes = readBounded(fd, L.artifactBytes); const after = lstatSync(path, { bigint: true }); if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.ctimeNs !== before.ctimeNs || after.mtimeNs !== before.mtimeNs) reject("Selected wheel changed"); } finally { closeSync(fd); }
       total += bytes!.length; if (total > L.artifactTotalBytes) reject("Selected wheel aggregate exceeds its bound"); artifacts.push({ bytes: bytes!, name: basename(path) });
     }
-    const budget = { bytes: 0, files: 0 }, wheels = artifacts.map(a => wheel(a.bytes, a.name, runtime, budget)), packages = wheels.map(w => w.pkg).sort((a, b) => a.name.localeCompare(b.name)), names = new Map(packages.map(p => [p.name, p]));
-    if (names.size !== packages.length) reject("Select exactly one artifact per normalized distribution");
-    for (const w of wheels) for (const raw of w.requires) {
-      const r = /^([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\(([^()]+)\)|([<>=!].*))?$/.exec(raw); if (!r) reject("Unsupported Requires-Dist marker, extra, URL or requirement grammar");
-      const dependency = names.get(normalizedName(r[1]!)); if (!dependency || (r[2] || r[3]) && !satisfies(dependency.version, (r[2] || r[3])!)) reject("Selected wheel dependency closure is incomplete or incompatible");
-    }
+    const budget = { bytes: 0, files: 0 }, wheels = artifacts.map(a => wheel(a.bytes, a.name, runtime, budget)), packages = wheels.map(w => w.pkg).sort((a, b) => a.name.localeCompare(b.name));
+    const markers = markerEnvironment(runtime), dependencyGraph = validatePythonDependencyGraph(wheels.map(w => ({ ...w.pkg, requires: w.requires, providesExtra: w.providesExtra })), markers,
+      { requirements: input.requirements, directArtifacts: input.directArtifacts });
     const content = new Map<string, Buffer>(), folded = new Set<string>(); let expanded = 0;
     for (const w of wheels) for (const [path, bytes] of w.files) { if (folded.has(path.toLowerCase())) reject("Selected wheels collide in the installed file tree"); folded.add(path.toLowerCase()); content.set(path, bytes); expanded += bytes.length; }
     if (content.size > L.files || expanded > L.expandedBytes) reject("Selected environment exceeds its extracted bounds");
     for (const path of content.keys()) { const parts = path.split("/"); parts.pop(); while (parts.length) { if (folded.has(parts.join("/").toLowerCase())) reject("Selected wheels have a file/directory collision"); parts.pop(); } }
-    const core = { version: 1 as const, policyVersion: 1 as const, runtimeClosureDigest: runtime.closureDigest, lockDigest: digest(encoded(packages)), packages, files: [...content].map(([path, bytes]) => ({ path, sha256: digest(bytes), bytes: bytes.length })).sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0), bytes: expanded };
+    const core = { version: 1 as const, policyVersion: 1 as const, runtimeClosureDigest: runtime.closureDigest, lockDigest: digest(encoded({ packages, dependencyGraph, markerEnvironment: markers })), packages, dependencyGraph, markerEnvironment: markers, files: [...content].map(([path, bytes]) => ({ path, sha256: digest(bytes), bytes: bytes.length })).sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0), bytes: expanded };
     const manifest: Manifest = { ...core, environmentId: manifestId(core) }; validateManifest(manifest);
     const state = this.registry(); if (state.actions.length >= L.actions || state.actions.some(a => this.project(a).ownerHeld)) reject("Python environment capacity or unresolved preparation blocks new writes");
     this.root(true); this.key(true); privateDir(join(this.home, "reviews"), true); privateDir(join(this.home, "environments"), true);
@@ -349,7 +340,7 @@ export class SkillPythonEnvironmentStore {
     chmodSync(join(root, "wheels"), 0o500); syncDir(join(root, "wheels"));
     this.writeTree(join(root, "data"), manifest, path => content.get(path)!); createFile(join(root, "manifest.json"), this.signed(manifest)); syncDir(root);
     const action: PrivateAction = { actionId, reviewDigest: digest(encoded(manifest)), state: "reviewed", manifest }; state.actions.push(action); this.publish(state);
-    return { ...this.project(action), state: "reviewed", limitations: ["pure-any-wheels-only", "pep440-requirements-no-pep508-markers-extras-or-direct-urls", "explicit-artifact-prerelease-selection", "offline-no-resolver-pip-build-hooks-or-package-import", "site-and-startup-processing-disabled"] };
+    return { ...this.project(action), state: "reviewed", limitations: ["pure-any-wheels-only", "pep508-selected-artifacts-only-no-url-fetch", "explicit-artifact-prerelease-selection", "offline-no-resolver-pip-build-hooks-or-package-import", "site-and-startup-processing-disabled"] };
   }
   private writeTree(root: string, m: Manifest, bytes: (path: string) => Buffer): void {
     for (const f of m.files) { const path = join(root, f.path); const parts = f.path.split("/"); parts.pop(); let dir = root; for (const part of parts) { dir = join(dir, part); privateDir(dir, true); } const data = bytes(f.path); if (data.length !== f.bytes || digest(data) !== f.sha256) reject("Reviewed wheel bytes changed before publication"); createFile(path, data); }

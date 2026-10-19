@@ -16,14 +16,14 @@ function id(value: unknown): asserts value is string {
 function integer(value: unknown, minimum = 0): asserts value is number {
   if (!Number.isSafeInteger(value) || Number(value) < minimum) throw new Error("Invalid owned Native history generation/timestamp");
 }
-function scopeOf(value: OwnedNativeHistoryScope): OwnedNativeHistoryScope {
+export function scopeOf(value: OwnedNativeHistoryScope): OwnedNativeHistoryScope {
   if (!value || typeof value !== "object") throw new Error("Owned Native history scope required");
   for (const key of ["taskId", "profileId", "backendAccountId"] as const) id(value[key]);
   integer(value.generation, 1);
   if (typeof value.sourceId !== "string" || !HASH.test(value.sourceId) || typeof value.authEpoch !== "string" || !UUID.test(value.authEpoch)) throw new Error("Invalid main-admitted Native history source");
   return { taskId: value.taskId, generation: value.generation, sourceId: value.sourceId, profileId: value.profileId, backendAccountId: value.backendAccountId, authEpoch: value.authEpoch };
 }
-function provenanceOf(value: OwnedNativeHistoryProvenance): OwnedNativeHistoryProvenance {
+export function provenanceOf(value: OwnedNativeHistoryProvenance): OwnedNativeHistoryProvenance {
   if (!value || typeof value !== "object") throw new Error("Owned Native history provenance required");
   for (const key of ["dispatchId", "workerBindingId", "nativeTurnReceiptId", "messageId", "turnId", "threadId"] as const) id(value[key]);
   integer(value.workerGeneration, 1); integer(value.timestampMs);
@@ -52,6 +52,8 @@ export interface OwnedNativeFinalCapture {
 }
 export type OwnedNativeFinalRecordResult = RecordResult | { outcome: "revoked" | "unavailable" };
 export interface OwnedNativeHistoryPort {
+  /** Separate opt-in: final-summary consent cannot authorize transcript events. */
+  transcript?: import("./transcript").TranscriptHistoryPort;
   lease(scope: OwnedNativeHistoryScope, offer: { dispatchId: string }): { lease: OwnedNativeCaptureLease | null; status: OwnedNativeHistoryStatus };
   recordFinal(input: OwnedNativeFinalCapture): OwnedNativeFinalRecordResult;
   /** Finally after terminal/aborted capture processing, including non-final offers. */
@@ -62,6 +64,7 @@ type Consent = { enabled: number; revision: number; acknowledged: number };
 /** Synchronous leaf of the one history SQLite owner. Captures only a bounded
  * final.summary projection, with no host inputs, tools, reasoning or watchers. */
 export class OwnedNativeHistoryCapture implements OwnedNativeHistoryPort {
+  transcript?: import("./transcript").TranscriptHistoryPort;
   private readonly leases = new Map<string, OwnedNativeCaptureLease>();
   private readonly completedLeases = new Set<string>();
   constructor(private readonly owner: {

@@ -28,7 +28,7 @@ test('lost export acknowledgement consumes one offer; exact receipt survives mai
       return Response.json({ ok: true, instanceId: instance, value });
     }) as typeof fetch });
     const request = { scope: { ...scope, toolCallId: 'call-1' }, tool: 'vm-shell/export', arguments: { reviewId, reviewDigest: digest }, idempotencyKey: 'export-1' };
-    await expect(bridge.execute(request)).rejects.toThrow('listed exact review');
+    expect(await bridge.execute(request)).toEqual({ state: 'failed', reason: 'vm-export-not-sent', result: { ownerHeld: false } });
     expect(requests.length).toBe(0);
     expect((await bridge.list(scope)).reviews).toEqual([review]);
     await expect(bridge.execute(request)).rejects.toThrow('reconcile the exact request');
@@ -39,7 +39,7 @@ test('lost export acknowledgement consumes one offer; exact receipt survives mai
     expect((await bridge.receipt(request))?.state).toBe('completed');
     expect(requests.at(-1)?.instance).toBe(replacement.instanceId);
     const other = { ...request, scope: { ...request.scope, toolCallId: 'call-2' }, idempotencyKey: 'export-2' };
-    await expect(bridge.execute(other)).rejects.toThrow('instance changed');
+    expect((await bridge.execute(other)).state).toBe('failed');
     expect(requests.filter(r => r.url.endsWith('/execute')).length).toBe(1);
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
@@ -70,6 +70,10 @@ test('listed export receipts retain exact reconciliation request and reject anot
       ok: true, instanceId: new Headers(init?.headers).get('x-nekodex-vm-export-instance'), value,
     })) as typeof fetch });
     expect((await bridge.list(scope)).receipts[0]?.request).toEqual(request);
+    // A later task generation may reconcile the exact older request; it never
+    // turns that older request into a current-generation prepared review.
+    expect((await bridge.list({ ...scope, generation: 3 })).receipts[0]?.request).toEqual(request);
+    await expect(bridge.list({ ...scope, generation: 1 })).rejects.toThrow('listed receipt scope differs');
     value = { reviews: [], receipts: [{ state: 'outcome_unknown', result: { reviewId, ownerHeld: true }, request: { ...request, scope: { ...request.scope, taskId: randomUUID() } } }] };
     await expect(bridge.list(scope)).rejects.toThrow('listed receipt scope differs');
     value = { state: 'outcome_unknown', result: { reviewId, ownerHeld: true }, request };

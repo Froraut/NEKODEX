@@ -16,9 +16,11 @@ export function createVmExportTools(bridge: ReturnType<typeof createLauncherVmEx
     execute: request => bridge.execute(request),
     // The passive receipt cannot settle a publication whose written-node proof
     // was retained before a lost response; only main's reconcile confirms it.
+    // An absent action also needs the exclusive main owner to prove no intent
+    // was recorded (for example after a pre-intent lock refusal).
     async reconcile(request) {
       const receipt = await bridge.receipt(request);
-      return receipt?.state === 'outcome_unknown' ? await bridge.reconcile(request) ?? receipt : receipt;
+      return !receipt || receipt.state === 'outcome_unknown' ? await bridge.reconcile(request) ?? receipt : receipt;
     },
   };
 }

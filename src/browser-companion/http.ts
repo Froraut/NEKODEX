@@ -8,12 +8,12 @@ export async function browserCompanionRequest(request: Request, getRuntime: () =
   if (request.method !== "POST") return Response.json({ ok: false, error: "Companion control requires JSON POST" }, { status: 405, headers });
   try {
     const body = await readJsonRequestBody(request, 4096, 4096) as Record<string, unknown>;
-    if (!body || typeof body !== "object" || Array.isArray(body) || typeof body.action !== "string" || Object.keys(body).some(key => !["action", "extensionId"].includes(key))) throw new Error("Invalid companion control request");
+    if (!body || typeof body !== "object" || Array.isArray(body) || typeof body.action !== "string" || Object.keys(body).some(key => !["action", "extensionId", "extensionOrigin"].includes(key))) throw new Error("Invalid companion control request");
     const runtime = getRuntime();
     let value: unknown;
     switch (body.action) {
       case "status": value = runtime.status(); break;
-      case "enable": value = await runtime.enable(body.extensionId); break;
+      case "enable": value = await runtime.enable(body.extensionId, body.extensionOrigin); break;
       case "disable": value = await runtime.disable(); break;
       case "create-pairing": value = runtime.createPairing(); break;
       case "revoke": value = runtime.revoke(); break;

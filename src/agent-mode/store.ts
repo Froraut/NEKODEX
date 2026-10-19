@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, lstatSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { projectNativeSelectedAttachments } from "./native-images";
 import { activeTaskEvidence } from "./evidence";
 import { invocationFingerprint } from "../agent-tools/journal";
 import { AGENT_NATIVE_PROTOCOL, nativeDigest, nativeToolCallId } from "./native-protocol";
@@ -144,6 +145,12 @@ export class AgentModeStore {
       if (Buffer.byteLength(JSON.stringify(input.workspaceSnapshotGrant)) > 32 * 1024) throw new Error("Workspace snapshot grant exceeds limit");
       task.workspaceSnapshotGrant = structuredClone(input.workspaceSnapshotGrant);
     }
+    if (input.nativeAttachments !== undefined) {
+      if (input.execution?.provider !== "owned-native") throw new Error("Task selected attachments require Native execution");
+      projectNativeSelectedAttachments({ attachments: input.nativeAttachments, modelImageInput: true });
+      task.nativeAttachments = structuredClone(input.nativeAttachments);
+    }
+    if (Buffer.byteLength(JSON.stringify(task)) > 512 * 1024) throw new Error("Task data exceeds bounded storage");
     this.db.query("INSERT INTO agent_tasks VALUES (?, ?)").run(task.id, JSON.stringify(task));
     return structuredClone(task);
   }
@@ -169,6 +176,12 @@ export class AgentModeStore {
       const task = this.getTask(taskId);
       if (task.status === "stopped" && control.action !== "stop") throw new Error("Stopped task is terminal; create a new task");
       if (control.action === "correct") { text(control.text, "correction"); plan(control.requirements, control.stages); }
+      if (control.action === "resume" && task.status === "awaiting_input" && task.stages.some(stage => stage.waitingFor === "user")) throw new Error("Task requires a substantive reply before resuming");
+      if (control.action === "reply") {
+        text(control.text, "user reply");
+        if (task.stages.some(stage => stage.waitingFor === "tools")) throw new Error("Task requires exact pending tool results before applying a user reply");
+        if (task.status !== "awaiting_input" || !task.stages.some(stage => stage.waitingFor === "user") || this.listDispatches(taskId).some(row => unsettled.has(row.state))) throw new Error("Task is not settled awaiting user input");
+      }
       if (control.action === "mode" && (!["manual", "goal", "loop"].includes(control.mode) || (control.mode === "loop" && control.recurringAuthorized !== true))) throw new Error("Loop requires explicit recurrence authorization");
       // Invalidate before aborting the physical port; late results remain attached to the old generation.
       task.generation++; delete task.ownerId; delete task.review;
@@ -196,8 +209,14 @@ export class AgentModeStore {
           if (stage.status === "pending") delete stage.dispatchId;
         }
       }
+      if (control.action === "reply") for (const stage of task.stages) if (stage.waitingFor === "user") {
+        stage.userInput = control.text; delete stage.waitingFor;
+      }
       if (control.action === "mode") task.mode = control.mode;
-      if (["resume", "mode"].includes(control.action) && task.stages.every(stage => stage.status === "completed")) task.status = "review_required";
+      if (["resume", "mode"].includes(control.action)) {
+        if (task.stages.some(stage => stage.waitingFor)) { task.status = "awaiting_input"; task.reason = task.stages.some(stage => stage.waitingFor === "user") ? "user_input_required" : "tool_results_required"; }
+        else if (task.stages.every(stage => stage.status === "completed")) task.status = "review_required";
+      }
       if (control.action === "correct" || control.action === "mode") for (const packet of this.listWork(taskId)) if (packet.state === "pending") {
         packet.state = "held"; this.db.query("UPDATE agent_work SET body=? WHERE id=?").run(JSON.stringify(packet), packet.workId);
       }
@@ -220,22 +239,25 @@ export class AgentModeStore {
       }
       if (task.reserved !== 0 || this.listDispatches(taskId).some(row => unsettled.has(row.state))
         || this.effectiveToolOutcomes(taskId).some(row => row.state === "outcome_unknown")) throw new Error("Task has live or unknown execution; reconcile before refreshing");
+      const userPaused = task.status === 'paused' && task.reason === 'pause';
+      const awaitingInput = task.status === 'awaiting_input';
       task.execution = structuredClone(execution);
       task.generation++;
       delete task.ownerId; delete task.review; delete task.loopRun; delete task.workspaceSnapshotGrant;
-      task.status = task.stages.every(stage => stage.status === "completed") ? "review_required" : "ready";
-      task.reason = "execution_refreshed";
+      task.status = userPaused ? 'paused' : awaitingInput ? 'awaiting_input' : task.stages.every(stage => stage.status === "completed") ? "review_required" : "ready";
+      task.reason = userPaused ? 'pause' : 'execution_refreshed';
       this.saveTask(task); return task;
     });
   }
-  worker(taskId: string, name: string): AgentWorker {
+  worker(taskId: string, name: string, options: { freshNativeStage?: boolean } = {}): AgentWorker {
     text(name, "worker name", 160);
     return this.atomic(() => {
       const task = this.getTask(taskId);
       const workers = this.listWorkers(taskId);
       const old = workers.find(row => row.name === name);
-      if (old) return old;
-      if (workers.length >= task.bounds.maxConcurrent) throw new Error("Worker concurrency bound");
+      if (old && !options.freshNativeStage) return old;
+      const freshNativeStage = options.freshNativeStage === true && task.execution?.provider === "owned-native";
+      if (workers.length >= 10_000 || (freshNativeStage ? workers.filter(row => row.state !== "sleeping").length >= task.bounds.maxConcurrent : workers.length >= task.bounds.maxConcurrent)) throw new Error("Worker concurrency bound");
       const row: AgentWorker = { id: randomUUID(), taskId, familyId: task.familyId, name, state: "sleeping" };
       this.db.query("INSERT INTO agent_workers VALUES (?, ?, ?)").run(row.id, taskId, JSON.stringify(row)); return row;
     });
@@ -313,7 +335,7 @@ export class AgentModeStore {
       if (rows.filter(row => unsettled.has(row.state)).length >= task.bounds.maxConcurrent) throw new Error("Concurrency bound");
       if ((task.bounds.maxSpend !== null && reservedSpend < 1) || task.turns + rows.filter(row => row.state === "admitted").length >= task.bounds.maxTurns || (task.bounds.maxSpend !== null && task.spent + task.reserved + reservedSpend > task.bounds.maxSpend)) throw new Error("Task turn/spend bound");
       const stage = task.stages.find(row => row.id === stageId);
-      if (!stage || stage.status !== "pending" || (stage.dependsOn ?? []).some(key => task.stages.find(row => row.id === key)?.status !== "completed")) throw new Error("Stage is not ready");
+      if (!stage || stage.status !== "pending" || stage.waitingFor || (stage.dependsOn ?? []).some(key => task.stages.find(row => row.id === key)?.status !== "completed")) throw new Error("Stage is not ready");
       if (stage.continuationFrom) {
         const source = this.getDispatch(stage.continuationFrom);
         const outcomes = this.effectiveToolOutcomes(taskId);
@@ -323,6 +345,7 @@ export class AgentModeStore {
       if (!worker || worker.taskId !== taskId || worker.familyId !== task.familyId || worker.state !== "sleeping") throw new Error("Worker is not sleeping in this task family");
       const dispatchId = randomUUID();
       const message = this.insertMessage({ taskId, sender: "coordinator", recipient: workerId, text: stage.instruction });
+      if (stage.userInput) this.insertMessage({ taskId, sender: "user", recipient: workerId, text: stage.userInput });
       const packet = new Map<string, MailMessage>();
       for (const mail of this.mailbox(taskId, workerId, true)) if (mail.generation === generation) packet.set(mail.id, mail);
       const row: AgentDispatch = { id: dispatchId, taskId, familyId: task.familyId, generation, taskRevision: task.revision, ownerId, workerId, stageId, messageId: message.id, messages: [...packet.values()].map(mail => ({ id: mail.id, revision: mail.revision })), state: "admitted", reservedSpend, createdAt: this.now() };
@@ -352,7 +375,8 @@ export class AgentModeStore {
       row.state = "cancelled"; this.saveDispatch(row); this.sleepWorker(row); task.reserved -= row.reservedSpend;
       const stage = task.stages.find(stage => stage.dispatchId === row.id);
       if (stage) { stage.status = "pending"; delete stage.dispatchId; }
-      task.status = "paused"; task.reason = "workspace_snapshot_unavailable"; this.saveTask(task);
+      if (["ready", "running"].includes(task.status)) { task.status = "paused"; task.reason = "workspace_snapshot_unavailable"; }
+      this.saveTask(task);
     });
   }
   acknowledge(dispatchId: string, acceptanceReceipt: string): AgentDispatch {
@@ -412,6 +436,7 @@ export class AgentModeStore {
           || next.taskGeneration !== source.generation || next.taskRevision !== source.taskRevision || !Array.isArray(next.catalog) || next.catalog.length > 64
           || next.catalogDigest !== nativeDigest(next.catalog) || !Array.isArray(next.requestIds) || !next.requestIds.length || next.requestIds.length > 128 || new Set(next.requestIds).size !== next.requestIds.length) throw new Error("Invalid Native tool continuation");
         id(next.workerBindingId); integer(next.workerGeneration, "Native worker generation", 1); id(next.nativeTurnReceiptId);
+        if (next.imageUsage) { integer(next.imageUsage.count, "Native image count", 0, 2); integer(next.imageUsage.byteLength, "Native image bytes", 0, 160 * 1024); }
         for (const requestId of next.requestIds) id(requestId);
         for (const call of next.pending) {
           if (call.protocol !== AGENT_NATIVE_PROTOCOL || !next.requestIds.includes(call.requestId) || call.toolCallId !== nativeToolCallId(dispatchId, call.requestId)) throw new Error("Invalid Native adapter call identity");
@@ -442,11 +467,14 @@ export class AgentModeStore {
         if (stage) {
           stage.status = result.outcome === "completed" ? "completed" : result.outcome === "failed" ? "failed" : "pending";
           if (stage.status === "pending") delete stage.dispatchId;
+          if (result.outcome === "awaiting_input") stage.waitingFor = result.continuation ? "tools" : "user"; else delete stage.waitingFor;
           if (result.continuation) { stage.continuationFrom = row.id; stage.continuationGeneration = task.generation; }
           else { delete stage.continuationFrom; delete stage.continuationGeneration; }
         }
-        task.status = result.outcome === "awaiting_input" ? "awaiting_input" : ["failed", "not_sent"].includes(result.outcome) ? "paused" : task.stages.every(stage => stage.status === "completed") ? "review_required" : "ready";
-        task.reason = result.outcome;
+        // Another worker's failure, unknown result or human wait must survive this receipt.
+        if (task.status !== "paused") this.updateProgress(task);
+        if (result.outcome === "not_sent") { task.status = "paused"; task.reason = "not_sent"; }
+        else if (task.status !== "paused" && task.status !== "awaiting_input") task.reason = result.outcome;
       } else if (task.revision === row.taskRevision && task.status !== "stopped") {
         const stage = task.stages.find(stage => stage.id === row.stageId && stage.dispatchId === row.id);
         if (stage && stage.status !== "completed") { stage.status = "blocked"; task.status = "paused"; task.reason = "late_result_review_required"; }
@@ -454,6 +482,11 @@ export class AgentModeStore {
       if (task.status !== "stopped" && task.bounds.maxSpend !== null && (result.actualSpend === null || result.actualSpend > row.reservedSpend || task.spent + task.reserved >= task.bounds.maxSpend)) { task.status = "paused"; task.reason = result.actualSpend === null ? "usage_unknown" : "spend_bound"; }
       this.saveTask(task); return row;
     });
+  }
+  private updateProgress(task: AgentTask): void {
+    if (task.stages.some(stage => stage.status === "failed" || stage.status === "blocked")) { task.status = "paused"; task.reason = "stage_failure_or_review_required"; }
+    else if (task.stages.some(stage => stage.waitingFor)) { task.status = "awaiting_input"; task.reason = task.stages.some(stage => stage.waitingFor === "user") ? "user_input_required" : "tool_results_required"; }
+    else task.status = task.stages.every(stage => stage.status === "completed") ? "review_required" : task.stages.some(stage => stage.status === "running") ? "running" : "ready";
   }
   resolveToolCall(scope: AgentToolOutcome["scope"]): { tool: string; arguments: Record<string, unknown>; idempotencyKey: string } | undefined {
     const task = this.getTask(scope.taskId);
@@ -495,7 +528,9 @@ export class AgentModeStore {
       if (task.generation === outcome.scope.generation && task.revision === source.taskRevision && task.status !== "stopped") {
         if (outcome.state === "outcome_unknown") { task.status = "paused"; task.reason = "tool_outcome_unknown"; }
         else if (source.result!.continuation!.pending.every(pending => this.effectiveToolOutcomes(task.id).some(result => result.scope.generation === outcome.scope.generation && result.scope.toolCallId === pending.toolCallId && result.state !== "outcome_unknown"))) {
-          task.status = "ready"; task.reason = "tool_results_ready";
+          const stage = task.stages.find(row => row.continuationFrom === source.id);
+          if (stage) delete stage.waitingFor;
+          if (["ready", "running", "awaiting_input"].includes(task.status)) { this.updateProgress(task); if (task.status !== "awaiting_input") task.reason = "tool_results_ready"; }
         }
         this.saveTask(task);
       }
@@ -532,7 +567,7 @@ export class AgentModeStore {
       if (!fact.late && task.ownerId === executionOwnerId && source.ownerId === executionOwnerId && stage && task.status === "paused" && task.reason === "tool_outcome_unknown"
         && !this.effectiveToolOutcomes(taskId).some(row => row.state === "outcome_unknown")
         && source.result!.continuation!.pending.every(call => this.effectiveToolOutcomes(taskId).some(row => row.scope.generation === source.generation && row.scope.toolCallId === call.toolCallId && row.tool === call.tool && row.state !== "outcome_unknown"))) {
-        task.status = "ready"; task.reason = "tool_receipt_reconciled"; this.saveTask(task);
+        delete stage.waitingFor; this.updateProgress(task); task.reason = "tool_receipt_reconciled"; this.saveTask(task);
       }
       return { task, reconciliation: fact };
     });
@@ -549,8 +584,8 @@ export class AgentModeStore {
         || this.listDispatches(taskId).some(row => unsettled.has(row.state)) || outcomes.some(row => row.state === "outcome_unknown")
         || source.result.continuation.pending.some(call => !outcomes.some(row => row.scope.generation === source.generation && row.scope.toolCallId === call.toolCallId && row.tool === call.tool && row.state !== "outcome_unknown"))) throw new Error("Current complete tool receipts required to resume this continuation");
       this.receipt(receiptId, taskId, "resume_continuation", { sourceId, generation: task.generation, revision: task.revision });
-      stage.status = "pending"; stage.continuationGeneration = task.generation;
-      task.status = "ready"; task.reason = "known_tool_results_adopted"; this.saveTask(task); return task;
+      stage.status = "pending"; delete stage.waitingFor; stage.continuationGeneration = task.generation;
+      this.updateProgress(task); task.reason = "known_tool_results_adopted"; this.saveTask(task); return task;
     });
   }
   /** Unknown usage keeps its reservation until an independent, idempotent usage receipt arrives. */
@@ -699,8 +734,10 @@ export class AgentModeStore {
       if (!packet) { task.reason = "waiting_for_mailbox_work"; this.saveTask(task); return undefined; }
       if (task.turns >= task.bounds.maxTurns) { task.status = "paused"; task.reason = "turn_bound"; delete task.loopRun; this.saveTask(task); return undefined; }
       const continuedConsent = options.automatic && task.loopRun?.ownerId === options.ownerId;
-      const next = this.nextLoopCycle(taskId, { workKey: packet.workKey, stages: [{ id: `work-${task.cycle + 1}`, instruction: packet.text, requirementIds: task.requirements.map(row => row.id) }] });
+      const stages = task.stages.map(({ id, instruction, requirementIds, dependsOn }) => ({ id, instruction, requirementIds, ...(dependsOn ? { dependsOn } : {}) }));
+      const next = this.nextLoopCycle(taskId, { workKey: packet.workKey, stages });
       if (next.status !== "ready") return next;
+      for (const stage of next.stages) stage.userInput = packet.text;
       packet.state = "claimed"; packet.cycle = next.cycle;
       this.db.query("UPDATE agent_work SET body=? WHERE id=?").run(JSON.stringify(packet), packet.workId);
       if (continuedConsent) next.loopRun = { ownerId: options.ownerId, generation: next.generation };

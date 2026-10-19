@@ -10,7 +10,7 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQ
 const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 function fixture() {
   let enabled = false; let selected = false; let uncertain = false; let active = true; let corrupt = false;
-  let foreign = false; let closed = 0; const calls: string[] = [];
+  let foreign = false; let foreignProperties = false; let closed = 0; const calls: string[] = [];
   let expired = false; let pendingOperation: { operationId: string; binding: unknown } | undefined; let lateReceipt: unknown;
   // Marker-only synthetic bytes exercise dimension/hash ownership; native codec/rendering is a separate Cua flow.
   const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0, 8, 8, 0, 1, 0, 1, 0, 0xff, 0xd9]);
@@ -30,6 +30,7 @@ function fixture() {
         scopeId: body.scopeId, observationId: randomUUID(), platform: 'darwin', ...selection,
         frameId: 'window-1', frameEpoch: 'b'.repeat(64), screenshotId: digest(png), coordinateSpace: 'screenshot-pixels', width: 1, height: 1,
         screenshotResource: 'native-desktop:synthetic-owned-image' };
+      if (command === 'properties') return { selection: foreignProperties ? { ...selection, windowId: '2' } : selection, observedAt: new Date().toISOString(), properties: [{ elementId: 'ax-stable-id', role: 'AXStaticText', value: 'Counter: 1' }] };
       if (command === 'image') return body.encoding === 'jpeg' ? { mimeType: 'image/jpeg', base64: jpeg.toString('base64'), sha256: digest(jpeg),
         sourceScreenshotId: corrupt ? '0'.repeat(64) : digest(png), width: 1, height: 1 } : { mimeType: 'image/png', base64: png.toString('base64'), sha256: corrupt ? '0'.repeat(64) : digest(png) };
       if (command === 'act') {
@@ -45,7 +46,7 @@ function fixture() {
   const provider = createMacosDesktopProvider({ helperExecutable: '/unlaunched-fixture-helper', helperSha256: 'a'.repeat(64),
     platform: 'darwin', isScopeActive: () => active, transportFactory: () => transport });
   return { provider, calls, selection, unknown: () => { uncertain = true; }, foreign: () => { foreign = true; },
-    corrupt: () => { corrupt = true; }, stop: () => { active = false; }, closed: () => closed,
+    corrupt: () => { corrupt = true; }, foreignProperties: () => { foreignProperties = true; }, stop: () => { active = false; }, closed: () => closed,
     expireWait: () => { expired = true; }, completeLate: () => { lateReceipt = { operationId: pendingOperation!.operationId, outcome: 'completed', executed: true, reason: 'late ax dispatch receipt; result-unverified' }; } };
 }
 
@@ -108,6 +109,48 @@ test('foreign native observations and stopped task scopes cannot acquire input a
   const f = fixture(); await f.provider.setEnabled(true, true); await f.provider.selectWindow(f.selection, true); f.foreign();
   await expect(f.provider.observe(scope)).rejects.toThrow('changed owner'); f.stop();
   expect((await f.provider.capabilities(scope)).available).toBe(false); await f.provider.close();
+});
+
+
+test('application property readback requires exact selected authority and preserves fresh native identity without capturing', async () => {
+  const f = fixture();
+  await expect(f.provider.applicationProperties(scope, f.selection)).rejects.toThrow('disabled'); expect(f.calls).toEqual([]);
+  await f.provider.setEnabled(true, true); await f.provider.selectWindow(f.selection, true);
+  await expect(f.provider.applicationProperties(scope, { ...f.selection, windowId: '2' })).rejects.toThrow('exact selected');
+  expect((await f.provider.applicationProperties(scope, f.selection)).properties).toEqual([{ elementId: 'ax-stable-id', role: 'AXStaticText', value: 'Counter: 1' }]);
+  expect(f.calls.filter(command => command === 'properties')).toHaveLength(1);
+  expect(f.calls.includes('observe') || f.calls.includes('image') || f.calls.includes('act')).toBe(false);
+  f.foreignProperties(); await expect(f.provider.applicationProperties(scope, f.selection)).rejects.toThrow('owner changed');
+  f.stop(); await expect(f.provider.applicationProperties(scope, f.selection)).rejects.toThrow('disabled');
+  await f.provider.close();
+});
+
+test('revoked native enable cannot restore authority after an explicit disable completes', async () => {
+  let reply!: (value: unknown) => void; let closes = 0;
+  const transport: NativeDesktopTransport = { request: () => new Promise(resolve => { reply = resolve; }), async close() { closes++; } };
+  const provider = createMacosDesktopProvider({ helperExecutable: '/never-launched', helperSha256: 'a'.repeat(64), platform: 'darwin', isScopeActive: () => true, transportFactory: () => transport });
+  const enabling = provider.setEnabled(true, true);
+  expect(provider.passiveStatus().activeCount).toBe(1);
+  await provider.setEnabled(false, true); reply({ enabled: true });
+  await expect(enabling).rejects.toThrow('revoked');
+  expect(provider.passiveStatus()).toMatchObject({ enabled: false, activeCount: 0 }); expect(closes).toBe(1);
+  await provider.close();
+});
+
+test('pre-dispatch native cancellation sends no input and does not create an uncertain owner', async () => {
+  const f = fixture(); await f.provider.setEnabled(true, true); await f.provider.selectWindow(f.selection, true);
+  const observation = await f.provider.observe(scope); const controller = new AbortController(); controller.abort();
+  const operationId = randomUUID(); const action = { kind: 'click' as const, x: 0, y: 0 }; const binding = desktopBindingOf(observation);
+  expect(await f.provider.actWithOperation(scope, binding, action, operationId, controller.signal)).toMatchObject({ operationId, outcome: 'not_sent', executed: false });
+  expect(f.calls.filter(command => command === 'act')).toHaveLength(0); expect(f.provider.passiveStatus().uncertain).toBe(false);
+  expect(f.provider.readExistingReceipt(operationId, binding, action)?.outcome).toBe('not_sent');
+  await f.provider.close();
+});
+
+test('oversized native protocol payload is refused before resolving or launching any helper', async () => {
+  const client = new NativeDesktopHelperClient({ executable: '/nonexistent-no-helper-launch', sha256: 'a'.repeat(64) });
+  await expect(client.request('properties', { selection: { windowId: '1'.repeat(70 * 1024) } })).rejects.toThrow('request exceeds');
+  expect(client.activeCount).toBe(0); await client.close();
 });
 
 const helper = join(import.meta.dir, '..', 'launcher', 'electron', 'desktop-helper', `darwin-${process.arch}`, 'nekodex-desktop-helper');

@@ -292,7 +292,7 @@ function createWorkerService(options = {}, shared) {
         modelProvider: admission.provider, cwd: admission.paths.cwd, approvalPolicy: 'never', approvalsReviewer: 'user', sandbox: 'read-only',
         developerInstructions: `${NEKO_DEVELOPER_INSTRUCTIONS}\n${NEKO_OUTPUT_FORMAT}`,
         ...(resumeThreadId || forkThreadId ? { threadId: resumeThreadId || forkThreadId, excludeTurns: true } : {}) },
-      requestId => { row = update(actionId, { state: 'offered', requestId }); });
+      requestId => { row = update(actionId, { state: 'offered', ownerHeld: true, requestId }); });
       if (!safeId(result?.thread?.id) || resumeThreadId && result.thread.id !== resumeThreadId || result.thread.ephemeral !== !shared?.persistent
         || result.thread.forkedFromId !== (resumeThreadId ? shared.persistent.forkedFromThreadId : forkThreadId ?? null)
         || result.thread.parentThreadId !== null || result.thread.status?.type !== 'idle'
@@ -302,15 +302,19 @@ function createWorkerService(options = {}, shared) {
         || !Array.isArray(result.instructionSources) || result.instructionSources.length) {
         throw fail('thread_receipt_mismatch', 'Native thread did not confirm its admitted identity and permissions');
       }
-      uuid(result.thread.id); worker.threadId = result.thread.id; shared?.created(worker.threadId);
-      const receipt = update(actionId, { state: 'completed', threadId: worker.threadId }); state = 'ready';
+      uuid(result.thread.id); shared?.created(result.thread.id); worker.threadId = result.thread.id;
+      const receipt = update(actionId, { state: 'completed', ownerHeld: false, threadId: worker.threadId }); state = 'ready';
       return { workerHandle: handle, threadId: worker.threadId, admissionId: admission.admissionId, receipt };
     } catch (reason) {
       if (row) {
-        try { update(actionId, { state: reason.authoritative ? 'failed' : 'unknown', reasonCode: reason.code || 'create_failed' }); } catch { /* earlier offered receipt remains uncertain */ }
+        try { update(actionId, { state: reason.authoritative ? 'failed' : 'unknown', ownerHeld: !reason.authoritative && !worker?.rpc.closed, reasonCode: reason.code || 'create_failed' }); } catch { /* earlier offered receipt remains uncertain */ }
       }
       state = row && !reason.authoritative ? 'unknown' : 'retired';
-      await worker?.rpc.destroy(); throw Object.assign(fail(reason.code || 'native_unavailable', 'Private native worker creation is unavailable'),
+      await worker?.rpc.destroy();
+      if (row && !reason.authoritative) {
+        try { update(actionId, { state: 'unknown', ownerHeld: false, reasonCode: reason.code || 'create_failed' }); } catch { /* Preserve the earlier held receipt if reconciliation cannot be saved. */ }
+      }
+      throw Object.assign(fail(reason.code || 'native_unavailable', 'Private native worker creation is unavailable'),
         typeof reason.field === 'string' ? { field: reason.field } : {});
     } finally { busy = null; }
   }
@@ -412,7 +416,11 @@ function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 15000, t
   if (!admission?.prestart || !admission?.forBinding || !admission?.checkAccount || !Number.isInteger(maxConcurrentThreads)
     || maxConcurrentThreads < 1 || maxConcurrentThreads > 32) throw fail('invalid_admission', 'Qualified Native account admission is required');
   const listeners = new Set(), threads = new Map(), facades = new Map(), persistentFacades = new Map();
-  let rpc, starting, closing, stopped = false, prepared = false, fault, persistentGate = null;
+  let rpc, starting, closing, stopped = false, prepared = false, fault;
+  const persistentGates = new Set(), persistentThreadClaims = new Map();
+  const uncertainOwner = () => [...listeners].some(value => value.creationUnknown)
+    || [...facades.values()].some(value => value.inspectOwnedWorker().state === 'unknown');
+  const activeAgent = () => [...facades.values()].some(value => !persistentFacades.has(value) && value.currentOperation());
   const changed = () => { try { onChange?.(); } catch {} };
   const threadState = id => {
     if (!threads.has(id)) threads.set(id, { closed: false, requested: false, resolve: null, promise: null });
@@ -478,9 +486,9 @@ function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 15000, t
     await row.promise;
   }
   function createWorker(binding, onReceipt, persistent) {
-    if (persistentGate && persistent?.token !== persistentGate) throw fail('worker_busy', 'Native account conversation operation is active');
+    if (persistent ? !persistentGates.has(persistent.token) : persistentGates.size) throw fail('worker_busy', 'Native account conversation operation is active');
     if (!persistent && [...persistentFacades.keys()].some(value => value.currentOperation() || value.inspectOwnedWorker().state === 'unknown')) throw fail('worker_busy', 'Native persistent conversation has an unsettled owner');
-    if (stopped || fault || facades.has(binding.workerBindingId)) throw fail('worker_busy', 'Native account binding is unavailable');
+    if (stopped || fault || uncertainOwner() || facades.has(binding.workerBindingId)) throw fail('worker_busy', 'Native account binding is unavailable');
     const scopedAdmission = admission.forBinding(binding);
     let scopedListener;
     const shared = { admission: scopedAdmission, ...(persistent ? { persistent } : {}),
@@ -488,26 +496,31 @@ function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 15000, t
         if (persistent?.resumeThreadId) {
           if (threads.has(id) && !threads.get(id).closed) throw fail('thread_receipt_mismatch', 'Native resumed a thread with an existing live subscription');
           threads.set(id, { closed: false, requested: false, resolve: null, promise: null });
+        } else if (scopedListener?.createdThreadId !== id) {
+          throw fail('thread_receipt_mismatch', 'Native creation did not establish a unique owned thread');
         }
         if (scopedListener) scopedListener.creationUnknown = false; changed();
       },
       rpcFor(id, notification, failure) {
+        // Reserve before any await: concurrent starts cannot both consume the last slot.
+        if (listeners.size >= maxConcurrentThreads) throw fail('worker_busy', 'Native account thread capacity reached');
         const listener = { id, notification, failure, creationUnknown: false, threadStartWritten: false, locallyClosed: false }; scopedListener = listener; listeners.add(listener);
         return {
           connect: async () => {
-            if ([...facades.values()].filter(value => value.currentOperation() || value.inspectOwnedWorker().threadId && !value.inspectOwnedWorker().receipts.every(row => row.retired)).length > maxConcurrentThreads) throw fail('worker_busy', 'Native account thread capacity reached');
             await ready();
           },
           request: async (method, params, beforeWrite, onWaitTimeout) => {
             const allowed = persistent ? ['config/read', 'configRequirements/read', 'thread/start', 'thread/fork', 'thread/resume', 'turn/start'] : ['config/read', 'configRequirements/read', 'thread/start', 'turn/start'];
             if (!allowed.includes(method)) throw fail('unsupported_method', 'Native account facade method is unavailable');
-            if (persistentGate && persistent?.token !== persistentGate) throw fail('worker_busy', 'Native account conversation operation is active');
+            if (persistent ? !persistentGates.has(persistent.token) : persistentGates.size) throw fail('worker_busy', 'Native account conversation operation is active');
             if (!persistent && [...persistentFacades.keys()].some(value => value.currentOperation() || value.inspectOwnedWorker().state === 'unknown')) throw fail('worker_busy', 'Native persistent conversation has an unsettled owner');
             if (stopped || fault) throw fault || fail('client_closed', 'Native account server is closing');
             const creation = ['thread/start', 'thread/fork', 'thread/resume'].includes(method);
             if (creation || method === 'turn/start') {
+              if (uncertainOwner()) throw fail('worker_busy', 'Native account has an uncertain owner');
               admission.checkAccount(await rpc.request('account/read', { refreshToken: false }), await rpc.request('account/rateLimits/read', {}));
               if (stopped || fault) throw fault || fail('client_closed', 'Native account server is closing');
+              if (uncertainOwner()) throw fail('worker_busy', 'Native account has an uncertain owner');
             }
             let result;
             try {
@@ -523,7 +536,15 @@ function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 15000, t
               if (creation && !reason.authoritative && !physicallyClosed()) { listener.creationUnknown = true; changed(); }
               throw reason;
             }
-            if (creation && method !== 'thread/resume' && typeof result?.thread?.id === 'string') threadState(result.thread.id);
+            if (creation && method !== 'thread/resume' && typeof result?.thread?.id === 'string') {
+              // Never bind or unsubscribe a different facade's thread when a malformed
+              // creation receipt aliases an existing (even previously closed) identity.
+              if (threads.has(result.thread.id)) {
+                listener.creationUnknown = true; changed();
+                throw fail('thread_receipt_mismatch', 'Native creation returned an already known thread');
+              }
+              threadState(result.thread.id); listener.createdThreadId = result.thread.id;
+            }
             return result;
           },
           destroy: () => {
@@ -542,8 +563,22 @@ function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 15000, t
     facades.set(binding.workerBindingId, facade); if (persistent) persistentFacades.set(facade, persistent); return facade;
   }
   async function persistentOperation(action) {
-    if (stopped || fault || persistentGate || [...facades.values()].some(value => value.currentOperation() || value.inspectOwnedWorker().state === 'unknown')) throw fail('worker_busy', 'Native account has active or uncertain work');
-    const token = {}; persistentGate = token; changed();
+    if (stopped || fault || uncertainOwner() || activeAgent()) throw fail('worker_busy', 'Native account has active or uncertain work');
+    const token = {}; persistentGates.add(token); changed();
+    const reserveThread = threadId => {
+      const prior = persistentThreadClaims.get(threadId);
+      if (prior && prior !== token) throw fail('worker_busy', 'Persistent thread already has an operation');
+      persistentThreadClaims.set(threadId, token);
+    };
+    const reserveWorker = facade => {
+      const owned = persistentFacades.get(facade);
+      if (!owned || owned.token !== token && persistentGates.has(owned.token)
+        || facade.currentOperation() || facade.inspectOwnedWorker().state !== 'ready') {
+        throw fail('worker_busy', 'Persistent conversation already has an operation or is unavailable');
+      }
+      reserveThread(facade.inspectOwnedWorker().threadId);
+      owned.token = token; return facade;
+    };
     try { await ready(); return await action({
       createWorker: (binding, onReceipt, forkThreadId) => {
         if (forkThreadId !== undefined) {
@@ -554,6 +589,7 @@ function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 15000, t
               && !value.currentOperation() && !threads.get(forkThreadId)?.closed;
           });
           if (!source) throw fail('invalid_intent', 'Fork requires an exact idle persistent conversation owned by this account');
+          reserveWorker(source);
         }
         return createWorker(binding, onReceipt, { token, forkThreadId });
       },
@@ -566,21 +602,25 @@ function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 15000, t
           || row.profileId !== row.historySource.profileId || row.epoch !== row.historySource.authEpoch
           || !Array.isArray(registry.actions) || registry.actions.some(value => value.conversationId === conversationId && (['prepared', 'unknown'].includes(value.state) || value.ownerHeld === true))
           || threads.has(row.threadId) && !threads.get(row.threadId).closed) throw fail('resume_unavailable', 'Resume requires a proven owned retained conversation with settled prior actions');
-        uuid(row.threadId); let consumed = false;
+        uuid(row.threadId); reserveThread(row.threadId); let consumed = false;
         return (binding, onReceipt) => {
-          if (consumed || persistentGate !== token || binding.model !== row.model) throw fail('invalid_intent', 'Resume capability is not current');
+          if (consumed || !persistentGates.has(token) || binding.model !== row.model) throw fail('invalid_intent', 'Resume capability is not current');
           consumed = true;
           return createWorker(binding, onReceipt, { token, resumeThreadId: row.threadId, forkedFromThreadId: row.forkedFromThreadId ?? null });
         };
       },
-      useWorker: facade => { const owned = persistentFacades.get(facade); if (!owned) throw fail('invalid_intent', 'Persistent conversation owner is unavailable'); owned.token = token; return facade; },
+      useWorker: reserveWorker,
     }); }
-    finally { if (persistentGate === token) persistentGate = null; changed(); }
+    finally {
+      persistentGates.delete(token);
+      for (const [threadId, owner] of persistentThreadClaims) if (owner === token) persistentThreadClaims.delete(threadId);
+      changed();
+    }
   }
   return Object.freeze({ prepare: ready, createWorker: (binding, onReceipt) => createWorker(binding, onReceipt), persistentOperation,
     inspect: () => ({ serverGeneration: admission.serverGeneration, pid: rpc?.pid ?? null, closed: physicallyClosed(), ready: prepared && !stopped && !fault && !physicallyClosed(), accepting: prepared && !stopped && !fault && !physicallyClosed() && ![...listeners].some(value => value.creationUnknown),
       threadIds: [...threads.keys()], bindings: [...facades.keys()], activeCount: [...facades.values()].filter(value => value.currentOperation()).length }),
-    currentOperation: () => persistentGate ? 'Native persistent conversation' : closing && !physicallyClosed() ? 'Closing Native account process' : fault && rpc && !physicallyClosed() ? 'Native account preflight reconciliation' : [...facades.values()].some(value => value.currentOperation()) ? 'Native account threads' : null,
+    currentOperation: () => persistentGates.size ? 'Native persistent conversation' : closing && !physicallyClosed() ? 'Closing Native account process' : fault && rpc && !physicallyClosed() ? 'Native account preflight reconciliation' : [...facades.values()].some(value => value.currentOperation()) ? 'Native account threads' : null,
     destroy() {
       if (closing) return closing; stopped = true; changed();
       closing = (async () => {

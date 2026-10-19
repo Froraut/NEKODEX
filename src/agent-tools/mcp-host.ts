@@ -58,7 +58,7 @@ export class StandaloneMcpHost implements StandaloneToolsPort {
     const starting = this.starting.get(recipe.id); if (starting) return starting;
     const promise = (async () => {
       verifyRecipeFiles(recipe);
-      const env: Record<string, string> = {};
+      const env: Record<string, string> = { ...recipe.env };
       if (recipe.trustedSandbox && Object.keys(recipe.envSecretRefs).length) throw new Error("Sandboxed MCP credential grants are unsupported");
       for (const [name, reference] of Object.entries(recipe.envSecretRefs)) {
         const value = await this.options.resolveSecret?.(reference);
@@ -78,7 +78,7 @@ export class StandaloneMcpHost implements StandaloneToolsPort {
         mkdirSync(home, { recursive: true, mode: 0o700 }); mkdirSync(tmp, { recursive: true, mode: 0o700 });
         sandbox = buildTrustedMcpSandboxLaunch({ config: recipe.trustedSandbox, executable: recipe.command, executableSha256: recipe.commandSha256, args: recipe.args, cwd: recipe.cwd, privateHome: realpathSync(home), privateTmp: realpathSync(tmp) });
       }
-      const sandboxEnv = sandbox ? { ...Object.fromEntries(DEFAULT_INHERITED_ENV_VARS.map(name => [name, ""])), ...sandbox.env } : undefined;
+      const sandboxEnv = sandbox ? { ...Object.fromEntries(DEFAULT_INHERITED_ENV_VARS.map(name => [name, ""])), ...sandbox.env, ...env } : undefined;
       const transport = new StdioClientTransport({ command: sandbox?.command ?? recipe.command, args: sandbox?.args ?? recipe.args, env: sandboxEnv ?? env, cwd: sandbox?.cwd ?? recipe.cwd, stderr: "pipe", maxBufferSize: 512 * 1024 });
       // Drain and discard stderr. Server output may contain credentials; no diagnostics copying.
       transport.stderr?.on("data", () => {});

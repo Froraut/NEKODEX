@@ -1,4 +1,5 @@
 const ACTIONS = new Set(['status', 'reviewServer', 'saveServer', 'setEnabled', 'removeServer', 'setServerEnabled', 'prepareInstall', 'installReviewed', 'installReceipt', 'cancelInstall', 'uninstallManaged', 'reviewInstalled', 'discover', 'approveInvoke', 'receipt', 'terminalReference', 'skillRoot', 'skillsDiscover', 'skillsSelect', 'removeSkillRoot']);
+const { createPythonBuildPicker } = require('../python-build-picker.cjs');
 for (const action of ['reviewSkillImport', 'reviewSkillPackageImport', 'commitSkillImport', 'managedSkillAction', 'attachManagedSkill', 'detachManagedSkill', 'revokeManagedSkill']) ACTIONS.add(action);
 for (const action of ['browserStatus', 'bindBrowserTools', 'revokeBrowserTools']) ACTIONS.add(action);
 for (const action of ['inspectDesktopPermissions', 'listDesktopWindows', 'setDesktopEnabled', 'selectDesktopWindow', 'revokeDesktopTools']) ACTIONS.add(action);
@@ -6,10 +7,12 @@ for (const action of ['remoteStatus', 'bindRemoteTools', 'revokeRemoteTools']) A
 for (const action of ['scriptStatus', 'grantScriptWorkspace', 'revokeScriptWorkspace']) ACTIONS.add(action);
 for (const action of ['vmStatus', 'reviewVmEnvironment', 'prepareVmEnvironment', 'attachVmWorkspace', 'revokeVmWorkspace', 'cancelVmOperation', 'reconcileVmOperation']) ACTIONS.add(action);
 for (const action of ['pythonEnvironmentStatus', 'reviewPythonEnvironment', 'preparePythonEnvironment', 'pythonEnvironmentAction', 'reconcilePythonEnvironment', 'bindPythonEnvironment', 'revokePythonEnvironment']) ACTIONS.add(action);
+for (const action of ['pythonBuildStatus', 'reviewPythonBuild', 'preparePythonBuild', 'attachPythonBuild', 'revokePythonBuild', 'cancelPythonBuild', 'reconcilePythonBuild', 'vmNetworkStatus', 'grantVmNetwork', 'revokeVmNetwork']) ACTIONS.add(action);
 /** Existing IPC sender guard and owned supervisor remain the sole authority. */
-function registerAgentTools({ handle, runtimeHost, dialog, getWindow, remoteService, workspaceService, vmExportService }) {
+function registerAgentTools({ handle, runtimeHost, dialog, getWindow, remoteService, workspaceService, vmExportService, pythonBuildSelectionService, oauthIpc }) {
   const request = async body => {
     if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Invalid Agent tools request');
+    if (oauthIpc?.handles(body.action)) return oauthIpc.request(body);
     if (body && ['vmExportWorkspaces', 'vmExportStatus', 'prepareVmExport', 'reconcileVmExport'].includes(body.action)) {
       if (!vmExportService || !workspaceService || Buffer.byteLength(JSON.stringify(body)) > 16384) throw new Error('VM export service is unavailable');
       if (body.action === 'vmExportWorkspaces') {
@@ -46,7 +49,7 @@ function registerAgentTools({ handle, runtimeHost, dialog, getWindow, remoteServ
     }
     const supervisor = runtimeHost.supervisor;
     const config = supervisor.readConfig();
-    const allowDraining = ['status', 'receipt', 'installReceipt', 'managedSkillAction', 'browserStatus', 'remoteStatus', 'scriptStatus', 'vmStatus', 'cancelVmOperation', 'reconcileVmOperation', 'revokeVmWorkspace', 'pythonEnvironmentStatus', 'pythonEnvironmentAction', 'reconcilePythonEnvironment', 'revokePythonEnvironment', 'revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools', 'revokeScriptWorkspace'].includes(body.action)
+    const allowDraining = ['status', 'receipt', 'installReceipt', 'managedSkillAction', 'browserStatus', 'remoteStatus', 'scriptStatus', 'vmStatus', 'cancelVmOperation', 'reconcileVmOperation', 'revokeVmWorkspace', 'pythonEnvironmentStatus', 'pythonEnvironmentAction', 'reconcilePythonEnvironment', 'revokePythonEnvironment', 'pythonBuildStatus', 'revokePythonBuild', 'cancelPythonBuild', 'reconcilePythonBuild', 'vmNetworkStatus', 'revokeVmNetwork', 'revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools', 'revokeScriptWorkspace'].includes(body.action)
       || body.action === 'setDesktopEnabled' && body.enabled === false;
     if (!config || !await supervisor.ownedAgentRuntimeReady(config, { allowDraining })) throw new Error('Start the current NEKODEX runtime to use Agent tools');
     // Observation can end while the exact approved tool remains owned by core.
@@ -54,11 +57,11 @@ function registerAgentTools({ handle, runtimeHost, dialog, getWindow, remoteServ
     // authorizes a second invoke or declares physical completion.
     const receipt = await supervisor.control(config, 'agent-tools', { body, timeoutMs: body.action === 'approveInvoke' ? 50000 : 5000 });
     if (!receipt || receipt.ok !== true) throw new Error(receipt?.message || receipt?.error || 'Agent tools operation failed');
-    return receipt.value;
+    return body.action === 'status' && oauthIpc ? oauthIpc.decorateStatus(receipt.value) : receipt.value;
   };
   handle('launcher:agent-tools', async (_event, body) => request(body));
   handle('launcher:agent-tools-observe', async (_event, body) => {
-    if (!body || !['remoteStatus', 'scriptStatus', 'vmStatus', 'reconcileVmOperation', 'vmExportWorkspaces', 'vmExportStatus', 'reconcileVmExport', 'pythonEnvironmentStatus', 'pythonEnvironmentAction'].includes(body.action)) throw new Error('This tools action only observes retained state or reconciles its exact metadata');
+    if (!body || !['remoteStatus', 'scriptStatus', 'vmStatus', 'reconcileVmOperation', 'vmExportWorkspaces', 'vmExportStatus', 'reconcileVmExport', 'pythonEnvironmentStatus', 'pythonEnvironmentAction', 'pythonBuildStatus', 'vmNetworkStatus', 'oauthList'].includes(body.action)) throw new Error('This tools action only observes retained state or reconciles its exact metadata');
     return request(body);
   });
   handle('launcher:agent-tools-revoke', async (_event, body) => {
@@ -75,6 +78,8 @@ function registerAgentTools({ handle, runtimeHost, dialog, getWindow, remoteServ
     const path = selection.filePaths[0];
     return { cancelled: false, grant: await request({ action: 'skillRoot', input: { root: path, label: require('node:path').basename(path) || path }, explicitUserAction: true }) };
   });
+  const pickPythonBuild = createPythonBuildPicker({ dialog, getWindow, service: pythonBuildSelectionService });
+  handle('launcher:agent-tools-pick-python-build-selection', (_event, scope, config) => pickPythonBuild(scope, config));
   handle('launcher:agent-tools-pick-install-root', async () => {
     if (!dialog) throw new Error('Native MCP allowed-root picker is unavailable');
     const options = { title: 'Select the directory for official MCP filesystem read/write tools', properties: ['openDirectory'] };

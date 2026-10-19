@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { createRequire } from 'node:module';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, realpathSync, rmSync, existsSync, lstatSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, realpathSync, rmSync, existsSync, lstatSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -22,12 +22,14 @@ function fixture(initial = true) {
   git(['init', '-q', '-b', 'main']); git(['config', 'user.name', author.name]); git(['config', 'user.email', author.email]);
   if (initial) { writeFileSync(join(repo, 'a.txt'), 'base\n'); writeFileSync(join(repo, 'b.txt'), 'keep\n'); git(['add', '--', 'a.txt', 'b.txt']); git(['commit', '-qm', 'Fixture base']); }
   const hosts = new Map<string, any>(), calls: string[] = [], receipts: any[] = []; let rows: any[] = [], admission = 0, terminals = 0;
-  let pause: (() => Promise<void>) | null = null, dropCommitReply = false, localTerminalFailures = 0;
+  let pause: (() => Promise<void>) | null = null, dropCommitReply = false, localTerminalFailures = 0, faultApplyProgram: string | null = null;
   const addHost = (directory = repo, hostname = 'fixture.invalid') => { const id = randomUUID(); hosts.set(id, { hostId: id, fingerprint: hash(id + directory), connectionId: randomUUID(), root: directory, hostname, username: 'fixture', port: 22 }); return id; };
   const hostId = addHost();
   async function helper(scope: any, action: string, payload: any) {
     return await new Promise<any>((resolve, reject) => {
-      const child = spawn('/usr/bin/python3', ['-c', REMOTE_GIT_REVIEW_HELPER], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+      const program = action === 'apply' && faultApplyProgram ? faultApplyProgram : REMOTE_GIT_REVIEW_HELPER;
+      if (action === 'apply') faultApplyProgram = null;
+      const child = spawn('/usr/bin/python3', ['-c', program], { env, stdio: ['pipe', 'pipe', 'pipe'] });
       const out: Buffer[] = [], err: Buffer[] = []; child.stdout.on('data', data => out.push(data)); child.stderr.on('data', data => err.push(data));
       child.once('error', reject); child.once('close', code => {
         const text = Buffer.concat(out).toString('utf8');
@@ -63,6 +65,7 @@ function fixture(initial = true) {
     records: () => structuredClone(rows), admission: () => admission, terminals: () => terminals,
     pause: (value: typeof pause) => { pause = value; }, dropCommit: () => { dropCommitReply = true; },
     failLocalTerminalOnce: () => { localTerminalFailures = 1; },
+    crashApplyAt: (boundary: string) => { expect(REMOTE_GIT_REVIEW_HELPER).toContain(boundary); faultApplyProgram = REMOTE_GIT_REVIEW_HELPER.replace(boundary, boundary.match(/^ +/)![0] + 'os._exit(73)\n' + boundary); },
     async close() { await controller.destroy(); rmSync(root, { recursive: true, force: true }); } };
 }
 
@@ -170,3 +173,50 @@ test('common repository ownership covers alias profiles and a foreign durable re
     expect(() => f.controller.pruneActions(other, [review.actionId])).toThrow();
   } finally { release?.(); await f.close(); }
 }, 30000);
+
+test('crashed index publication reconciles the actual index with typed proof and no Git replay', async () => {
+  const f = fixture();
+  try {
+    const head = f.git(['rev-parse', 'HEAD']); writeFileSync(join(f.repo, 'a.txt'), 'published before crash\n');
+    writeFileSync(join(f.repo, 'b.txt'), 'separate user staging\n'); f.git(['add', '--', 'b.txt']);
+    f.crashApplyAt("   save(state='completed',phase='completed',result=result); phase='completed'");
+    const action = await f.run('stage', ['a.txt']); expect(action.result.state).toBe('unknown');
+    expect(f.git(['show', ':a.txt'])).toBe('published before crash');
+    const applies = f.calls.filter(value => value === 'apply').length;
+    const restarted = createRemoteGitReviewController(f.options); f.hosts.get(f.hostId).connectionId = randomUUID();
+    const inspected = await restarted.inspectAction(f.hostId, action.plan.actionId);
+    expect(inspected).toMatchObject({ state: 'completed', ownerHeld: false, result: { reconciled: true } });
+    expect(inspected.result.indexDigest).toBe(hash(readFileSync(join(f.repo, '.git', 'index'))));
+    expect(inspected.result).not.toHaveProperty('commitOid'); expect(inspected.result).not.toHaveProperty('treeOid');
+    await restarted.apply(f.hostId, { actionId: action.plan.actionId, reviewDigest: action.plan.reviewDigest });
+    expect(f.calls.filter(value => value === 'apply').length).toBe(applies);
+    expect(f.git(['rev-parse', 'HEAD'])).toBe(head); expect(f.git(['show', ':b.txt'])).toBe('separate user staging');
+    expect(readFileSync(join(f.repo, 'a.txt'), 'utf8')).toBe('published before crash\n'); await restarted.destroy();
+  } finally { await f.close(); }
+}, 15000);
+
+test('dead prepublication owner settles only its retained exact index lock and preserves replacement or modified locks', async () => {
+  for (const lockState of ['owned', 'replacement', 'modified', 'publication-intent']) {
+    const f = fixture();
+    try {
+      const index = readFileSync(join(f.repo, '.git', 'index')), head = f.git(['rev-parse', 'HEAD']);
+      writeFileSync(join(f.repo, 'a.txt'), 'unpublished dirty bytes\n');
+      f.crashApplyAt(lockState === 'publication-intent' ? '    os.replace(lockpath,index); owned_lock=None; sync_directory(gitdir)' : "   fresh(plan['capture'])\n   original=read_file(index,MAX_OUTPUT)");
+      const action = await f.run('stage', ['a.txt']); expect(action.result.state).toBe('unknown');
+      const lock = join(f.repo, '.git', 'index.lock'); expect(existsSync(lock)).toBe(true);
+      if (lockState === 'publication-intent') {
+        const ledger = JSON.parse(readFileSync(join(f.repo, '.git', 'nekodex-review-actions', action.plan.actionId + '.json'), 'utf8'));
+        expect(ledger).toMatchObject({ publicationIntent: true, phase: 'index-publication' }); expect(hash(readFileSync(lock))).toBe(ledger.afterIndexDigest);
+      }
+      if (lockState === 'replacement') { writeFileSync(lock + '.replacement', 'external lock owner\n'); renameSync(lock + '.replacement', lock); }
+      if (lockState === 'modified') { const inode = lstatSync(lock).ino; writeFileSync(lock, 'external lock owner\n'); expect(lstatSync(lock).ino).toBe(inode); }
+      const inspected = await f.controller.inspectAction(f.hostId, action.plan.actionId);
+      expect(inspected).toMatchObject({ state: 'failed', ownerHeld: false, terminal: true });
+      const foreign = lockState === 'replacement' || lockState === 'modified';
+      expect(existsSync(lock)).toBe(foreign); if (foreign) expect(readFileSync(lock, 'utf8')).toBe('external lock owner\n');
+      expect(readFileSync(join(f.repo, '.git', 'index'))).toEqual(index); expect(f.git(['rev-parse', 'HEAD'])).toBe(head);
+      expect(readFileSync(join(f.repo, 'a.txt'), 'utf8')).toBe('unpublished dirty bytes\n');
+      expect(f.calls.filter(value => value === 'apply')).toHaveLength(1);
+    } finally { await f.close(); }
+  }
+}, 20000);

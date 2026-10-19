@@ -11,12 +11,13 @@ const { createOwnedNativeAccountServer } = require('../launcher/electron/owned-n
 const { createPersistentNativeConversations } = require('../launcher/electron/persistent-native-conversations.cjs');
 const { compileAgentNativeOutputSchema } = require('../launcher/electron/agent-native-bridge.cjs');
 
-async function fixture(capacity = 3) {
+async function fixture(capacity = 3, terminalTimeoutMs = 50) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'neko-persistent-conversations-')));
   const paths = { home: join(root, 'home'), codexHome: join(root, 'codex'), cwd: join(root, 'home', 'work') };
   for (const value of Object.values(paths)) mkdirSync(value, { recursive: true, mode: 0o700 });
   const methods: any[] = [], histories = new Map<string, string[]>(), receipts: any[] = [];
-  let launches = 0, held: (() => void) | undefined, holdNext = false, rejectNextCreate = false, processClosed = false;
+  let launches = 0, holdNext = false, rejectNextCreate = false, aliasNextCreate = false, processClosed = false;
+  const held = new Map<string, () => void>(), turnWaiters = new Map<string, () => void>();
   let admissionId = 'a'.repeat(64); const model = 'synthetic-model';
   const profileId = randomUUID(), epoch = randomUUID();
   const historySource = { profileId, authEpoch: epoch, backendAccountId: 'synthetic-account', sourceId: 'c'.repeat(64) };
@@ -28,7 +29,7 @@ async function fixture(capacity = 3) {
     forBinding(binding: any) { return { ...admission, admissionId, modelId: model, imageInput: false,
       paths: { ...paths, journal: join(root, 'journals', binding.workerBindingId) }, availability: () => ({ available: true, reasonCode: null }) }; },
   };
-  const serverOptions = { admission, maxConcurrentThreads: capacity, requestTimeoutMs: 50, terminalTimeoutMs: 50, stopGraceMs: 20,
+  const serverOptions = { admission, maxConcurrentThreads: capacity, requestTimeoutMs: 50, terminalTimeoutMs, stopGraceMs: 20,
     testHooks: { spawnProcess() {
       launches++; processClosed = false;
       const child: any = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
@@ -45,9 +46,10 @@ async function fixture(capacity = 3) {
           if (request.method === 'account/rateLimits/read') response(request, {});
           if (request.method === 'thread/start' || request.method === 'thread/fork' || request.method === 'thread/resume') {
             if (rejectNextCreate) { rejectNextCreate = false; child.stdout.write(JSON.stringify({ id: request.id, error: { code: -32600, message: 'Synthetic known rejection' } }) + '\n'); return; }
-            const params = request.params, resumed = request.method === 'thread/resume', id = resumed ? params.threadId : randomUUID();
+            const params = request.params, resumed = request.method === 'thread/resume', id = resumed ? params.threadId : aliasNextCreate ? histories.keys().next().value! : randomUUID();
+            const aliased = aliasNextCreate; aliasNextCreate = false;
             if (resumed && holdResume) { holdResume = false; resumeSeen?.(); return; }
-            if (!resumed) { histories.set(id, params.threadId ? [...histories.get(params.threadId)!] : []); forkParents.set(id, params.threadId ?? null); }
+            if (!resumed && !aliased) { histories.set(id, params.threadId ? [...histories.get(params.threadId)!] : []); forkParents.set(id, params.threadId ?? null); }
             response(request, { thread: { id, ephemeral: resumed ? false : params.ephemeral, forkedFromId: forkParents.get(id) ?? null, parentThreadId: null, status: { type: 'idle' } },
               model, modelProvider: 'openai', approvalPolicy: 'never', approvalsReviewer: 'user', sandbox: { type: 'readOnly' }, cwd: paths.cwd, instructionSources: [] });
           }
@@ -60,7 +62,8 @@ async function fixture(capacity = 3) {
               event('item/completed', { threadId, turnId, completedAtMs: Date.now(), item: { type: 'agentMessage', id: randomUUID(), phase: 'final_answer', text: JSON.stringify({ protocol: 'neko-agent-v1', kind: 'final', requestId: null, toolId: null, argumentsJson: null, summary: `Observed ${params.input[0].text}` }) } });
               event('turn/completed', { threadId, turn: { id: turnId, status: 'completed' } });
             };
-            if (holdNext) { holdNext = false; held = finish; } else finish();
+            if (holdNext) { holdNext = false; held.set(threadId, finish); } else finish();
+            turnWaiters.get(params.input[0].text)?.(); turnWaiters.delete(params.input[0].text);
           }
           if (request.method === 'thread/unsubscribe') { response(request, {}); event('thread/closed', { threadId: request.params.threadId }); }
         }); done();
@@ -88,8 +91,9 @@ async function fixture(capacity = 3) {
       expectedContext = { profileId, epoch, serverGeneration: admission.serverGeneration };
       service = createPersistentNativeConversations({ getExecution: () => context, storageRoot });
     },
-    rejectCreate: () => { rejectNextCreate = true; },
-    release: () => { held!(); held = undefined; }, switchContext: () => { context = { ...context, epoch: randomUUID() }; },
+    rejectCreate: () => { rejectNextCreate = true; }, aliasCreate: () => { aliasNextCreate = true; },
+    waitForTurn: (text: string) => new Promise<void>(resolve => { turnWaiters.set(text, resolve); }),
+    release: (threadId = held.keys().next().value) => { const finish = held.get(threadId!); held.delete(threadId!); finish!(); }, switchContext: () => { context = { ...context, epoch: randomUUID() }; },
     async close() { await Promise.all([service.destroy(), server.destroy()]); expect(processClosed || launches === 0).toBe(true); rmSync(root, { recursive: true, force: true }); } };
 }
 
@@ -132,6 +136,57 @@ test('explicit persistent ownership keeps same-thread followup and fork context 
     expect(turnCount()).toBe(3);
   } finally { await f.close(); }
 });
+
+test('independent retained conversations run simultaneously within one account quota and keep exact continuation ownership', async () => {
+  const f = await fixture(2, 1000);
+  try {
+    const first = f.create('parallel alpha'), second = f.create('parallel beta');
+    const alphaSeen = f.waitForTurn(first.text); f.hold(); const alphaPending = f.service.create(first); await alphaSeen;
+    const alpha = f.service.list().conversations.find((row: any) => row.id === f.service.inspectAction(first.actionId).conversationId);
+    const betaSeen = f.waitForTurn(second.text); f.hold(); const betaPending = f.service.create(second); await betaSeen;
+    const beta = f.service.list().conversations.find((row: any) => row.id === f.service.inspectAction(second.actionId).conversationId);
+    expect(alpha.threadId).not.toBe(beta.threadId);
+    expect(f.server.inspect().activeCount).toBe(2); expect(f.launches()).toBe(1);
+    expect(f.service.list().conversations.map((row: any) => row.status)).toEqual(['running', 'running']);
+    await f.service.create(first); // Exact duplicate is a passive receipt lookup.
+    await expect(f.service.send({ actionId: randomUUID(), conversationId: alpha.id, revision: alpha.revision,
+      text: 'overlapping alpha', expectedContext: f.expectedContext })).rejects.toMatchObject({ actionRecorded: false });
+    const overCapacity = f.create('no third subscription');
+    await expect(f.service.create(overCapacity)).rejects.toMatchObject({ actionRecorded: true, code: 'worker_busy' });
+    expect(f.service.inspectAction(overCapacity.actionId)).toMatchObject({ state: 'failed', ownerHeld: false });
+    expect(f.methods.filter(row => row.method === 'thread/start')).toHaveLength(2);
+    expect(f.methods.filter(row => row.method === 'turn/start')).toHaveLength(2);
+    f.release(beta.threadId); await betaPending;
+    expect(f.service.inspectAction(first.actionId).state).toBe('prepared');
+    expect(f.service.inspectAction(second.actionId).state).toBe('completed');
+    expect(f.service.list().conversations.find((row: any) => row.id === beta.id).lastSummary).toBe('Observed parallel beta');
+    f.release(alpha.threadId); await alphaPending;
+    const followup = { actionId: randomUUID(), conversationId: alpha.id, revision: 1, text: 'alpha continuation', expectedContext: f.expectedContext };
+    await f.service.send(followup);
+    expect(f.histories.get(alpha.threadId)).toEqual(['parallel alpha', 'alpha continuation']);
+    expect(f.histories.get(beta.threadId)).toEqual(['parallel beta']);
+    expect(f.service.list().busy).toBe(false);
+    expect(f.methods.filter(row => row.method === 'thread/start')).toHaveLength(2);
+  } finally { await f.close(); }
+}, 2000);
+
+test('aliased creation receipt cannot take or close an existing retained thread and keeps the uncertain owner blocked', async () => {
+  const f = await fixture();
+  try {
+    await f.service.create(f.create('owned original'));
+    const original = f.service.list().conversations[0];
+    f.aliasCreate(); const alias = f.create('must not use original');
+    await expect(f.service.create(alias)).rejects.toMatchObject({ actionRecorded: true });
+    expect(f.service.inspectAction(alias.actionId)).toMatchObject({ state: 'unknown', ownerHeld: true });
+    expect(f.server.inspect().accepting).toBe(false);
+    expect(f.methods.filter(row => row.method === 'thread/unsubscribe')).toHaveLength(0);
+    expect(f.methods.filter(row => row.method === 'turn/start')).toHaveLength(1);
+    expect(f.histories.get(original.threadId)).toEqual(['owned original']);
+    await expect(f.service.create(f.create('blocked while outcome unknown'))).rejects.toMatchObject({ actionRecorded: false });
+    await f.service.create(alias);
+    expect(f.methods.filter(row => row.method === 'thread/start')).toHaveLength(2);
+  } finally { await f.server.destroy(); await f.close(); }
+}, 2000);
 
 test('held unknown conversation blocks all senders, duplicate never reoffers, late exact receipt settles and restart never resumes', async () => {
   const f = await fixture();

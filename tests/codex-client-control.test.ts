@@ -8,7 +8,7 @@ import { join } from 'node:path';
 const require = createRequire(import.meta.url);
 const { createCodexClientControl } = require('../launcher/electron/codex-client-control.cjs');
 const { registerCodexClientControlIpc } = require('../launcher/electron/ipc/codex-client-control.cjs');
-import { mergeNativeThreads, nativeThreadRows } from '../launcher/src/native-threads-model';
+import { mergeNativeThreads, nativeExternalThreadControl, nativeThreadRows } from '../launcher/src/native-threads-model';
 
 const ROOT = '0199a001-0000-7000-8000-000000000001';
 const CHILD = '0199a001-0000-7000-8000-000000000002';
@@ -102,6 +102,43 @@ test('fork requires user action, preserves native policies and returns the new f
       params: { command: 'private' } })}\n`);
     expect(f.received.at(-1)).toEqual({ id: 900, error: { code: -32601,
       message: 'This client does not handle server requests' } });
+  } finally { await f.client.destroy(); }
+});
+
+test('native fork carries the exact turn boundary and no execution authority', async () => {
+  const f = fixture();
+  try {
+    await expect(f.client.forkThread({ threadId: ROOT, lastTurnId: '', userInitiated: true }))
+      .rejects.toMatchObject({ code: 'invalid_parameters' });
+    expect(f.launches).toHaveLength(0);
+    const forking = f.client.forkThread({ threadId: ROOT, lastTurnId: 'native-turn-17', userInitiated: true });
+    const request = await f.next('thread/fork');
+    expect(request.params).toEqual({ threadId: ROOT, lastTurnId: 'native-turn-17', excludeTurns: true });
+    f.respond(request, { thread: thread(CHILD, { forkedFromId: ROOT }) });
+    const receipt = await forking;
+    expect(receipt).toMatchObject({ sourceThreadId: ROOT, lastTurnId: 'native-turn-17', executionStarted: false });
+    const saved = JSON.parse(readFileSync(join(f.directory, 'native-thread-control', 'forks.json'), 'utf8'));
+    expect(saved.records[0]).toMatchObject({ actionId: receipt.actionId, threadId: ROOT,
+      lastTurnId: 'native-turn-17', state: 'completed', forkId: CHILD });
+    expect(f.received.some(row => /thread\/resume|turn\/start|turn\/interrupt/.test(row.method || ''))).toBe(false);
+  } finally { await f.client.destroy(); }
+});
+
+test('external idle and configured-server metadata never become exclusive execution authority', async () => {
+  const f = fixture({ controlSocket: '/fixture/control.sock' });
+  try {
+    expect(f.client.snapshot()).toMatchObject({ capabilities: { resumeExternal: false, exclusiveHandoff: false },
+      externalControl: { executionOwner: 'unverified', reason: 'exclusive-owner-contract-unavailable' } });
+    const reading = f.client.readThread(ROOT);
+    f.respond(await f.next('thread/read'), { thread: thread(ROOT, { status: { type: 'idle' },
+      originator: 'historical-originator', parentThreadId: 'not-a-native-id', sessionId: 'unverified-family' }) });
+    const result = await reading;
+    expect(result.statusScope).toBe('configured-server');
+    expect(result.thread).toMatchObject({ parentThreadId: null, sessionId: null, originator: 'historical-originator' });
+    expect(nativeExternalThreadControl(result.thread)).toEqual({ threadId: ROOT, sessionId: null, parentThreadId: null,
+      resumeAvailable: false, exclusiveHandoffAvailable: false, executionOwner: 'unverified',
+      reason: 'exclusive-owner-contract-unavailable' });
+    expect(f.received.some(row => /thread\/resume|turn\/start|turn\/interrupt/.test(row.method || ''))).toBe(false);
   } finally { await f.client.destroy(); }
 });
 

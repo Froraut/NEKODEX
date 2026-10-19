@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { createBrowserCompanionHost, type BrowserCompanionHost } from "./host";
 import { COMPANION_ORIGIN } from "./protocol";
 import { createCompanionBrowserProvider } from "./providers";
+import { companionExtensionOrigin } from "./firefox-identity";
 
 export interface CompanionListener { stop(closeActiveConnections?: boolean): void | Promise<void> }
 export interface BrowserCompanionRuntimeOptions {
@@ -33,6 +34,7 @@ export function createBrowserCompanionRuntime(options: BrowserCompanionRuntimeOp
   let host: BrowserCompanionHost | undefined;
   let listener: CompanionListener | undefined;
   let extensionId = "";
+  let extensionOrigin = "";
   let unavailableReason: string | null = null;
   let transitioning = false;
   let closed = false;
@@ -42,22 +44,22 @@ export function createBrowserCompanionRuntime(options: BrowserCompanionRuntimeOp
   function status() {
     return {
       enabled: !!listener, state: closed ? "closed" as const : transitioning ? "transitioning" as const : unavailableReason ? "unavailable" as const : listener ? "listening" as const : "disabled" as const,
-      origin: COMPANION_ORIGIN, extensionId, reason: unavailableReason, restartPolicy: "off" as const,
+      origin: COMPANION_ORIGIN, extensionId, extensionOrigin, reason: unavailableReason, restartPolicy: "off" as const,
       extensionArtifact: { directory, manifestPath, available: existsSync(manifestPath) },
       companion: host?.status() ?? null,
       lastReceipt: lastReceipt ? structuredClone(lastReceipt) : null, chatGptSendSupported: false as const,
     };
   }
-  async function enable(selectedId: unknown) {
+  async function enable(selectedId: unknown, selectedOrigin?: unknown) {
     if (closed) throw new Error("Companion runtime is closed");
     if (transitioning) throw new Error("Companion listener transition is already in progress");
-    if (typeof selectedId !== "string" || !/^[a-p]{32}$/.test(selectedId)) throw new Error("Enter the exact 32-character Chrome extension ID (letters a–p)");
+    const checkedOrigin = companionExtensionOrigin(selectedId, selectedOrigin);
     if (listener) {
-      if (selectedId !== extensionId) throw new Error("Disable the current listener before changing extension identity");
+      if (selectedId !== extensionId || checkedOrigin !== extensionOrigin) throw new Error("Disable the current listener before changing extension identity");
       return status();
     }
-    transitioning = true; unavailableReason = null; extensionId = selectedId;
-    const candidate = createBrowserCompanionHost({ extensionId });
+    transitioning = true; unavailableReason = null; extensionId = selectedId as string; extensionOrigin = checkedOrigin;
+    const candidate = createBrowserCompanionHost({ extensionId, ...(selectedOrigin !== undefined ? { extensionOrigin } : {}) });
     try {
       const owned = options.startListener ? options.startListener(candidate) : Bun.serve({
         hostname: "127.0.0.1", port: 17843, idleTimeout: 30,

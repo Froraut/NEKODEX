@@ -114,7 +114,7 @@ class Sftp {
   close() { this.abort(new Error('SFTP session closed.')); }
   async request(type, ...parts) { await this.ready; if (this.closed) throw new Error('SFTP is disconnected.'); const id = ++this.sequence;
     return new Promise((resolve, reject) => { const timer = setTimeout(() => this.abort(new Error('SFTP response timed out; operation may be incomplete.')), 30000);
-      this.pending.set(id, { resolve, reject, timer }); this.send(Buffer.concat([Buffer.from([type]), uint(id), ...parts])); }); }
+      this.pending.set(id, { resolve, reject, timer }); try { this.send(Buffer.concat([Buffer.from([type]), uint(id), ...parts])); } catch (error) { this.abort(error); } }); }
   expect(response, type) { if (response.type !== type) fail('PROTOCOL', 'Unexpected SFTP response type.'); return response.reader; }
   async realpath(file) { const r = this.expect(await this.request(16, str(file)), 104); if (r.u32() !== 1) fail('PROTOCOL', 'Ambiguous SFTP realpath.'); return r.text(); }
   async stat(file) { try { return this.expect(await this.request(7, str(file)), 105).attrs(); } catch (e) { if (e.sftpCode === 2) return null; throw e; } }
@@ -134,8 +134,8 @@ class Sftp {
     try { while (true) { let response; try { response = await this.request(5, str(handle), offset(size), uint(32768)); } catch (e) { if (e.sftpCode === 1) break; throw e; }
       const data = this.expect(response, 103).string(); if (!data.length) break; size += data.length; if (size > LIMITS.bytes) fail('FILE', 'File grew beyond the edit limit.'); chunks.push(data);
     } } finally { await this.release(handle); } return Buffer.concat(chunks); }
-  async putExclusive(file, bytes, mode = 0o600) { const handle = await this.handle(3, str(file), uint(2 | 8 | 32), uint(4), uint(mode & 0o777));
-    try { for (let at = 0; at < bytes.length; at += 32768) this.expect(await this.request(6, str(handle), offset(at), str(bytes.subarray(at, at + 32768))), 101); }
+  async putExclusive(file, bytes, mode = 0o600, created) { const handle = await this.handle(3, str(file), uint(2 | 8 | 32), uint(4), uint(mode & 0o777));
+    try { created?.(); for (let at = 0; at < bytes.length; at += 32768) this.expect(await this.request(6, str(handle), offset(at), str(bytes.subarray(at, at + 32768))), 101); }
     finally { await this.release(handle); } }
   async rename(from, to, replace) { if (replace) { if (this.extensions.get('posix-rename@openssh.com') !== '1') fail('RENAME', 'This server lacks atomic replacement support.');
       this.expect(await this.request(200, str('posix-rename@openssh.com'), str(from), str(to)), 101); }
@@ -165,26 +165,31 @@ with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
  print(json.dumps({'exitCode':p.returncode,'stdout':out.read(65536).decode('utf-8','replace'),'stderr':err.read(65536).decode('utf-8','replace'),'truncated':os.fstat(out.fileno()).st_size>65536 or os.fstat(err.fileno()).st_size>65536,'stopped':reason}))
 `;
 const shellQuote = value => "'" + value.replace(/'/g, "'\\''") + "'";
-async function runRemoteProgram(host, request, spawnProcess = spawn, program = COMMAND_HELPER) {
+async function runRemoteProgram(host, request, spawnProcess = spawn, program = COMMAND_HELPER, signal) {
+  signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
     const child = spawnProcess('ssh', [...sshArgs(host, false), `python3 -c ${shellQuote(program)}`], { shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     let out = Buffer.alloc(0); let err = ''; let overflow = false; let processError = null;
+    const cancel = () => { processError = new Error('Local SSH transport cancellation requested; remote outcome is unknown.'); child.kill(); };
+    signal?.addEventListener('abort', cancel, { once: true });
+    if (signal?.aborted) cancel();
     child.stdout.on('data', b => { if (out.length + b.length > 1024 * 1024) { overflow = true; child.kill(); } else out = Buffer.concat([out, b]); });
     child.stderr.on('data', b => { err = (err + b.toString()).slice(-4096); });
     child.stdin.on('error', error => { processError = error; child.kill(); }); child.on('error', error => { processError = error; });
-    child.on('close', code => { if (processError) return reject(processError); if (overflow) return reject(new Error('Remote command response exceeded bounds; outcome unknown.'));
+    child.on('close', code => { signal?.removeEventListener('abort', cancel); if (processError) return reject(processError); if (overflow) return reject(new Error('Remote command response exceeded bounds; outcome unknown.'));
       if (code !== 0) return reject(new Error(err.trim() || 'SSH command disconnected; outcome unknown.'));
       try { resolve(JSON.parse(out.toString())); } catch (error) { reject(error); } });
     child.stdin.end(JSON.stringify(request) + '\n');
   });
 }
 
-async function runCommand(host, request, spawnProcess = spawn) { const result = await runRemoteProgram(host, request, spawnProcess); if (!Number.isInteger(result.exitCode) || typeof result.stdout !== 'string' || typeof result.stderr !== 'string') throw new Error('Invalid command receipt.'); return result; }
+async function runCommand(host, request, spawnProcess = spawn, signal) { const result = await runRemoteProgram(host, request, spawnProcess, COMMAND_HELPER, signal); if (!Number.isInteger(result.exitCode) || typeof result.stdout !== 'string' || typeof result.stderr !== 'string') throw new Error('Invalid command receipt.'); return result; }
 
 function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, transportFactory, commandRunner, remoteGitRunner, remoteGitReviewRunner, validateAgentTask, validateAgentIntent, agentInstanceId = randomUUID(), sshConfigContext } = {}) {
   if (typeof storagePath !== 'string' || !path.isAbsolute(storagePath)) throw new Error('A private absolute remote-workspace storage path is required.');
   const hosts = new Map(); const sessions = new Map(); const approvals = new Map(); const busy = new Set();
-  const active = new Map(); const owners = new Map(); const transports = new Set(); let closing = false;
+  const active = new Map(); const owners = new Map(); const transports = new Set(); const hostTransports = new Map();
+  const controls = new Map(); const connectionStates = new Map(); let closing = false;
   if (typeof agentInstanceId !== 'string' || !/^[a-f0-9-]{36}$/.test(agentInstanceId)) throw new Error('Invalid remote Agent main instance.');
   const mainInstanceId = agentInstanceId, agentBindings = new Map(), agentActive = new Map(), agentRevocations = new Map(), agentInvalidations = new Map();
   let receipts = []; let drafts = []; let worktrees = []; let toolIntents = []; let gitReviewActions = []; let key;
@@ -266,7 +271,19 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
   function hostOf(id) { const host = hosts.get(id); if (!host) fail('HOST', 'Select a saved SSH host.'); return host; }
   function heldGit(id) { return gitReviewActions.some(row => row.hostId === id && (row.ownerHeld || row.state === 'prepared' || row.state === 'unknown')); }
   function connected(id) { const host = hostOf(id); const session = sessions.get(id); if (!session || session.sftp.closed || session.fingerprint !== host.fingerprint) fail('OFFLINE', 'Connect this SSH host first.'); if (session.effectiveHost?.config.sshConfigSnapshot) assertSshConfigSnapshot(session.effectiveHost.config.sshConfigSnapshot); return { host: session.effectiveHost ?? host, ...session }; }
-  async function exclusive(id, action, kind = 'read') { hostOf(id); if (closing) fail('CLOSING', 'Remote workspace is closing.'); if (busy.has(id)) fail('BUSY', 'This host has an operation in progress.'); busy.add(id); owners.set(id, kind); const pending = Promise.resolve().then(action); active.set(id, pending); try { return await pending; } finally { active.delete(id); owners.delete(id); busy.delete(id); } }
+  async function exclusive(id, action, kind = 'read') { hostOf(id); if (closing) fail('CLOSING', 'Remote workspace is closing.'); if (busy.has(id)) fail('BUSY', 'This host has an operation in progress.');
+    const control = new AbortController(); controls.set(id, control); busy.add(id); owners.set(id, kind);
+    const pending = Promise.resolve().then(() => { control.signal.throwIfAborted(); return action(); }); active.set(id, pending);
+    try { return await pending; } finally { if (kind === 'connect' && connectionStates.get(id) === 'connecting') connectionStates.set(id, 'disconnected'); active.delete(id); owners.delete(id); controls.delete(id); busy.delete(id); } }
+  function clearHostAuthority(id) { retireHostBindings(id); for (const [token, approval] of approvals) if (approval.hostId === id) approvals.delete(token); }
+  function observeTransport(id, sftp) {
+    transports.add(sftp); hostTransports.set(id, sftp);
+    if (sftp.exited) void Promise.resolve(sftp.exited).then(() => {
+      transports.delete(sftp);
+      if (hostTransports.get(id) !== sftp) return;
+      if (sessions.get(id)?.sftp === sftp) { clearHostAuthority(id); connectionStates.set(id, 'disconnected'); }
+    }, () => { /* An injected transport must still expose its closed state. */ });
+  }
   async function bounded(session, file, empty = false, missing = false) {
     relative(file, empty); const joined = path.posix.join(session.root, file); const parent = empty && !file ? joined : path.posix.dirname(joined);
     if (await session.sftp.realpath(parent) !== parent) fail('BOUNDARY', 'Remote parent is a symbolic link or changed location.');
@@ -277,7 +294,11 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
     return { id: host.id, ...host.config, ...(effective ? { hostname: effective.config.hostname, username: effective.config.username, port: effective.config.port } : {}),
       ...(host.config.connectionMode === 'ssh-config-alias' ? { sshAlias: host.config.hostname, aliasResolved: Boolean(effective),
         configuredEndpoint: { hostname: host.config.hostname, username: host.config.username, port: host.config.port, connectionMode: 'ssh-config-alias' } } : {}), fingerprint: effective?.fingerprint ?? host.fingerprint,
-      connected: Boolean(session && !session.sftp.closed), canonicalRoot: session?.root ?? null, busy: busy.has(host.id) }; }
+      connected: Boolean(session && !session.sftp.closed), canonicalRoot: session?.root ?? null, busy: busy.has(host.id),
+      connectionState: session && !session.sftp.closed ? 'connected' : connectionStates.get(host.id) === 'connecting' ? 'connecting' : 'disconnected',
+      reconnectRequired: Boolean(session?.sftp.closed || connectionStates.get(host.id) === 'disconnected'),
+      activeOperation: owners.get(host.id) ?? null, cancellationRequested: controls.get(host.id)?.signal.aborted ?? false,
+      unknownReceiptIds: receipts.filter(row => row.hostId === host.id && row.state === 'unknown').map(row => row.id) }; }
   async function listRemote(s, directory = '') {
     const target = await bounded(s, directory, true); const listing = await s.sftp.list(target);
     return { path: directory, truncated: listing.truncated, entries: listing.entries.map(e => ({ name: e.name, path: directory ? directory + '/' + e.name : e.name,
@@ -424,8 +445,8 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
           else if (request.tool === 'remote/read') data = { ...await readRemote(s, request.arguments.path), truncated: false };
           else {
             await bounded(s, '', true); await checkAgentIntent(request); boundAgent(request);
-            dispatched = true;
-            data = await (commandRunner ?? ((h, r) => runCommand(h, r, spawnProcess)))(s.host.config, { root: s.root, command: request.arguments.command, timeoutSeconds: request.arguments.timeoutSeconds });
+            controls.get(binding.hostId)?.signal.throwIfAborted(); dispatched = true;
+            data = await (commandRunner ?? ((h, r) => runCommand(h, r, spawnProcess, controls.get(s.host.id)?.signal)))(s.host.config, { root: s.root, command: request.arguments.command, timeoutSeconds: request.arguments.timeoutSeconds }, { signal: controls.get(s.host.id)?.signal });
             if (!record(data) || !Number.isInteger(data.exitCode) || typeof data.stdout !== 'string' || typeof data.stderr !== 'string') fail('COMMAND', 'Invalid remote command terminal receipt.');
             data = { exitCode: data.exitCode, stdout: data.stdout, stderr: data.stderr, capturedStdoutBytes: Buffer.byteLength(data.stdout), capturedStderrBytes: Buffer.byteLength(data.stderr), truncated: data.truncated === true, stopped: typeof data.stopped === 'string' ? data.stopped.slice(0, 100) : null };
           }
@@ -449,12 +470,13 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
       const session = connected(id); await bounded(session, '', true);
       if (mutation && (receipts.some(r => r.hostId === id && r.state === 'unknown') || heldGit(id))) fail('UNKNOWN', 'Inspect and reconcile uncertain remote transactions before another mutation.');
       const host = session.host; const scope = { hostId: id, fingerprint: host.fingerprint, connectionId: session.connectionId, root: session.root, hostname: host.config.hostname, username: host.config.username, port: host.config.port };
-      const run = (action, payload) => runner ? runner(host.config, { root: session.root, scope, action, payload }) : runRemoteProgram(host.config, { root: session.root, scope, action, payload }, spawnProcess, program);
+      const run = (action, payload) => { const signal = controls.get(id)?.signal; signal?.throwIfAborted(); return runner ? runner(host.config, { root: session.root, scope, action, payload }, { signal }) : runRemoteProgram(host.config, { root: session.root, scope, action, payload }, spawnProcess, program, signal); };
       return action(scope, run);
     }, kind);
   const remoteWorktrees = createRemoteWorktreeController({
     withHost: withRemoteGitHost(REMOTE_GIT_HELPER, remoteGitRunner),
-    getRecords: () => worktrees, storeRecords: rows => { worktrees = rows; persist(); },
+    getHostScope: id => ({ hostId: hostOf(id).id }),
+    getRecords: () => worktrees, storeRecords: rows => { persist({ worktrees: rows }); worktrees = rows; },
     begin: (id, kind, detail) => receipt(connected(id).host, kind, detail), finish: settle,
   });
   const cleanGitRows = () => structuredClone(gitReviewActions.map(withoutSignature));
@@ -510,30 +532,50 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
     gitPruneActions(id, actionIds) { hostOf(id); return remoteGitReview.pruneActions(id, actionIds); },
     listHosts: () => [...hosts.values()].map(publicHost),
     addHost(input) { if (hosts.size >= LIMITS.hosts) fail('HOST', 'Remote host limit reached.'); const config = validateHost(input); const host = { id: randomUUID(), config, fingerprint: hash(JSON.stringify(config)) }; hosts.set(host.id, host); persist(); return publicHost(host); },
-    forgetHost(id) { hostOf(id); if (busy.has(id)) fail('BUSY', 'Wait for the remote operation to settle.'); if (worktrees.some(w => w.hostId === id)) fail('WORKTREE', 'This host retains managed worktree ownership records.'); if (gitReviewActions.some(r => r.hostId === id)) fail('GIT', 'This host retains Git action and recovery records.'); if (drafts.some(d => d.hostId === id)) fail('DRAFT', 'Recover or discard this host’s drafts before removing it.'); retireHostBindings(id); sessions.get(id)?.sftp.close(); sessions.delete(id); hosts.delete(id); for (const [token, a] of approvals) if (a.hostId === id) approvals.delete(token); persist(); return { removed: true }; },
-    connect: id => exclusive(id, async () => { const host = hostOf(id); retireHostBindings(id); for (const [token, approval] of approvals) if (approval.hostId === id) approvals.delete(token); sessions.get(id)?.sftp.close(); sessions.delete(id);
+    forgetHost(id) { hostOf(id); if (busy.has(id)) fail('BUSY', 'Wait for the remote operation to settle.'); if (receipts.some(row => row.hostId === id && ['started', 'unknown'].includes(row.state))) fail('UNKNOWN', 'Retain this host until its exact uncertain transaction is reconciled.'); if (worktrees.some(w => w.hostId === id)) fail('WORKTREE', 'This host retains managed worktree ownership records.'); if (gitReviewActions.some(r => r.hostId === id)) fail('GIT', 'This host retains Git action and recovery records.'); if (drafts.some(d => d.hostId === id)) fail('DRAFT', 'Recover or discard this host’s drafts before removing it.'); retireHostBindings(id); sessions.get(id)?.sftp.close(); sessions.delete(id); hosts.delete(id); hostTransports.delete(id); connectionStates.delete(id); for (const [token, a] of approvals) if (a.hostId === id) approvals.delete(token); persist(); return { removed: true }; },
+    connect: id => exclusive(id, async () => { const host = hostOf(id); clearHostAuthority(id); const previous = hostTransports.get(id); previous?.close(); sessions.delete(id);
+      connectionStates.set(id, 'connecting');
+      // Reconnection never overlaps the former local transport owner, even after
+      // an explicit disconnect removed its visible session.
+      if (previous?.exited) await previous.exited;
+      controls.get(id)?.signal.throwIfAborted();
       let effectiveHost;
       if (host.config.connectionMode === 'ssh-config-alias') { const snapshot = resolveSshConfigAlias(host.config, sshConfigContext); assertSshConfigSnapshot(snapshot);
         effectiveHost = { id: host.id, config: { ...host.config, hostname: snapshot.hostname, username: snapshot.username, port: snapshot.port, sshConfigSnapshot: snapshot }, fingerprint: hash(JSON.stringify([host.fingerprint, snapshot.fingerprint])) }; }
-      const sftp = transportFactory ? transportFactory((effectiveHost ?? host).config) : new Sftp((effectiveHost ?? host).config, spawnProcess); transports.add(sftp); if (sftp.exited) void sftp.exited.then(() => transports.delete(sftp));
-      try { await sftp.ready; const root = await sftp.realpath(host.config.root); if (!root.startsWith('/') || /[\0\r\n]/.test(root)) fail('ROOT', 'Invalid canonical remote root.'); const stat = await sftp.stat(root); if (!stat || (stat.mode & 0xf000) !== 0x4000) fail('ROOT', 'Remote root is not a directory.'); if (effectiveHost) assertSshConfigSnapshot(effectiveHost.config.sshConfigSnapshot); sessions.set(id, { sftp, root, fingerprint: host.fingerprint, connectionId: randomUUID(), ...(effectiveHost ? { effectiveHost } : {}) }); receipt(effectiveHost ?? host, 'connect', { state: 'completed' }); return publicHost(host); }
-      catch (error) { sftp.close(); throw error; } }, 'connect'),
-    disconnect(id) { hostOf(id); if (busy.has(id)) fail('BUSY', 'This host still owns an active operation.'); retireHostBindings(id); sessions.get(id)?.sftp.close(); sessions.delete(id); for (const [token, a] of approvals) if (a.hostId === id) approvals.delete(token); return { disconnected: true }; },
+      const sftp = transportFactory ? transportFactory((effectiveHost ?? host).config) : new Sftp((effectiveHost ?? host).config, spawnProcess); observeTransport(id, sftp);
+      try { await sftp.ready; controls.get(id)?.signal.throwIfAborted(); const root = await sftp.realpath(host.config.root); if (!root.startsWith('/') || /[\0\r\n]/.test(root)) fail('ROOT', 'Invalid canonical remote root.'); const stat = await sftp.stat(root); if (!stat || (stat.mode & 0xf000) !== 0x4000) fail('ROOT', 'Remote root is not a directory.'); if (effectiveHost) assertSshConfigSnapshot(effectiveHost.config.sshConfigSnapshot); controls.get(id)?.signal.throwIfAborted(); if (sftp.closed) fail('OFFLINE', 'SSH/SFTP disconnected during connection.'); connectionStates.set(id, 'connected'); sessions.set(id, { sftp, root, fingerprint: host.fingerprint, connectionId: randomUUID(), ...(effectiveHost ? { effectiveHost } : {}) }); receipt(effectiveHost ?? host, 'connect', { state: 'completed' }); return publicHost(host); }
+      catch (error) { connectionStates.set(id, 'disconnected'); sftp.close(); throw error; } }, 'connect'),
+    disconnect(id) { hostOf(id); if (busy.has(id)) fail('BUSY', 'This host still owns an active operation.'); clearHostAuthority(id); sessions.get(id)?.sftp.close(); sessions.delete(id); connectionStates.set(id, 'disconnected'); return { disconnected: true }; },
+    cancelOperation(id) { hostOf(id); const control = controls.get(id), operation = owners.get(id) ?? null;
+      if (!control) return { requested: false, operation: null, remoteOutcome: 'not-cancelled' };
+      // This is explicit cancellation of our transport, never evidence that the
+      // remote process stopped. Its existing owner must still settle its receipt.
+      clearHostAuthority(id); control.abort(); hostTransports.get(id)?.close(); connectionStates.set(id, 'disconnected');
+      return { requested: true, operation, remoteOutcome: 'requires-terminal-proof' };
+    },
     list: (id, directory = '') => exclusive(id, () => listRemote(connected(id), directory)),
     preview: (id, file) => exclusive(id, () => readRemote(connected(id), file)),
     retainDraft: (id, input) => retain(id, input),
     listDrafts(id) { hostOf(id); return drafts.filter(d => d.hostId === id); },
     discardDraft(id, draftId) { hostOf(id); const draft = drafts.find(d => d.id === draftId && d.hostId === id); if (!draft) fail('DRAFT', 'Draft not found.'); drafts = drafts.filter(d => d !== draft); persist(); return { discarded: true }; },
-    save: (id, input) => exclusive(id, async () => { const candidate = validateDraft(input); if (receipts.some(r => r.hostId === id && r.state === 'unknown') || heldGit(id)) fail('UNKNOWN', 'Inspect this host’s exact uncertain transaction before another write.'); const draft = retain(id, candidate); const s = connected(id); const operation = receipt(s.host, 'write', { state: 'started', path: candidate.path, expectedRevision: candidate.expectedRevision, candidateRevision: hash(candidate.text), draftId: draft.id }); let temp = null; let renameSent = false;
+    save: (id, input) => exclusive(id, async () => { const candidate = validateDraft(input); if (receipts.some(r => r.hostId === id && r.state === 'unknown') || heldGit(id)) fail('UNKNOWN', 'Inspect this host’s exact uncertain transaction before another write.'); const draft = retain(id, candidate); const s = connected(id); const operation = receipt(s.host, 'write', { state: 'started', path: candidate.path, expectedRevision: candidate.expectedRevision, candidateRevision: hash(candidate.text), draftId: draft.id }); let temp = null; let renameSent = false; let tempOwned = false; let tempAttempted = false;
       try { const target = await bounded(s, candidate.path, false, true); const before = await s.sftp.read(target); const revision = before === null ? null : hash(before);
         if (revision !== candidate.expectedRevision) return { state: 'conflict', draftId: draft.id, receipt: settle(operation.id, { state: 'conflict', message: 'Remote file changed; draft retained.' }) };
         if (before !== null) { if (before.includes(0)) fail('FILE', 'Binary files cannot be edited here.'); try { new TextDecoder('utf-8', { fatal: true }).decode(before); } catch { fail('FILE', 'Binary files cannot be edited here.'); } }
-        const stat = await s.sftp.stat(target); if (revision !== null && s.sftp.extensions && s.sftp.extensions.get('posix-rename@openssh.com') !== '1') fail('RENAME', 'This server lacks atomic replacement support.'); temp = path.posix.join(path.posix.dirname(target), `.nekodex-${randomUUID()}.tmp`); await s.sftp.putExclusive(temp, Buffer.from(candidate.text), stat?.mode ?? 0o600);
+        const stat = await s.sftp.stat(target); if (revision !== null && s.sftp.extensions && s.sftp.extensions.get('posix-rename@openssh.com') !== '1') fail('RENAME', 'This server lacks atomic replacement support.'); temp = path.posix.join(path.posix.dirname(target), `.nekodex-${randomUUID()}.tmp`); controls.get(id)?.signal.throwIfAborted(); settle(operation.id, { state: 'started', temporaryPath: temp }); tempAttempted = true; await s.sftp.putExclusive(temp, Buffer.from(candidate.text), stat?.mode ?? 0o600, () => { tempOwned = true; }); tempOwned = true;
         await bounded(s, candidate.path, false, true); const latest = await s.sftp.read(target); if ((latest === null ? null : hash(latest)) !== revision) { await s.sftp.remove(temp); temp = null; return { state: 'conflict', draftId: draft.id, receipt: settle(operation.id, { state: 'conflict', message: 'Remote file changed before rename; draft retained.' }) }; }
-        renameSent = true; await s.sftp.rename(temp, target, revision !== null); temp = null; const after = await s.sftp.read(target); const candidateRevision = hash(candidate.text);
+        controls.get(id)?.signal.throwIfAborted(); renameSent = true; await s.sftp.rename(temp, target, revision !== null); temp = null; const after = await s.sftp.read(target); const candidateRevision = hash(candidate.text);
         if (after === null || hash(after) !== candidateRevision) return { state: 'unknown', draftId: draft.id, receipt: settle(operation.id, { state: 'unknown', message: 'Replacement acknowledged but file differs; inspect remote state. Draft retained.' }) };
         const terminal = settle(operation.id, { state: 'completed', revision: candidateRevision }); drafts = drafts.filter(d => d.id !== draft.id || d.text !== candidate.text || d.expectedRevision !== candidate.expectedRevision); persist(); return { state: 'saved', revision: candidateRevision, draftRetained: drafts.some(d => d.id === draft.id), receipt: terminal };
-      } catch (error) { if (temp && !renameSent && !s.sftp.closed) await s.sftp.remove(temp).catch(() => {}); return { state: renameSent ? 'unknown' : 'failed', draftId: draft.id, receipt: settle(operation.id, { state: renameSent ? 'unknown' : 'failed', message: error.message, ...(temp ? { temporaryPath: temp } : {}) }) }; }
+      } catch (error) {
+        // A failed exclusive OPEN is not ownership of the random path. Never
+        // remove an existing file unless this exact transport acknowledged create.
+        if (temp && tempOwned && !renameSent && !s.sftp.closed) {
+          try { await s.sftp.remove(temp); temp = null; } catch (cleanupError) { if (cleanupError.sftpCode === 2) temp = null; }
+        }
+        const uncertain = renameSent || Boolean(temp && tempAttempted && (tempOwned || error.sftpCode !== 11));
+        return { state: uncertain ? 'unknown' : 'failed', draftId: draft.id, receipt: settle(operation.id, { state: uncertain ? 'unknown' : 'failed', message: error.message, ...(temp ? { temporaryPath: temp } : {}) }) };
+      }
     }, 'write'),
     approveCommand(id, input) { const s = connected(id); if (busy.has(id)) fail('BUSY', 'Wait for this host’s current operation.'); if (!input || typeof input.command !== 'string' || !input.command.trim() || Buffer.byteLength(input.command) > 16384 || input.command.includes('\0') || !Number.isInteger(input.timeoutSeconds) || input.timeoutSeconds < 1 || input.timeoutSeconds > 3600) fail('COMMAND', 'Provide a command and a 1–3600 second execution limit.');
       if (receipts.some(r => r.hostId === id && r.state === 'unknown') || heldGit(id)) fail('UNKNOWN', 'Inspect the exact uncertain operation before reviewing another command.');
@@ -541,14 +583,14 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
       const approval = { token: randomUUID(), hostId: id, connectionId: s.connectionId, fingerprint: s.host.fingerprint, hostname: s.host.config.hostname, username: s.host.config.username, port: s.host.config.port, root: s.root, command: input.command, timeoutSeconds: input.timeoutSeconds };
       approvals.set(approval.token, approval); return approval; },
     executeCommand: (id, token) => exclusive(id, async () => { const s = connected(id); const approval = approvals.get(token); if (!approval || approval.hostId !== id || approval.fingerprint !== s.host.fingerprint || approval.root !== s.root || approval.connectionId !== s.connectionId) fail('APPROVAL', 'Review this exact host, root and command before executing.'); if (receipts.some(r => r.hostId === id && r.state === 'unknown') || heldGit(id)) fail('UNKNOWN', 'Inspect the exact uncertain operation before another command.'); approvals.delete(token);
-      await bounded(s, '', true); const operation = receipt(s.host, 'command', { state: 'started', approvalId: approval.token, command: approval.command, timeoutSeconds: approval.timeoutSeconds });
-      try { const result = await (commandRunner ?? ((h, r) => runCommand(h, r, spawnProcess)))(s.host.config, { root: s.root, command: approval.command, timeoutSeconds: approval.timeoutSeconds }); return { ...result, receipt: settle(operation.id, { state: 'completed', exitCode: result.exitCode, stopped: result.stopped }) }; }
+      await bounded(s, '', true); controls.get(id)?.signal.throwIfAborted(); const operation = receipt(s.host, 'command', { state: 'started', approvalId: approval.token, command: approval.command, timeoutSeconds: approval.timeoutSeconds });
+      try { const result = await (commandRunner ?? ((h, r) => runCommand(h, r, spawnProcess, controls.get(s.host.id)?.signal)))(s.host.config, { root: s.root, command: approval.command, timeoutSeconds: approval.timeoutSeconds }, { signal: controls.get(id)?.signal }); if (!record(result) || !Number.isInteger(result.exitCode) || typeof result.stdout !== 'string' || typeof result.stderr !== 'string') fail('COMMAND', 'Invalid remote command terminal receipt.'); return { ...result, receipt: settle(operation.id, { state: 'completed', exitCode: result.exitCode, stopped: result.stopped }) }; }
       catch (error) { return { exitCode: null, stdout: '', stderr: '', receipt: settle(operation.id, { state: 'unknown', message: error.message }) }; }
     }, 'command'),
     listReceipts(id) { hostOf(id); return receipts.filter(r => r.hostId === id); },
     reconcile(id, receiptId, note) { hostOf(id); if (busy.has(id)) fail('BUSY', 'The host operation is still active.'); const r = receipts.find(r => r.id === receiptId && r.hostId === id); if (r?.kind?.startsWith('git-')) fail('RECONCILE', 'Inspect the exact Git action; a note cannot settle an index or commit outcome.'); if (!r || r.state !== 'unknown' || typeof note !== 'string' || note.trim().length < 8 || note.length > 2000) fail('RECONCILE', 'Provide the observed remote outcome before acknowledging an uncertain transaction.'); return settle(r.id, { state: 'reconciled', reconciliation: note, reconciledAt: new Date().toISOString() }); },
     currentOperation() { const entry = [...owners].find(([, kind]) => (['connect', 'write', 'command'].includes(kind) || kind.startsWith('worktree-') || kind.startsWith('git-'))); return entry ? `SSH ${entry[1]} · ${hostOf(entry[0]).config.label} (${hostOf(entry[0]).config.hostname})` : remoteGitReview.currentOperation(); },
-    async destroy() { closing = true; agentBindings.clear(); const settlements = await Promise.allSettled([...active.values(), ...[...agentActive.values()].map(item => item.promise), remoteGitReview.destroy()]); const failed = settlements.find(row => row.status === 'rejected'); if (failed) throw failed.reason; const owned = [...transports]; for (const sftp of owned) sftp.close(); await Promise.all(owned.map(sftp => sftp.exited ?? Promise.resolve())); sessions.clear(); approvals.clear(); transports.clear(); },
+    async destroy() { closing = true; agentBindings.clear(); const settlements = await Promise.allSettled([...active.values(), ...[...agentActive.values()].map(item => item.promise), remoteGitReview.destroy()]); const failed = settlements.find(row => row.status === 'rejected'); if (failed) throw failed.reason; const owned = [...transports]; for (const sftp of owned) sftp.close(); await Promise.all(owned.map(sftp => sftp.exited ?? Promise.resolve())); sessions.clear(); approvals.clear(); transports.clear(); hostTransports.clear(); connectionStates.clear(); },
     dispose() { if (busy.size || agentActive.size) fail('BUSY', 'Remote operations still own their terminal outcomes.'); for (const session of sessions.values()) session.sftp.close(); sessions.clear(); approvals.clear(); agentBindings.clear(); },
   };
 }

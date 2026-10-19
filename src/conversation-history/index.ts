@@ -9,3 +9,6 @@ export type { ValidatedHistoryTurn, ValidatedUserText } from "./capture";
 
 export type { CanonicalCaptureLease } from './canonical';
 export type { OwnedNativeHistoryPort, OwnedNativeCaptureLease, OwnedNativeHistoryStatus, OwnedNativeHistoryScope } from './owned-native';
+
+export { TranscriptHistoryCapture } from "./transcript";
+export type { TranscriptHistoryPort, TranscriptLease, TranscriptEvent, TranscriptEventInput, TranscriptSubscriptionStatus } from "./transcript";

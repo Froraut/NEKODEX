@@ -16,9 +16,12 @@ const create = z.object({ ownerMode: z.literal("agent"), id: identity, familyId:
   execution: z.discriminatedUnion("provider", [z.object({ provider: z.literal("local-responses"), model: identity }).strict(),
     z.object({ provider: z.literal("owned-native"), model: identity, admissionId: identity }).strict()]),
   workspaceSnapshotGrant: z.unknown().optional(),
+  nativeAttachments: z.array(z.object({ selectionId: z.string().min(1).max(512), receipt: z.string().min(1).max(512), name: z.string().min(1).max(160),
+    mimeType: z.enum(["text/plain", "image/png", "image/jpeg"]), data: z.string().min(1).max(220_000), sha256: z.string().regex(/^[a-f0-9]{64}$/), byteLength: z.number().int().positive().max(160 * 1024) }).strict()).max(6).optional(),
 }).strict();
 const control = z.discriminatedUnion("action", [
   z.object({ action: z.enum(["pause", "resume", "stop"]) }).strict(),
+  z.object({ action: z.literal("reply"), text: boundedText }).strict(),
   z.object({ action: z.literal("mode"), mode, recurringAuthorized: z.boolean().optional() }).strict(),
   z.object({ action: z.literal("correct"), text: boundedText, requirements: z.array(requirement).min(1).max(128), stages: z.array(stage).min(1).max(128) }).strict(),
 ]);
@@ -75,7 +78,7 @@ export function createAgentModeRoutes(options: AgentModeRouteOptions): (request:
     if (!options.authorize(request)) return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
     if (request.method !== "POST") return Response.json({ ok: false, error: "method_not_allowed" }, { status: 405, headers: { allow: "POST" } });
     try {
-      const envelope = z.object({ action: z.enum(["status", "list", "get", "create", "control", "step", "run", "review", "evidence", "verify", "workspace-grant", "resume-continuation", "enqueue-work", "cycle", "workspace-evidence", "reconcile-tool", "refresh-execution"]), taskId: identity.optional(), actionId: identity.optional(), idempotencyKey: identity.optional(), dispatchId: identity.optional(), workId: identity.optional(), work: z.unknown().optional(), input: z.unknown().optional(), control: z.unknown().optional(), scope: taskScope.optional(), grant: z.unknown().optional(), proof: z.unknown().optional(), explicitUserAction: z.boolean().optional(), workerName: identity.optional(), reviewId: identity.optional(), evidence: z.unknown().optional() }).strict().parse(await readJsonRequestBody(request, 128 * 1024, 128 * 1024));
+      const envelope = z.object({ action: z.enum(["status", "list", "get", "create", "control", "step", "run", "review", "evidence", "verify", "workspace-grant", "resume-continuation", "enqueue-work", "cycle", "workspace-evidence", "reconcile-tool", "refresh-execution"]), taskId: identity.optional(), actionId: identity.optional(), idempotencyKey: identity.optional(), dispatchId: identity.optional(), workId: identity.optional(), work: z.unknown().optional(), input: z.unknown().optional(), control: z.unknown().optional(), scope: taskScope.optional(), grant: z.unknown().optional(), proof: z.unknown().optional(), explicitUserAction: z.boolean().optional(), workerName: identity.optional(), reviewId: identity.optional(), evidence: z.unknown().optional() }).strict().parse(await readJsonRequestBody(request, 512 * 1024, 512 * 1024));
       const runtime = options.runtime;
       if (envelope.action === "status") return success({ ...runtime.status(), ...listing(runtime), capabilities: { ...runtime.status().capabilities, observedEvidence: Boolean(options.resolveEvidence || options.observeWorkspaceEvidence) } });
       if (envelope.action === "list") return success(listing(runtime));

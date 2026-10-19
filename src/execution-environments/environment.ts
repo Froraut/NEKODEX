@@ -1,5 +1,5 @@
 import { isActionId, isSha256, sha256, vmAssert } from './protocol';
-import { admitDevelopmentVmRuntime, vmRuntimeProtectedPaths, type AdmittedVmRuntime, type VmRuntimeSelection } from './executor';
+import { admitVmRuntime, vmRuntimeProtectedPaths, type AdmittedVmRuntime, type VmRuntimeSelection } from './executor';
 
 export interface VmEnvironmentReview {
   actionId: string; reviewDigest: string; helperSha256: string; guestManifestSha256: string;
@@ -16,7 +16,7 @@ export class VmEnvironmentController {
   private readonly actions = new Map<string, VmEnvironmentReview>();
   private latest?: string;
   private runtime?: AdmittedVmRuntime;
-  constructor(selection?: VmRuntimeSelection) { this.selection = selection && Object.freeze({ ...selection }); }
+  constructor(selection?: VmRuntimeSelection) { this.selection = selection && Object.freeze({ ...selection, ...(selection.production ? { production: Object.freeze({ ...selection.production }) } : {}) }); }
   status(): VmEnvironmentStatus {
     if (this.runtime) {
       try { vmRuntimeProtectedPaths(this.runtime); }
@@ -25,7 +25,7 @@ export class VmEnvironmentController {
     }
     const supported = process.platform === 'darwin' && process.arch === 'arm64' && Boolean(this.selection);
     return { supported, prepared: Boolean(this.runtime), ...(this.runtime ? { runtimeDigest: this.runtime.runtimeDigest } : {}),
-      ...(!supported ? { reason: 'The fixed Linux VM development runtime is not supplied in this application layout' }
+      ...(!supported ? { reason: 'The fixed offline Linux VM runtime is not supplied in this application layout' }
         : !this.runtime ? { reason: 'Review and explicitly prepare the selected offline Linux runtime' } : {}),
       ...(this.latest ? { review: structuredClone(this.actions.get(this.latest)!) } : {}) };
   }
@@ -47,7 +47,7 @@ export class VmEnvironmentController {
     this.latest = actionId;
     if (row.state !== 'reviewed') return this.status(); // lost ACK never repeats preparation
     row.state = 'preparing';
-    try { this.runtime = admitDevelopmentVmRuntime(this.selection); row.state = 'prepared'; }
+    try { this.runtime = admitVmRuntime(this.selection); row.state = 'prepared'; }
     catch { row.state = 'failed'; row.reason = 'The selected helper, signature or guest artifacts could not be admitted'; }
     return this.status();
   }

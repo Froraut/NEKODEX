@@ -18,6 +18,8 @@ export interface ServerRecipe {
   pinnedFiles: { path: string; sha256: string }[];
   cwd: string;
   envSecretRefs: Record<string, string>;
+  /** Reviewed non-secret official server settings; never a general inherited environment. */
+  env?: { MEMORY_FILE_PATH?: string; DISABLE_THOUGHT_LOGGING?: "true" };
   managedInstallation?: { actionId: string; package: string; version: string; integrity: string; graphSha256: string; treeRoot: string; treeSha256: string; treeFiles: number };
   trustedSandbox?: TrustedSandboxConfig;
 }
@@ -30,11 +32,17 @@ export function validateToolsConfig(value: unknown): ToolsConfig {
   if (!config || !onlyKeys(config, ["version", "enabled", "servers"]) || config.version !== 1 || typeof config.enabled !== "boolean" || !Array.isArray(config.servers) || config.servers.length > 32) throw new Error("Invalid standalone tools configuration");
   const ids = new Set<string>();
   for (const server of config.servers) {
-    if (!server || !onlyKeys(server, ["id", "enabled", "transport", "source", "command", "commandSha256", "args", "pinnedFiles", "cwd", "envSecretRefs", "managedInstallation", "trustedSandbox"])) throw new Error("Unsupported server configuration field");
+    if (!server || !onlyKeys(server, ["id", "enabled", "transport", "source", "command", "commandSha256", "args", "pinnedFiles", "cwd", "envSecretRefs", "env", "managedInstallation", "trustedSandbox"])) throw new Error("Unsupported server configuration field");
     if (!server || !/^[a-zA-Z0-9_-]{1,80}$/.test(server.id) || ids.has(server.id) || typeof server.enabled !== "boolean" || server.transport !== "stdio" || server.source?.kind !== "user-installed" || typeof server.source.label !== "string" || !server.source.label || typeof server.source.version !== "string" || !server.source.version || !isAbsolute(server.command) || !isAbsolute(server.cwd) || !/^[a-f0-9]{64}$/.test(server.commandSha256) || !Array.isArray(server.args) || server.args.length > 128 || server.args.some(arg => typeof arg !== "string" || arg.length > 8192) || !Array.isArray(server.pinnedFiles) || server.pinnedFiles.length > 32 || !server.envSecretRefs || typeof server.envSecretRefs !== "object" || Array.isArray(server.envSecretRefs)) throw new Error("Invalid pinned server recipe");
     ids.add(server.id);
     for (const file of server.pinnedFiles) if (!file || !isAbsolute(file.path) || !/^[a-f0-9]{64}$/.test(file.sha256)) throw new Error("Invalid pinned server file");
     for (const [name, ref] of Object.entries(server.envSecretRefs)) if (!/^[A-Z_][A-Z0-9_]{0,100}$/.test(name) || typeof ref !== "string" || ref.length > 240 || !/^[a-z][a-z0-9+.-]{1,31}:[a-zA-Z0-9._/-]+$/.test(ref) || ["NODE_OPTIONS", "BUN_OPTIONS", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "PATH", "HOME", "SHELL"].includes(name)) throw new Error("Invalid secret reference");
+    if (server.env !== undefined) {
+      if (!server.env || typeof server.env !== "object" || Array.isArray(server.env) || !onlyKeys(server.env, ["MEMORY_FILE_PATH", "DISABLE_THOUGHT_LOGGING"])) throw new Error("Unsupported reviewed server environment");
+      if (server.env.DISABLE_THOUGHT_LOGGING !== undefined && server.env.DISABLE_THOUGHT_LOGGING !== "true") throw new Error("Thought logging must remain disabled");
+      if (server.env.MEMORY_FILE_PATH !== undefined && (typeof server.env.MEMORY_FILE_PATH !== "string" || !isAbsolute(server.env.MEMORY_FILE_PATH) || server.env.MEMORY_FILE_PATH.length > 8192 || /[\u0000-\u001f]/.test(server.env.MEMORY_FILE_PATH))) throw new Error("Memory storage requires an absolute reviewed path");
+      if (Object.keys(server.env).some(name => Object.hasOwn(server.envSecretRefs, name))) throw new Error("Reviewed settings cannot overlap credential references");
+    }
     const managed = server.managedInstallation;
     if (managed && (typeof managed.actionId !== "string" || !managed.actionId || typeof managed.package !== "string" || typeof managed.version !== "string" || !/^sha512-[a-zA-Z0-9+/]+=*$/.test(managed.integrity) || !/^[a-f0-9]{64}$/.test(managed.graphSha256) || !isAbsolute(managed.treeRoot) || !/^[a-f0-9]{64}$/.test(managed.treeSha256) || !Number.isInteger(managed.treeFiles) || managed.treeFiles < 1)) throw new Error("Invalid managed installation provenance");
     const sandbox = server.trustedSandbox;
@@ -47,6 +55,12 @@ export function validateToolsConfig(value: unknown): ToolsConfig {
   return structuredClone(config);
 }
 export function verifyRecipeFiles(recipe: ServerRecipe): void {
+  const memoryPath = recipe.env?.MEMORY_FILE_PATH;
+  if (memoryPath) {
+    const parent = dirname(memoryPath);
+    if (realpathSync(parent) !== parent || !lstatSync(parent).isDirectory()) throw new Error("Memory storage parent must be a canonical directory");
+    if (existsSync(memoryPath) && (!lstatSync(memoryPath).isFile() || realpathSync(memoryPath) !== memoryPath)) throw new Error("Memory storage must be a canonical regular file");
+  }
   if (recipe.trustedSandbox) {
     if (!sandboxProviderAvailable()) throw new Error("Requested OS sandbox is unavailable on this platform");
     validateTrustedSandboxConfig(recipe.trustedSandbox);

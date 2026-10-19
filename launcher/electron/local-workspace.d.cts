@@ -50,6 +50,7 @@ export interface LocalWorkspaceService {
   tree(workspaceId: string, path?: string, depth?: number): WorkspaceListing;
   preview(workspaceId: string, path: string): WorkspacePreview;
   save(workspaceId: string, input: { path: string; expectedRevision: string | null; text: string; draftId?: string }): WorkspaceSaveResult;
+  /** Persists bounded recovery text for an existing grant even when its directory is unavailable; grants no file access. */
   retainDraft(workspaceId: string, input: { path: string; expectedRevision: string | null; text: string; draftId?: string }): WorkspaceDraft;
   listDrafts(workspaceId: string): WorkspaceDraft[];
   discardDraft(workspaceId: string, draftId: string): boolean;

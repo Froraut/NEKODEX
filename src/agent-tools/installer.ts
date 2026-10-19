@@ -2,10 +2,46 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { readPrivateMetadata, writePrivateMetadata } from "./private-metadata";
-import { sha256 } from "./config";
+import { sha256, type ServerRecipe } from "./config";
 import { installedTreeDigest } from "./package-tree";
 
-export const OFFICIAL_MCP_CATALOG = [{ id: "official-filesystem", label: "Official MCP Filesystem", package: "@modelcontextprotocol/server-filesystem", version: "1.0.0", integrity: "sha512-2fN6qhpsiPSBAe0ev1qDPk4sCWdULCZQTuYc4ZY7+BDWQ1XCxLB+7dqStF2ZflgG4G/9vTwQsjxh7pjFqrrpcg==", bin: "mcp-server-filesystem", entrypoint: "dist/index.js", registry: "https://registry.npmjs.org", source: "https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem", capabilities: "Read/write filesystem tools in the one explicitly selected directory. This is server policy, not OS isolation." }] as const;
+/** Reviewed immutable package selections. Registry publisher metadata is evidence, not signature verification. */
+export interface OfficialMcpRecipe {
+  id: string; label: string; package: string; version: string; integrity: string;
+  bin: string; entrypoint: string; registry: string; source: string; capabilities: string;
+  publisher: { organization: string; registryIdentity: string; trustedPublisherId: string; verification: "registry-metadata-only" };
+  sourcePin: { kind: "npm-archive-sha512"; url: string; integrity: string; entrySha256: string };
+  runtime: { family: "bun"; version: "1.4.0"; upstreamNodeEngine: "not-declared"; verification: "filesystem-live-only" | "not-run" };
+  auth: { kind: "none"; oauth: false };
+  sandbox: { provider: "macos-seatbelt"; network: "denied"; data: "selected-directory" | "memory-file-in-selected-directory" | "none"; otherPlatforms: "unavailable" };
+  launch: "filesystem-root" | "memory-file" | "no-arguments";
+  dependencyReview: "exact-transitive-graph-before-install";
+}
+const officialRecipe = (input: Pick<OfficialMcpRecipe, "id" | "label" | "package" | "integrity" | "bin" | "capabilities" | "launch"> & { directory: string; entrySha256: string; publisherId: string; data: OfficialMcpRecipe["sandbox"]["data"] }): OfficialMcpRecipe => ({
+  id: input.id, label: input.label, package: input.package, version: "1.0.0", integrity: input.integrity,
+  bin: input.bin, entrypoint: "dist/index.js", registry: "https://registry.npmjs.org",
+  source: `https://github.com/modelcontextprotocol/servers/tree/main/src/${input.directory}`,
+  capabilities: input.capabilities,
+  publisher: { organization: "Model Context Protocol a Series of LF Projects, LLC.", registryIdentity: "GitHub Actions (npm-oidc-no-reply@github.com)", trustedPublisherId: input.publisherId, verification: "registry-metadata-only" },
+  sourcePin: { kind: "npm-archive-sha512", url: `https://registry.npmjs.org/${input.package}/-/server-${input.package.split("server-")[1]}-1.0.0.tgz`, integrity: input.integrity, entrySha256: input.entrySha256 },
+  runtime: { family: "bun", version: "1.4.0", upstreamNodeEngine: "not-declared", verification: input.id === "official-filesystem" ? "filesystem-live-only" : "not-run" },
+  auth: { kind: "none", oauth: false },
+  sandbox: { provider: "macos-seatbelt", network: "denied", data: input.data, otherPlatforms: "unavailable" },
+  launch: input.launch, dependencyReview: "exact-transitive-graph-before-install",
+});
+export const OFFICIAL_MCP_CATALOG: readonly OfficialMcpRecipe[] = [
+  officialRecipe({ id: "official-filesystem", label: "Official MCP Filesystem", package: "@modelcontextprotocol/server-filesystem", integrity: "sha512-2fN6qhpsiPSBAe0ev1qDPk4sCWdULCZQTuYc4ZY7+BDWQ1XCxLB+7dqStF2ZflgG4G/9vTwQsjxh7pjFqrrpcg==", bin: "mcp-server-filesystem", directory: "filesystem", entrySha256: "68e6aae96c907bf00089dd48b9f2fdd06113e6588d9915f19852cb468f9296d8", publisherId: "5734d7de-e554-4200-8ccc-50933124df3d", data: "selected-directory", launch: "filesystem-root", capabilities: "Read/write filesystem tools in the explicitly selected directory. Tool inventory is discovered after a separate connection. Server path policy alone is not OS isolation." }),
+  officialRecipe({ id: "official-sequential-thinking", label: "Official MCP Sequential Thinking", package: "@modelcontextprotocol/server-sequential-thinking", integrity: "sha512-ykTmeS4Eejs+FESDrD73mDBNYCkb+cCZJ1MWuv7/vwucbVgGfEbBL5HVt2nVw0/vNF8jz+o9sO/WmxxfXt0J6w==", bin: "mcp-server-sequential-thinking", directory: "sequentialthinking", entrySha256: "99182c997de7d0d317e65bd07e6890cacde83dad670dca2488cadfde1e58c737", publisherId: "4c7619b6-28cd-43b8-8e56-a49c0c9204d6", data: "none", launch: "no-arguments", capabilities: "Structured thought/branch bookkeeping in the server process; no model or independent reasoning provider. Thought logging is disabled. Runtime and actual tool discovery are not yet verified for this recipe." }),
+  officialRecipe({ id: "official-memory", label: "Official MCP Memory", package: "@modelcontextprotocol/server-memory", integrity: "sha512-UDMtMrw2xeI16mcn7O4fesp9Pf3hYh91thuU5KSz0BxKqwnTwEytZKjHfkrqxxmKp0r4QHoiEkMV99UmadmODw==", bin: "mcp-server-memory", directory: "memory", entrySha256: "3152ff0b3df6d345ffd67270053c3287d7e8cb8a24d832d18e8eadc5ffd10a08", publisherId: "237904c1-7b70-431f-8d66-c320993d63a3", data: "memory-file-in-selected-directory", launch: "memory-file", capabilities: "Persistent entities, relations and observations in nekodex-memory.jsonl inside the explicitly selected directory. Data is shared by tasks using this server. Runtime and actual tool discovery are not yet verified for this recipe." }),
+];
+/** Only these reviewed non-secret settings may enter a server environment. */
+export function managedMcpLaunchPlan(catalogId: string, allowedRoot: string): { args: string[]; env: NonNullable<ServerRecipe["env"]>; readData: boolean; writeData: boolean } {
+  const recipe = OFFICIAL_MCP_CATALOG.find(row => row.id === catalogId);
+  if (!recipe) throw new Error("Unsupported managed MCP recipe");
+  if (recipe.launch === "filesystem-root") return { args: [allowedRoot], env: {}, readData: true, writeData: true };
+  if (recipe.launch === "memory-file") return { args: [], env: { MEMORY_FILE_PATH: join(allowedRoot, "nekodex-memory.jsonl") }, readData: true, writeData: true };
+  return { args: [], env: { DISABLE_THOUGHT_LOGGING: "true" }, readData: false, writeData: false };
+}
 export interface InstallGraphNode { name: string; version: string; integrity: string }
 export interface McpInstallReceipt {
   version: 1; actionId: string; fingerprint: string; catalogId: string; allowedRoot: string;
@@ -45,6 +81,8 @@ export function reviewBunInstallGraph(lockBytes: string, catalogId: string): { g
   const recipe = OFFICIAL_MCP_CATALOG.find(row => row.id === catalogId); if (!recipe || Buffer.byteLength(lockBytes) > 1024 * 1024) throw new Error("Unsupported or oversized install graph");
   const lock = Bun.JSONC.parse(lockBytes) as any;
   if (![1, 2].includes(lock.lockfileVersion) || !lock.packages || Object.keys(lock.packages).length > 256 || Object.keys(lock.workspaces ?? {}).some(key => key !== "") || lock.trustedDependencies?.length) throw new Error("Unsupported install lock format");
+  const dependencies = lock.workspaces?.[""]?.dependencies;
+  if (!dependencies || Object.keys(dependencies).length !== 1 || dependencies[recipe.package] !== recipe.version) throw new Error("Install graph root does not match the reviewed official recipe");
   const graph: InstallGraphNode[] = [];
   for (const row of Object.values(lock.packages) as any[]) {
     if (!Array.isArray(row) || row.length < 4 || typeof row[0] !== "string" || !/^(?:@[a-z0-9_.-]+\/)?[a-z0-9_.-]+@[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?$/.test(row[0]) || row[1] !== "" || typeof row[3] !== "string" || !/^sha512-[a-zA-Z0-9+/]+={0,2}$/.test(row[3])) throw new Error("Install graph requires exact official registry versions and SHA-512 integrity");

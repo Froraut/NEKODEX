@@ -1,5 +1,6 @@
 const fs = require('node:fs/promises');
 const ACTIONS = new Set(['status', 'set-recording', 'threads', 'thread', 'message', 'search', 'delete-thread', 'delete-message', 'export', 'import-selected', 'owned-native-status', 'owned-native-consent']);
+for (const action of ['transcript-native-status', 'transcript-native-consent', 'transcript-subscriptions', 'transcript-revoke']) ACTIONS.add(action);
 /** Guarded main handle is injected by the composition root. The current daemon
  * remains the only DB writer; this registrar never launches/probes another app. */
 function registerConversationHistory({ handle, runtimeHost, clipboard, dialog, canonicalRecorder }) {
@@ -16,8 +17,8 @@ function registerConversationHistory({ handle, runtimeHost, clipboard, dialog, c
     if (!body || !ACTIONS.has(body.action) || JSON.stringify(body).length > 600000) throw new Error('Invalid history request');
     const supervisor = runtimeHost.supervisor;
     const config = supervisor.readConfig();
-    const allowDraining = ['status', 'threads', 'thread', 'message', 'search', 'export', 'owned-native-status'].includes(body.action)
-      || (body.action === 'set-recording' || body.action === 'owned-native-consent') && body.enabled === false;
+    const allowDraining = ['status', 'threads', 'thread', 'message', 'search', 'export', 'owned-native-status', 'transcript-native-status', 'transcript-subscriptions', 'transcript-revoke'].includes(body.action)
+      || ['set-recording', 'owned-native-consent', 'transcript-native-consent'].includes(body.action) && body.enabled === false;
     if (!config || !await supervisor.ownedAgentRuntimeReady(config, { allowDraining })) throw new Error('Start the current NEKODEX runtime to use conversation history');
     const receipt = await supervisor.control(config, 'conversation-history', { body });
     if (!receipt || receipt.ok !== true) throw new Error(receipt?.error || 'History operation failed');
@@ -25,7 +26,7 @@ function registerConversationHistory({ handle, runtimeHost, clipboard, dialog, c
   };
   handle('launcher:conversation-history', requestHistory);
   handle('launcher:conversation-history-revoke', (_event, body) => {
-    if (!body || body.enabled !== false || !['set-recording', 'owned-native-consent', 'canonical-consent'].includes(body.action)) throw new Error('This history action only revokes recording');
+    if (!body || body.enabled !== false || !['set-recording', 'owned-native-consent', 'transcript-native-consent', 'canonical-consent'].includes(body.action)) throw new Error('This history action only revokes recording');
     return requestHistory(_event, body);
   });
   handle('launcher:conversation-history-copy', async (_event, text) => {

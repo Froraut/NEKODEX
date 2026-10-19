@@ -1,5 +1,28 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
+// Keep routing dependency-free: sandboxed preload may require Electron, not sibling Node modules.
+// These are narrow lifecycle routes; the main registrar still validates every action and payload.
+const HISTORY_REVOKE_ACTIONS = new Set([
+  'set-recording', 'owned-native-consent', 'transcript-native-consent', 'canonical-consent',
+]);
+const AGENT_TOOLS_REVOKE_ACTIONS = new Set([
+  'revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools', 'revokeScriptWorkspace',
+  'revokePythonEnvironment', 'revokeVmWorkspace', 'cancelVmOperation',
+]);
+const AGENT_TOOLS_OBSERVE_ACTIONS = new Set([
+  'remoteStatus', 'scriptStatus', 'vmStatus', 'reconcileVmOperation',
+  'vmExportWorkspaces', 'vmExportStatus', 'reconcileVmExport',
+  'pythonEnvironmentStatus', 'pythonEnvironmentAction', 'pythonBuildStatus', 'vmNetworkStatus', 'oauthList',
+]);
+function conversationHistoryChannel(body) {
+  return body?.enabled === false && HISTORY_REVOKE_ACTIONS.has(body?.action)
+    ? 'launcher:conversation-history-revoke' : 'launcher:conversation-history';
+}
+function agentToolsChannel(body) {
+  if (body?.explicitUserAction === true && AGENT_TOOLS_REVOKE_ACTIONS.has(body?.action)) return 'launcher:agent-tools-revoke';
+  return AGENT_TOOLS_OBSERVE_ACTIONS.has(body?.action) ? 'launcher:agent-tools-observe' : 'launcher:agent-tools';
+}
+
 function subscription(channel, listener) {
   const wrapped = (_event, value) => listener(value);
   ipcRenderer.on(channel, wrapped);
@@ -21,6 +44,14 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   workspaceGitBases: id => ipcRenderer.invoke("launcher:workspace-git-bases", id),
   workspaceGitStatus: (id, options) => ipcRenderer.invoke("launcher:workspace-git-status", id, options),
   workspaceGitDiff: (id, snapshotId) => ipcRenderer.invoke("launcher:workspace-git-diff", id, snapshotId),
+  workspaceGitReviewBases: id => ipcRenderer.invoke('launcher:workspace-git-review-bases', id),
+  workspaceGitReviewCapture: (id, input = {}) => ipcRenderer.invoke('launcher:workspace-git-review-capture', id, input),
+  workspaceGitReviewDiff: (id, input) => ipcRenderer.invoke('launcher:workspace-git-review-diff', id, input),
+  workspaceGitReviewPrepare: (id, input) => ipcRenderer.invoke('launcher:workspace-git-review-prepare', id, input),
+  workspaceGitReviewApply: (id, input) => ipcRenderer.invoke('launcher:workspace-git-review-apply', id, input),
+  workspaceGitReviewInspectAction: (id, actionId) => ipcRenderer.invoke('launcher:workspace-git-review-inspect-action', id, actionId),
+  workspaceGitReviewListActions: id => ipcRenderer.invoke('launcher:workspace-git-review-list-actions', id),
+  workspaceGitReviewPruneActions: (id, actionIds) => ipcRenderer.invoke('launcher:workspace-git-review-prune-actions', id, actionIds),
   snapshot: () => ipcRenderer.invoke("launcher:snapshot"),
   setLanguage: (language) => ipcRenderer.invoke("launcher:set-language", language),
   openSocial: (target) => ipcRenderer.invoke("launcher:open-social", target),
@@ -48,8 +79,7 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   closeBrowserTab: (tabId, expectedTraceId) => ipcRenderer.invoke("launcher:browser-tab-close", tabId, expectedTraceId),
   dismissTask: (accountId, id) => ipcRenderer.invoke('launcher:task-dismiss', accountId, id),
   taskPlanPolicy: () => ipcRenderer.invoke('launcher:task-plan-policy'),
-  conversationHistoryRequest: body => ipcRenderer.invoke(body?.enabled === false && ['set-recording', 'owned-native-consent', 'canonical-consent'].includes(body?.action)
-    ? 'launcher:conversation-history-revoke' : 'launcher:conversation-history', body),
+  conversationHistoryRequest: body => ipcRenderer.invoke(conversationHistoryChannel(body), body),
   copyConversationHistoryText: text => ipcRenderer.invoke('launcher:conversation-history-copy', text),
   saveConversationHistoryMarkdown: markdown => ipcRenderer.invoke('launcher:conversation-history-save', markdown),
   agentMode: body => ipcRenderer.invoke('launcher:agent-mode', body),
@@ -59,12 +89,13 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   agentWorkspaceRoots: () => ipcRenderer.invoke('launcher:agent-workspace-roots'),
   agentWorkspaceGrants: () => ipcRenderer.invoke('launcher:agent-workspace-grants'),
   revokeAgentWorkspaceGrant: grantId => ipcRenderer.invoke('launcher:agent-workspace-revoke', grantId),
-  agentTools: body => ipcRenderer.invoke(body?.explicitUserAction === true && ['revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools', 'revokeScriptWorkspace', 'revokePythonEnvironment', 'revokeVmWorkspace', 'cancelVmOperation'].includes(body?.action)
-    ? 'launcher:agent-tools-revoke' : ['remoteStatus', 'scriptStatus', 'vmStatus', 'reconcileVmOperation', 'vmExportWorkspaces', 'vmExportStatus', 'reconcileVmExport', 'pythonEnvironmentStatus', 'pythonEnvironmentAction'].includes(body?.action) ? 'launcher:agent-tools-observe' : 'launcher:agent-tools', body),
+  agentTools: body => ipcRenderer.invoke(agentToolsChannel(body), body),
   pickAgentSkillRoot: () => ipcRenderer.invoke('launcher:agent-tools-pick-skill-root'),
   pickAgentToolsInstallRoot: () => ipcRenderer.invoke('launcher:agent-tools-pick-install-root'),
   pickAgentScriptWorkspace: () => ipcRenderer.invoke('launcher:agent-tools-pick-script-workspace'),
   pickAgentPythonWheels: () => ipcRenderer.invoke('launcher:agent-tools-pick-python-wheels'),
+  pickAgentPythonBuildSelection: (scope, config) => ipcRenderer.invoke('launcher:agent-tools-pick-python-build-selection', scope, config),
+  pickAgentOAuthProvider: () => ipcRenderer.invoke('launcher:agent-tools-pick-oauth-provider', { explicitUserAction: true }),
   browserCompanion: body => ipcRenderer.invoke('launcher:browser-companion', body),
   copyBrowserPairing: text => ipcRenderer.invoke('launcher:browser-companion-copy', text),
   localControlApiRequest: body => ipcRenderer.invoke('launcher:local-control-api', body),
@@ -105,6 +136,7 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   remoteWorkspaceForgetHost: id => ipcRenderer.invoke('launcher:remote-workspace-forget-host', id),
   remoteWorkspaceConnect: id => ipcRenderer.invoke('launcher:remote-workspace-connect', id),
   remoteWorkspaceDisconnect: id => ipcRenderer.invoke('launcher:remote-workspace-disconnect', id),
+  remoteWorkspaceCancelOperation: id => ipcRenderer.invoke('launcher:remote-workspace-cancel-operation', id),
   remoteWorkspaceList: (id, directory = '') => ipcRenderer.invoke('launcher:remote-workspace-list', id, directory),
   remoteWorkspacePreview: (id, file) => ipcRenderer.invoke('launcher:remote-workspace-preview', id, file),
   remoteWorkspaceRetainDraft: (id, input) => ipcRenderer.invoke('launcher:remote-workspace-retain-draft', id, input),

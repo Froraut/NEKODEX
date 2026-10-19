@@ -6,6 +6,16 @@ const MAX_IMAGES = 2, MAX_IMAGE_BYTES = 160 * 1024, MAX_DIMENSION = 8192, MAX_PI
 const keys = (value, expected) => plain(value) && Object.keys(value).length === expected.length && expected.every(key => Object.hasOwn(value, key));
 const id = value => typeof value === 'string' && value.length > 0 && value.length <= 512 && !/[\u0000-\u001f]/.test(value);
 function bad() { throw fail('invalid_image', 'Native image bytes or provenance are invalid'); }
+function sourceValid(source) {
+  if (!plain(source) || !id(source.receipt) || !Number.isSafeInteger(source.attachmentIndex)
+    || source.attachmentIndex < 0 || source.attachmentIndex > 31) return false;
+  if (keys(source, ['toolCallId', 'receipt', 'attachmentIndex'])) return id(source.toolCallId);
+  return keys(source, ['kind', 'selectionId', 'receipt', 'attachmentIndex', 'name'])
+    && source.kind === 'selected-attachment' && id(source.selectionId)
+    && typeof source.name === 'string' && source.name.length > 0 && source.name.length <= 160
+    && source.name === source.name.trim() && !/[\u0000-\u001f\u007f/\\]/u.test(source.name)
+    && source.name !== '.' && source.name !== '..';
+}
 function validateOwnedNativeImageMetadata(images) {
   if (!Array.isArray(images) || images.length > MAX_IMAGES) bad();
   let bytes = 0;
@@ -16,8 +26,7 @@ function validateOwnedNativeImageMetadata(images) {
       || !Number.isSafeInteger(image.width) || image.width < 1 || image.width > MAX_DIMENSION
       || !Number.isSafeInteger(image.height) || image.height < 1 || image.height > MAX_DIMENSION
       || image.width * image.height > MAX_PIXELS
-      || !keys(image.source, ['toolCallId', 'receipt', 'attachmentIndex']) || !id(image.source.toolCallId) || !id(image.source.receipt)
-      || !Number.isSafeInteger(image.source.attachmentIndex) || image.source.attachmentIndex < 0 || image.source.attachmentIndex > 31) bad();
+      || !sourceValid(image.source)) bad();
     bytes += image.byteLength;
     return { mimeType: image.mimeType, width: image.width, height: image.height, sha256: image.sha256,
       byteLength: image.byteLength, source: { ...image.source } };

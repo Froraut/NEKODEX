@@ -24,7 +24,7 @@ function makeNativeAccountAdmission({ authority, lease, profile, inventory, inve
     if (!Number.isFinite(fetched) || fetched > now + 1000 || now - fetched > 300000) throw fail('inventory_refresh_required', 'Refresh Native catalog provenance before starting a new account generation');
   };
   fresh();
-  if (fileDigest(wrapperPin.executable) !== wrapperPin.executableSha256) throw fail('native_wrapper_pin_changed', 'Native account executable changed');
+  if (wrapperPin.wrapperBuildPin?.kind !== 'publisher-signed-app' && fileDigest(wrapperPin.executable) !== wrapperPin.executableSha256) throw fail('native_wrapper_pin_changed', 'Native account executable changed');
   (testHooks.verifyWrapper || verifyWrapper)(wrapperPin.executable, wrapperPin.executableSha256, wrapperPin.wrapperBuildPin);
   if (process.platform !== 'darwin' || lease.kind !== 'execution' || original.profileId !== profile.profileId || original.epoch !== profile.epoch
     || original.sourceRevision !== SOURCE || original.clientVersion !== VERSION || original.executableSha256 !== wrapperPin.executableSha256
@@ -83,7 +83,7 @@ function makeNativeAccountAdmission({ authority, lease, profile, inventory, inve
     if (current.configSha256 !== configSha256 || current.root !== profile.root || digest(regular(paths.config, 2 * 1024 * 1024)) !== configSha256
       || !regular(paths.catalog, 2 * 1024 * 1024).equals(Buffer.from(catalogText))) throw fail('admission_changed', 'Native account admission changed');
     if (checkExecutable) {
-      if (fileDigest(wrapperPin.executable) !== wrapperPin.executableSha256) throw fail('native_wrapper_pin_changed', 'Native account executable changed');
+      if (wrapperPin.wrapperBuildPin?.kind !== 'publisher-signed-app' && fileDigest(wrapperPin.executable) !== wrapperPin.executableSha256) throw fail('native_wrapper_pin_changed', 'Native account executable changed');
       (testHooks.verifyWrapper || verifyWrapper)(wrapperPin.executable, wrapperPin.executableSha256, wrapperPin.wrapperBuildPin);
     }
     for (const file of ['/etc/codex/config.toml', '/etc/codex/managed_config.toml', '/etc/codex/requirements.toml']) absent(file);

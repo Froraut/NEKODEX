@@ -44,9 +44,12 @@ function projectThread(value) {
     status.activeFlags = [...value.status.activeFlags];
   }
   const result = { id: value.id, status };
-  for (const key of ['sessionId', 'parentThreadId', 'forkedFromId', 'name', 'agentNickname',
+  for (const key of ['name', 'agentNickname',
     'agentRole', 'cwd', 'model', 'modelProvider', 'reasoningEffort', 'originator']) {
     result[key] = typeof value[key] === 'string' ? value[key] : null;
+  }
+  for (const key of ['sessionId', 'parentThreadId', 'forkedFromId']) {
+    result[key] = typeof value[key] === 'string' && UUID.test(value[key]) ? value[key] : null;
   }
   // Source may contain subagent provenance; expose a classification, never arbitrary nested data.
   result.source = typeof value.source === 'string' ? value.source
@@ -88,7 +91,9 @@ function createCodexClientControl({ executable, codexHome, controlSocket, journa
         : failure ? 'unavailable' : initialized ? 'ready' : child ? 'connecting' : 'disconnected',
       transport, statusScope: controlSocket ? 'configured-server' : 'connection',
       userAgent: initializeResult?.userAgent || null,
-      capabilities: { ...methodSupport, startTurn: false, interruptTurn: false, approve: false },
+      capabilities: { ...methodSupport, startTurn: false, interruptTurn: false, approve: false,
+        resumeExternal: false, exclusiveHandoff: false },
+      externalControl: { executionOwner: 'unverified', reason: 'exclusive-owner-contract-unavailable' },
       errorCode: failure?.code || null,
       uncertainForks: journal?.snapshot() || [],
     };
@@ -322,7 +327,10 @@ function createCodexClientControl({ executable, codexHome, controlSocket, journa
   async function forkThread({ threadId: id, lastTurnId, userInitiated } = {}) {
     if (userInitiated !== true) throw error('user_action_required', 'Fork requires an explicit user action');
     const params = { threadId: threadId(id), excludeTurns: true };
-    if (lastTurnId != null) params.lastTurnId = optionalString(lastTurnId, 'last turn ID', 128);
+    if (lastTurnId != null) {
+      params.lastTurnId = optionalString(lastTurnId, 'last turn ID', 128);
+      if (!params.lastTurnId) throw error('invalid_parameters', 'Invalid last turn ID');
+    }
     if (!journal) throw error('fork_journal_unavailable', 'A private durable fork journal is required');
     pendingForks++;
     let actionId, observedForkId = null;
@@ -343,7 +351,8 @@ function createCodexClientControl({ executable, codexHome, controlSocket, journa
       }
       observedForkId = thread.id;
       journal.finish(actionId, { state: 'completed', forkId: thread.id, completedAt: new Date().toISOString() });
-      return { thread, actionId, statusScope: snapshot().statusScope };
+      return { thread, actionId, sourceThreadId: id, lastTurnId: params.lastTurnId ?? null,
+        executionStarted: false, statusScope: snapshot().statusScope };
     } catch (reason) {
       if (actionId) {
         if (reason.code === 'rpc_error' && reason.authoritative) {

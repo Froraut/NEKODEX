@@ -11,10 +11,15 @@ import { AGENT_NATIVE_DESCRIPTOR_FILE } from "../launcher/electron/agent-native-
 import { createAgentToolsComposition, type AgentToolsComposition } from "./agent-tools/composition";
 import { browserCompanionRequest, createAgentBrowserToolsProvider, createBrowserCompanionRuntime, type AgentBrowserToolsProvider, type BrowserCompanionRuntime } from "./browser-companion";
 import type { ToolScope } from "./agent-tools/types";
+import type { AgentTask } from "./agent-mode/types";
 import { createAgentDesktopToolsProvider, type AgentDesktopToolsProvider } from "./browser-companion/agent-desktop-tools";
+import { resolveDesktopPropertyEvidence } from "./browser-companion/desktop-outcome";
+import { resolveBrowserTextTransitionEvidence } from "./browser-companion/outcome-observer";
 import { createMacosDesktopProvider } from "./browser-companion/macos-desktop";
 import { resolveDesktopHelper, type PinnedDesktopHelper } from "./browser-companion/desktop-helper-path";
 import { resolveSkillPdfHelper, type PinnedSkillPdfHelper } from "./agent-tools/skill-pdf-helper-path";
+import { createLauncherPythonBuildSelectionBridge } from "./execution-environments/launcher-python-build-selection";
+import type { PythonBuildSelection } from "./execution-environments/python-build";
 import type { VmRuntimeSelection } from './execution-environments/executor';
 import { createVmExportControlRoutes } from './execution-environments/control';
 import { createLauncherVmExportBridge } from './execution-environments/launcher-export';
@@ -40,7 +45,7 @@ import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worke
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
 import { configureTurnBrokerEventLog } from "./adapters/chatgpt-web/turn-broker-diagnostics";
 import { rejectUnparseableChatGptToolResults } from "./adapters/chatgpt-web/rejected-tool-results";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { chatGptTurnSessions, chatGptTurnExecutionKey } from "./adapters/chatgpt-web/turn-execution";
 import {
   activeStructuredCompactionCount,
@@ -66,7 +71,6 @@ import { parseChatGptWebProModelVersion, type ChatGptWebProModelVersion } from "
 import { AsyncEventQueue } from "./event-queue";
 import { createInternalJsonRequest, readJsonRequestBody } from "./http-body";
 import { httpStatusFromTerminalError } from "./lib/errors";
-import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { augmentNativeModelCatalog } from "./model-catalog";
 import { pickerCatalogAgeMs, refreshPickerCatalog } from "./codex-picker-catalog";
@@ -857,8 +861,10 @@ export function startServer(
     /** Trusted DEV harness pin. Packaged CLI resolves its own sibling native helper. */
     desktopHelper?: PinnedDesktopHelper;
     pdfHelper?: PinnedSkillPdfHelper;
-    /** Trusted fixed development VM artifacts; installed layout remains unavailable until bundled. */
+    /** Trusted fixed development or publisher-signed production VM artifact selection. */
     vmRuntimeSelection?: VmRuntimeSelection;
+    /** Trusted main-selected immutable source/build snapshots, never renderer filesystem paths. */
+    resolvePythonBuildSelection?: (selectionId: string, scope: ToolScope) => PythonBuildSelection | Promise<PythonBuildSelection>;
     /** Trusted launcher/fixture profile identity, independent of browser readiness. */
     nativeLauncherProfile?: "production" | "development";
   } = {},
@@ -901,6 +907,10 @@ export function startServer(
     authorize: request => controlAuthorized(request), canStart: () => !stopPrepared && acceptingAgentTools() });
   const vmExportControlRoutes = createVmExportControlRoutes({ runtime: () => { getAgentRoutes(); return agentRuntime!; }, tools: () => getAgentTools(),
     authorize: request => controlAuthorized(request), canStart: () => !stopPrepared && acceptingAgentTools() });
+  const pythonBuildSelections = config.browserHost === "launcher" ? createLauncherPythonBuildSelectionBridge({
+    descriptorPath: join(historyHome, "runtime", "launcher-agent-python-build.json"),
+    expectedProfile: dependencies.nativeLauncherProfile ?? (process.env.CODEX_CHATGPT_WEB_LAUNCHER_PROFILE === "development" ? "development" : "production"),
+  }) : undefined;
   let agentTools: AgentToolsComposition | undefined;
   let browserCompanion: BrowserCompanionRuntime | undefined;
   let agentBrowserTools: AgentBrowserToolsProvider | undefined;
@@ -1033,6 +1043,19 @@ export function startServer(
     const actual = Buffer.from(header);
     return actual.length === expected.length && timingSafeEqual(actual, expected);
   };
+  // Resolve through both the task's retained reference and the private tool journal.
+  // A caller-supplied receipt key cannot select another task's canonical output.
+  const canonicalTaskToolOutcome = (task: AgentTask, receiptKey: string) => {
+    const retained = agentRuntime?.store.effectiveToolOutcomes(task.id).find(outcome => outcome.idempotencyKey === receiptKey
+      && outcome.scope.taskId === task.id && outcome.scope.generation === task.generation);
+    if (!retained) return undefined;
+    const sourcePrefix = retained.tool.split("/")[0];
+    if (sourcePrefix !== "browser" && sourcePrefix !== "desktop") return undefined;
+    const canonical = getAgentTools().getEvidenceOutcomeBySourceEvent(`${sourcePrefix}:${createHash("sha256").update(receiptKey).digest("hex")}`);
+    return canonical && canonical.idempotencyKey === receiptKey && canonical.tool === retained.tool
+      && canonical.scope.taskId === task.id && canonical.scope.generation === task.generation
+      && canonical.scope.toolCallId === retained.scope.toolCallId ? canonical : undefined;
+  };
   const getAgentRoutes = () => {
     if (agentRoutes) return agentRoutes;
     const models = () => [...availableChatGptWebModelRoutes(liveConfig())
@@ -1063,7 +1086,9 @@ export function startServer(
       claimTransport: (request, digest) => agentRuntime!.claimNativeTransport(request, digest),
       tools: { discover: (scope, options) => getAgentTools().toolsPort.discover(scope, options) },
       history: { lease: (scope, offer) => getHistoryStore().ownedNative.lease(scope, offer),
-        recordFinal: input => getHistoryStore().ownedNative.recordFinal(input), release: lease => historyStore?.ownedNative.release(lease) },
+        recordFinal: input => getHistoryStore().ownedNative.recordFinal(input), release: lease => historyStore?.ownedNative.release(lease),
+        transcript: { subscribe: (scope, offer) => getHistoryStore().transcript.subscribe(scope, offer),
+          recordEvent: input => getHistoryStore().transcript.recordEvent(input), release: lease => historyStore?.transcript.release(lease) } },
       selectedSkills: request => getAgentTools().selectedSkillContent({ taskId: request.task.id, generation: request.task.generation, toolCallId: request.dispatch.id }) });
     const executionPort = createAgentExecutionRouter({ localResponses: webExecution, ownedNative: nativeExecution });
     agentRuntime = new AgentModeRuntime({ store, models, executionPort,
@@ -1084,7 +1109,10 @@ export function startServer(
         if (task.execution?.provider === "owned-native") invalidateNativeTask(task);
       },
       beforeVerify: task => {
-        for (const evidence of activeTaskEvidence(task)) if (evidence.observer === "workspace-file-observer-v1") getAgentEvidence().assertCurrent(task, evidence);
+        for (const evidence of activeTaskEvidence(task)) {
+          if (evidence.observer === "workspace-file-observer-v1") getAgentEvidence().assertCurrent(task, evidence);
+          if (evidence.observer === "selected-macos-application-property-v1") getAgentDesktopTools().assertPropertyEvidenceCurrent(task, evidence);
+        }
       }, workspaceEvidenceReferences: task => task.evidence.some(evidence => evidence.observer === "workspace-file-observer-v1") ? getAgentEvidence().listTask(task.id) : [],
       toolsAvailable: () => getAgentTools().status().config.enabled || Boolean(agentBrowserTools?.status().bindings.some(binding => {
         const scope = { taskId: binding.taskId, generation: binding.generation, toolCallId: 'capability-status' };
@@ -1094,11 +1122,19 @@ export function startServer(
         isAgentScopeActive({ taskId: binding.taskId, generation: binding.generation, toolCallId: 'capability-status' })))
         || Boolean(agentRemoteTools?.status().available && agentRemoteTools.status().bindings.some(binding =>
           isAgentScopeActive({ taskId: binding.taskId, generation: binding.generation, toolCallId: 'capability-status' })))
+        || getAgentTools().vmNetworkStatus().grants.some(row => !row.revoked && isAgentScopeActive({ taskId: row.grant.scope.taskId, generation: row.grant.scope.generation, toolCallId: 'network-capability-status' }))
         || getAgentTools().hasSkillResourceTools() || getAgentTools().hasSkillScriptTools() || getAgentTools().hasVmShellTools(agentRuntime?.store.listTasks().map(task => ({ taskId: task.id, generation: task.generation, toolCallId: 'vm-export-discovery' })) ?? []) });
     agentRoutes = createAgentModeRoutes({ runtime: agentRuntime, authorize: controlAuthorized,
       observeWorkspaceEvidence: (task, proof) => getAgentEvidence().observe(task, proof),
       resolveEvidence: (task, reference) => {
         if (reference.sourceEventId.startsWith("workspace-file:")) return getAgentEvidence().resolve(task, reference);
+        if (reference.sourceEventId.startsWith("desktop-property:")) return resolveDesktopPropertyEvidence(task, reference, sourceEventId => {
+          const retained = agentRuntime!.store.effectiveToolOutcomes(task.id).find(outcome => outcome.scope.generation === task.generation
+            && sourceEventId === `desktop-property:${createHash("sha256").update(outcome.idempotencyKey).digest("hex")}`);
+          return retained ? canonicalTaskToolOutcome(task, retained.idempotencyKey) : undefined;
+        });
+        if (reference.sourceEventId.startsWith("browser-transition:")) return resolveBrowserTextTransitionEvidence(task, reference,
+          receiptKey => canonicalTaskToolOutcome(task, receiptKey));
         if (["mcp:", "browser:", "desktop:"].some(prefix => reference.sourceEventId.startsWith(prefix))) return getAgentTools().resolveEvidence(task, reference);
         throw new Error("Unsupported observed evidence source");
       } });
@@ -1133,7 +1169,8 @@ export function startServer(
     desktopTools: getAgentDesktopTools(),
     remoteTools: config.browserHost === 'launcher' ? getAgentRemoteTools() : undefined,
     pdfHelper: resolveSkillPdfHelper({ explicit: dependencies.pdfHelper }),
-    vmRuntimeSelection: dependencies.nativeLauncherProfile === 'development' || process.env.CODEX_CHATGPT_WEB_LAUNCHER_PROFILE === 'development' ? dependencies.vmRuntimeSelection : undefined,
+    resolvePythonBuildSelection: dependencies.resolvePythonBuildSelection ?? pythonBuildSelections?.resolvePythonBuildSelection,
+    vmRuntimeSelection: dependencies.vmRuntimeSelection?.production || dependencies.nativeLauncherProfile === 'development' || process.env.CODEX_CHATGPT_WEB_LAUNCHER_PROFILE === 'development' ? dependencies.vmRuntimeSelection : undefined,
     vmExport: config.browserHost === 'launcher' ? createVmExportTools(createLauncherVmExportBridge({ descriptorPath: join(historyHome, 'runtime', AGENT_VM_EXPORT_DESCRIPTOR_FILE),
       expectedProfile: dependencies.nativeLauncherProfile ?? (process.env.CODEX_CHATGPT_WEB_LAUNCHER_PROFILE === 'development' ? 'development' : 'production') })) : undefined,
     isScopeActive: isAgentScopeActive, resolveToolCall: scope => agentRuntime?.resolveToolCall(scope),
@@ -1158,11 +1195,15 @@ export function startServer(
     authorizeAdmin: controlAuthorized, localGuard: localHttpRequestRejection, port: (): number => server.port!, peerAddress: request => server.requestIP(request)?.address,
     sources: {
       status: () => ({ version: VERSION, ready: admission.accepting, activeHttpTurns: httpTurns.count(), activeAgentTasks: agentRuntime?.activeCount ?? 0 }),
-      agentTasks: () => agentRuntime?.store.listTasks().map(task => ({ id: task.id, state: task.status, kind: "agent", mode: task.mode, generation: task.generation, revision: task.revision, createdAt: task.createdAt, updatedAt: task.updatedAt })),
+      agentTasks: () => agentRuntime?.store.listTasks().map(task => ({ id: task.id, state: task.status, kind: "agent", mode: task.mode, familyId: task.familyId, generation: task.generation, revision: task.revision, createdAt: task.createdAt, updatedAt: task.updatedAt })),
       history: () => historyStore,
     }, agentAction: input => {
       if (stopPrepared) throw new Error("Agent runtime is draining");
       getAgentRoutes(); return agentRuntime!.executeScopedAction(input);
+    }, agentActionReceipt: input => {
+      // Observation must not initialize execution or perform stopped-owner recovery.
+      if (!agentRuntime) throw new Error("Agent action receipt source is unavailable");
+      return agentRuntime.store.readCommandResult(input.taskId, input.actionId, "scoped_action", input)?.result;
     },
   });
   const trackInference = (
@@ -1301,7 +1342,7 @@ export function startServer(
           getAgentRoutes();
           const task = agentRuntime!.store.getTask(input.taskId);
           if (task.familyId !== input.scope.familyId || task.generation !== input.scope.generation || task.revision !== input.scope.revision) throw new Error("History task generation changed");
-          if (stopPrepared && input.action === "owned-native-consent" && input.enabled !== false) throw new Error("Native history admission is draining");
+          if (stopPrepared && ["owned-native-consent", "transcript-native-consent"].includes(input.action) && input.enabled !== false) throw new Error("Native history admission is draining");
           return nativeHistoryScope(task.id);
         } });
       }

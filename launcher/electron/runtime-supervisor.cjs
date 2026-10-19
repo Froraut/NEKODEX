@@ -1709,9 +1709,12 @@ class RuntimeSupervisor {
       const env = await this.nativeProxyEnvironmentProvider();
       if (this.stopping) throw new Error("Responses startup was cancelled while resolving the system proxy");
       this.assertCanStart(recoverySignal);
+      const invocation = this.runtimeCommand(["serve"], config.releaseVersion);
       child = this.spawnChild("daemon", {
-        ...this.runtimeCommand(["serve"], config.releaseVersion),
-        env,
+        ...invocation,
+        // Fixed packaged-origin claims belong to the runtime command. Proxy
+        // discovery must not discard or replace that execution binding.
+        env: { ...env, ...invocation.env },
         nativeBackgroundRoute: config.nativeBackgroundRoute,
       }, recoverySignal);
       await this.waitForProxy(config, 20_000, recoverySignal);

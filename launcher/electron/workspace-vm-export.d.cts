@@ -9,6 +9,7 @@ export interface WorkspaceVmExportService {
   list(scope: VmExportTaskScope): VmExportStatus;
   /** Accepted/unknown actions retain only their original workspace grant. Corrupt identity fails closed. */
   hasRetainedState(workspaceId: string): boolean;
+  /** Only queued/in-flight work vetoes quit. Durable unknown receipts remain reconcilable. */
   readonly activeCount: number; currentOperation(): string | null; destroy(): Promise<void>; close(): Promise<void>;
 }
 export function createWorkspaceVmExportService(options: {

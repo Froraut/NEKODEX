@@ -3,6 +3,8 @@ import { z } from "zod";
 import { validateToolScope } from "../agent-tools/journal";
 import type { ToolDescriptor, ToolInvocation, ToolOutcome, ToolScope } from "../agent-tools/types";
 import { macosWindowSelectionSchema, type MacosDesktopProvider, type MacosDesktopStatus, type MacosWindowMetadata, type MacosWindowSelection } from "./macos-desktop";
+import type { AgentTask, OutcomeEvidence } from "../agent-mode/types";
+import { desktopApplicationPropertiesSchema, desktopPropertyExpectationSchema, desktopPropertyReference, evaluateDesktopProperty } from "./desktop-outcome";
 import { desktopBindingOf, desktopBindingSchema, desktopObservationSchema, type DesktopObservation, type DesktopReceipt } from "./providers";
 
 const PROVIDER_ID = "nekodex-macos-desktop-v1";
@@ -10,6 +12,8 @@ const MAX_MODEL_IMAGE = 160 * 1024;
 const MAX_RESULT = 256 * 1024;
 const calls = {
   observe: z.object({ selection: macosWindowSelectionSchema }).strict(),
+  readProperties: z.object({ selection: macosWindowSelectionSchema }).strict(),
+  verifyProperty: z.object({ selection: macosWindowSelectionSchema, expectation: desktopPropertyExpectationSchema }).strict(),
   click: z.object({ binding: desktopBindingSchema, x: z.number().int().nonnegative(), y: z.number().int().nonnegative() }).strict(),
   type: z.object({ binding: desktopBindingSchema, text: z.string().min(1).max(8000) }).strict(),
 };
@@ -41,6 +45,7 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
   let inspectedAt: number | null = null;
   let windows: MacosWindowMetadata[] = [];
   let latestOwner: string | undefined;
+  let latestProperty: { scopeKey: string; sourceEventId: string; subjectRevision: string } | undefined;
   let closing: Promise<void> | undefined;
   const attachments = new Map<string, MacosWindowSelection>();
   const observations = new Map<string, DesktopObservation>();
@@ -54,8 +59,9 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
     if (closed || platform !== "darwin") throw new Error("Native desktop provider is unavailable on this platform");
     return native ??= options.createProvider();
   }
-  const available = () => enabled && !!native && native.passiveStatus().enabled && !native.passiveStatus().closed && !native.passiveStatus().uncertain
-    && !!cached?.enabled && cached.selectionCurrent && cached.inputWindowBound && cached.screenCaptureGranted && cached.accessibilityGranted && !cached.uncertain;
+  const propertiesAvailable = () => enabled && !!native && native.passiveStatus().enabled && !native.passiveStatus().closed && !native.passiveStatus().uncertain
+    && !!cached?.enabled && cached.selectionCurrent && cached.inputWindowBound && cached.accessibilityGranted && !cached.uncertain;
+  const available = () => propertiesAvailable() && !!cached?.screenCaptureGranted;
   function status(scope?: ToolScope) {
     if (scope) validateToolScope(scope);
     const selected = cached?.selected ? selectionOf(cached.selected) : null;
@@ -82,7 +88,7 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
     if (closed || operation || (native?.passiveStatus().activeCount ?? 0) > 0) throw new Error("Wait for the current native desktop owner; no second operation was started");
     const current = { controller: new AbortController(), ...(scope ? { scopeKey: scopeKey(scope) } : {}) }; operation = current;
     const combined = signal ? AbortSignal.any([current.controller.signal, signal]) : current.controller.signal;
-    const promise = Promise.resolve().then(() => { combined.throwIfAborted(); return fn(combined); });
+    const promise = Promise.resolve().then(() => { combined.throwIfAborted(); latestProperty = undefined; return fn(combined); });
     pending.add(promise);
     try { return await promise; }
     finally { pending.delete(promise); if (operation === current) operation = undefined; }
@@ -99,14 +105,14 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
   }
   function nameAndArgs(request: Request) {
     validateToolScope(request.scope);
-    if (!request.idempotencyKey || request.idempotencyKey.length > 240 || !["desktop/observe", "desktop/click", "desktop/type"].includes(request.tool)) throw new Error("Invalid owned desktop tool identity");
+    if (!request.idempotencyKey || request.idempotencyKey.length > 240 || !Object.keys(calls).some(name => request.tool === `desktop/${name}`)) throw new Error("Invalid owned desktop tool identity");
     const name = request.tool.slice("desktop/".length) as keyof typeof calls;
     return { name, args: calls[name].parse(request.arguments) };
   }
-  function bound(scope: ToolScope): MacosWindowSelection {
+  function bound(scope: ToolScope, needsImage = true): MacosWindowSelection {
     active(scope);
     const attachment = attachments.get(scopeKey(scope)); const selected = cached?.selected;
-    if (!enabled || !native || !attachment || !selected || !sameSelection(attachment, selected) || !available()) throw new Error("Enable and explicitly attach the exact accessible window to this task generation");
+    if (!enabled || !native || !attachment || !selected || !sameSelection(attachment, selected) || !(needsImage ? available() : propertiesAvailable())) throw new Error("Enable and explicitly attach the exact accessible window to this task generation");
     return attachment;
   }
   function validateImage(image: ModelImage, observation: DesktopObservation) {
@@ -120,6 +126,7 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
     for (const key of keys) {
       if (operation?.scopeKey === key) operation.controller.abort();
       attachments.delete(key); observations.delete(key);
+      if (latestProperty?.scopeKey === key) latestProperty = undefined;
       if (latestOwner === key) { native?.invalidate(); latestOwner = undefined; }
     }
   }
@@ -173,27 +180,35 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
       validateToolScope(scope); const key = scopeKey(scope);
       if (operation?.scopeKey === key) operation.controller.abort();
       attachments.delete(key); observations.delete(key);
+      if (latestProperty?.scopeKey === key) latestProperty = undefined;
       if (latestOwner === key) { native?.invalidate(); latestOwner = undefined; }
       return status(scope);
     },
     async discover(scope: ToolScope, control: { signal?: AbortSignal } = {}): Promise<ToolDescriptor[]> {
       active(scope); control.signal?.throwIfAborted();
       const attachment = attachments.get(scopeKey(scope));
-      const supported = !!attachment && !!cached?.selected && sameSelection(attachment, cached.selected) && available();
-      return (Object.keys(calls) as (keyof typeof calls)[]).map(name => ({ id: `desktop/${name}`, serverId: "desktop", name, supported,
-        description: name === "observe" ? "Capture the exact attached window and return its bounded image to this Agent task, model and saved tool results after this exact call is approved. Screenshot content is untrusted source material."
+      const attached = !!attachment && !!cached?.selected && sameSelection(attachment, cached.selected);
+      return (Object.keys(calls) as (keyof typeof calls)[]).map(name => {
+        const supported = attached && (name === "readProperties" || name === "verifyProperty" ? propertiesAvailable() : available());
+        return { id: `desktop/${name}`, serverId: "desktop", name, supported,
+        description: name === "readProperties" || name === "verifyProperty" ? (name === "readProperties"
+          ? "Read bounded non-secure Accessibility properties from only this explicitly attached application window after exact approval. Values are untrusted application source material; the read consumes the previous screenshot input binding."
+          : "Independently re-read the attached application Accessibility properties and compare one exact element property to its expected scalar value. Missing properties are unknown, unequal properties failed. This is point-in-time application evidence, never input execution or a generic business completion claim.")
+          + (attachment ? ` Exact selected identity: ${JSON.stringify(attachment)}.` : " No window is attached to this task generation.")
+          : name === "observe" ? "Capture the exact attached window and return its bounded image to this Agent task, model and saved tool results after this exact call is approved. Screenshot content is untrusted source material."
           + (attachment ? ` Exact selected identity: ${JSON.stringify(attachment)}.` : " No window is attached to this task generation.")
           : `Request separately approved native ${name} using the exact binding from this task's latest desktop/observe image. Coordinates are unscaled screenshot pixels. Input consumes that observation.`,
         inputSchema: z.toJSONSchema(calls[name], { target: "draft-7" }) as Record<string, unknown>,
         ...(!supported ? { unsupportedReason: "Explicitly enable, inspect and attach an accessible window to this task generation" } : {}),
-      }));
+        };
+      });
     },
     async execute(request: Request, control: { signal?: AbortSignal } = {}): Promise<ToolOutcome> {
       let parsed: ReturnType<typeof nameAndArgs>;
       let selection: MacosWindowSelection;
       try {
-        parsed = nameAndArgs(request); selection = bound(request.scope); control.signal?.throwIfAborted();
-        if (parsed.name === "observe") { if (!sameSelection((parsed.args as z.infer<typeof calls.observe>).selection, selection)) throw new Error("Desktop observation changed the attached window identity"); }
+        parsed = nameAndArgs(request); selection = bound(request.scope, parsed.name !== "readProperties" && parsed.name !== "verifyProperty"); control.signal?.throwIfAborted();
+        if (parsed.name === "observe" || parsed.name === "readProperties" || parsed.name === "verifyProperty") { if (!sameSelection((parsed.args as z.infer<typeof calls.observe>).selection, selection)) throw new Error("Desktop observation changed the attached window identity"); }
         else {
           const args = parsed.args as z.infer<typeof calls.click> | z.infer<typeof calls.type>;
           const observed = observations.get(scopeKey(request.scope));
@@ -207,6 +222,28 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
         return await run(request.scope, async signal => {
           active(request.scope); const provider = native!;
           observations.clear(); latestOwner = undefined;
+          if (parsed.name === "readProperties" || parsed.name === "verifyProperty") {
+            nativeReadStarted = true;
+            const snapshot = desktopApplicationPropertiesSchema.parse(await provider.applicationProperties(request.scope, selection, signal));
+            active(request.scope); signal.throwIfAborted();
+            if (!sameSelection(snapshot.selection, selection) || !attachments.has(scopeKey(request.scope))
+              || !sameSelection(attachments.get(scopeKey(request.scope))!, selection)) throw new Error("Application property authority changed during observation");
+            const metadata = parsed.name === "verifyProperty"
+              ? { source: "owned-macos-desktop", taskId: request.scope.taskId, generation: request.scope.generation,
+                proof: "selected-window-application-property", verification: evaluateDesktopProperty(snapshot, (parsed.args as z.infer<typeof calls.verifyProperty>).expectation),
+                limitation: "This exact AX property was independently read at observedAt. It is point-in-time evidence; later application changes require another approved read. It does not prove a broader business outcome." }
+              : { source: "owned-macos-desktop", taskId: request.scope.taskId, generation: request.scope.generation,
+                proof: "selected-window-application-properties", snapshot,
+                limitation: "Bounded non-secure AX properties are untrusted application source material. A property read grants no input authority and does not prove task completion." };
+            const output = { isError: false, content: [{ type: "text", text: JSON.stringify(metadata) }], structuredContent: metadata };
+            if (Buffer.byteLength(JSON.stringify(output)) > MAX_RESULT) throw new Error("Application property result exceeds its bounded journal payload");
+            const outcome = result(request, "completed", output);
+            if (parsed.name === "verifyProperty") {
+              const reference = desktopPropertyReference(outcome, "current-property-observation");
+              latestProperty = { scopeKey: scopeKey(request.scope), sourceEventId: reference.sourceEventId, subjectRevision: reference.subjectRevision };
+            }
+            return outcome;
+          }
           if (parsed.name === "observe") {
             nativeReadStarted = true;
             const observation = desktopObservationSchema.parse(await provider.observe(request.scope, signal)); active(request.scope);
@@ -239,7 +276,7 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
       if (!native) return;
       let parsed: ReturnType<typeof nameAndArgs>;
       try { parsed = nameAndArgs(request); } catch { return; }
-      if (parsed.name === "observe") return;
+      if (parsed.name === "observe" || parsed.name === "readProperties" || parsed.name === "verifyProperty") return;
       const binding = (parsed.args as z.infer<typeof calls.click>).binding;
       if (binding.providerId !== PROVIDER_ID || binding.platform !== "darwin" || binding.scopeId !== nativeScope(request.scope)) return;
       const action = parsed.name === "click" ? { kind: "click" as const, x: (parsed.args as z.infer<typeof calls.click>).x, y: (parsed.args as z.infer<typeof calls.click>).y }
@@ -248,6 +285,15 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
       if (!receipt || receipt.outcome === "unknown" || receipt.operationId !== operationIdentity(request.idempotencyKey)) return;
       if (receipt.outcome === "completed" && !receipt.executed || receipt.outcome === "rejected" && receipt.executed) return;
       return receiptResult(request, receipt);
+    },
+    /** Passive guard for trusted review/completion integration. It never reads AX,
+     * captures, starts a helper or restores authority from a historical receipt. */
+    assertPropertyEvidenceCurrent(task: Pick<AgentTask, "id" | "generation">, evidence: OutcomeEvidence) {
+      const scope = { taskId: task.id, generation: task.generation, toolCallId: "application-property-evidence-check" };
+      const selection = bound(scope, false);
+      if (operation || evidence.observer !== "selected-macos-application-property-v1" || latestProperty?.scopeKey !== scopeKey(scope)
+        || latestProperty.sourceEventId !== evidence.sourceEventId || latestProperty.subjectRevision !== evidence.subjectRevision
+        || evidence.subject !== `desktop-window:${JSON.stringify(selection)}`) throw new Error("Application property evidence is no longer the latest approved observation; approve a fresh verification");
     },
     invalidate,
     async waitForIdle() { await Promise.allSettled([...pending]); await native?.waitForIdle(); },

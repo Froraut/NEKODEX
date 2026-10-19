@@ -5,7 +5,7 @@ import { Readable } from "node:stream";
 import type { ScopedAgentAction } from "./types";
 
 type ReadOperation = "status" | "tasks" | "agent-tasks" | "history-coverage";
-interface ClientRequest { origin: string; operation: ReadOperation | "action"; limit?: number; offset?: number; action?: ScopedAgentAction }
+export interface ClientRequest { origin: string; operation: ReadOperation | "action" | "action-receipt"; limit?: number; offset?: number; action?: ScopedAgentAction }
 export interface LocalControlClientResult {
   apiVersion: "1"; ok: boolean; httpStatus?: number; value?: unknown; error?: { code: string };
   actionId?: string; outcome?: "unknown";
@@ -15,7 +15,7 @@ export interface LocalControlClientDependencies {
   request?: (url: string, init: RequestInit) => Promise<Response>; timeoutMs?: number;
 }
 const READ_TOKEN = /^nk-read-[a-f0-9]{64}$/;
-const USAGE = "Usage: codex-chatgpt-web local-api <status|tasks|agent-tasks|history-coverage|action> --origin http://127.0.0.1:PORT --token-stdin [--limit N --offset N]; action requires --operation --task-id --action-id --family-id --generation --revision";
+const USAGE = "Usage: codex-chatgpt-web local-api <status|tasks|agent-tasks|history-coverage|action|action-receipt> --origin http://127.0.0.1:PORT --token-stdin [--limit N --offset N]; action requires --operation --task-id --action-id --family-id --generation --revision";
 const invalid = (): never => { throw new Error(USAGE); };
 class CredentialInputError extends Error {}
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -33,9 +33,9 @@ function decimal(value: string | undefined, min: number, max: number): number {
 /** Parse only fixed routes and opaque scopes. Never reflect unknown arguments. */
 export function parseLocalControlClientArguments(args: readonly string[]): ClientRequest {
   const [operation, ...rest] = args;
-  if (!["status", "tasks", "agent-tasks", "history-coverage", "action"].includes(operation || "")) invalid();
+  if (!["status", "tasks", "agent-tasks", "history-coverage", "action", "action-receipt"].includes(operation || "")) invalid();
   const options = new Map<string, string>(); let tokenStdin = false;
-  const allowed = new Set(["--origin", ...(operation === "action" ? ["--operation", "--task-id", "--action-id", "--family-id", "--generation", "--revision"] : ["tasks", "agent-tasks"].includes(operation) ? ["--limit", "--offset"] : [])]);
+  const allowed = new Set(["--origin", ...(["action", "action-receipt"].includes(operation!) ? ["--operation", "--task-id", "--action-id", "--family-id", "--generation", "--revision"] : ["tasks", "agent-tasks"].includes(operation) ? ["--limit", "--offset"] : [])]);
   for (let index = 0; index < rest.length; index++) {
     const option = rest[index];
     if (option === "--token-stdin") { if (tokenStdin) invalid(); tokenStdin = true; continue; }
@@ -44,7 +44,7 @@ export function parseLocalControlClientArguments(args: readonly string[]): Clien
   }
   if (!tokenStdin || !options.has("--origin")) invalid();
   const request: ClientRequest = { origin: origin(options.get("--origin")!), operation: operation as ClientRequest["operation"] };
-  if (operation === "action") {
+  if (operation === "action" || operation === "action-receipt") {
     const taskId = options.get("--task-id"), actionId = options.get("--action-id"), familyId = options.get("--family-id"), actionOperation = options.get("--operation");
     if (![taskId, actionId, familyId].every(value => identity(value) && value!.length <= 128) || !["pause", "resume", "stop", "step", "review"].includes(actionOperation || "")) invalid();
     request.action = { taskId: taskId!, actionId: actionId!, familyId: familyId!, operation: actionOperation as ScopedAgentAction["operation"],
@@ -79,13 +79,14 @@ async function tokenLine(input: AsyncIterable<Uint8Array | string>, administrati
 function taskMetadata(value: unknown): Record<string, unknown> {
   if (!object(value) || !identity(value.id) || !identity(value.state)) throw new Error();
   const result: Record<string, unknown> = { id: value.id, state: value.state };
-  for (const key of ["kind", "mode"]) if (value[key] !== undefined) { if (!identity(value[key])) throw new Error(); result[key] = value[key]; }
+  for (const key of ["kind", "mode", "familyId"]) if (value[key] !== undefined) { if (!identity(value[key])) throw new Error(); result[key] = value[key]; }
   for (const key of ["generation", "revision", "createdAt", "updatedAt"]) if (value[key] !== undefined) { if (!integer(value[key])) throw new Error(); result[key] = value[key]; }
   return result;
 }
 function projection(request: ClientRequest, value: unknown): unknown {
   if (!object(value)) throw new Error();
-  if (request.operation === "action") {
+  if (request.operation === "action" || request.operation === "action-receipt") {
+    if (request.operation === "action-receipt" && value.found === false && value.actionId === request.action!.actionId) return { found: false, actionId: request.action!.actionId };
     if (!object(value.task) || value.task.familyId !== request.action!.familyId) throw new Error();
     const task = taskMetadata({ ...value.task, state: value.task.status });
     if (task.id !== request.action!.taskId || !integer(task.generation) || task.generation < request.action!.generation || task.revision !== request.action!.revision) throw new Error();
@@ -147,16 +148,17 @@ async function directLoopbackRequest(url: string, init: RequestInit): Promise<Re
 export async function runLocalControlClient(args: readonly string[], dependencies: LocalControlClientDependencies = {}): Promise<LocalControlClientResult> {
   const request = parseLocalControlClientArguments(args);
   if (dependencies.input === undefined && stdin.isTTY) throw new Error("Pipe one credential line through stdin; interactive token entry is unavailable");
-  const token = await tokenLine(dependencies.input ?? stdin, request.operation === "action");
+  const token = await tokenLine(dependencies.input ?? stdin, Boolean(request.action));
   if (args.some(value => value.includes(token))) throw new Error("Credentials must be supplied through stdin only");
   const timeout = dependencies.timeoutMs ?? 15000;
   if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 30000) throw new Error("Invalid local API request timeout");
-  const url = new URL(request.operation === "action" ? "/admin/local-control-api-action" : request.operation === "history-coverage" ? "/api/v1/history?view=coverage" : `/api/v1/${request.operation}`, request.origin);
+  const url = new URL(request.action ? "/admin/local-control-api-action" : request.operation === "history-coverage" ? "/api/v1/history?view=coverage" : `/api/v1/${request.operation}`, request.origin);
+  if (request.operation === "action-receipt") for (const [key, value] of Object.entries(request.action!)) url.searchParams.set(key, String(value));
   if (request.limit !== undefined) url.searchParams.set("limit", String(request.limit));
   if (request.offset !== undefined) url.searchParams.set("offset", String(request.offset));
   try {
-    const response = await (dependencies.request ?? directLoopbackRequest)(url.href, { method: request.action ? "POST" : "GET", redirect: "error", signal: AbortSignal.timeout(timeout),
-      headers: { authorization: `Bearer ${token}`, ...(request.action ? { "content-type": "application/json" } : {}) }, ...(request.action ? { body: JSON.stringify(request.action) } : {}) });
+    const response = await (dependencies.request ?? directLoopbackRequest)(url.href, { method: request.operation === "action" ? "POST" : "GET", redirect: "error", signal: AbortSignal.timeout(timeout),
+      headers: { authorization: `Bearer ${token}`, ...(request.operation === "action" ? { "content-type": "application/json" } : {}) }, ...(request.operation === "action" ? { body: JSON.stringify(request.action) } : {}) });
     const body = await boundedResponse(response);
     // Even an unexpected local server response must never echo the supplied secret.
     if (body.includes(token)) throw new Error();

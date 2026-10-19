@@ -9,7 +9,7 @@ export type { OwnedNativeImage } from "../../launcher/electron/owned-native-imag
 import { AGENT_NATIVE_PROTOCOL, AGENT_NATIVE_OUTPUT_SCHEMA_ID, AGENT_NATIVE_OUTPUT_SCHEMA, AGENT_NATIVE_OUTPUT_SCHEMA_HASH, AGENT_NATIVE_TEXT_BYTES, AGENT_NATIVE_ENVELOPE_BYTES } from "../../launcher/electron/agent-native-protocol.cjs";
 export { AGENT_NATIVE_PROTOCOL, AGENT_NATIVE_OUTPUT_SCHEMA_ID, AGENT_NATIVE_OUTPUT_SCHEMA, AGENT_NATIVE_OUTPUT_SCHEMA_HASH, AGENT_NATIVE_TEXT_BYTES, AGENT_NATIVE_ENVELOPE_BYTES };
 const id = z.string().min(1).max(128).regex(/^[^\u0000-\u0020]+$/u);
-const reply = z.object({ protocol: z.literal(AGENT_NATIVE_PROTOCOL), kind: z.enum(["tool_request", "final"]),
+const reply = z.object({ protocol: z.literal(AGENT_NATIVE_PROTOCOL), kind: z.enum(["tool_request", "final", "awaiting_input"]),
   requestId: id.nullable(), toolId: z.string().min(1).max(240).nullable(), argumentsJson: z.string().nullable(), summary: z.string().nullable(),
 }).strict();
 export function nativeDigest(value: unknown): string { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
@@ -76,12 +76,18 @@ export function nativeToolValidator(tool: AgentNativeToolDefinition): (value: un
   const validate = compileToolInputSchema(tool.inputSchema);
   return value => validate(value) === true;
 }
-export function parseNativeResult(text: string, catalog: AgentNativeToolDefinition[], priorRequestIds: string[]) {
+export type AgentNativeResult =
+  | { kind: "final"; summary: string }
+  | { kind: "awaiting_input"; summary: string }
+  | { kind: "tool_request"; requestId: string; tool: string; arguments: Record<string, unknown> };
+export function parseNativeResult(text: string, catalog: AgentNativeToolDefinition[], priorRequestIds: string[]): AgentNativeResult {
   if (Buffer.byteLength(text) > AGENT_NATIVE_TEXT_BYTES) throw new Error("Native adapter reply exceeds its bound");
   const value = reply.parse(JSON.parse(text));
-  if (value.kind === "final") {
-    if (value.requestId !== null || value.toolId !== null || value.argumentsJson !== null || value.summary === null || !value.summary.trim() || Buffer.byteLength(value.summary) > 16_384) throw new Error("Invalid Native final branch");
-    return { kind: "final" as const, summary: value.summary };
+  if (value.kind === "final" || value.kind === "awaiting_input") {
+    if (value.requestId !== null || value.toolId !== null || value.argumentsJson !== null || value.summary === null || !value.summary.trim() || Buffer.byteLength(value.summary) > 16_384) throw new Error(`Invalid Native ${value.kind} branch`);
+    return value.kind === "final"
+      ? { kind: "final", summary: value.summary }
+      : { kind: "awaiting_input", summary: value.summary };
   }
   if (value.requestId === null || value.toolId === null || value.argumentsJson === null || value.summary !== null || priorRequestIds.includes(value.requestId) || priorRequestIds.length >= 128
     || Buffer.byteLength(value.argumentsJson) > 64 * 1024) throw new Error("Invalid Native tool-request branch");

@@ -1,3 +1,4 @@
+import type { LocalGitReviewService } from './local-git-review.cjs';
 export interface ManagedWorktree {
   id: string; workspaceId: string; sourcePath: string; sourceIdentity: string;
   path: string; branch: string; headOid: string; identity?: string;
@@ -25,9 +26,17 @@ export interface WorkspaceRestoreReceipt {
   state: "restoring" | "complete" | "needs-inspection"; restoredPaths: string[]; createdAt: string;
 }
 export interface WorkspaceGitService {
-  /** Exact active create/archive owners for the application's Quit/Restart guard. */
+  reviewBases: LocalGitReviewService['bases'];
+  reviewCapture: LocalGitReviewService['capture'];
+  reviewDiff: LocalGitReviewService['diff'];
+  reviewPrepare: LocalGitReviewService['prepare'];
+  reviewApply: LocalGitReviewService['apply'];
+  reviewInspectAction: LocalGitReviewService['inspectAction'];
+  reviewListActions: LocalGitReviewService['listActions'];
+  reviewPruneActions: LocalGitReviewService['pruneActions'];
+  /** Exact active Git/create/archive owners for the application's Quit/Restart guard. */
   currentOperation(): string | null;
-  /** Main-only derived grant port: source grant and ready owned checkout are revalidated; accepts no path. */
+  /** Main-only derived grant port: source grant and ready/archived owned checkout are revalidated; accepts no path. */
   resolveManagedRoot(sourceRootId: string, worktreeId: string): Promise<{ id: string; path: string }>;
   /** Close admission and join existing owners through durable terminal receipts; never force-kills Git. */
   destroy(): Promise<void>;
@@ -46,6 +55,8 @@ export interface WorkspaceGitService {
 /** Only the main-process composition root supplies the picker-backed grant resolver and private storage. */
 export function createWorkspaceGitService(options: {
   resolveWorkspace: (workspaceId: string) => { id: string; path: string }; storagePath: string;
+  /** Trusted saved editor drafts block Git preparation/application without discarding bytes. */
+  getDraftPaths?: (workspaceId: string) => string[];
   /** Trusted composition policy: false while a derived root grant still owns this checkout. */
   canArchiveWorktree?: (sourceRootId: string, worktreeId: string) => boolean;
 }): WorkspaceGitService;

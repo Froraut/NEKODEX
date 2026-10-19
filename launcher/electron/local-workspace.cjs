@@ -188,7 +188,7 @@ function createLocalWorkspaceService({ pickDirectory, registryPath = null, agent
       const text = textOf(bytes);
       return { path: relative, state: text === null ? "binary" : truncated ? "truncated" : "text",
         revision: digest(Buffer.concat([Buffer.from(JSON.stringify({ ...identity(after), size: after.size,
-          mtime: after.mtimeMs, ctime: after.ctimeMs })), bytes])),
+          mtime: after.mtimeMs, ctime: after.ctimeMs, mode: after.mode })), bytes])),
         text: text === null ? null : text, size: after.size, truncated };
     } finally { fs.closeSync(fd); }
   }
@@ -360,7 +360,9 @@ function createLocalWorkspaceService({ pickDirectory, registryPath = null, agent
     return publicRoot(root);
   }
   function retainDraft(id, input) {
-    rootFor(id);
+    // Recovery storage needs the registered grant, not a live filesystem root.
+    // No path is resolved or written here, so an offline/replaced root cannot lose typed text.
+    if (!roots.has(id)) fail("WORKSPACE_UNKNOWN", "Select a workspace first.");
     relativeParts(input.path);
     if (typeof input.text !== "string" || Buffer.byteLength(input.text) > LIMITS.previewBytes
         || input.text.includes("\0") || (input.expectedRevision !== null

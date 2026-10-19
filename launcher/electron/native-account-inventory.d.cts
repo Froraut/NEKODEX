@@ -17,7 +17,8 @@ export interface NativeInventoryUsage {
 }
 export interface NativeInventoryWrapperPin {
   executable: string; executableSha256: string; target: 'aarch64-apple-darwin'|'x86_64-apple-darwin';
-  wrapperBuildPin: {metadataPath:string;metadataSha256:string;sourceRoot:string;sourcePinSha256:string};
+  wrapperBuildPin: {metadataPath:string;metadataSha256:string;sourceRoot:string;sourcePinSha256:string;
+    kind?:'publisher-signed-app';appBundlePath?:string;resourcesPath?:string;mainExecutablePath?:string;productionManifestSha256?:string};
   officialBootstrapCatalog: {path:string;sha256:string;bytes?:number;sourceRelativePath?:string;codexRevision?:string;bootstrapOnly?:boolean};
 }
 /** Main-only owner. No supplied paths, model IDs, RPC methods or environment cross renderer IPC.

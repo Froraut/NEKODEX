@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { readRequestBodyBytes } from "../http-body";
+import { companionExtensionOrigin } from "./firefox-identity";
 import {
   COMPANION_ORIGIN, COMPANION_PATH, COMPANION_VERSION, browserActionSchema, browserBindingSchema,
   browserObservationSchema, resultSchema, sameBrowserBinding, browserBindingOf,
@@ -15,16 +16,17 @@ interface Pending {
 export interface BrowserCompanionHostOptions {
   /** Exact unpacked/store extension identity selected by the local user. No wildcard origins. */
   extensionId: string;
+  /** Explicit local-user Firefox profile UUID pin; never derived from request headers. */
+  extensionOrigin?: string;
   origin?: string;
   hostId?: string;
 }
 
 /** A private, in-memory owner. Mount only on a loopback listener; the bootstrap API stays in-process. */
 export function createBrowserCompanionHost(options: BrowserCompanionHostOptions) {
-  if (!/^[a-p]{32}$/.test(options.extensionId)) throw new Error("An exact Chrome extension ID is required");
+  const extensionOrigin = companionExtensionOrigin(options.extensionId, options.extensionOrigin);
   const origin = options.origin ?? COMPANION_ORIGIN;
   if (origin !== COMPANION_ORIGIN) throw new Error("Companion origin must match the fixed extension host permission");
-  const extensionOrigin = `chrome-extension://${options.extensionId}`;
   const hostId = options.hostId ?? randomUUID();
   let pairingCode: string | undefined;
   let token: string | undefined;
@@ -70,7 +72,7 @@ export function createBrowserCompanionHost(options: BrowserCompanionHostOptions)
     if (!anchor || !sameBrowserBinding(anchor, binding) || binding.sessionId !== sessionId) throw new Error("Stale or foreign observation; select or observe the exact tab again");
     return binding;
   }
-  function dispatch(kind: CompanionCommand["kind"], bindingValue: unknown, actionValue?: unknown, signal?: AbortSignal, requestedOperationId?: string): Promise<CompanionReceipt> {
+  function dispatch(kind: CompanionCommand["kind"], bindingValue: unknown, actionValue?: unknown, signal?: AbortSignal, requestedOperationId?: string, observeOptions?: { includeImage?: boolean }): Promise<CompanionReceipt> {
     if (closed || !token) throw new Error("Companion is not paired");
     if (pending) throw new Error("A companion operation is active or has an uncertain outcome; reconcile its receipt first");
     const binding = assertBinding(bindingValue, kind);
@@ -81,7 +83,8 @@ export function createBrowserCompanionHost(options: BrowserCompanionHostOptions)
     if (!/^[A-Za-z0-9:_-]{1,160}$/.test(operationId) || receipts.has(operationId)) throw new Error("Companion operation identity is invalid or already consumed; reconcile its receipt without replay");
     return new Promise(resolve => {
       const abort = () => uncertain("Caller cancelled; a dispatched input may already have occurred");
-      pending = { command: { operationId, kind, binding: structuredClone(binding), ...(action ? { action } : {}) }, phase: "queued", resolve,
+      pending = { command: { operationId, kind, binding: structuredClone(binding), ...(action ? { action } : {}),
+        ...(kind === "observe" && observeOptions?.includeImage === true ? { includeImage: true } : {}) }, phase: "queued", resolve,
         detach: () => signal?.removeEventListener("abort", abort) };
       signal?.addEventListener("abort", abort, { once: true });
       wake?.();
@@ -96,7 +99,9 @@ export function createBrowserCompanionHost(options: BrowserCompanionHostOptions)
     if (request.method !== "POST" || request.headers.get("content-type")?.split(";")[0] !== "application/json") return response({ error: "JSON POST is required" }, 415);
     if (closed) return response({ error: "Companion host is closed" }, 410);
     try {
-      const wire = await readRequestBodyBytes(request, 64 * 1024);
+      // A maximum bounded image plus escaped page text/refs needs more than the
+      // small control envelope. Only results receive this larger finite budget.
+      const wire = await readRequestBodyBytes(request, route === `${COMPANION_PATH}/result` ? 512 * 1024 : 64 * 1024);
       const body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(wire));
       if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("Invalid companion message");
       if (body.version !== COMPANION_VERSION || body.hostId !== hostId) return response({ error: "Companion protocol or host identity mismatch" }, 409);
@@ -124,6 +129,7 @@ export function createBrowserCompanionHost(options: BrowserCompanionHostOptions)
         if (!pending || pending.command.operationId !== result.operationId) throw new Error("Unknown operation receipt");
         const current = pending;
         if (current.phase === "queued") throw new Error("Operation has not been delivered");
+        if (result.observation?.screenshot && (current.command.kind !== "observe" || current.command.includeImage !== true || result.outcome !== "completed")) throw new Error("Screenshot was not requested by the exact approved observation");
         if ((result.outcome === "rejected" && result.executed) || (result.outcome === "completed" && result.executed !== (current.command.kind === "act")) || (current.command.kind === "act" && result.observation)) throw new Error("Execution receipt does not match the delivered operation");
         if (result.outcome === "completed" && current.command.kind === "observe") {
           if (!result.observation) throw new Error("Observation receipt is missing");
@@ -164,13 +170,14 @@ export function createBrowserCompanionHost(options: BrowserCompanionHostOptions)
       if (closed) throw new Error("Companion host is closed");
       if (pending) throw new Error("Reconcile the active operation before pairing another session");
       revoke(); pairingCode = randomBytes(32).toString("base64url");
-      return { version: COMPANION_VERSION, origin, hostId, pairingCode, extensionId: options.extensionId };
+      return { version: COMPANION_VERSION, origin, hostId, pairingCode, extensionId: options.extensionId,
+        ...(options.extensionOrigin ? { extensionOrigin } : {}) };
     },
-    status: () => ({ version: COMPANION_VERSION, hostId, extensionId: options.extensionId, paired: !!token, connected: polling && !!token,
+    status: () => ({ version: COMPANION_VERSION, hostId, extensionId: options.extensionId, extensionOrigin, paired: !!token, connected: polling && !!token,
       selected: selected ? structuredClone(selected) : null,
       operation: pending ? { operationId: pending.command.operationId, phase: pending.phase } : null }),
     observation: () => observation ? structuredClone(observation) : undefined,
-    observe: (binding: BrowserBinding, signal?: AbortSignal, operationId?: string) => dispatch("observe", binding, undefined, signal, operationId),
+    observe: (binding: BrowserBinding, signal?: AbortSignal, operationId?: string, observeOptions?: { includeImage?: boolean }) => dispatch("observe", binding, undefined, signal, operationId, observeOptions),
     act: (binding: BrowserBinding, action: unknown, signal?: AbortSignal, operationId?: string) => dispatch("act", binding, action, signal, operationId),
     receipt: (operationId: string) => receipts.has(operationId) ? structuredClone(receipts.get(operationId)) : undefined,
     revoke,

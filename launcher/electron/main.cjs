@@ -20,12 +20,18 @@ const { createAgentNativeBridge } = require('./agent-native-bridge.cjs');
 const { createAgentNativeDescriptorPublisher } = require('./agent-native-descriptor.cjs');
 const { createAgentRemoteDescriptorPublisher } = require('./agent-remote-descriptor.cjs');
 const { createAgentVmExportDescriptorPublisher } = require('./agent-vm-descriptor.cjs');
+const { createAgentPythonBuildDescriptorPublisher } = require('./agent-python-build-descriptor.cjs');
+const { createPythonBuildSelectionService } = require('./python-build-selection.cjs');
+const { createAgentOAuthService } = require('./agent-oauth-service.cjs');
+const { oauthProtectedVaultAvailable } = require('./agent-oauth-vault.cjs');
+const { createAgentOAuthIpc } = require('./ipc/agent-oauth.cjs');
 const { createWorkspaceVmExportService } = require('./workspace-vm-export.cjs');
 const { createNativeAccountAuthority } = require('./native-account-authority.cjs');
 const { fileDigest: nativeFileDigest, regular: nativeRegular, VERSION: NATIVE_CLI_VERSION } = require('./owned-native-admission.cjs');
 const { registerNativeAccounts } = require('./ipc/native-accounts.cjs');
 const { createNativeAccountInventoryService } = require('./native-account-inventory.cjs');
 const { reviewedOwnedNativeDevPin } = require('./owned-native-dev-pin.cjs');
+const { reviewedOwnedNativeProductionPin } = require('./owned-native-production-pin.cjs');
 const { createNativeAccountExecutionService, settleNativeConversationOwners } = require('./native-account-execution.cjs');
 const { createPersistentNativeConversations } = require('./persistent-native-conversations.cjs');
 const { registerPersistentNativeConversations } = require('./ipc/native-persistent-conversations.cjs');
@@ -149,6 +155,10 @@ const SOURCE_ROOT = path.resolve(__dirname, "../..");
 const LAUNCHER_PROFILE = resolveLauncherProfile({ appData: app.getPath("appData") });
 const IS_DEV_PROFILE = LAUNCHER_PROFILE.kind === DEVELOPMENT_PROFILE;
 const CORE_HOME = LAUNCHER_PROFILE.coreHome;
+function reviewedNativeWorkerPin() {
+  return IS_DEV_PROFILE ? reviewedOwnedNativeDevPin(SOURCE_ROOT)
+    : reviewedOwnedNativeProductionPin({ resourcesPath: process.resourcesPath, executablePath: process.execPath });
+}
 const taskPlans = createTaskPlanStore({
   coreHome: CORE_HOME,
   resolveTask: ({ accountId, taskId }) => browserHost?.taskLedgers.get(accountId)?.get(taskId) ?? null,
@@ -159,6 +169,9 @@ let agentNativeBridge = null;
 let agentNativeDescriptor = null;
 let agentRemoteDescriptor = null;
 let agentVmExportDescriptor = null;
+let agentPythonBuildDescriptor = null;
+let pythonBuildSelectionService = null;
+let agentOAuthService = null;
 let workspaceVmExportService = null;
 async function vmCoreControl(action, body) {
   if (quitting || shutdownInProgress || exitCommitted || lifecycleAdmission.busy()) throw new Error('VM export admission is closed');
@@ -1049,6 +1062,7 @@ function registerIpc({ logger, stateStore }) {
   workspaceTerminalService ??= createWorkspaceTerminalService();
   workspaceGitService ??= createWorkspaceGitService({
     resolveWorkspace: id => localWorkspaceService.resolveGrant(id),
+    getDraftPaths: id => localWorkspaceService.listDrafts(id).map(draft => draft.path),
     storagePath: path.join(app.getPath('userData'), 'workspace-git'),
     canArchiveWorktree: (sourceRootId, worktreeId) => !localWorkspaceService.hasManagedRootGrant(sourceRootId, worktreeId),
   });
@@ -1122,8 +1136,30 @@ function registerIpc({ logger, stateStore }) {
       return bytes;
     } });
   registerLifecycleParticipant('workspace-vm-export', { currentOperation: () => workspaceVmExportService.currentOperation(), destroy: () => workspaceVmExportService.destroy() });
+  pythonBuildSelectionService ??= createPythonBuildSelectionService({
+    assertScope: scope => vmCoreControl('validate-task', { scope: { taskId: scope.taskId, generation: scope.generation } }),
+  });
+  registerLifecycleParticipant('python-build-selections', {
+    currentOperation: () => null,
+    destroy: () => pythonBuildSelectionService.close(),
+  });
+  agentOAuthService ??= createAgentOAuthService({
+    coreHome: CORE_HOME,
+    getAuthority: () => {
+      const current = nativeAccountExecution?.inspect();
+      if (!current?.profileId || !current.epoch || current.failed || !current.server?.ready) return null;
+      return { accountId: `native:${current.profileId}`, epoch: current.epoch };
+    },
+    protectedAvailable: () => oauthProtectedVaultAvailable(),
+    openExternal: url => shell.openExternal(url),
+  });
+  const oauthIpc = createAgentOAuthIpc({ service: agentOAuthService, handle, dialog, getWindow: () => mainWindow });
+  registerLifecycleParticipant('agent-oauth', {
+    currentOperation: () => agentOAuthService.currentOperation(),
+    destroy: () => agentOAuthService.close(),
+  });
   registerAgentTools({ handle, runtimeHost, dialog, getWindow: () => mainWindow, remoteService: remoteWorkspaceService,
-    workspaceService: localWorkspaceService, vmExportService: workspaceVmExportService });
+    workspaceService: localWorkspaceService, vmExportService: workspaceVmExportService, pythonBuildSelectionService, oauthIpc });
   registerBrowserCompanion({ handle, runtimeHost, clipboard });
   registerLocalControlApi({ handle, runtimeHost, clipboard });
   externalUsageService ??= createExternalUsageService({
@@ -1162,7 +1198,7 @@ function registerIpc({ logger, stateStore }) {
         recovery: {
           executionRoot: path.join(CORE_HOME, 'native-account-execution'),
           inventoryRoot: path.join(CORE_HOME, 'native-account-inventories'),
-          getWorkerPin: async () => reviewedOwnedNativeDevPin(SOURCE_ROOT),
+          getWorkerPin: async () => reviewedNativeWorkerPin(),
           getMetadataRuntimePin: async () => {
             // Resolve the already owned runtime without running its CLI or searching PATH.
             const invocation = runtimeHost.supervisor.runtimeCommand(['--version']);
@@ -1180,19 +1216,17 @@ function registerIpc({ logger, stateStore }) {
     }
   };
   const getNativeAccountInventory = () => {
-    if (!IS_DEV_PROFILE) throw new Error('Native inventory requires the reviewed development worker');
     const authority = getNativeAccountAuthority();
     nativeAccountInventory ??= createNativeAccountInventoryService({ authority,
-      getWrapperPin: () => reviewedOwnedNativeDevPin(SOURCE_ROOT),
+      getWrapperPin: reviewedNativeWorkerPin,
       acquireProfileOwner: input => authority.acquireProfileOwner(input),
       storageRoot: path.join(CORE_HOME, 'native-account-inventories') });
     return nativeAccountInventory;
   };
   const getNativeAccountExecution = () => {
-    if (!IS_DEV_PROFILE) throw new Error('Native execution requires the reviewed development worker');
     const authority = getNativeAccountAuthority();
     nativeAccountExecution ??= createNativeAccountExecutionService({ authority, inventory: getNativeAccountInventory(),
-      getWrapperPin: () => reviewedOwnedNativeDevPin(SOURCE_ROOT),
+      getWrapperPin: reviewedNativeWorkerPin,
       storageRoot: path.join(CORE_HOME, 'native-account-execution'), maxConcurrentThreads: 2,
       onChange: publishNativeAccountModels });
     return nativeAccountExecution;
@@ -2381,6 +2415,8 @@ async function start() {
     getAgentRemoteInstance: () => agentRemoteDescriptor?.instanceId,
     getVmExportService: () => workspaceVmExportService,
     getVmExportInstance: () => agentVmExportDescriptor?.instanceId,
+    getPythonBuildSelectionService: () => pythonBuildSelectionService,
+    getPythonBuildSelectionInstance: () => agentPythonBuildDescriptor?.instanceId,
     validateRemoteInvalidation: body => {
       if (!body || typeof body !== 'object' || Array.isArray(body)
         || Object.keys(body).some(key => !['taskId', 'familyId', 'beforeGeneration'].includes(key))) throw new Error('Invalid remote invalidation');
@@ -2479,6 +2515,13 @@ async function start() {
   } catch {
     agentVmExportDescriptor = null;
     logger.warn('agent_vm_export.descriptor_unavailable', { reasonCode: 'private-profile-unavailable' });
+  }
+  try {
+    agentPythonBuildDescriptor = createAgentPythonBuildDescriptorPublisher({ coreHome: CORE_HOME, profile: LAUNCHER_PROFILE.kind, control: browserControl.descriptor() });
+    agentPythonBuildDescriptor.publish();
+  } catch {
+    agentPythonBuildDescriptor = null;
+    logger.warn('agent_python_build.descriptor_unavailable', { reasonCode: 'private-profile-unavailable' });
   }
   contextChangeQueue?.stop();
   contextChangeQueue = createContextChangeQueue({

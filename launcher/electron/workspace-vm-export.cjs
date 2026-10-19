@@ -3,8 +3,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } = require('node:crypto');
 const { writePrivateFileAtomic } = require('./atomic-file.cjs');
-const MAX_BYTES = 16 * 1024 * 1024;
-const MAX_ROWS = 64;
+const { parseVmExportTaskScope, parseVmExportRequest, VM_EXPORT_LIMITS } = require('./vm-export-contract.cjs');
+const MAX_BYTES = VM_EXPORT_LIMITS.outputBytes;
+const MAX_ROWS = VM_EXPORT_LIMITS.rows;
 const HASH = /^[a-f0-9]{64}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -28,12 +29,9 @@ function exact(value, keys) {
     }
 }
 
-function scope(value, tool = false) {
-    exact(value, tool ? ['taskId', 'generation', 'toolCallId'] : ['taskId', 'generation']);
-    if (!UUID.test(value.taskId) || !Number.isSafeInteger(value.generation) || value.generation < 1 || tool && (typeof value.toolCallId !== 'string' || !value.toolCallId || value.toolCallId.length > 512)) {
-        fail('invalid-scope');
-    }
-    return { taskId: value.taskId, generation: value.generation };
+function scope(value) {
+    try { return parseVmExportTaskScope(value); }
+    catch { fail('invalid-scope'); }
 }
 
 function relative(value) {
@@ -130,6 +128,7 @@ function createWorkspaceVmExportService({ home, workspaceService, readCandidate,
     const uncertain = new Set();
     const active = new Set();
     let closing = false;
+    let queue = Promise.resolve();
     const root = (create = false) => {
         if (!fs.existsSync(home)) {
             if (!create) {
@@ -193,7 +192,12 @@ function createWorkspaceVmExportService({ home, workspaceService, readCandidate,
             return [];
         }
         directory(path.join(home, kind));
-        const rows = fs.readdirSync(path.join(home, kind));
+        // Legacy previews could crash after candidate.bin but before review.json.
+        // Only committed metadata enters discovery/capacity; execute still reads
+        // and authenticates its exact requested review independently.
+        const rows = fs.readdirSync(path.join(home, kind))
+            .filter(name => !name.startsWith('.pending-'))
+            .filter(name => kind !== 'reviews' || UUID.test(name) && fs.existsSync(path.join(home, kind, name, 'review.json')));
         if (rows.length > MAX_ROWS) {
             fail('store-limit');
         }
@@ -203,7 +207,7 @@ function createWorkspaceVmExportService({ home, workspaceService, readCandidate,
         if (closing && !settlement) {
             fail('closing');
         }
-        const operation = (async () => {
+        const operation = queue.then(async () => {
             if (process.platform !== 'darwin') {
                 fail('platform-unavailable');
             }
@@ -217,12 +221,15 @@ function createWorkspaceVmExportService({ home, workspaceService, readCandidate,
                 key(true);
                 directory(path.join(home, 'reviews'), true);
                 directory(path.join(home, 'actions'), true);
+                directory(path.join(home, 'settled'), true);
+                directory(path.join(home, 'consumed'), true);
                 return await work();
             }
             finally {
                 fs.closeSync(fd);
             }
-        })();
+        });
+        queue = operation.catch(() => {});
         active.add(operation);
         void operation.finally(() => active.delete(operation)).catch(() => {
         });
@@ -302,22 +309,13 @@ function createWorkspaceVmExportService({ home, workspaceService, readCandidate,
         currentBytes: r.currentBytes
     });
     const requestInfo = request => {
-        exact(request, ['scope', 'tool', 'arguments', 'idempotencyKey']);
-        const task = scope(request.scope, true);
-        exact(request.arguments, ['reviewId', 'reviewDigest']);
-        if (request.tool !== 'vm-shell/export' || typeof request.idempotencyKey !== 'string' || !request.idempotencyKey || request.idempotencyKey.length > 512 || !UUID.test(request.arguments.reviewId) || !HASH.test(request.arguments.reviewDigest)) {
-            fail('invalid-intent');
-        }
-        const canonical = {
-            scope: { ...task, toolCallId: request.scope.toolCallId },
-            tool: request.tool,
-            arguments: { reviewId: request.arguments.reviewId, reviewDigest: request.arguments.reviewDigest },
-            idempotencyKey: request.idempotencyKey
-        };
+        let canonical;
+        try { canonical = parseVmExportRequest(request); }
+        catch { fail('invalid-intent'); }
         return {
-            task,
+            task: { taskId: canonical.scope.taskId, generation: canonical.scope.generation },
             fingerprint: sha(JSON.stringify(canonical)),
-            actionKey: sha(request.idempotencyKey)
+            actionKey: sha(canonical.idempotencyKey)
         };
     };
     const actionDir = k => {
@@ -352,6 +350,7 @@ function createWorkspaceVmExportService({ home, workspaceService, readCandidate,
         }
         const dir = actionDir(name);
         directory(dir);
+        if (readArchive(name)) return false;
         if (!fs.existsSync(path.join(dir, 'intent.json')) || !fs.existsSync(path.join(dir, 'terminal.json'))) {
             return true;
         }
@@ -369,6 +368,70 @@ function createWorkspaceVmExportService({ home, workspaceService, readCandidate,
             return unknown(intent);
         }
     };
+    // Settled actions retain a signed replay receipt forever. Only their bulky
+    // working directory and consumed preview bytes are compacted, never identity.
+    const archiveFile = actionKey => path.join(home, 'settled', actionKey.slice(0, 2), actionKey + '.json');
+    const readArchive = actionKey => {
+        const file = archiveFile(actionKey);
+        if (!fs.existsSync(file)) return null;
+        const row = read(file), identity = requestInfo(row.intent?.request);
+        if (row.actionKey !== actionKey || identity.actionKey !== actionKey
+            || row.intent.fingerprint !== identity.fingerprint
+            || !['completed', 'failed'].includes(row.outcome?.state)) fail('invalid-receipt');
+        return row;
+    };
+    const archived = info => {
+        const row = readArchive(info.actionKey);
+        if (!row) return null;
+        if (row.intent.fingerprint !== info.fingerprint) fail('action-conflict');
+        return structuredClone(row.outcome);
+    };
+    const consumedReview = reviewId => {
+        const file = path.join(home, 'consumed', reviewId + '.json');
+        if (!fs.existsSync(file)) return false;
+        const row = read(file);
+        if (row.reviewId !== reviewId || !HASH.test(row.actionKey)) fail('invalid-record');
+        return true;
+    };
+    const compact = (reserveReview = false) => {
+        if (entries('actions').length < MAX_ROWS && entries('reviews').length < MAX_ROWS) return;
+        for (const name of entries('actions')) {
+            const dir = actionDir(name);
+            const saved = readArchive(name);
+            if (!saved && !fs.existsSync(path.join(dir, 'intent.json'))) continue;
+            const intent = saved?.intent ?? read(path.join(dir, 'intent.json'));
+            const outcome = saved?.outcome ?? terminal(dir, intent);
+            if (outcome.state === 'outcome_unknown') continue;
+            const file = archiveFile(name);
+            directory(path.dirname(file), true);
+            put(file, { version: 1, actionKey: name, intent, outcome });
+            if (intent.accepted !== false) {
+                put(path.join(home, 'consumed', intent.reviewId + '.json'), { version: 1, reviewId: intent.reviewId, actionKey: name });
+                const reviewDir = reviewAt(intent.reviewId);
+                if (fs.existsSync(reviewDir)) { directory(reviewDir); fs.rmSync(reviewDir, { recursive: true }); sync(path.dirname(reviewDir)); }
+            }
+            fs.rmSync(dir, { recursive: true });
+            sync(path.join(home, 'actions'));
+        }
+        // Unaccepted previews carry no execution authority. Eviction makes their
+        // old exact request fail closed; it cannot recreate or replay a review.
+        const reviews = entries('reviews');
+        if (reserveReview && reviews.length >= MAX_ROWS) {
+            const oldest = reviews.filter(name => UUID.test(name)).sort((a, b) => fs.statSync(reviewAt(a)).mtimeMs - fs.statSync(reviewAt(b)).mtimeMs)[0];
+            if (oldest) { fs.rmSync(reviewAt(oldest), { recursive: true }); sync(path.join(home, 'reviews')); }
+        }
+    };
+    const refusal = (request, info, reason) => {
+        compact();
+        const dir = actionDir(info.actionKey);
+        directory(dir, true);
+        const intent = { version: 1, accepted: false, receiptId: randomUUID(),
+            reviewId: request.arguments.reviewId, reviewDigest: request.arguments.reviewDigest,
+            fingerprint: info.fingerprint, request: structuredClone(request), scope: info.task };
+        put(path.join(dir, 'intent.json'), intent);
+        return settle(dir, intent, { state: 'failed', reason,
+            result: { receiptId: intent.receiptId, reviewId: intent.reviewId, ownerHeld: false } });
+    };
     async function prepare(input) {
         exact(input, ['scope', 'workspaceId', 'destinationPath', 'operationId', 'candidatePath', 'candidateSha256', 'explicitUserAction']);
         scope(input.scope);
@@ -377,7 +440,7 @@ function createWorkspaceVmExportService({ home, workspaceService, readCandidate,
         }
         relative(input.candidatePath);
         return locked(async () => {
-            if (held() || entries('reviews').length >= MAX_ROWS) {
+            if (held()) {
                 fail('prior-export-held-or-capacity');
             }
             const task = await trusted(input.scope);
@@ -397,6 +460,7 @@ function createWorkspaceVmExportService({ home, workspaceService, readCandidate,
             }
             destination(input.workspaceId, input.destinationPath);
             const capture = workspaceService.captureBinary(input.workspaceId, input.destinationPath);
+            compact(true);
             const reviewId = randomUUID(), body = {
                 version: 1,
                 reviewId,
@@ -413,10 +477,13 @@ function createWorkspaceVmExportService({ home, workspaceService, readCandidate,
                 rootIdentity: capture.rootIdentity,
                 parentDigest: capture.parentDigest
             };
-            const row = { ...body, reviewDigest: sha(JSON.stringify(body)) }, dir = reviewAt(reviewId);
-            directory(dir, true);
-            create(path.join(dir, 'candidate.bin'), bytes);
-            put(path.join(dir, 'review.json'), row);
+            const row = { ...body, reviewDigest: sha(JSON.stringify(body)) };
+            const staging = path.join(home, 'reviews', '.pending-' + reviewId);
+            directory(staging, true);
+            create(path.join(staging, 'candidate.bin'), bytes);
+            put(path.join(staging, 'review.json'), row);
+            fs.renameSync(staging, reviewAt(reviewId));
+            sync(path.join(home, 'reviews'));
             return publicReview(row);
         });
     }
@@ -431,13 +498,15 @@ function createWorkspaceVmExportService({ home, workspaceService, readCandidate,
             return current.promise;
         }
         const promise = (async () => {
-            await validateIntent(request);
             return locked(async () => {
+                const saved = archived(info);
+                if (saved) return saved;
                 const dir = actionDir(info.actionKey);
                 if (fs.existsSync(dir)) {
                     directory(dir);
                     if (!fs.existsSync(path.join(dir, 'intent.json'))) {
-                        return unknown();
+                        if (fs.existsSync(path.join(dir, 'publication.json')) || fs.existsSync(path.join(dir, 'terminal.json'))) return unknown();
+                        return refusal(request, info, 'vm-export-intent-not-recorded');
                     }
                     const priorIntent = read(path.join(dir, 'intent.json'));
                     if (priorIntent.fingerprint !== info.fingerprint) {
@@ -445,18 +514,25 @@ function createWorkspaceVmExportService({ home, workspaceService, readCandidate,
                     }
                     return terminal(dir, priorIntent);
                 }
-                if (held() || entries('actions').length >= MAX_ROWS) {
-                    fail('prior-export-held-or-capacity');
-                }
-                const review = readReview(request.arguments.reviewId);
-                if (review.reviewDigest !== request.arguments.reviewDigest || !same(await trusted(info.task), review.scope)) {
-                    fail('review-scope-changed');
-                }
-                for (const name of entries('actions')) {
-                    const priorIntent = read(path.join(actionDir(name), 'intent.json'));
-                    if (priorIntent.reviewId === review.reviewId) {
-                        fail('review-consumed');
+                let review;
+                try {
+                    if (closing) fail('closing');
+                    compact();
+                    if (held() || entries('actions').length >= MAX_ROWS) fail('prior-export-held-or-capacity');
+                    await validateIntent(request);
+                    review = readReview(request.arguments.reviewId);
+                    if (review.reviewDigest !== request.arguments.reviewDigest || !same(await trusted(info.task), review.scope)) {
+                        fail('review-scope-changed');
                     }
+                    if (consumedReview(review.reviewId)) fail('review-consumed');
+                    for (const name of entries('actions')) {
+                        const priorIntent = read(path.join(actionDir(name), 'intent.json'));
+                        if (priorIntent.accepted !== false && priorIntent.reviewId === review.reviewId) {
+                            fail('review-consumed');
+                        }
+                    }
+                } catch (error) {
+                    return refusal(request, info, ownerErrors.has(error) ? error.code : 'vm-export-preintent-refused');
                 }
                 // Persist the accepted, signed intent before any publication attempt.
                 const intent = {
@@ -528,7 +604,7 @@ function createWorkspaceVmExportService({ home, workspaceService, readCandidate,
                 }
                 // A terminal receipt releases ownership only after durable settlement.
                 return settle(dir, intent, outcome);
-            });
+            }, true);
         })();
         pending.set(info.actionKey, { fingerprint: info.fingerprint, promise });
         try {
@@ -543,7 +619,10 @@ function createWorkspaceVmExportService({ home, workspaceService, readCandidate,
 
     function inspect(request) {
         const info = requestInfo(request);
-        if (!root() || !fs.existsSync(actionDir(info.actionKey))) {
+        if (!root()) return null;
+        const saved = archived(info);
+        if (saved) return saved;
+        if (!fs.existsSync(actionDir(info.actionKey))) {
             return null;
         }
         const dir = actionDir(info.actionKey);
@@ -561,9 +640,14 @@ function createWorkspaceVmExportService({ home, workspaceService, readCandidate,
     async function reconcile(request) {
         const info = requestInfo(request);
         return locked(async () => {
+            const saved = archived(info);
+            if (saved) return saved;
             const dir = actionDir(info.actionKey);
+            // Exclusive owner lock and intent-before-publication ordering prove
+            // that absent intent cannot have published. Never infer from time.
             if (!fs.existsSync(dir) || !fs.existsSync(path.join(dir, 'intent.json'))) {
-                return null;
+                if (fs.existsSync(path.join(dir, 'publication.json')) || fs.existsSync(path.join(dir, 'terminal.json'))) return unknown();
+                return refusal(request, info, 'vm-export-intent-not-recorded');
             }
             const intent = read(path.join(dir, 'intent.json'));
             if (intent.fingerprint !== info.fingerprint) {
@@ -579,7 +663,8 @@ function createWorkspaceVmExportService({ home, workspaceService, readCandidate,
                 return terminal(dir, intent);
             }
             if (!fs.existsSync(path.join(dir, 'publication.json'))) {
-                return unknown(intent);
+                return settle(dir, intent, { state: 'failed', reason: 'vm-export-publication-not-started',
+                    result: { receiptId: intent.receiptId, reviewId: intent.reviewId, ownerHeld: false, reconciled: true } });
             }
             const publication = read(path.join(dir, 'publication.json')), review = readReview(intent.reviewId);
             if (publication.receiptId !== intent.receiptId || review.reviewDigest !== intent.reviewDigest || !same(review.scope, intent.scope)) {
@@ -625,15 +710,15 @@ function createWorkspaceVmExportService({ home, workspaceService, readCandidate,
                 continue;
             }
             const i = read(path.join(dir, 'intent.json'));
-            consumed.add(i.reviewId);
-            if (i.scope.taskId === task.taskId && i.scope.generation === task.generation) {
+            if (i.accepted !== false) consumed.add(i.reviewId);
+            if (i.scope.taskId === task.taskId && i.scope.generation <= task.generation) {
                 receipts.push({ ...terminal(dir, i), request: structuredClone(i.request) });
             }
         }
         // A review bound by any accepted intent is refused as `review-consumed`;
         // offering it to the model again would only produce a refused call.
         const reviews = entries('reviews').filter(UUID.test.bind(UUID)).map(readReview)
-            .filter(r => r.scope.taskId === task.taskId && r.scope.generation === task.generation && !consumed.has(r.reviewId));
+            .filter(r => r.scope.taskId === task.taskId && r.scope.generation === task.generation && !consumed.has(r.reviewId) && !consumedReview(r.reviewId));
         return { reviews: reviews.map(publicReview), receipts };
     }
 
@@ -645,6 +730,7 @@ function createWorkspaceVmExportService({ home, workspaceService, readCandidate,
             for (const name of entries('actions')) {
                 const dir = actionDir(name);
                 directory(dir);
+                if (readArchive(name)) continue;
                 if (!fs.existsSync(path.join(dir, 'intent.json'))) {
                     return true;
                 }
@@ -678,21 +764,8 @@ function createWorkspaceVmExportService({ home, workspaceService, readCandidate,
             return publicError(error);
         }
     };
-    const activeCount = () => {
-        try {
-            const retained = entries('actions').filter(name => {
-                const dir = actionDir(name);
-                if (!fs.existsSync(path.join(dir, 'intent.json'))) {
-                    return true;
-                }
-                return terminal(dir, read(path.join(dir, 'intent.json'))).state === 'outcome_unknown';
-            }).length;
-            return Math.max(retained, pending.size, active.size);
-        }
-        catch {
-            return Math.max(1, pending.size, active.size);
-        }
-    };
+    // Durable uncertainty is a reconciliation obligation, not running work.
+    const activeCount = () => Math.max(pending.size, active.size);
     const destroy = async () => {
         closing = true;
         await Promise.allSettled([...active, ...[...pending.values()].map(p => p.promise)]);

@@ -26,6 +26,7 @@ export interface RemoteWorktreeApi {
   remoteWorktreeInspect(id: string): Promise<RemoteGitSnapshot>;
   remoteWorktreePrepare(id: string, input: { name: string; captureId: string }): Promise<RemoteWorktreePlan>;
   remoteWorktreeCreate(id: string, token: string): Promise<RemoteWorktreeResult>;
+  /** Retained local ownership/recovery metadata, available while disconnected. */
   remoteWorktreeList(id: string): Promise<RemoteManagedWorktree[]>;
   remoteWorktreeInspectOwned(id: string, worktreeId: string): Promise<RemoteManagedWorktree>;
   remoteWorktreePrepareArchive(id: string, worktreeId: string): Promise<RemoteWorktreeArchivePlan>;
@@ -35,6 +36,7 @@ export interface RemoteWorktreeService {
   worktreeInspect(id: string): Promise<RemoteGitSnapshot>;
   worktreePrepare(id: string, input: { name: string; captureId: string }): Promise<RemoteWorktreePlan>;
   worktreeCreate(id: string, token: string): Promise<RemoteWorktreeResult>;
+  /** Retained observations only; mutations still require current remote scope. */
   worktreeList(id: string): Promise<RemoteManagedWorktree[]>;
   worktreeInspectOwned(id: string, worktreeId: string): Promise<RemoteManagedWorktree>;
   worktreePrepareArchive(id: string, worktreeId: string): Promise<RemoteWorktreeArchivePlan>;

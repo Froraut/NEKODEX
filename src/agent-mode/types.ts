@@ -1,3 +1,4 @@
+import type { NativeSelectedAttachment } from "./native-attachment-types";
 /** Internal standalone Agent-mode contracts. None of these values grant tool authority. */
 export type AgentMode = "manual" | "goal" | "loop";
 export type TaskStatus = "ready" | "running" | "paused" | "awaiting_input" | "review_required" | "verified_complete" | "stopped";
@@ -12,7 +13,7 @@ export interface AgentBounds {
 }
 export interface Requirement { id: string; text: string }
 export interface StageInput { id: string; instruction: string; requirementIds: string[]; dependsOn?: string[] }
-export interface Stage extends StageInput { status: StageStatus; dispatchId?: string; continuationFrom?: string; continuationGeneration?: number }
+export interface Stage extends StageInput { status: StageStatus; dispatchId?: string; continuationFrom?: string; continuationGeneration?: number; waitingFor?: "user" | "tools"; userInput?: string }
 export interface OutcomeEvidence {
   id: string;
   requirementId: string;
@@ -61,6 +62,7 @@ export interface AgentTask {
   /** Native bounds count admitted offers, not unobserved internal retries/compaction requests. */
   turnUnit?: "responses-requests" | "native-offers";
   workspaceSnapshotGrant?: unknown;
+  nativeAttachments?: NativeSelectedAttachment[];
   ownerId?: string;
   reason?: string;
   evidenceRevision: number;
@@ -85,6 +87,7 @@ export interface CreateAgentTask {
   recurringAuthorized?: boolean;
   execution?: AgentExecutionConfig;
   workspaceSnapshotGrant?: unknown;
+  nativeAttachments?: NativeSelectedAttachment[];
 }
 export interface AgentWorker {
   id: string;
@@ -152,6 +155,7 @@ export interface AgentNativeContinuation {
   workerBindingId: string;
   workerGeneration: number;
   nativeTurnReceiptId: string;
+  imageUsage?: { count: number; byteLength: number };
   catalog: AgentNativeToolDefinition[];
   catalogDigest: string;
   requestIds: string[];
@@ -223,6 +227,8 @@ export interface ExecutionRequest {
   stage: Stage;
   messages: MailMessage[];
   history: { reports: { dispatchId: string; workerId: string; stageId: string; summary: string }[]; total: number; truncated: boolean };
+  /** Inert canonical context, never authority to replay a tool or certify an outcome. */
+  priorToolContext?: { complete: boolean; receipts: { dispatchId: string; stageId: string; taskRevision: number; outcome: AgentToolOutcome }[] };
   continuation?: { source: AgentContinuation; outcomes: AgentToolOutcome[] };
   signal: AbortSignal;
 }
@@ -236,5 +242,6 @@ export interface OutcomeReviewPort {
 }
 export type AgentControl =
   | { action: "pause" | "stop" | "resume" }
+  | { action: "reply"; text: string }
   | { action: "correct"; text: string; requirements: Requirement[]; stages: StageInput[] }
   | { action: "mode"; mode: AgentMode; recurringAuthorized?: boolean };

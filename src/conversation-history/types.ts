@@ -15,11 +15,12 @@ export interface CaptureRecord extends MessageIdentity {
   /** Describes this message's text only, never the entire thread or transcript. */
   coverage: "complete" | "partial";
   coverageReason?: string;
-  capturePolicy: "user-assistant-text-v1" | "canonical-thread-text-v1" | "owned-native-final-summary-v1";
+  capturePolicy: "user-assistant-text-v1" | "canonical-thread-text-v1" | "owned-native-final-summary-v1" | "canonical-events-v1";
   /** Caller assertion, not a redaction claim. Unknown sensitivity retains metadata only. */
   sensitivity: "caller-validated" | "unknown" | "known-pattern-filtered";
   canonical?: {policyVersion:"known-pattern-filter-v1";fingerprint:string;observedAt:number;timestampSource:"native"|"observed-at";originalBytes:number;exclusionReason:string|null;sourceCoverage:"complete"|"partial"};
   ownedNative?: OwnedNativeHistoryMetadata;
+  transcript?: TranscriptHistoryMetadata;
 }
 
 /** Main-admitted source identity, never renderer-supplied account proof. */
@@ -92,4 +93,13 @@ export interface HistoryMarkdownExport {
   incompleteMessages: number;
   partial: boolean;
   hasMore: boolean;
+}
+
+/** Authenticated producer event projection. Complete applies to this message,
+ * never to unobserved earlier/filtered transcript items. */
+export interface TranscriptHistoryMetadata {
+  policyVersion: "canonical-events-v1";
+  scope: OwnedNativeHistoryScope;
+  provenance: OwnedNativeHistoryProvenance;
+  sourceRevision: string; originalBytes: number; exclusionReason: string | null;
 }

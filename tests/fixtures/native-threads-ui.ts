@@ -24,7 +24,9 @@ const api: NativeThreadsApi = {
   nativeThreadsSnapshot: async () => ({ ok: true, value: { state: 'ready', transport: 'owned-stdio-server',
     statusScope: 'connection', userAgent: 'codex-cli/0.163.0 · isolated UI fixture',
     capabilities: { list: 'supported', read: 'supported', fork: 'unverified',
-      startTurn: false, interruptTurn: false, approve: false }, errorCode: null, uncertainForks: [...fixture.uncertain] } }),
+      startTurn: false, interruptTurn: false, approve: false, resumeExternal: false, exclusiveHandoff: false },
+    externalControl: { executionOwner: 'unverified', reason: 'exclusive-owner-contract-unavailable' },
+    errorCode: null, uncertainForks: [...fixture.uncertain] } }),
   nativeThreadsList: async () => {
     fixture.calls.push('list');
     return fixture.failList ? { ok: false, error: { code: 'rpc_error', rpcCode: -32601,
@@ -35,7 +37,7 @@ const api: NativeThreadsApi = {
     fixture.calls.push(`read:${id}`);
     return { ok: true, value: { thread: rows.find(row => row.id === id)!, statusScope: 'connection' } };
   },
-  nativeThreadFork: async ({ threadId }) => {
+  nativeThreadFork: async ({ threadId, lastTurnId }) => {
     fixture.calls.push(`fork:${threadId}`);
     if (fixture.unknownFork) {
       fixture.uncertain.push({ actionId: '0199a001-0000-7000-8000-000000000004', threadId,
@@ -45,7 +47,9 @@ const api: NativeThreadsApi = {
     }
     const fork = thread(FORK, 'Fork of fixture worker', { forkedFromId: threadId, status: { type: 'idle' } });
     rows.push(fork);
-    return { ok: true, value: { thread: fork, statusScope: 'connection' } };
+    return { ok: true, value: { thread: fork, statusScope: 'connection',
+      actionId: '0199a001-0000-7000-8000-000000000005', sourceThreadId: threadId,
+      lastTurnId: lastTurnId ?? null, executionStarted: false } };
   },
   nativeThreadAcknowledgeFork: async ({ actionId }) => {
     fixture.calls.push(`acknowledge:${actionId}`);

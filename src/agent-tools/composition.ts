@@ -1,6 +1,7 @@
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { z } from "zod";
+import { Database } from "bun:sqlite";
 import { defaultToolsConfig, readToolsConfig, sha256, verifyRecipeFiles, writeToolsConfig, type ServerRecipe, type ToolsConfig } from "./config";
 import { StandaloneMcpHost } from "./mcp-host";
 import { ReadOnlySkillLibrary, type SelectedSkill, type SkillIdentity, type SkillRootGrant } from "./skills";
@@ -16,13 +17,13 @@ import type { AgentTask } from "../agent-mode/types";
 import type { AgentEvidenceReference } from "../agent-mode/http";
 import { createAgentToolsRoutes } from "./http";
 import { readPrivateMetadata, writePrivateMetadata } from "./private-metadata";
-import { ManagedMcpInstaller, OFFICIAL_MCP_CATALOG } from "./installer";
+import { ManagedMcpInstaller, OFFICIAL_MCP_CATALOG, managedMcpLaunchPlan } from "./installer";
 import { reviewTrustedSandboxConfig, sandboxProviderAvailable } from "./sandbox";
 import { ManagedSkillStore } from "./managed-skills";
 import { createSkillResourceToolsProvider, type AttachedSkillResource, type SkillResourceToolsProvider } from "./skill-resource-tools";
 import { SkillScriptExecutor } from "./skill-script-executor";
 import { admitApplePythonRuntime, pythonRuntimeStatus, type AdmittedPythonRuntime } from "./skill-python-runtime";
-import { SkillPythonEnvironmentStore, pythonEnvironmentPublicReason, asPythonEnvironmentPublicError } from "./skill-python-environment";
+import { SkillPythonEnvironmentStore, pythonEnvironmentPublicReason, asPythonEnvironmentPublicError, type SkillPythonEnvironmentReviewInput } from "./skill-python-environment";
 import { createSkillScriptToolsProvider, type SkillScriptExecutorPort, type SkillScriptToolsProvider } from "./skill-script-tools";
 import { SkillPdfExtractor, type SkillPdfExtractorPort } from "./skill-pdf-extractor";
 import type { PinnedSkillPdfHelper } from "./skill-pdf-helper-path";
@@ -31,6 +32,8 @@ import type { SkillResource } from "./skill-resources";
 import { VmProductController } from '../execution-environments/product';
 import type { VmRuntimeSelection } from '../execution-environments/executor';
 import type { VmExecutorPort } from '../execution-environments/types';
+import type { PythonBuildSelection } from '../execution-environments/python-build';
+import type { VmNetworkGrantInput, VmNetworkScope, VmNetworkLedger, VmNetworkTransport } from '../execution-environments/network';
 
 export interface AgentToolsCompositionOptions {
   home: string;
@@ -59,6 +62,11 @@ export interface AgentToolsCompositionOptions {
   /** Fixed main/development artifact selection, never renderer/model paths. */
   vmRuntimeSelection?: VmRuntimeSelection;
   vmExecutor?: VmExecutorPort;
+  /** Trusted deterministic owner ports only; never renderer or model values. */
+  vmNetworkLedger?: VmNetworkLedger;
+  vmNetworkTransport?: VmNetworkTransport;
+  /** Main picker retains immutable bytes; renderer supplies only its opaque selection ID. */
+  resolvePythonBuildSelection?: (selectionId: string, scope: ToolScope) => PythonBuildSelection | Promise<PythonBuildSelection>;
   vmExport?: Pick<StandaloneBuiltinToolsProvider, 'discover' | 'execute' | 'reconcile'>;
 }
 function ownedPdfExtractor(home: string, helper?: PinnedSkillPdfHelper): SkillPdfExtractorPort {
@@ -137,7 +145,7 @@ export class AgentToolsComposition {
     this.configPath = join(options.home, "agent-tools.json"); this.journalPath = join(options.home, "agent-tool-calls.sqlite");
     this.skillStatePath = join(options.home, "agent-skills.json");
     this.vm = new VmProductController({ home: options.home, runtimeSelection: options.vmRuntimeSelection,
-      executor: options.vmExecutor, export: options.vmExport,
+      executor: options.vmExecutor, export: options.vmExport, networkLedger: options.vmNetworkLedger, networkTransport: options.vmNetworkTransport,
       isScopeActive: scope => !this.closing && !this.changing && this.options.canStart?.() !== false && this.options.isScopeActive(scope),
       assertMutation: explicit => this.vmMutation(explicit), assertScope: scope => this.scope(scope),
       savedCalls: scope => this.options.resolveSavedVmCalls?.(scope) ?? [],
@@ -173,7 +181,7 @@ export class AgentToolsComposition {
     this.toolsPort = {
       discover: (scope, opts) => this.track(async () => {
         this.scope(scope);
-        if (!readToolsConfig(this.configPath).enabled && !this.options.browserTools && !this.options.desktopTools && !this.options.remoteTools && !this.hasSkillResourceTools() && !this.hasSkillScriptTools() && !this.hasVmShellTools([scope]) && !this.options.builtins?.length) return [];
+        if (!readToolsConfig(this.configPath).enabled && !this.options.browserTools && !this.options.desktopTools && !this.options.remoteTools && !this.hasSkillResourceTools() && !this.hasSkillScriptTools() && !this.hasVmShellTools([scope]) && !this.hasVmNetworkTools(scope) && !this.options.builtins?.length) return [];
         this.descriptors = await this.getHost().discover(scope, opts); return structuredClone(this.descriptors);
       }),
       invoke: (request, opts) => this.track(() => this.getHost().invoke(request, opts)),
@@ -193,7 +201,8 @@ export class AgentToolsComposition {
       const resources = config.servers.some(server => server.id === this.skillResourceTools.serverId) ? [] : [this.skillResourceTools];
       const scripts = config.servers.some(server => server.id === this.skillScriptTools.serverId) ? [] : [this.skillScriptTools];
       const vm = config.servers.some(server => server.id === this.vm.provider.serverId) ? [] : [this.vm.provider];
-      this.host = new StandaloneMcpHost({ config, journalPath: this.journalPath, isScopeActive: scope => !this.closing && !this.changing && this.options.canStart?.() !== false && this.options.isScopeActive(scope), builtins: [...(this.options.builtins ?? []), ...(this.options.browserTools ? [this.options.browserTools] : []), ...(this.options.desktopTools ? [this.options.desktopTools] : []), ...remote, ...resources, ...scripts, ...vm] });
+      const network = config.servers.some(server => server.id === this.vm.networkProvider.serverId) ? [] : [this.vm.networkProvider];
+      this.host = new StandaloneMcpHost({ config, journalPath: this.journalPath, isScopeActive: scope => !this.closing && !this.changing && this.options.canStart?.() !== false && this.options.isScopeActive(scope), builtins: [...(this.options.builtins ?? []), ...(this.options.browserTools ? [this.options.browserTools] : []), ...(this.options.desktopTools ? [this.options.desktopTools] : []), ...remote, ...resources, ...scripts, ...vm, ...network] });
     }
     return this.host;
   }
@@ -206,7 +215,7 @@ export class AgentToolsComposition {
     const heldPdf = Number.isSafeInteger(pdf.activeCount) && Number(pdf.activeCount) >= 0 ? Number(pdf.activeCount) : 0;
     return Math.max(this.pending.size, this.host?.pendingBuiltinCount ?? 0, this.options.desktopTools?.status().activeCount ?? 0,
       this.options.remoteTools?.status().activeCount ?? 0, this.skillScriptTools.status().activeOperations.length,
-      this.skillResourceTools.activeCount, this.vm.provider.activeCount, heldPdf, pdf.recoveryRequired ? 1 : 0) + (this.changing ? 1 : 0) + this.installer.activeCount;
+      this.skillResourceTools.activeCount, this.vm.provider.activeCount, this.vm.buildActiveCount, this.vm.networkStatus().activeCount, heldPdf, pdf.recoveryRequired ? 1 : 0) + (this.changing ? 1 : 0) + this.installer.activeCount;
   }
   private managedSkills() { if (this.closing) throw new Error("Managed skill store is closing"); return this.managedSkillStore ??= new ManagedSkillStore(this.options.home); }
   private managedSkillStatus() {
@@ -257,6 +266,30 @@ export class AgentToolsComposition {
   readVmCandidate(scope: { taskId: string; generation: number }, operationId: string, path: string, sha256: string) {
     return this.vm.readCandidate(scope, operationId, path, sha256);
   }
+  private hasVmNetworkTools(scope: ToolScope) {
+    return !readToolsConfig(this.configPath).servers.some(server => server.id === this.vm.networkProvider.serverId)
+      && this.vm.networkStatus(scope).grants.some(row => !row.revoked);
+  }
+  vmNetworkStatus(scope?: ToolScope) { return this.vm.networkStatus(scope); }
+  grantVmNetwork(input: VmNetworkGrantInput, explicit: boolean) {
+    if (readToolsConfig(this.configPath).servers.some(server => server.id === this.vm.networkProvider.serverId)) throw new Error('Reserved builtin network namespace conflicts with an existing MCP server');
+    return this.vm.grantNetwork(input, explicit);
+  }
+  revokeVmNetwork(scope: VmNetworkScope, grantId: string, explicit: boolean) { return this.vm.revokeNetwork(scope, grantId, explicit); }
+  pythonBuildStatus(scope?: ToolScope) { return { ...this.vm.pythonBuildStatus(scope), selectionAvailable: Boolean(this.options.resolvePythonBuildSelection) }; }
+  reviewPythonBuild(actionId: string, selectionId: string, scope: ToolScope, explicit: boolean) {
+    this.vmMutation(explicit); this.scope(scope);
+    if (!this.options.resolvePythonBuildSelection) throw new Error('Explicit native Python build picker is unavailable');
+    return this.track(async () => {
+      const selection = await this.options.resolvePythonBuildSelection!(selectionId, scope); this.scope(scope);
+      return this.vm.reviewPythonBuild(actionId, selection, scope, true);
+    });
+  }
+  preparePythonBuild(actionId: string, digest: string, scope: ToolScope, explicit: boolean) { return this.track(() => this.vm.preparePythonBuild(actionId, digest, scope, explicit)); }
+  attachPythonBuild(actionId: string, scope: ToolScope, explicit: boolean) { return this.vm.attachPythonBuild(actionId, scope, explicit); }
+  revokePythonBuild(scope: ToolScope, explicit: boolean) { return this.vm.revokePythonBuild(scope, explicit); }
+  cancelPythonBuild(actionId: string, explicit: boolean) { return this.vm.cancelPythonBuild(actionId, explicit); }
+  reconcilePythonBuild(actionId: string, explicit: boolean) { return this.vm.reconcilePythonBuild(actionId, explicit); }
   validateBegunVmExportInvocation(request: Omit<ToolInvocation, 'grantId'>): void {
     if (request.tool !== 'vm-shell/export') throw new Error('Unsupported VM export source'); this.scope(request.scope);
     const current = this.options.resolveToolCall?.(request.scope);
@@ -280,9 +313,9 @@ export class AgentToolsComposition {
   private pythonEnvironmentMutation(explicitUserAction: boolean) {
     if (!explicitUserAction || this.closing || this.changing || this.options.canStart?.() === false) throw new Error("Explicit current local Python environment action required");
   }
-  reviewPythonEnvironment(actionId: string, wheelPaths: string[], explicitUserAction: boolean) {
+  reviewPythonEnvironment(actionId: string, wheelPaths: string[], explicitUserAction: boolean, options: Omit<SkillPythonEnvironmentReviewInput, "wheelPaths"> = {}) {
     this.pythonEnvironmentMutation(explicitUserAction);
-    return this.pythonEnvironmentControl(() => this.pythonEnvironments.review(actionId, { wheelPaths }, true));
+    return this.pythonEnvironmentControl(() => this.pythonEnvironments.review(actionId, { ...options, wheelPaths }, true));
   }
   preparePythonEnvironment(actionId: string, reviewDigest: string, explicitUserAction: boolean) {
     this.pythonEnvironmentMutation(explicitUserAction);
@@ -317,6 +350,8 @@ export class AgentToolsComposition {
       remoteTools: this.options.remoteTools?.status() ?? null,
       scriptTools: this.scriptStatus(),
       pythonEnvironments: this.pythonEnvironmentStatus(),
+      pythonBuilds: this.pythonBuildStatus(),
+      vmNetwork: this.vmNetworkStatus(),
       ...this.vm.projection(),
       capabilities: { stdio: process.platform !== "win32", install: process.platform !== "win32", oauth: false, secrets: false, nativeSandbox: false, mcpSandboxAvailable: sandboxProviderAvailable(), skillWrites: false, managedSkillImports: process.platform !== "win32", skillResourceReads: process.platform !== 'win32' && !config.servers.some(server => server.id === this.skillResourceTools.serverId), skillScripts: this.skillScriptTools.status().capabilities.supported && !config.servers.some(server => server.id === this.skillScriptTools.serverId), pendingToolCalls: Boolean(this.options.resolveToolCall) } };
   }
@@ -330,7 +365,7 @@ export class AgentToolsComposition {
   reviewServer(input: unknown, explicitUserAction: boolean) {
     if (!explicitUserAction || this.closing || this.changing) throw new Error("Explicit trusted configuration review required");
     const value = recipeInput.parse(input);
-    if (value.id === this.options.browserTools?.serverId || value.id === this.options.desktopTools?.serverId || value.id === this.options.remoteTools?.serverId || value.id === this.skillResourceTools.serverId || value.id === this.vm.provider.serverId || this.options.builtins?.some(provider => provider.serverId === value.id)) throw new Error("Reserved builtin tool namespace cannot be used by an MCP server");
+    if (value.id === this.options.browserTools?.serverId || value.id === this.options.desktopTools?.serverId || value.id === this.options.remoteTools?.serverId || value.id === this.skillResourceTools.serverId || value.id === this.vm.provider.serverId || value.id === this.vm.networkProvider.serverId || this.options.builtins?.some(provider => provider.serverId === value.id)) throw new Error("Reserved builtin tool namespace cannot be used by an MCP server");
     const command = realpathSync(value.command); const cwd = realpathSync(value.cwd);
     if (["sh", "bash", "zsh", "fish", "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "npx", "bunx", "uvx", "npm", "pnpm", "yarn", "pip", "pip3"].includes(basename(command).toLowerCase()) || value.args.some(arg => ["-e", "--eval", "-c", "--command"].includes(arg))) throw new Error("Installers, shell commands and inline evaluation are unsupported server recipes");
     const recipe: ServerRecipe = { id: value.id, enabled: false, transport: "stdio", source: { kind: "user-installed", label: value.label, version: value.version }, command, commandSha256: pinnedFile(command, 512 * 1024 * 1024).sha256, args: value.args, pinnedFiles: value.pinnedFiles.map(path => pinnedFile(path, 32 * 1024 * 1024)), cwd, envSecretRefs: {} };
@@ -346,7 +381,7 @@ export class AgentToolsComposition {
     return { reviewId, recipe, trust: "This explicitly configured server runs with your OS user permissions; tool approval does not sandbox the server process." };
   }
   private async changeConfig(make: (current: ToolsConfig) => ToolsConfig): Promise<ReturnType<AgentToolsComposition["status"]>> {
-    if (this.closing || this.changing || this.pending.size || this.host?.pendingBuiltinCount || this.options.desktopTools?.status().activeCount || this.installer.activeCount) throw new Error("Wait for owned tool operations before changing configuration");
+    if (this.closing || this.changing || this.pending.size || this.host?.pendingBuiltinCount || this.options.desktopTools?.status().activeCount || this.vm.buildActiveCount || this.vm.provider.activeCount || this.vm.networkStatus().activeCount || this.installer.activeCount) throw new Error("Wait for owned tool operations before changing configuration");
     this.changing = true;
     let settled!: () => void; this.configSettling = new Promise<void>(resolve => { settled = resolve; });
     try {
@@ -398,6 +433,19 @@ export class AgentToolsComposition {
       await this.options.onOutcome?.(outcome); return outcome;
     });
   }
+  /** Trusted observer lookup only. Read-only existing journal; no host/client creation. */
+  getEvidenceOutcomeBySourceEvent(sourceEventId: string): ToolOutcome | undefined {
+    if (!/^[a-z][a-z0-9_-]{0,39}:[a-f0-9]{64}$/.test(sourceEventId) || !existsSync(this.journalPath)) return;
+    const stat = lstatSync(this.journalPath);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== process.getuid?.() || stat.mode & 0o077) return;
+    const db = new Database(this.journalPath, { readonly: true });
+    try {
+      const row = db.query('SELECT receipt FROM tool_calls WHERE event_id=?').get(sourceEventId) as { receipt: string } | null;
+      if (!row) return; const outcome = JSON.parse(row.receipt) as ToolOutcome;
+      if (!sourceEventId.endsWith(':' + sha256(outcome.idempotencyKey))) return;
+      validateToolScope(outcome.scope); return structuredClone(outcome);
+    } finally { db.close(); }
+  }
   receipt(idempotencyKey: string): ToolOutcome | undefined { return this.getHost().getOutcome(idempotencyKey); }
   /** Passive cross-process proof of the exact already-approved journal intent. */
   validateBegunRemoteInvocation(request: Omit<ToolInvocation, "grantId">): void {
@@ -438,6 +486,8 @@ export class AgentToolsComposition {
     this.options.remoteTools?.invalidate(taskId);
     this.skillScriptTools.invalidate?.(taskId);
     this.vm.provider.invalidate?.(taskId);
+    this.vm.networkProvider.invalidate?.(taskId);
+    void this.vm.invalidateBuilds(taskId);
     this.skillResourceTools.invalidate?.(taskId);
     for (const provider of this.options.builtins ?? []) provider.invalidate?.(taskId);
   }
@@ -468,12 +518,12 @@ export class AgentToolsComposition {
     if (!explicitUserAction || this.closing || this.changing) throw new Error("Explicit installed runtime review required");
     const receipt = this.installer.receipt(actionId); const catalog = OFFICIAL_MCP_CATALOG.find(row => row.id === receipt?.catalogId);
     if (!receipt || receipt.state !== "installed" || !receipt.runtime || !receipt.tree || !receipt.graphSha256 || !catalog) throw new Error("Exact installed runtime receipt required");
-    const id = `npm-filesystem-${sha256(actionId).slice(0, 12)}`;
+    const id = `npm-${catalog.id.slice("official-".length)}-${sha256(actionId).slice(0, 12)}`, launch = managedMcpLaunchPlan(catalog.id, receipt.allowedRoot);
     const current = readToolsConfig(this.configPath); if (current.servers.some(server => server.id === id)) throw new Error("Installed recipe configuration already exists; inspect it instead of replacing it");
     const command = realpathSync(process.execPath); const entry = join(receipt.runtime, "node_modules", catalog.package, catalog.entrypoint);
     const bunfig = join(receipt.runtime, "bunfig.toml");
-    const recipe: ServerRecipe = { id, enabled: false, transport: "stdio", source: { kind: "user-installed", label: catalog.label, version: catalog.version }, command, commandSha256: pinnedFile(command, 512 * 1024 * 1024).sha256, args: ["--no-install", "--no-env-file", `--config=${bunfig}`, entry, receipt.allowedRoot], pinnedFiles: [pinnedFile(entry, 32 * 1024 * 1024), pinnedFile(bunfig, 64 * 1024), pinnedFile(join(receipt.runtime, "package.json"), 64 * 1024), pinnedFile(join(receipt.runtime, "bun.lock"), 1024 * 1024)], cwd: receipt.runtime, envSecretRefs: {}, managedInstallation: { actionId, package: catalog.package, version: catalog.version, integrity: catalog.integrity, graphSha256: receipt.graphSha256, treeRoot: join(receipt.runtime, "node_modules"), treeSha256: receipt.tree.sha256, treeFiles: receipt.tree.files } };
-    if (sandboxProviderAvailable()) recipe.trustedSandbox = this.reviewedSandbox({ codeRoots: [join(receipt.runtime, "node_modules")], readRoots: [receipt.runtime, receipt.allowedRoot], writeRoots: [receipt.allowedRoot] }, [receipt.runtime], [join(receipt.runtime, "node_modules")]);
+    const recipe: ServerRecipe = { id, enabled: false, transport: "stdio", source: { kind: "user-installed", label: catalog.label, version: catalog.version }, command, commandSha256: pinnedFile(command, 512 * 1024 * 1024).sha256, args: ["--no-install", "--no-env-file", `--config=${bunfig}`, entry, ...launch.args], pinnedFiles: [pinnedFile(entry, 32 * 1024 * 1024), pinnedFile(bunfig, 64 * 1024), pinnedFile(join(receipt.runtime, "package.json"), 64 * 1024), pinnedFile(join(receipt.runtime, "bun.lock"), 1024 * 1024)], cwd: receipt.runtime, envSecretRefs: {}, env: launch.env, managedInstallation: { actionId, package: catalog.package, version: catalog.version, integrity: catalog.integrity, graphSha256: receipt.graphSha256, treeRoot: join(receipt.runtime, "node_modules"), treeSha256: receipt.tree.sha256, treeFiles: receipt.tree.files } };
+    if (sandboxProviderAvailable()) recipe.trustedSandbox = this.reviewedSandbox({ codeRoots: [join(receipt.runtime, "node_modules")], readRoots: [receipt.runtime, ...(launch.readData ? [receipt.allowedRoot] : [])], writeRoots: launch.writeData ? [receipt.allowedRoot] : [] }, [receipt.runtime], [join(receipt.runtime, "node_modules")]);
     verifyRecipeFiles(recipe); const reviewId = crypto.randomUUID(); this.reviews.set(reviewId, { recipe, configDigest: sha256(JSON.stringify(current)) });
     return { reviewId, recipe, trust: "Review the installed dependency tree and exact allowed root. Save disabled first; enabling and connecting are separate actions." };
   }
@@ -591,6 +641,7 @@ export class AgentToolsComposition {
       this.options.desktopTools?.invalidate();
       this.skillScriptTools.invalidate?.();
       this.vm.provider.invalidate?.();
+      this.vm.networkProvider.invalidate?.();
       this.skillResourceTools.invalidate?.();
       for (const provider of this.options.builtins ?? []) provider.invalidate?.();
     }
@@ -601,6 +652,8 @@ export class AgentToolsComposition {
       await this.options.desktopTools?.close();
       await this.options.remoteTools?.close();
       await this.skillScriptTools.close();
+      await this.vm.closeNetwork();
+      await this.vm.closeBuilds();
       await this.vm.provider.close();
       await Promise.all([this.skillResourceTools.close(), this.pdfExtractor.close()]);
       await this.host?.close(); await Promise.allSettled([...this.pending]); this.host = undefined;

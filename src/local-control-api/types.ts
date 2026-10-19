@@ -14,6 +14,7 @@ export interface ControlTaskMetadata {
   state: string;
   kind?: string;
   mode?: string;
+  familyId?: string;
   generation?: number;
   revision?: number;
   createdAt?: number;
@@ -45,4 +46,6 @@ export interface LocalControlApiRouteOptions {
   sources: LocalControlApiSources;
   /** One existing AgentMode owner validates scope + durable action id before sending. */
   agentAction?: (input: ScopedAgentAction) => unknown | Promise<unknown>;
+  /** Passive lookup on the already-owned command store; undefined means unknown. */
+  agentActionReceipt?: (input: ScopedAgentAction) => unknown | Promise<unknown>;
 }

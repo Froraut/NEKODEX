@@ -15,11 +15,11 @@ function fixture() {
   const writable = (dir: string) => { chmodSync(dir, 0o700); for (const name of readdirSync(dir)) { const path = join(dir, name); if (lstatSync(path).isDirectory()) writable(path); } };
   return { base, home, store: new SkillPythonEnvironmentStore({ home, getRuntime: runtime }), close() { writable(base); rmSync(base, { recursive: true }); } };
 }
-function wheel(base: string, options: { name?: string; version?: string; requires?: string[]; python?: string; files?: Record<string, string | Uint8Array>; badRecord?: boolean; mode?: number } = {}) {
+function wheel(base: string, options: { name?: string; version?: string; requires?: string[]; python?: string; extras?: string[]; files?: Record<string, string | Uint8Array>; badRecord?: boolean; mode?: number } = {}) {
   const name = options.name ?? "qa_fixture", version = options.version ?? "1.0", dist = `${name}-${version}.dist-info`;
   const files: Record<string, Uint8Array> = {};
   for (const [path, data] of Object.entries(options.files ?? { [name + "/__init__.py"]: "MARKER = 'dependency-only-after-explicit-binding'\n" })) files[path] = typeof data === "string" ? Buffer.from(data) : data;
-  files[dist + "/METADATA"] = Buffer.from(`Metadata-Version: 2.1\nName: ${name}\nVersion: ${version}\n${options.python ? `Requires-Python: ${options.python}\n` : ""}${(options.requires ?? []).map(r => `Requires-Dist: ${r}\n`).join("")}\n`);
+  files[dist + "/METADATA"] = Buffer.from(`Metadata-Version: 2.1\nName: ${name}\nVersion: ${version}\n${options.python ? `Requires-Python: ${options.python}\n` : ""}${(options.requires ?? []).map(r => `Requires-Dist: ${r}\n`).join("")}${(options.extras ?? []).map(e => `Provides-Extra: ${e}\n`).join("")}\n`);
   files[dist + "/WHEEL"] = Buffer.from("Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n");
   files[dist + "/RECORD"] = Buffer.from(Object.entries(files).map(([path, data]) => `${path},sha256=${options.badRecord ? "invalid" : createHash("sha256").update(data).digest("base64url")},${data.length}\n`).join("") + `${dist}/RECORD,,\n`);
   const input: Zippable = {}; for (const [path, data] of Object.entries(files)) input[path] = [data, { os: 3, attrs: (options.mode ?? 0o100600) << 16 }];
@@ -61,6 +61,22 @@ mac("owner-admitted offline pure-wheel environments", () => {
     } finally { f.close(); }
   });
 
+  test("PEP508 wheel metadata activates explicit extras and requires exact direct artifact pins", () => {
+    const f = fixture(); try {
+      const dep = wheel(f.base, { name: "marker_dependency" });
+      const sha = createHash("sha256").update(readFileSync(dep)).digest("hex");
+      const url = `https://example.invalid/marker_dependency-1.0-py3-none-any.whl#sha256=${sha}`;
+      const app = wheel(f.base, { name: "marker_app", extras: ["dates"], requires: [
+        `marker-dependency @ ${url} ; extra == "dates" and python_version >= "3.9"`, 'not_on_mac; sys_platform == "win32"',
+      ] });
+      const review = f.store.review(randomUUID(), { wheelPaths: [app, dep], requirements: ["marker-app[dates]"], directArtifacts: [{ url, artifactSha256: sha }] }, true);
+      expect(review.state).toBe("reviewed");
+      const ready = f.store.prepare(review.actionId, review.reviewDigest, true); expect(ready.state).toBe("ready");
+      assertAdmittedPythonEnvironment(f.store.admit(ready.environment!.environmentId), runtime());
+      expect(() => f.store.review(randomUUID(), { wheelPaths: [app, dep], requirements: ["marker-app[dates]"] }, true)).toThrow("exact selected artifact SHA256 mapping");
+    } finally { f.close(); }
+  });
+
   test("archive traversal, case collisions, links, native/startup content, oversized expansion and RECORD corruption never publish an environment", () => {
     const f = fixture(); try {
       const examples: NonNullable<Parameters<typeof wheel>[1]>[] = [
@@ -77,10 +93,10 @@ mac("owner-admitted offline pure-wheel environments", () => {
     } finally { f.close(); }
   });
 
-  test("missing or incompatible dependencies, markers, extras, direct URLs and incompatible Python are explicit refusals", () => {
+  test("missing or incompatible dependencies, undeclared extras, unpinned direct URLs and incompatible Python are explicit refusals", () => {
     const f = fixture(); try {
       const dependency = wheel(f.base, { name: "dependency", version: "2.0rc1" });
-      for (const requirement of ["missing>=1", "dependency>=3", "dependency; python_version >= '3'", "dependency[extra]>=1", "dependency @ https://example.invalid/dep.whl"]) {
+      for (const requirement of ["missing>=1", "dependency>=3", "dependency[extra]>=1", "dependency @ https://example.invalid/dep.whl"]) {
         const app = wheel(f.base, { name: "application", requires: [requirement] }); expect(() => f.store.review(randomUUID(), { wheelPaths: [app, dependency] }, true)).toThrow();
       }
       const newer = wheel(f.base, { name: "newer_python", python: ">=3.10" }); expect(() => f.store.review(randomUUID(), { wheelPaths: [newer] }, true)).toThrow();

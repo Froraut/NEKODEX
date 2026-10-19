@@ -4,6 +4,7 @@ import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { z } from 'zod';
 import { validateToolScope } from '../agent-tools/journal';
+import { desktopApplicationPropertiesSchema, type DesktopApplicationProperties } from './desktop-outcome';
 import type { ToolScope } from '../agent-tools/types';
 import { desktopActionSchema, desktopBindingOf, desktopBindingSchema, desktopObservationSchema,
   type DesktopAction, type DesktopBinding, type DesktopObservation, type DesktopProviderPort, type DesktopReceipt } from './providers';
@@ -11,7 +12,7 @@ import { desktopActionSchema, desktopBindingOf, desktopBindingSchema, desktopObs
 const PROVIDER_ID = 'nekodex-macos-desktop-v1';
 const MAX_REPLY = 12 * 1024 * 1024;
 const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
-export const macosWindowSelectionSchema = z.object({ windowId: z.string().regex(/^\d+$/), processId: z.string().regex(/^\d+:\d+$/), windowEpoch: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
+export const macosWindowSelectionSchema = z.object({ windowId: z.string().max(10).regex(/^\d+$/), processId: z.string().max(32).regex(/^\d+:\d+$/), windowEpoch: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 const windowSchema = macosWindowSelectionSchema.extend({ owner: z.string().max(160), title: z.string().max(512), foreground: z.boolean(),
   frame: z.object({ x: z.number().finite(), y: z.number().finite(), width: z.number().positive().finite(), height: z.number().positive().finite() }).strict() }).strict();
 const statusSchema = z.object({ enabled: z.boolean(), providerId: z.literal(PROVIDER_ID), uncertain: z.boolean(), selected: windowSchema.nullable(),
@@ -22,7 +23,7 @@ export type MacosWindowMetadata = z.infer<typeof windowSchema>;
 export type MacosDesktopStatus = z.infer<typeof statusSchema>;
 export interface NativeDesktopTransport {
   readonly activeCount?: number;
-  request(command: 'status' | 'listWindows' | 'enable' | 'select' | 'observe' | 'image' | 'act' | 'invalidate', body?: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
+  request(command: 'status' | 'listWindows' | 'enable' | 'select' | 'observe' | 'image' | 'act' | 'invalidate' | 'properties', body?: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
   close(): Promise<void>;
   readExistingReceipt?(operationId: string, binding: DesktopBinding): unknown | undefined;
   waitForIdle?(): Promise<void>;
@@ -108,9 +109,10 @@ export class NativeDesktopHelperClient implements NativeDesktopTransport {
       if (this.receipts.size >= 128) return Promise.reject(new NativeRejection('Native operation receipt capacity reached'));
       this.receipts.set(operationId, { binding, fingerprint });
     }
-    const child = this.start(); const id = randomUUID();
+    const id = randomUUID();
     const line = JSON.stringify({ version: 1, id, command, ...body }) + '\n';
-    if (Buffer.byteLength(line) > 64 * 1024) return Promise.reject(new Error('Native desktop request exceeds its bound'));
+    if (Buffer.byteLength(line) > 64 * 1024) return Promise.reject(new NativeRejection('Native desktop request exceeds its bound'));
+    const child = this.start();
     return new Promise((resolve, reject) => {
       const abort = () => this.fail(new Error('Native desktop request aborted; owned helper is stopping'));
       const timeout = setTimeout(() => {
@@ -152,6 +154,7 @@ export interface MacosDesktopProvider extends DesktopProviderPort {
   selectWindow(selection: MacosWindowSelection, explicitUserAction: boolean): Promise<void>;
   image(scope: ToolScope, observation: DesktopObservation, signal?: AbortSignal): Promise<{ mimeType: 'image/png'; base64: string; sha256: string }>;
   modelImage(scope: ToolScope, observation: DesktopObservation, signal?: AbortSignal): Promise<{ mimeType: 'image/jpeg'; base64: string; sha256: string; sourceScreenshotId: string; width: number; height: number }>;
+  applicationProperties(scope: ToolScope, selection: MacosWindowSelection, signal?: AbortSignal): Promise<DesktopApplicationProperties>;
   actWithOperation(scope: ToolScope, binding: DesktopBinding, action: DesktopAction, operationId: string, signal?: AbortSignal): Promise<DesktopReceipt>;
   readExistingReceipt(operationId: string, binding: DesktopBinding, action?: DesktopAction): DesktopReceipt | undefined;
   close(): Promise<void>;
@@ -164,6 +167,7 @@ export function createMacosDesktopProvider(options: { helperExecutable: string; 
   const platform = options.platform ?? process.platform;
   let enabled = false; let closed = false; let busy = false; let uncertain = false; let generation = 0;
   let closingOwners = 0;
+  let selectedSelection: MacosWindowSelection | undefined;
   let latest: DesktopObservation | undefined; let transport: NativeDesktopTransport | undefined;
   const operations = new Map<string, { binding: DesktopBinding; actionHash: string; receipt?: DesktopReceipt }>();
   const idleWaiters = new Set<() => void>();
@@ -189,21 +193,31 @@ export function createMacosDesktopProvider(options: { helperExecutable: string; 
     async listWindows(signal) { return z.object({ windows: z.array(windowSchema).max(128) }).strict().parse(await native().request('listWindows', {}, signal)).windows; },
     async setEnabled(value, explicitUserAction) {
       if (!explicitUserAction || typeof value !== 'boolean' || closed) throw new Error('Explicit desktop capture/input preference required');
-      generation++; latest = undefined; enabled = false;
+      if (value && (uncertain || busy)) throw new Error('Reconcile the current native operation before enabling another input owner');
+      const revision = ++generation; latest = undefined; selectedSelection = undefined; enabled = false;
       if (!value) {
         const previous = transport; transport = undefined;
         if (previous) { closingOwners++; try { await previous.close(); } finally { closingOwners--; settleIdle(); } }
         return;
       }
-      if (uncertain || busy) throw new Error('Reconcile the current native operation before enabling another input owner');
-      const result = z.object({ enabled: z.literal(true) }).strict().parse(await native().request('enable', { enabled: true }));
-      enabled = result.enabled;
+      busy = true;
+      try {
+        const result = z.object({ enabled: z.literal(true) }).strict().parse(await native().request('enable', { enabled: true }));
+        if (closed || generation !== revision) throw new Error('Native enable authority was revoked while enabling');
+        enabled = result.enabled;
+      } finally { busy = false; settleIdle(); }
     },
     async selectWindow(value, explicitUserAction) {
       if (!explicitUserAction || !enabled || busy || uncertain) throw new Error('Explicit selected-window authority is required');
       const selection = macosWindowSelectionSchema.parse(value);
-      generation++; latest = undefined;
-      z.object({ selected: windowSchema, inputWindowBound: z.boolean() }).strict().parse(await native().request('select', { selection }));
+      const revision = ++generation; latest = undefined; selectedSelection = undefined; busy = true;
+      try {
+        const value = z.object({ selected: windowSchema, inputWindowBound: z.boolean() }).strict().parse(await native().request('select', { selection }));
+        if (!enabled || closed || generation !== revision || JSON.stringify(macosWindowSelectionSchema.parse({
+          windowId: value.selected.windowId, processId: value.selected.processId, windowEpoch: value.selected.windowEpoch,
+        })) !== JSON.stringify(selection)) throw new Error('Native selected-window authority changed');
+        selectedSelection = selection;
+      } finally { busy = false; settleIdle(); }
     },
     async capabilities(scope, signal) {
       try {
@@ -252,6 +266,18 @@ export function createMacosDesktopProvider(options: { helperExecutable: string; 
         latest = undefined; generation++; throw new Error('Native model image does not match the source screenshot and dimensions');
       }
       return value;
+    },
+    async applicationProperties(scope, selectionValue, signal) {
+      active(scope); if (busy) throw new Error('Native desktop operation is active');
+      const selection = macosWindowSelectionSchema.parse(selectionValue);
+      if (!selectedSelection || JSON.stringify(selection) !== JSON.stringify(selectedSelection)) throw new Error('Native application properties require the exact selected window');
+      const revision = generation; busy = true;
+      try {
+        const snapshot = desktopApplicationPropertiesSchema.parse(await native().request('properties', { selection }, signal));
+        active(scope);
+        if (revision !== generation || JSON.stringify(snapshot.selection) !== JSON.stringify(selection)) throw new Error('Native application property owner changed');
+        return structuredClone(snapshot);
+      } finally { busy = false; settleIdle(); }
     },
     act(scope, binding, action, signal) { return provider.actWithOperation(scope, binding, action, randomUUID(), signal); },
     async actWithOperation(scope, bindingValue, actionValue, operationIdValue, signal) {
@@ -304,7 +330,7 @@ export function createMacosDesktopProvider(options: { helperExecutable: string; 
     },
     invalidate() { generation++; latest = undefined; if (!busy && transport) void transport.request('invalidate').catch(() => {}); },
     async close() {
-      closed = true; enabled = false; generation++; latest = undefined; const previous = transport; transport = undefined;
+      closed = true; enabled = false; generation++; latest = undefined; selectedSelection = undefined; const previous = transport; transport = undefined;
       if (previous) { closingOwners++; try { await previous.close(); } finally { closingOwners--; settleIdle(); } }
     },
   };

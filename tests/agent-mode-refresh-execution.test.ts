@@ -57,3 +57,22 @@ test('refresh refuses retained unknown execution and cannot switch to another co
     expect(store.getTask(task.id)).toEqual(before); expect(sends).toBe(1);
   } finally { store.close(); rmSync(home, { recursive: true, force: true }); }
 });
+
+test('refresh preserves an explicit user pause until a separate resume action', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'agent-refresh-user-pause-')), store = new AgentModeStore(join(home, 'state.sqlite'));
+  let admissionId = 'old-admission', sends = 0;
+  const runtime = new AgentModeRuntime({ store, ownerId: 'fixture-owner', models: () => [{ id: 'fixture-model', provider: 'owned-native', admissionId, available: true }],
+    executionPort: { async execute() { sends++; return { receiptId: 'after-resume', outcome: 'completed', summary: 'Only explicitly resumed.', actualSpend: null }; } } });
+  try {
+    const task = runtime.create('create', input());
+    const paused = runtime.control(task.id, 'user-pause', { action: 'pause' }, scopeOf(task));
+    admissionId = 'new-admission';
+    const refreshed = runtime.refreshExecution(task.id, 'refresh-paused', scopeOf(paused), true);
+    expect(refreshed).toMatchObject({ status: 'paused', reason: 'pause', generation: paused.generation + 1, execution: { admissionId } });
+    expect(sends).toBe(0);
+    expect(() => runtime.step(task.id, 'unwanted-run', { explicitUserAction: true }, scopeOf(refreshed))).toThrow('Task paused');
+    const resumed = runtime.control(task.id, 'explicit-resume', { action: 'resume' }, scopeOf(refreshed));
+    runtime.step(task.id, 'wanted-run', { explicitUserAction: true }, scopeOf(resumed)); await runtime.waitForIdle();
+    expect(sends).toBe(1);
+  } finally { store.close(); rmSync(home, { recursive: true, force: true }); }
+});

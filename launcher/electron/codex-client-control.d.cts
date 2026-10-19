@@ -58,7 +58,10 @@ export interface CodexClientControlSnapshot {
   statusScope: CodexStatusScope;
   userAgent: string | null;
   capabilities: { list: CodexMethodSupport; read: CodexMethodSupport; fork: CodexMethodSupport;
-    startTurn: false; interruptTurn: false; approve: false };
+    startTurn: false; interruptTurn: false; approve: false;
+    resumeExternal: false; exclusiveHandoff: false };
+  /** A proxy connection or idle status is not an exclusive execution lease. */
+  externalControl: { executionOwner: 'unverified'; reason: 'exclusive-owner-contract-unavailable' };
   errorCode: string | null;
   uncertainForks: CodexForkAction[];
 }
@@ -77,7 +80,8 @@ export interface CodexClientControl {
     signal?: AbortSignal }): Promise<CodexConversationPage>;
   /** Call only from a guarded, explicit user action. No turn starts or approval overrides. */
   forkThread(params: { threadId: string; lastTurnId?: string; userInitiated: true }): Promise<{
-    thread: CodexThreadMetadata; actionId: string; statusScope: CodexStatusScope }>;
+    thread: CodexThreadMetadata; actionId: string; sourceThreadId: string; lastTurnId: string | null;
+    executionStarted: false; statusScope: CodexStatusScope }>;
   acknowledgeFork(params: { actionId: string; threadId: string; confirmedInspection: true }): CodexClientControlSnapshot;
   /** Awaits the owned client process closing. Never stops an existing server daemon. */
   destroy(): Promise<void>;

@@ -4,7 +4,8 @@ export type { RemoteGitReviewAction, RemoteGitReviewAuthor, RemoteGitReviewBases
 import type { RemoteAgentScope, RemoteAgentTaskScope, RemoteAgentInvocation, RemoteAgentOutcome, RemoteAgentStatus } from './agent-remote-types.cjs';
 export type { RemoteAgentScope, RemoteAgentTaskScope, RemoteAgentBinding, RemoteAgentInvocation, RemoteAgentOutcome, RemoteAgentStatus } from './agent-remote-types.cjs';
 export type RemoteHostInput = { label: string; hostname: string; username: string; port: number | null; root: string; connectionMode?: 'direct' | 'ssh-config-alias' };
-export type RemoteHost = RemoteHostInput & { id: string; fingerprint: string; connected: boolean; canonicalRoot: string | null; busy: boolean; sshAlias?: string; aliasResolved?: boolean; configuredEndpoint?: Pick<RemoteHostInput, 'hostname' | 'username' | 'port' | 'connectionMode'> };
+export type RemoteOperationCancellation = { requested: boolean; operation: string | null; remoteOutcome: 'not-cancelled' | 'requires-terminal-proof' };
+export type RemoteHost = RemoteHostInput & { id: string; fingerprint: string; connected: boolean; canonicalRoot: string | null; busy: boolean; connectionState?: 'connected' | 'connecting' | 'disconnected'; reconnectRequired?: boolean; activeOperation?: string | null; cancellationRequested?: boolean; unknownReceiptIds?: string[]; sshAlias?: string; aliasResolved?: boolean; configuredEndpoint?: Pick<RemoteHostInput, 'hostname' | 'username' | 'port' | 'connectionMode'> };
 export type RemoteListing = { path: string; truncated: boolean; entries: { name: string; path: string; kind: 'directory' | 'file' | 'blocked'; size: number | null }[] };
 export type RemotePreview = { path: string; state: 'text' | 'binary' | 'missing'; revision: string | null; text: string | null; size: number };
 export type RemoteDraftInput = { path: string; text: string; expectedRevision: string | null };
@@ -19,6 +20,7 @@ export interface RemoteWorkspaceApi extends RemoteWorktreeApi, RemoteGitReviewAp
   remoteWorkspaceForgetHost(id: string): Promise<{ removed: boolean }>;
   remoteWorkspaceConnect(id: string): Promise<RemoteHost>;
   remoteWorkspaceDisconnect(id: string): Promise<{ disconnected: boolean }>;
+  remoteWorkspaceCancelOperation?(id: string): Promise<RemoteOperationCancellation>;
   remoteWorkspaceList(id: string, directory?: string): Promise<RemoteListing>;
   remoteWorkspacePreview(id: string, file: string): Promise<RemotePreview>;
   remoteWorkspaceRetainDraft(id: string, input: RemoteDraftInput): Promise<RemoteDraft>;
@@ -50,6 +52,8 @@ export interface RemoteWorkspaceService extends RemoteWorktreeService {
   forgetHost(id: string): { removed: boolean };
   connect(id: string): Promise<RemoteHost>;
   disconnect(id: string): { disconnected: boolean };
+  /** Cancel our transport only; the original owner retains terminal/unknown settlement. */
+  cancelOperation(id: string): RemoteOperationCancellation;
   list(id: string, directory?: string): Promise<RemoteListing>;
   preview(id: string, file: string): Promise<RemotePreview>;
   retainDraft(id: string, input: RemoteDraftInput): RemoteDraft;

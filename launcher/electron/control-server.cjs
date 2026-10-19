@@ -6,6 +6,9 @@ const { assertTaskObservation } = require("./task-observation.cjs");
 const { assertTaskPlanObservation } = require("./task-plan-observation.cjs");
 const { isTaskModel } = require("./browser-task-ledger.cjs");
 const { READINESS_CODES } = require("./admission-failure-copy.cjs");
+const { VM_EXPORT_LIMITS, parseVmExportTaskScope, parseVmExportRequest } = require('./vm-export-contract.cjs');
+
+const { PYTHON_BUILD_SELECTION_LIMITS, parsePythonBuildSelectionRequest } = require('./python-build-selection-contract.cjs');
 
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_MANUAL_START_BODY_BYTES = 3 * 1024 * 1024;
@@ -49,7 +52,7 @@ class BrowserControlServer {
   constructor({ logger, getBrowserHost, getPreferences, resolveNativeProxy,
     getAgentNativeBridge, getAgentNativeInstance, validateNativeInvalidation,
     getAgentRemoteService, getAgentRemoteInstance, validateRemoteInvalidation,
-    getVmExportService, getVmExportInstance }) {
+    getVmExportService, getVmExportInstance, getPythonBuildSelectionService, getPythonBuildSelectionInstance }) {
     this.logger = logger;
     this.getBrowserHost = getBrowserHost;
     this.getPreferences = getPreferences;
@@ -62,6 +65,8 @@ class BrowserControlServer {
     this.validateRemoteInvalidation = validateRemoteInvalidation;
     this.getVmExportService = getVmExportService;
     this.getVmExportInstance = getVmExportInstance;
+    this.getPythonBuildSelectionService = getPythonBuildSelectionService;
+    this.getPythonBuildSelectionInstance = getPythonBuildSelectionInstance;
     this.token = randomBytes(32).toString("base64url");
     this.automaticMutationReceipts = new Map();
     this.port = 0;
@@ -165,6 +170,7 @@ class BrowserControlServer {
     if (remoteAction) { await this.handleAgentRemote(request, response, remoteAction); return; }
     const vmExportAction = new Map(['list', 'execute', 'receipt', 'reconcile'].map(action => [`/v1/agent-vm-export/${action}`, action])).get(request.url);
     if (vmExportAction) { await this.handleVmExport(request, response, vmExportAction); return; }
+    if (request.url === '/v1/agent-python-build/selection') { await this.handlePythonBuildSelection(request, response); return; }
     const isNativeProxy = request.url === "/v1/network/resolve-proxy";
     const isNativeUsage = request.url === "/v1/usage/native";
     const isTurn = request.url === "/v1/turn/start"
@@ -687,13 +693,43 @@ class BrowserControlServer {
     if (!instanceId || request.headers['x-nekodex-vm-export-instance'] !== instanceId) { writeJson(response, 403, { error: 'vm_export_scope_unavailable' }); return; }
     if (!service) { writeJson(response, 503, { error: 'vm_export_unavailable', instanceId }); return; }
     try {
-      const body = await readJson(request, 64 * 1024);
+      const rawBody = await readJson(request, VM_EXPORT_LIMITS.requestBytes);
+      const body = action === 'list' ? parseVmExportTaskScope(rawBody) : parseVmExportRequest(rawBody);
       const value = action === 'list' ? service.list(body) : action === 'execute' ? await service.execute(body)
         : action === 'receipt' ? service.inspect(body) : await service.reconcile(body);
       if (Buffer.byteLength(JSON.stringify(value)) > 224 * 1024) throw new Error('VM export response exceeds limit');
       if (!response.destroyed && !response.writableEnded) writeJson(response, 200, { ok: true, instanceId, value: value ?? null });
     } catch {
       if (!response.destroyed && !response.writableEnded) writeJson(response, 409, { ok: false, error: 'vm_export_conflict', instanceId });
+    }
+  }
+
+  async handlePythonBuildSelection(request, response) {
+    if (request.method !== 'POST') { writeJson(response, 405, {error:'method_not_allowed'}); return; }
+    const instanceId = this.getPythonBuildSelectionInstance?.(), service = this.getPythonBuildSelectionService?.();
+    if (!instanceId || request.headers['x-nekodex-python-build-instance'] !== instanceId) { writeJson(response,403,{error:'python_build_scope_unavailable'}); return; }
+    if (!service) { writeJson(response,503,{error:'python_build_selection_unavailable'}); return; }
+    try {
+      const body = parsePythonBuildSelectionRequest(await readJson(request, PYTHON_BUILD_SELECTION_LIMITS.requestBytes));
+      const selected = await service.open(body); await selected.assertCurrent();
+      const header = Buffer.from(JSON.stringify({...selected.header,instanceId}));
+      if (header.length > PYTHON_BUILD_SELECTION_LIMITS.headerBytes) throw new Error('selection limit');
+      const prefix = Buffer.alloc(4); prefix.writeUInt32BE(header.length);
+      response.writeHead(200,{'content-type':'application/vnd.nekodex.python-build-selection','cache-control':'no-store','x-nekodex-python-build-instance':instanceId});
+      const write = chunk => new Promise((resolve,reject) => {
+        if (response.destroyed) { reject(new Error('closed')); return; }
+        response.write(chunk,error => error ? reject(error) : resolve());
+      });
+      await write(prefix); await write(header);
+      let sinceCheck = 0;
+      for (const bytes of selected.chunks) for (let offset=0;offset<bytes.length;offset+=65536) {
+        const chunk=bytes.subarray(offset,offset+65536); await write(chunk); sinceCheck+=chunk.length;
+        if (sinceCheck >= 2*1024*1024) { await selected.assertCurrent(); sinceCheck=0; }
+      }
+      await selected.assertCurrent(); response.end();
+    } catch {
+      if (response.headersSent) response.destroy();
+      else if (!response.destroyed && !response.writableEnded) writeJson(response,409,{error:'python_build_selection_conflict'});
     }
   }
 

@@ -1,6 +1,8 @@
+export type OwnedNativeImageSource = { toolCallId: string; receipt: string; attachmentIndex: number }
+  | { kind: 'selected-attachment'; selectionId: string; receipt: string; attachmentIndex: number; name: string };
 export interface OwnedNativeImageMetadata {
   mimeType: 'image/png' | 'image/jpeg'; width: number; height: number; sha256: string; byteLength: number;
-  source: { toolCallId: string; receipt: string; attachmentIndex: number };
+  source: OwnedNativeImageSource;
 }
 export interface OwnedNativeImage extends OwnedNativeImageMetadata { data: string }
 export const MAX_IMAGES: 2;

@@ -17,7 +17,8 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
   const file = storagePath || path.join(storageRoot, 'registry.json'), directory = path.dirname(file), lock = path.join(directory, 'owner.lock');
   const owner = JSON.stringify({ pid: process.pid, nonce: randomUUID() });
   const live = new Map();
-  let owned = false, lastDigest, busy = false, destroyed = false, closing;
+  let owned = false, lastDigest, destroyed = false, closing;
+  const operations = new Set();
   const pending = new Set();
   let state;
   try {
@@ -78,7 +79,7 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
     const ids = new Set(conversations.map(row => row.id));
     return { conversations, actions: state.actions.filter(row => ids.has(row.conversationId)).map(row => ({ actionId: row.actionId, kind: row.kind,
       conversationId: row.conversationId, state: row.state, ownerHeld: row.ownerHeld === true, ...(row.reasonCode ? { reasonCode: row.reasonCode } : {}) })),
-      busy, retention: 'explicit-native-context', resumeSupported: true };
+      busy: operations.size > 0, retention: 'explicit-native-context', resumeSupported: true };
   }
   function recordNative(action, row, receipt) {
     if (receipt.actionId !== action.turnActionId) return;
@@ -107,7 +108,7 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
       const fingerprint = digest(canonical({ kind, input }));
       const old = state.actions.find(row => row.actionId === input.actionId);
       if (old) { recorded = true; if (old.fingerprint !== fingerprint) throw fail('intent_conflict', 'Persistent Native action identity changed'); return list(); }
-      if (destroyed || busy) throw fail('worker_busy', 'Persistent Native owner is unavailable');
+      if (destroyed) throw fail('worker_busy', 'Persistent Native owner is unavailable');
       const context = getExecution();
       if (!context?.server || !context.server.inspect().accepting) throw fail('owner_unavailable', 'Open the selected qualified Native account first');
       uuid(context.profileId); uuid(context.epoch); uuid(context.serverGeneration);
@@ -133,10 +134,16 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
       if (!selectedModel) throw fail('model_unavailable', 'Select a model from the current qualified account');
       if (!isAgentNativeHistorySource(selectedModel.historySource) || selectedModel.historySource.profileId !== context.profileId || selectedModel.historySource.authEpoch !== context.epoch) throw fail('account_identity_unavailable', 'Qualified Native account identity is required for retained context');
       if (state.actions.length >= 512 || ['create', 'fork'].includes(kind) && state.conversations.length >= 128) throw fail('registry_quota', 'Persistent Native registry quota reached');
-      busy = true; notify();
+      // A fork reserves its source too. Registry mutations remain synchronous under
+      // one writer, while independent exact conversations can await Native together.
+      const operationKey = source?.id || input.actionId;
+      if (operations.has(operationKey)) throw fail('worker_busy', 'This persistent conversation already has an operation');
+      operations.add(operationKey); notify();
       try {
         return await context.server.persistentOperation(async operation => {
           assertContext();
+          // Account readiness yields; enforce the shared registry quota again at claim.
+          if (state.actions.length >= 512 || ['create', 'fork'].includes(kind) && state.conversations.length >= 128) throw fail('registry_quota', 'Persistent Native registry quota reached');
           acquire();
           const makeResumedWorker = kind === 'resume' ? operation.prepareResume({ registryPath: file, conversationId: source.id, revision: source.revision }) : null;
           const now = Date.now();
@@ -186,6 +193,7 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
                 const snapshot = worker.inspectOwnedWorker();
                 const exactId = kind === 'resume' || kind === 'fork' ? action.createActionId : row.threadId ? action.turnActionId : action.createActionId;
                 const exact = snapshot.receipts.find(receipt => receipt.actionId === exactId);
+                if (exact) action.ownerHeld = exact.ownerHeld === true;
                 provablyNotSent = kind !== 'closeIdle' && snapshot.storageOwner === 'current' && !exact;
                 knownLeafFailure = snapshot.storageOwner === 'current' && exact?.state === 'failed' && exact.ownerHeld === false;
               } catch { /* Receipt storage uncertainty is never permission to retry. */ }
@@ -199,7 +207,7 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
             throw reason;
           }
         });
-      } finally { busy = false; notify(); }
+      } finally { operations.delete(operationKey); notify(); }
     };
     const result = run().then(() => list()).catch(reason => { reason.actionRecorded = recorded; throw reason; });
     pending.add(result); result.finally(() => { pending.delete(result); }).catch(() => {}); return result;
@@ -220,7 +228,7 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
       return row ? { actionId: row.actionId, kind: row.kind, conversationId: row.conversationId, state: row.state,
         ownerHeld: row.ownerHeld === true, ...(row.reasonCode ? { reasonCode: row.reasonCode } : {}) } : undefined;
     },
-    currentOperation: () => busy ? 'Native persistent conversation' : [...live.values()].some(worker => worker.currentOperation()) ? 'Awaiting persistent Native ownership settlement' : null,
+    currentOperation: () => operations.size ? 'Native persistent conversation' : [...live.values()].some(worker => worker.currentOperation()) ? 'Awaiting persistent Native ownership settlement' : null,
     destroy });
 }
 module.exports = { createPersistentNativeConversations };

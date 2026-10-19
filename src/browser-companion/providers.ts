@@ -10,7 +10,7 @@ export interface BrowserProviderPort {
   selected(): BrowserBinding | undefined;
   receipt(operationId: string): CompanionReceipt | undefined;
   current(): BrowserObservation | undefined;
-  observe(binding: BrowserBinding, signal?: AbortSignal, operationId?: string): Promise<CompanionReceipt>;
+  observe(binding: BrowserBinding, signal?: AbortSignal, operationId?: string, options?: { includeImage?: boolean }): Promise<CompanionReceipt>;
   act(binding: BrowserBinding, action: BrowserAction, signal?: AbortSignal, operationId?: string): Promise<CompanionReceipt>;
 }
 export function createCompanionBrowserProvider(host: BrowserCompanionHost): BrowserProviderPort {

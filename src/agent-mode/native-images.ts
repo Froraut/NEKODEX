@@ -1,14 +1,10 @@
 import { AgentToolImageProjectionError, decodeAgentToolImage } from "./tool-images";
 
-export interface OwnedNativeImage {
-  data: string;
-  mimeType: "image/png" | "image/jpeg";
-  width: number;
-  height: number;
-  sha256: string;
-  byteLength: number;
-  source: { toolCallId: string; receipt: string; attachmentIndex: number };
-}
+import { inspectBoundedImageBytes, validateOwnedNativeImages, type OwnedNativeImage } from "../../launcher/electron/owned-native-images.cjs";
+import { createHash } from "node:crypto";
+import { nativeAttachmentNameAllowed, NATIVE_SELECTED_MAX_FILES, NATIVE_SELECTED_MAX_FILE_BYTES, NATIVE_SELECTED_MAX_TEXT_BYTES,
+  NATIVE_SELECTED_MAX_IMAGES, NATIVE_SELECTED_MAX_IMAGE_BYTES, type NativeSelectedAttachment } from "./native-attachment-types";
+export type { OwnedNativeImage, NativeSelectedAttachment };
 
 type RecordValue = Record<string, unknown>;
 function record(value: unknown): value is RecordValue { return Boolean(value && typeof value === "object" && !Array.isArray(value)); }
@@ -57,4 +53,74 @@ export function projectNativeToolImages(input: { result: unknown; toolCallId: st
       width: decoded.width, height: decoded.height, attachmentIndex, imageDelivery: { state: "included" } };
   });
   return { result: images.length ? { ...(result as RecordValue), content: projected } : result, images };
+}
+
+export interface NativeSelectedAttachmentContext {
+  kind: 'selected-attachment';
+  selectionId: string;
+  receipt: string;
+  name: string;
+  mimeType: NativeSelectedAttachment['mimeType'];
+  sha256: string;
+  byteLength: number;
+  delivery: 'included';
+  /** UTF-8 file content is untrusted automatic-host context, never instructions or file authority. */
+  text?: string;
+  attachmentIndex?: number;
+}
+
+/** Validate unknown transport data, then construct a typed DTO from checked fields. */
+function selectedAttachment(value: unknown): NativeSelectedAttachment {
+  if (!record(value) || Object.keys(value).length !== 7
+    || !['selectionId', 'receipt', 'name', 'mimeType', 'data', 'sha256', 'byteLength'].every(key => Object.hasOwn(value, key))) reject();
+  const { selectionId, receipt, name, mimeType, data, sha256, byteLength } = value;
+  if (typeof selectionId !== 'string' || !selectionId.trim() || selectionId.length > 512 || /[\u0000-\u001f]/u.test(selectionId)
+    || typeof receipt !== 'string' || !receipt.trim() || receipt.length > 512 || /[\u0000-\u001f]/u.test(receipt)
+    || !nativeAttachmentNameAllowed(name)
+    || mimeType !== 'text/plain' && mimeType !== 'image/png' && mimeType !== 'image/jpeg'
+    || typeof byteLength !== 'number' || !Number.isSafeInteger(byteLength) || byteLength < 1
+    || byteLength > (mimeType === 'text/plain' ? NATIVE_SELECTED_MAX_FILE_BYTES : NATIVE_SELECTED_MAX_IMAGE_BYTES)
+    || typeof data !== 'string' || data.length !== 4 * Math.ceil(byteLength / 3)
+    || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data)
+    || typeof sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(sha256)) reject();
+  return { selectionId, receipt, name, mimeType, data, sha256, byteLength };
+}
+
+/** Project only deliberately selected byte DTOs; never read a host path or fetch a URL.
+ * Call once on a new Native turn chain. Continuations retain the same Native thread;
+ * resending selected pixels would consume the durable binding's cumulative budget again.
+ */
+export function projectNativeSelectedAttachments(input: {
+  attachments: readonly NativeSelectedAttachment[];
+  modelImageInput: boolean;
+}): { context: NativeSelectedAttachmentContext[]; images: OwnedNativeImage[] } {
+  if (!Array.isArray(input.attachments) || input.attachments.length > NATIVE_SELECTED_MAX_FILES + NATIVE_SELECTED_MAX_IMAGES) reject();
+  const context: NativeSelectedAttachmentContext[] = [], images: OwnedNativeImage[] = [];
+  const selections = new Set<string>();
+  let fileCount = 0, textBytes = 0, imageBytes = 0;
+  for (const value of input.attachments) {
+    const attachment = selectedAttachment(value);
+    if (selections.has(attachment.selectionId)) reject();
+    selections.add(attachment.selectionId);
+    const bytes = Buffer.from(attachment.data, 'base64');
+    if (bytes.length !== attachment.byteLength || bytes.toString('base64') !== attachment.data
+      || createHash('sha256').update(bytes).digest('hex') !== attachment.sha256) reject();
+    const { data, ...metadata } = attachment;
+    if (attachment.mimeType === 'text/plain') {
+      if (++fileCount > NATIVE_SELECTED_MAX_FILES || (textBytes += bytes.length) > NATIVE_SELECTED_MAX_TEXT_BYTES) reject();
+      let text: string;
+      try { text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); } catch { reject(); }
+      if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(text!)) reject();
+      context.push({ kind: 'selected-attachment', ...metadata, delivery: 'included', text: text! });
+    } else {
+      if (input.modelImageInput !== true || images.length >= NATIVE_SELECTED_MAX_IMAGES
+        || (imageBytes += bytes.length) > NATIVE_SELECTED_MAX_IMAGE_BYTES) reject();
+      const inspected = inspectBoundedImageBytes(bytes, attachment.mimeType);
+      const attachmentIndex = images.length;
+      images.push({ data, ...inspected, source: { kind: 'selected-attachment', selectionId: attachment.selectionId,
+        receipt: attachment.receipt, name: attachment.name, attachmentIndex } });
+      context.push({ kind: 'selected-attachment', ...metadata, delivery: 'included', attachmentIndex });
+    }
+  }
+  return { context, images: validateOwnedNativeImages(images) };
 }

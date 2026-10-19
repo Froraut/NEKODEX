@@ -11,10 +11,19 @@ function number(value:string|null,fallback:number,max:number){if(value===null)re
 const safeId=(value:unknown)=>typeof value==="string"&&value.length>0&&Buffer.byteLength(value)<=512&&!/[\u0000-\u001f]/u.test(value)?value:undefined;
 function metadata(row:ControlTaskMetadata){
   const id=safeId(row?.id),state=safeId(row?.state);if(!id||!state)throw new Error("Invalid source metadata");
-  return {id,state,...Object.fromEntries(["kind","mode"].flatMap(field=>{const value=safeId(row[field as keyof ControlTaskMetadata]);return value?[[field,value]]:[];})),
+  return {id,state,...Object.fromEntries(["kind","mode","familyId"].flatMap(field=>{const value=safeId(row[field as keyof ControlTaskMetadata]);return value?[[field,value]]:[];})),
     ...Object.fromEntries(["generation","revision","createdAt","updatedAt"].flatMap(field=>{const value=row[field as keyof ControlTaskMetadata];return typeof value==="number"&&Number.isSafeInteger(value)&&value>=0?[[field,value]]:[];}))};
 }
 function page(rows:readonly ControlTaskMetadata[],limit:number,offset:number){return {items:rows.slice(offset,offset+limit).map(metadata),total:rows.length,limit,offset,hasMore:offset+limit<rows.length,content:"metadata-only"};}
+/** Owner receipts can contain full task plans. External action adapters expose
+ * only the exact accepted scope and state, never those retained task contents. */
+function actionMetadata(input:{actionId:string;operation:string},value:unknown){
+  const receipt=value&&typeof value==="object"?value as Record<string,unknown>:{};
+  const raw=receipt.task&&typeof receipt.task==="object"?receipt.task as Record<string,unknown>:undefined;
+  const task=raw?metadata({...raw,state:raw.status} as unknown as ControlTaskMetadata):undefined;
+  return {actionId:input.actionId,operation:input.operation,...(task?{task:{...task,status:task.state}}:{}),
+    ...(typeof receipt.duplicate==="boolean"?{duplicate:receipt.duplicate}:{}),...(safeId(receipt.dispatchId)?{dispatchId:receipt.dispatchId}:{})};
+}
 /** Mount before other auth dispatch. Read credentials are rejected on every
  * non-versioned route, including admin routes, even when their format is forged. */
 export function createLocalControlApiRoutes(options:LocalControlApiRouteOptions):(request:Request)=>Promise<Response|undefined>{
@@ -28,13 +37,21 @@ export function createLocalControlApiRoutes(options:LocalControlApiRouteOptions)
     try {
       if(url.pathname==="/admin/local-control-api"||url.pathname==="/admin/local-control-api-action"){
         if(token.startsWith("nk-read-")||!options.authorizeAdmin(request))return fail("admin_authority_required",403);
+        if(url.pathname.endsWith("-action") && request.method === "GET") {
+          if(!options.agentActionReceipt)return fail("action_owner_unavailable",503);
+          const keys=["taskId","actionId","familyId","generation","revision","operation","explicitUserAction"];
+          if([...url.searchParams.keys()].some(key=>!keys.includes(key)) || keys.some(key=>url.searchParams.getAll(key).length!==1))return fail("invalid_request",400);
+          const input=actionSchema.parse({...Object.fromEntries(url.searchParams),generation:Number(url.searchParams.get("generation")),revision:Number(url.searchParams.get("revision")),explicitUserAction:url.searchParams.get("explicitUserAction")==="true"});
+          const receipt=await options.agentActionReceipt(input);
+          return result(receipt===undefined?{found:false,actionId:input.actionId}:actionMetadata(input,receipt));
+        }
         if(request.method!=="POST")return fail("method_not_allowed",405);
         const body=await readJsonRequestBody(request,16384,16384);
         if(url.pathname.endsWith("-action")){
           if(!options.agentAction)return fail("action_owner_unavailable",503);
           const input=actionSchema.parse(body);
           // Delegate once to the existing owner/outbox. No retry, scheduler or sender here.
-          return result(await options.agentAction(input),202);
+          return result(actionMetadata(input,await options.agentAction(input)),202);
         }
         const input=z.object({action:z.enum(["status","enable","disable","rotate","history-consent"]),consent:z.boolean().optional(),enabled:z.boolean().optional()}).strict().parse(body);
         return result(input.action==="status"?{status:policy.status()}:policy.change(input.action,input));

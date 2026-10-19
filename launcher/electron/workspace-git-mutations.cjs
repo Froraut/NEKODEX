@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { randomUUID, createHash } = require("node:crypto");
+const { createLocalGitReviewService } = require("./local-git-review.cjs");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const { CAPTURE_LIMITS, relative, selectedPaths, chain, assertChain, targetFile, captureFile, captureFiles } = require("./workspace-file-capture.cjs");
 const LIMITS = Object.freeze({ ...CAPTURE_LIMITS,
@@ -61,8 +62,8 @@ async function filterNames(root) {
 }
 
 /** resolveWorkspace is a main-process picker-grant port, never a renderer-supplied path. */
-function createWorkspaceGitService({ resolveWorkspace, storagePath, canArchiveWorktree = () => true }) {
-  if (typeof resolveWorkspace !== "function" || typeof canArchiveWorktree !== "function" || typeof storagePath !== "string" || !path.isAbsolute(storagePath)) {
+function createWorkspaceGitService({ resolveWorkspace, storagePath, canArchiveWorktree = () => true, getDraftPaths = () => [] }) {
+  if (typeof resolveWorkspace !== "function" || typeof canArchiveWorktree !== "function" || typeof getDraftPaths !== "function" || typeof storagePath !== "string" || !path.isAbsolute(storagePath)) {
     throw new TypeError("Trusted workspace resolver and private storage path are required.");
   }
   // Validate before mkdir so an existing symlink cannot redirect private snapshot storage.
@@ -167,7 +168,7 @@ function createWorkspaceGitService({ resolveWorkspace, storagePath, canArchiveWo
     if (!shutdown) {
       admissionOpen = false;
       // Existing owners finish Git and publish their durable terminal/recovery receipts. No shutdown kill/deadline.
-      shutdown = Promise.allSettled([...owners.values()].map((owner) => owner.terminal)).then(() => { previews.clear(); });
+      shutdown = Promise.all([Promise.allSettled([...owners.values()].map((owner) => owner.terminal)), localReview.destroy()]).then(() => { previews.clear(); });
     }
     return shutdown;
   }
@@ -192,15 +193,15 @@ function createWorkspaceGitService({ resolveWorkspace, storagePath, canArchiveWo
     }
     return value;
   }
-  async function inspectOwned(root, record) {
-    recheck(root); assertChain(chain(record.path));
-    if (nodeIdentity(fs.lstatSync(record.path)) !== record.identity) fail("WORKTREE_CHANGED", "Managed worktree directory changed.");
+  async function inspectOwned(root, record, directory = record.path) {
+    recheck(root); assertChain(chain(directory));
+    if (nodeIdentity(fs.lstatSync(directory)) !== record.identity) fail("WORKTREE_CHANGED", "Managed worktree directory changed.");
     const worktrees = (await checkedGit(root.path, ["worktree", "list", "--porcelain", "-z"])).split("\0\0");
-    const match = worktrees.some((block) => block.split("\0").includes(`worktree ${record.path}`)
+    const match = worktrees.some((block) => block.split("\0").includes(`worktree ${directory}`)
       && block.split("\0").includes(`branch refs/heads/${record.branch}`));
     if (!match) fail("WORKTREE_CHANGED", "Git ownership or branch no longer matches this worktree receipt.");
-    const headOid = (await checkedGit(record.path, ["rev-parse", "--verify", "HEAD^{commit}"])).trim();
-    const status = await checkedGit(record.path, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=all"]);
+    const headOid = (await checkedGit(directory, ["rev-parse", "--verify", "HEAD^{commit}"])).trim();
+    const status = await checkedGit(directory, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=all"]);
     recheck(root);
     return { headOid, status, revision: hash(`${headOid}\0${status}`) };
   }
@@ -270,15 +271,21 @@ function createWorkspaceGitService({ resolveWorkspace, storagePath, canArchiveWo
     const root = rootFor(id);
     if (active.has(id)) fail("WORKSPACE_BUSY", "A workspace operation is already active.");
     const record = owned(root, worktreeId);
-    if (record.state !== "ready") fail("WORKTREE_PENDING", "Only a ready owned worktree can be opened.");
-    await inspectOwned(root, record);
+    const expectedState = record.state;
+    if (!["ready", "archived"].includes(expectedState)) fail("WORKTREE_PENDING", "Inspect this worktree's retained operation before opening it.");
+    const directory = expectedState === "archived" ? record.archivePath : record.path;
+    if (expectedState === "archived" && directory !== path.join(storagePath, "archives", record.id)) {
+      fail("WORKTREE_CHANGED", "Archived checkout has no matching private recovery location.");
+    }
+    await inspectOwned(root, record, directory);
     recheck(root);
-    if (active.has(id) || record.state !== "ready") fail("WORKSPACE_BUSY", "Worktree ownership changed while opening it.");
-    assertChain(chain(record.path));
-    if (fs.realpathSync(record.path) !== record.path || nodeIdentity(fs.lstatSync(record.path)) !== record.identity) {
+    if (active.has(id) || record.state !== expectedState) fail("WORKSPACE_BUSY", "Worktree ownership changed while opening it.");
+    assertChain(chain(directory));
+    if (fs.realpathSync(directory) !== directory || nodeIdentity(fs.lstatSync(directory)) !== record.identity) {
       fail("WORKTREE_CHANGED", "Managed worktree directory changed.");
     }
-    return Object.freeze({ id: record.id, path: record.path });
+    // Recovery opens the preserved checkout in place: no reset, branch recreation or restore replay.
+    return Object.freeze({ id: record.id, path: directory });
   }
   async function listWorktrees(id) {
     const root = rootFor(id);
@@ -434,12 +441,17 @@ function createWorkspaceGitService({ resolveWorkspace, storagePath, canArchiveWo
       throw failure;
     }
   }
-  return Object.freeze({ hasRetainedState(id) {
+  const localReview = createLocalGitReviewService({ storagePath, rootFor, recheck, own, exclusive, getDraftPaths });
+  return Object.freeze({
+    reviewBases: localReview.bases, reviewCapture: localReview.capture, reviewDiff: localReview.diff,
+    reviewPrepare: localReview.prepare, reviewApply: localReview.apply, reviewInspectAction: localReview.inspectAction,
+    reviewListActions: localReview.listActions, reviewPruneActions: localReview.pruneActions,
+    hasRetainedState(id) {
     identifier(id);
-    return active.has(id) || state.worktrees.some((entry) => entry.workspaceId === id)
+    return active.has(id) || localReview.hasRetainedState(id) || state.worktrees.some((entry) => entry.workspaceId === id)
       || state.snapshots.some((entry) => entry.workspaceId === id)
       || state.restores.some((entry) => entry.workspaceId === id && entry.state !== "complete");
-  }, currentOperation, destroy,
+  }, currentOperation: () => currentOperation() || localReview.currentOperation(), destroy,
     resolveManagedRoot: async (id, worktreeId) => own(id, "read", "Opening managed worktree", () => resolveManagedRoot(id, worktreeId)),
     listWorktrees: async (id) => own(id, "read", "Inspecting managed worktrees", () => listWorktrees(id)),
     createWorktree,

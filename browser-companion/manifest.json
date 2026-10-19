@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "NEKODEX Browser Companion",
-  "description": "Pair a selected page with your local NEKODEX task while this popup stays open.",
+  "description": "Pair one selected page with your local NEKODEX task using an explicitly opened sharing session.",
   "version": "0.1.0",
   "minimum_chrome_version": "106",
   "permissions": ["activeTab", "scripting", "storage"],

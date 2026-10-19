@@ -84,7 +84,7 @@ export function createOwnedNativeAccountServer(options:{
 }):{
   prepare():Promise<void>;
   createWorker(binding:import('./agent-native-bridge.cjs').AgentNativeBinding,onReceipt?:(receipt:OwnedNativeReceipt)=>void):ReturnType<typeof createOwnedNativeWorkerService>;
-  /** Main-only exclusive account operation. No raw RPC or foreign-thread adoption. */
+  /** Main-only exact-conversation operation. Independent known persistent owners may overlap within account capacity; uncertain ownership blocks new mutations. No raw RPC or foreign-thread adoption. */
   persistentOperation<T>(action:(operation:{
     createWorker(binding:import('./agent-native-bridge.cjs').AgentNativeBinding,onReceipt?:(receipt:OwnedNativeReceipt)=>void,forkThreadId?:string):ReturnType<typeof createOwnedNativeWorkerService>;
     useWorker(worker:ReturnType<typeof createOwnedNativeWorkerService>):ReturnType<typeof createOwnedNativeWorkerService>;

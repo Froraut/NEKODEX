@@ -383,23 +383,59 @@ try:
   if parents!=record.get('parents') or trees!=[record.get('stagedTree')]: return False
   if repo['mergeHeads'] and merge_state()!={k:None for k in ['MERGE_HEAD','MERGE_MSG','MERGE_MODE']}: return False
   return True
+ def unpublished_proven(record,observed):
+  if observed!=record['repository'] or record.get('refIntent'): return False
+  if not record.get('publicationIntent'): return True
+  if record['operation'] not in ('stage','unstage'): return False
+  lock=record.get('indexLock',{}); path=lock.get('path')
+  if path!=index+'.lock' or not lock.get('identity'): return False
+  try: before=os.lstat(path)
+  except FileNotFoundError: return False
+  if identity_stat(before)!=lock['identity'] or before.st_uid!=os.getuid() or before.st_nlink!=1: return False
+  data=read_file(path,MAX_OUTPUT)
+  return data is not None and sha(data)==record.get('afterIndexDigest')
+ def settle_record_locks(record):
+  # Only a physically retired helper with terminal repository proof may leave
+  # these exact locks behind. Never unlink a replacement or a Git child's lock.
+  owner=record.get('owner')
+  if not owner or process_identity(owner['pid'])==owner: return
+  gate=read_gate()
+  if gate is None or not gate_matches(gate,record): return
+  locks=([record['indexLock']] if record.get('indexLock') else [])+record.get('mergeLocks',[])
+  allowed={index+'.lock'}|{os.path.join(gitdir,name+'.lock') for name in ['MERGE_HEAD','MERGE_MSG','MERGE_MODE']}
+  for lock in locks:
+   path=lock.get('path')
+   if path not in allowed: refuse('Retained lock ownership is invalid')
+   try: before=os.lstat(path)
+   except FileNotFoundError: continue
+   if str(before.st_dev)!=lock.get('dev') or str(before.st_ino)!=lock.get('ino'): continue
+   # Inode numbers can be reused after a user replaces a stale lock. Legacy
+   # records without the exact creation signature remain inspection-only.
+   if lock.get('identity')!=identity_stat(before): continue
+   if not stat.S_ISREG(before.st_mode) or before.st_uid!=os.getuid() or before.st_nlink!=1: refuse('Retained lock ownership is unsafe')
+   after=os.lstat(path)
+   if identity_stat(before)!=identity_stat(after): refuse('Retained lock changed during settlement')
+   os.unlink(path); sync_directory(gitdir)
  def inspect_record(record,path):
   state=record.get('state','unknown'); operation=record['operation']; repo=record['repository']; observed=repository(); evidence={'indexDigest':observed['indexDigest'],'headOid':observed['headOid'],'headRef':observed['headRef'],'mergeStateDigest':observed['mergeStateDigest']}
   if record.get('state') in ('completed','failed'):
    gate=read_gate()
    if gate is not None and gate_matches(gate,record) and record['state']=='completed' and not effect_proven(record,observed):
     return {'actionId':record['actionId'],'requestDigest':record['requestDigest'],'state':'unknown','operation':operation,'result':record.get('result'),'reason':'Known Git result is retained but shared-gate postconditions changed','evidence':evidence,'ownerHeld':True,'replayed':False}
-   held=settle_gate(record)
+   settle_record_locks(record); held=settle_gate(record)
    return {'actionId':record['actionId'],'requestDigest':record['requestDigest'],'state':'unknown' if held else record['state'],'operation':operation,'result':record.get('result'),'reason':'Shared repository gate is still held' if held else record.get('reason'),'evidence':evidence,'ownerHeld':held,'replayed':False}
   owner=record.get('owner')
   if not owner or process_identity(owner['pid'])==owner:
    return {'actionId':record['actionId'],'requestDigest':record['requestDigest'],'state':'unknown','operation':operation,'reason':'Remote mutation owner has not physically settled','evidence':evidence,'ownerHeld':True,'replayed':False}
   proven=effect_proven(record,observed)
   if proven:
-   next_record=dict(record); next_record.update({'state':'completed','phase':'reconciled','result':record.get('result') or {'indexDigest':observed['indexDigest'],'commitOid':record.get('candidateCommitOid'),'treeOid':record.get('stagedTree')}}); persist_record(path,next_record); record=next_record; state='completed'
-  elif not record.get('publicationIntent') and not record.get('refIntent') and observed==repo:
+   result={'indexDigest':observed['indexDigest'],'reconciled':True}
+   if operation=='commit': result.update({'commitOid':record['candidateCommitOid'],'treeOid':record['stagedTree']})
+   next_record=dict(record); next_record.update({'state':'completed','phase':'reconciled','result':record.get('result') or result}); persist_record(path,next_record); record=next_record; state='completed'
+  elif unpublished_proven(record,observed):
    next_record=dict(record); next_record.update({'state':'failed','phase':'reconciled','reason':'No reviewed index/ref transition was published'}); persist_record(path,next_record); record=next_record; state='failed'
   else: state='unknown'
+  if state in ('completed','failed'): settle_record_locks(record)
   held=settle_gate(record) if state in ('completed','failed') else True
   return {'actionId':record['actionId'],'requestDigest':record['requestDigest'],'state':'unknown' if held else state,'operation':operation,'result':record.get('result'),'reason':'Shared repository gate is still held' if held else record.get('reason'),'evidence':evidence,'ownerHeld':held,'replayed':False}
  def release_lock():
@@ -452,7 +488,7 @@ try:
   lockstat=os.fstat(lockfd); owned_lock=(lockpath,lockstat.st_dev,lockstat.st_ino)
   candidate=os.path.join(parent,action_id+'.candidate-index'); candidate_stat=None; merge_locks=[]
   try:
-   save(indexLock={'path':lockpath,'dev':str(lockstat.st_dev),'ino':str(lockstat.st_ino)})
+   save(indexLock={'path':lockpath,'dev':str(lockstat.st_dev),'ino':str(lockstat.st_ino),'identity':identity_stat(lockstat)})
    fresh(plan['capture'])
    original=read_file(index,MAX_OUTPUT)
    fd=os.open(candidate,os.O_CREAT|os.O_EXCL|os.O_WRONLY|os.O_NOFOLLOW,0o600)
@@ -491,7 +527,7 @@ try:
     else:
      mask=os.umask(0); os.umask(mask); os.fchmod(lockfd,0o644&~mask)
     os.fsync(lockfd)
-    save(publicationIntent=True,afterIndexDigest=after_digest,phase='index-publication')
+    save(publicationIntent=True,afterIndexDigest=after_digest,indexLock={'path':lockpath,'dev':str(lockstat.st_dev),'ino':str(lockstat.st_ino),'identity':identity_stat(os.fstat(lockfd))},phase='index-publication')
     if repository()!=repo or index_digest()!=repo['indexDigest'] or index_metadata()!=metadata: refuse('Index or reference changed before publication')
     if identity_stat(os.fstat(lockfd))[:2]!=[str(owned_lock[1]),str(owned_lock[2])]: refuse('Owned index lock changed')
     s=os.lstat(lockpath)
@@ -507,7 +543,7 @@ try:
       try: mf=os.open(path,os.O_CREAT|os.O_EXCL|os.O_WRONLY|os.O_NOFOLLOW,0o600)
       except FileExistsError: refuse('Merge metadata is locked by another owner')
       ms=os.fstat(mf); os.close(mf); merge_locks.append((path,ms.st_dev,ms.st_ino))
-      save(mergeLocks=[{'path':v[0],'dev':str(v[1]),'ino':str(v[2])} for v in merge_locks])
+      save(mergeLocks=[{'path':v[0],'dev':str(v[1]),'ino':str(v[2]),'identity':identity_stat(os.lstat(v[0]))} for v in merge_locks])
      if merge_state()!=plan['mergeState']: refuse('Reviewed merge metadata changed')
     tree=text(['write-tree'],writing=True,extra_env=candidate_env)
     if not oid(tree): refuse('Staged tree identity is invalid')

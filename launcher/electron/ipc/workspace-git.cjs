@@ -25,6 +25,37 @@ function registerWorkspaceGitIpc({ registerIpcHandler, service }) {
     if (args.length !== count) throw new Error("Unexpected workspace operation arguments");
     return action(...args);
   });
+  handle("launcher:workspace-git-review-bases", 1, workspaceId => service.reviewBases(id(workspaceId)));
+  handle("launcher:workspace-git-review-capture", 2, (workspaceId, value) => {
+    const input = object(value, ["baseId"]);
+    return service.reviewCapture(id(workspaceId), input.baseId === undefined ? {} : { baseId: id(input.baseId) });
+  });
+  handle("launcher:workspace-git-review-diff", 2, (workspaceId, value) => {
+    const input = object(value, ["captureId", "kind", "path", "stage"]);
+    id(input.captureId);
+    if (!["worktree", "staged", "base", "conflict"].includes(input.kind)) throw new Error("Invalid local Git diff kind");
+    if (input.path !== undefined) paths([input.path]);
+    if (input.kind === "conflict" ? !input.path || ![1, 2, 3].includes(input.stage) : input.stage !== undefined) throw new Error("Invalid conflict stage");
+    return service.reviewDiff(id(workspaceId), input);
+  });
+  handle("launcher:workspace-git-review-prepare", 2, (workspaceId, value) => {
+    const input = object(value, ["actionId", "captureId", "operation", "paths", "message", "author"]);
+    id(input.actionId); id(input.captureId);
+    // The controller validates operation-specific fields and exact bounded author/message data.
+    if (input.paths !== undefined) paths(input.paths);
+    return service.reviewPrepare(id(workspaceId), input);
+  });
+  handle("launcher:workspace-git-review-apply", 2, (workspaceId, value) => {
+    const input = object(value, ["actionId", "reviewDigest"]); id(input.actionId);
+    if (typeof input.reviewDigest !== "string" || !/^[a-f0-9]{64}$/.test(input.reviewDigest)) throw new Error("Invalid exact local Git review");
+    return service.reviewApply(id(workspaceId), input);
+  });
+  handle("launcher:workspace-git-review-inspect-action", 2, (workspaceId, actionId) => service.reviewInspectAction(id(workspaceId), id(actionId)));
+  handle("launcher:workspace-git-review-list-actions", 1, workspaceId => service.reviewListActions(id(workspaceId)));
+  handle("launcher:workspace-git-review-prune-actions", 2, (workspaceId, actionIds) => {
+    if (!Array.isArray(actionIds) || !actionIds.length || actionIds.length > 32) throw new Error("Invalid settled local Git actions");
+    return service.reviewPruneActions(id(workspaceId), actionIds.map(id));
+  });
   handle("launcher:workspace-worktrees", 1, (workspaceId) => service.listWorktrees(id(workspaceId)));
   handle("launcher:workspace-worktree-create", 2, (workspaceId, value) => {
     const input = object(value, ["name", "expectedHeadOid"]);

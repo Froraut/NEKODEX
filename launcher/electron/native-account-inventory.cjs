@@ -175,11 +175,13 @@ function createNativeAccountInventoryService({ authority, getWrapperPin, acquire
       lock = path.join(p.root, '.inventory-owner'); lockBytes = JSON.stringify({ actionId, pid: process.pid, nonce: randomUUID() });
       fs.writeFileSync(lock, lockBytes, { flag: 'wx', mode: 0o600 }); save(row);
       const pin = clone(await getWrapperPin());
-      if (fileDigest(pin.executable) !== pin.executableSha256) throw fail('native_wrapper_pin_changed', 'Native wrapper binary changed');
+      if (pin.wrapperBuildPin?.kind !== 'publisher-signed-app' && fileDigest(pin.executable) !== pin.executableSha256) throw fail('native_wrapper_pin_changed', 'Native wrapper binary changed');
       (testHooks.verifyWrapper || verifyWrapper)(pin.executable, pin.executableSha256, pin.wrapperBuildPin);
       const bootstrapPath = path.join(pin.wrapperBuildPin.sourceRoot, 'build', pin.target, 'official-bootstrap-models.json');
+      const bootstrapBytes = () => pin.wrapperBuildPin.kind === 'publisher-signed-app'
+        ? require('./owned-native-production-pin.cjs').readProductionNativeBootstrap(pin) : regular(bootstrapPath, MAX_LINE);
       if (pin.officialBootstrapCatalog?.path !== bootstrapPath || pin.officialBootstrapCatalog?.sha256 !== BOOTSTRAP_SHA
-        || digest(regular(bootstrapPath, MAX_LINE)) !== BOOTSTRAP_SHA) throw fail('bootstrap_pin_changed', 'Official bundled bootstrap source changed');
+        || digest(bootstrapBytes()) !== BOOTSTRAP_SHA) throw fail('bootstrap_pin_changed', 'Official bundled bootstrap source changed');
       function unchanged() {
         const current = authority.resolveProfile(profileId, epoch, lease);
         if (current.configSha256 !== expectedHash || current.root !== p.root || (!(owner && !owner.closed && !owner.classifier) && authStat(p) !== baselineAuth)
@@ -210,7 +212,7 @@ function createNativeAccountInventoryService({ authority, getWrapperPin, acquire
       transition('classify'); await launch(true).classify(); await owner.close(); owner = null; operation.owner = null; unchanged();
       privateDirectory(path.join(p.root, 'log'));
       const bootstrap = path.join(p.root, 'official-bootstrap-models.json');
-      try { fs.writeFileSync(bootstrap, regular(bootstrapPath, MAX_LINE), { flag: 'wx', mode: 0o600 }); } catch (e) { if (e.code !== 'EEXIST') throw e; }
+      try { fs.writeFileSync(bootstrap, bootstrapBytes(), { flag: 'wx', mode: 0o600 }); } catch (e) { if (e.code !== 'EEXIST') throw e; }
       if (digest(boundedPrivate(bootstrap, MAX_LINE)) !== BOOTSTRAP_SHA) throw fail('bootstrap_pin_changed', 'Private bootstrap bytes changed');
       async function publish(config) {
         unchanged(); const configText = Object.entries(config).map(([k,v]) => `${k} = ${toml(v)}\n`).join('');

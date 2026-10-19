@@ -84,6 +84,7 @@ func lastInputTime() -> TimeInterval {
     var image: Captured?
     var uncertain = false
     let session = UUID().uuidString.lowercased()
+    var propertyElements: [(AXUIElement, String)] = []
 
     func permissions() -> [String: Any] {
         ["screenCaptureGranted": CGPreflightScreenCaptureAccess(), "accessibilityGranted": AXIsProcessTrusted(),
@@ -127,6 +128,22 @@ func lastInputTime() -> TimeInterval {
               CFGetTypeID(element) == AXUIElementGetTypeID() else { return nil }
         return (element as! AXUIElement)
     }
+    // CG's complete stacking order includes menus, sheets and nonstandard layers that
+    // the selectable normal-window inventory intentionally omits. Never send a pixel
+    // click through one of those surfaces, even when it belongs to the same PID.
+    func pixelTarget(_ row: WindowRow, point: CGPoint) throws {
+        guard let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]],
+              let hit = rows.first(where: { value in
+                  guard (number(value[kCGWindowAlpha as String]) ?? 1) > 0,
+                        let bounds = value[kCGWindowBounds as String] as? NSDictionary,
+                        let frame = CGRect(dictionaryRepresentation: bounds) else { return false }
+                  return frame.contains(point)
+              }), number(hit[kCGWindowNumber as String]) == Double(row.id),
+              number(hit[kCGWindowOwnerPID as String]) == Double(row.pid) else { try reject("pixel-target-occluded-or-changed") }
+        guard !CGEventSource.buttonState(.combinedSessionState, button: .left),
+              !CGEventSource.buttonState(.combinedSessionState, button: .right),
+              !CGEventSource.buttonState(.combinedSessionState, button: .center) else { try reject("human-mouse-button-held") }
+    }
     func inputOwner(_ row: WindowRow, expectedFocus: AXUIElement?) throws {
         guard AXIsProcessTrusted(), CGPreflightPostEventAccess(), NSWorkspace.shared.frontmostApplication?.processIdentifier == row.pid,
               let target = selectedAX, axWindows(row).contains(where: { CFEqual($0, target) }),
@@ -151,6 +168,7 @@ func lastInputTime() -> TimeInterval {
         while !pending.isEmpty && seen.count < 512 && result.count < 128 {
             let (element, depth) = pending.removeLast()
             if seen.contains(where: { CFEqual($0, element) }) { continue }; seen.append(element)
+            if (attribute(element, kAXSubroleAttribute as CFString) as? String) == (kAXSecureTextFieldSubrole as String) { continue }
             if depth < 12, let children = attribute(element, kAXChildrenAttribute as CFString) as? [AXUIElement] {
                 pending.append(contentsOf: children.prefix(128).map { ($0, depth + 1) })
             }
@@ -178,7 +196,7 @@ func lastInputTime() -> TimeInterval {
             var range: CFRange?
             if isText, let value = attribute(element, kAXSelectedTextRangeAttribute as CFString), CFGetTypeID(value) == AXValueGetTypeID() {
                 var r = CFRange(); if AXValueGetValue(value as! AXValue, .cfRange, &r), r.location >= 0, r.length >= 0,
-                    r.location + r.length <= (textValue?.utf16.count ?? 0) { range = r }
+                    r.location <= (textValue?.utf16.count ?? 0), r.length <= (textValue?.utf16.count ?? 0) - r.location { range = r }
             }
             let title = attribute(element, kAXTitleAttribute as CFString) as? String ?? ""
             let valueState: Any = textValue ?? (rawValue as? NSNumber)?.stringValue ?? ""
@@ -189,6 +207,47 @@ func lastInputTime() -> TimeInterval {
                 selectedTextWritable: selectedWritable.boolValue, valueWritable: valueWritable.boolValue,
                 value: textValue, range: range, depth: depth))
         }
+        return result
+    }
+    // Trusted property readback has its own fresh AX read. It neither captures the
+    // screen nor turns an input receipt into an application result.
+    func applicationProperties(_ row: WindowRow) throws -> [[String: Any]] {
+        let window = try boundWindow(row)
+        var result: [[String: Any]] = []; var seen: [AXUIElement] = []; var pending: [(AXUIElement, Int)] = [(window, 0)]
+        while !pending.isEmpty && seen.count < 512 && result.count < 128 {
+            let (element, depth) = pending.removeLast()
+            if seen.contains(where: { CFEqual($0, element) }) { continue }; seen.append(element)
+            guard (attribute(element, kAXSubroleAttribute as CFString) as? String) != (kAXSecureTextFieldSubrole as String),
+                  (attribute(element, kAXHiddenAttribute as CFString) as? Bool) != true else { continue }
+            var pid: pid_t = 0
+            guard AXUIElementGetPid(element, &pid) == .success, pid == row.pid else { continue }
+            if let elementWindow = attribute(element, kAXWindowAttribute as CFString), !CFEqual(elementWindow, window) { continue }
+            if depth < 12, let children = attribute(element, kAXChildrenAttribute as CFString) as? [AXUIElement] {
+                pending.append(contentsOf: children.prefix(128).map { ($0, depth + 1) })
+            }
+            guard let frame = axFrame(element), frame.width > 0, frame.height > 0, !frame.intersection(row.frame).isNull,
+                  let role = attribute(element, kAXRoleAttribute as CFString) as? String else { continue }
+            let identifier = attribute(element, kAXIdentifierAttribute as CFString) as? String
+            let title = attribute(element, kAXTitleAttribute as CFString) as? String
+            let rawValue = attribute(element, kAXValueAttribute as CFString)
+            var value: Any?
+            if let text = rawValue as? String, text.utf16.count <= 4096 { value = text }
+            else if let numeric = rawValue as? NSNumber, numeric.doubleValue.isFinite { value = numeric }
+            let elementID: String
+            if let retained = propertyElements.first(where: { CFEqual($0.0, element) }) { elementID = retained.1 }
+            else {
+                guard propertyElements.count < 512 else { try reject("property-identity-capacity") }
+                elementID = "ax-" + UUID().uuidString.lowercased(); propertyElements.append((element, elementID))
+            }
+            var item: [String: Any] = ["elementId": elementID, "role": String(role.prefix(160))]
+            if let identifier = identifier, !identifier.isEmpty, identifier.utf16.count <= 512 { item["identifier"] = identifier }
+            if let title = title, !title.isEmpty, title.utf16.count <= 512 { item["title"] = title }
+            if let value = value { item["value"] = value }
+            if let enabled = attribute(element, kAXEnabledAttribute as CFString) as? Bool { item["enabled"] = enabled }
+            if let focused = attribute(element, kAXFocusedAttribute as CFString) as? Bool { item["focused"] = focused }
+            result.append(item)
+        }
+        guard let encoded = try? JSONSerialization.data(withJSONObject: result), encoded.count <= 60 * 1024 else { try reject("property-snapshot-size-limit") }
         return result
     }
     func capture(_ row: WindowRow, scope: String) async throws -> Captured {
@@ -236,15 +295,25 @@ func lastInputTime() -> TimeInterval {
             return ["windows": windows().map(\.json)]
         case "enable":
             guard exact(request, base + ["enabled"]), let value = request["enabled"] as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() else { try reject("invalid-request") }
-            enabled = value.boolValue; selected = nil; selectedAX = nil; captured = nil; image = nil
+            enabled = value.boolValue; selected = nil; selectedAX = nil; captured = nil; image = nil; propertyElements = []
             return ["enabled": enabled]
         case "select":
             guard exact(request, base + ["selection"]), enabled, !uncertain,
                   let selection = request["selection"] as? [String: Any], exact(selection, ["windowId", "processId", "windowEpoch"]),
                   let row = windows().first(where: { $0.json["windowId"] as? String == selection["windowId"] as? String
                     && $0.processID == selection["processId"] as? String && $0.epoch == selection["windowEpoch"] as? String }) else { try reject("selection-unavailable-or-changed") }
-            selected = row; selectedAX = matchAX(row); captured = nil; image = nil
+            selected = row; selectedAX = matchAX(row); captured = nil; image = nil; propertyElements = []
             return ["selected": row.json, "inputWindowBound": selectedAX != nil]
+        case "properties":
+            guard exact(request, base + ["selection"]), enabled, !uncertain, AXIsProcessTrusted(),
+                  let selection = request["selection"] as? [String: Any], exact(selection, ["windowId", "processId", "windowEpoch"]) else { try reject("property-read-unavailable") }
+            let row = try currentWindow()
+            guard selection["windowId"] as? String == String(row.id), selection["processId"] as? String == row.processID,
+                  selection["windowEpoch"] as? String == row.epoch else { try reject("property-selection-changed") }
+            let properties = try applicationProperties(row)
+            let current = try currentWindow(); _ = try boundWindow(current)
+            guard sameFrame(current.frame, row.frame), token(properties) == token(try applicationProperties(current)) else { try reject("property-state-changed-during-read") }
+            return ["selection": selection, "observedAt": ISO8601DateFormatter().string(from: Date()), "properties": properties]
         case "observe":
             guard exact(request, base + ["scopeId"]), !uncertain, let scope = string(request["scopeId"]) else { try reject("observation-unavailable") }
             captured = nil; image = nil
@@ -277,7 +346,6 @@ func lastInputTime() -> TimeInterval {
                   fresh.binding["frameEpoch"] as? String == binding["frameEpoch"] as? String else { return receipt("rejected", false, "screen-or-frame-changed") }
             let current = try currentWindow()
             guard sameFrame(current.frame, original.frame) else { return receipt("rejected", false, "owner-or-frame-changed") }
-            let source = CGEventSource(stateID: .privateState)
             if action["kind"] as? String == "click" {
                 guard exact(action, ["kind", "x", "y"]), let x = number(action["x"]), let y = number(action["y"]),
                       x.rounded() == x, y.rounded() == y, x >= 0, y >= 0,
@@ -299,9 +367,15 @@ func lastInputTime() -> TimeInterval {
                 // Generic event input is available only when the selected exact window is already foreground.
                 try inputOwner(current, expectedFocus: original.focusedElement)
                 guard fresh.lastInput <= original.lastInput + 0.005, lastInputTime() <= original.lastInput + 0.005 else { return receipt("rejected", false, "human-input-changed") }
-                guard let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
+                guard let source = CGEventSource(stateID: .privateState),
+                      let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
                       let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) else { return receipt("rejected", false, "event-unavailable") }
                 guard getppid() == initialParent else { return receipt("rejected", false, "parent-owner-exited") }
+                // Recheck focus, point stacking and physical button/modifier state as
+                // close to dispatch as possible; no activation or click-through.
+                try inputOwner(try currentWindow(), expectedFocus: original.focusedElement)
+                try pixelTarget(current, point: point)
+                guard lastInputTime() <= original.lastInput + 0.005 else { return receipt("rejected", false, "human-input-changed") }
                 down.flags = []; up.flags = []; down.postToPid(row.pid); up.postToPid(row.pid)
             } else if action["kind"] as? String == "type" {
                 guard exact(action, ["kind", "text"]), let text = action["text"] as? String, !text.isEmpty, text.utf16.count <= 8000 else { return receipt("rejected", false, "invalid-literal-text") }
@@ -330,7 +404,7 @@ func lastInputTime() -> TimeInterval {
             captured = nil; image = nil; return ["invalidated": true]
         case "shutdown":
             guard exact(request, base) else { try reject("invalid-request") }
-            captured = nil; image = nil; selected = nil; selectedAX = nil; return ["closing": true]
+            captured = nil; image = nil; selected = nil; selectedAX = nil; propertyElements = []; return ["closing": true]
         default: try reject("unsupported-command")
         }
     }

@@ -25,14 +25,14 @@ test('unknown export receipt is settled through main reconciliation of its retai
   expect(b.calls).toEqual(['receipt', 'reconcile']);
 });
 
-test('terminal or absent receipts are returned without main reconciliation, and unresolved stays unknown', async () => {
+test('terminal receipts stay passive; absent actions request exclusive reconciliation and unresolved stays unknown', async () => {
   const done = bridge(completed, undefined);
   expect(await createVmExportTools(done.value).reconcile!(request)).toEqual(completed);
   const absent = bridge(undefined, completed);
-  expect(await createVmExportTools(absent.value).reconcile!(request)).toBeUndefined();
+  expect(await createVmExportTools(absent.value).reconcile!(request)).toEqual(completed);
   const pending = bridge(unknown, undefined);
   expect(await createVmExportTools(pending.value).reconcile!(request)).toEqual(unknown);
-  expect([done.calls, absent.calls, pending.calls]).toEqual([['receipt'], ['receipt'], ['receipt', 'reconcile']]);
+  expect([done.calls, absent.calls, pending.calls]).toEqual([['receipt'], ['receipt', 'reconcile'], ['receipt', 'reconcile']]);
 });
 
 test('export discovery offers only reviews of the exact current task generation', async () => {

@@ -17,6 +17,10 @@ def identity(directory):
  s=os.lstat(directory)
  if not stat.S_ISDIR(s.st_mode) or stat.S_ISLNK(s.st_mode): raise RuntimeError('Directory identity is unsafe')
  return str(s.st_dev)+':'+str(s.st_ino)
+def sync_directory(directory):
+ fd=os.open(directory,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+ try: os.fsync(fd)
+ finally: os.close(fd)
 canonical(root)
 env={k:v for k,v in os.environ.items() if not k.startswith('GIT_')}
 env.update({'GIT_CONFIG_NOSYSTEM':'1','GIT_CONFIG_GLOBAL':'/dev/null','GIT_TERMINAL_PROMPT':'0','GIT_OPTIONAL_LOCKS':'0','GIT_NO_LAZY_FETCH':'1','GIT_LFS_SKIP_SMUDGE':'1','GIT_ALLOW_PROTOCOL':'','GIT_PROTOCOL_FROM_USER':'0','GIT_ASKPASS':'','SSH_ASKPASS':'','GIT_PAGER':'cat'})
@@ -91,17 +95,18 @@ try:
   if not re.fullmatch(r'[a-f0-9-]{36}',record['id']) or not re.fullmatch(r'codex/[a-z][a-z0-9-]{0,47}',record['branch']) or record['headOid']!=current['headOid']: raise RuntimeError('Invalid reviewed worktree plan')
   if record['parent']!=current['parent'] or record['parentIdentity']!=current['parentIdentity'] or record['hostFingerprint']!=scope['fingerprint']: raise RuntimeError('Parent or host grant does not match')
   parent=canonical(current['parent']); managed=os.path.join(parent,'.nekodex-worktrees')
-  if not os.path.lexists(managed): os.mkdir(managed,0o700)
+  if not os.path.lexists(managed): os.mkdir(managed,0o700); sync_directory(parent)
   canonical(managed)
   if os.lstat(managed).st_uid!=os.getuid() or os.lstat(managed).st_mode&0o077: raise RuntimeError('Managed parent must be owner-only')
   owners=os.path.join(managed,'.owners')
-  if not os.path.lexists(owners): os.mkdir(owners,0o700)
+  if not os.path.lexists(owners): os.mkdir(owners,0o700); sync_directory(managed)
   canonical(owners)
   if os.lstat(owners).st_uid!=os.getuid() or os.lstat(owners).st_mode&0o077: raise RuntimeError('Ownership marker parent must be owner-only')
   if record['path']!=os.path.join(managed,record['id']) or record['marker']!=os.path.join(owners,record['id']+'.json') or os.path.lexists(record['path']): raise RuntimeError('Managed target already exists or differs from the reviewed plan')
   phase='remote-intent'; mutated=True
   fd=os.open(record['marker'],os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
   with os.fdopen(fd,'w') as f: json.dump(record,f); f.flush(); os.fsync(f.fileno())
+  sync_directory(owners)
   phase='git-create'
   raw(['worktree','add','--no-guess-remote','--no-track','-b',record['branch'],'--',record['path'],record['headOid']],mutation=True)
   phase='verify-created'; result=ownership(record)
@@ -120,7 +125,7 @@ try:
 except Exception as error: print(json.dumps({'ok':False,'message':str(error),'phase':phase,'mutated':mutated}))
 `;
 
-function createRemoteWorktreeController({ withHost, getRecords, storeRecords, begin, finish }) {
+function createRemoteWorktreeController({ withHost, getHostScope, getRecords, storeRecords, begin, finish }) {
   const sourceCaptures = new Map(); const plans = new Map(); const archivePlans = new Map();
   const scopeMatch = (a, s) => a.hostId === s.hostId && a.fingerprint === s.fingerprint && a.connectionId === s.connectionId && a.root === s.root;
   const publicScope = s => ({ hostId: s.hostId, fingerprint: s.fingerprint, connectionId: s.connectionId, root: s.root, hostname: s.hostname, username: s.username, port: s.port });
@@ -145,7 +150,8 @@ function createRemoteWorktreeController({ withHost, getRecords, storeRecords, be
       try { const result = await checked(run, 'create', { record, snapshot: plan.snapshot }); const saved = update(record, { state: 'ready', ...observed(record, result) }); return { worktree: saved, receipt: finish(receipt.id, { state: 'completed', path: saved.path }) }; }
       catch (error) { const uncertain = error.remoteMutated !== false; const saved = update(record, { state: uncertain ? 'needs-inspection' : 'failed', message: error.message }); return { worktree: saved, receipt: finish(receipt.id, { state: uncertain ? 'unknown' : 'failed', message: error.message }) }; }
     }, 'worktree-create', true),
-    list: id => withHost(id, async s => getRecords().filter(r => r.hostId === id && r.hostFingerprint === s.fingerprint && r.sourceRoot === s.root), 'worktree-inspect'),
+    list: id => getHostScope ? Promise.resolve().then(() => { getHostScope(id); return structuredClone(getRecords().filter(r => r.hostId === id)); })
+      : withHost(id, async s => structuredClone(getRecords().filter(r => r.hostId === id && r.hostFingerprint === s.fingerprint && r.sourceRoot === s.root)), 'worktree-inspect'),
     inspectOwned: (id, worktreeId) => withHost(id, async (s, run) => { const record = recordOf(id, worktreeId, s); const result = await checked(run, 'inspect-owned', { record }); return update(record, { ...observed(record, result), state: record.state === 'archived' || result.archiveRef ? 'archived' : 'ready', inspectedAt: new Date().toISOString() }); }, 'worktree-inspect'),
     prepareArchive: (id, worktreeId) => withHost(id, async (s, run) => { const record = recordOf(id, worktreeId, s); if (record.state !== 'ready') fail('Inspect this worktree successfully before archive review.'); const expected = await checked(run, 'inspect-owned', { record }); const plan = { ...publicScope(s), token: randomUUID(), record, expected }; for (const [token, previous] of archivePlans) if (previous.hostId === id) archivePlans.delete(token); archivePlans.set(plan.token, plan); return plan; }, 'worktree-review'),
     archive: (id, token) => withHost(id, async (s, run) => { const plan = archivePlans.get(token); if (!plan || !scopeMatch(plan, s)) fail('Review this exact owned checkout before archiving.'); archivePlans.delete(token); const record = recordOf(id, plan.record.id, s); update(record, { state: 'archiving' }); const receipt = begin(id, 'worktree-archive', { state: 'started', path: record.path, worktreeId: record.id, approvalId: token });

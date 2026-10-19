@@ -8,6 +8,9 @@ import { isPythonEnvironmentError, pythonEnvironmentPublicReason } from "./skill
 
 const scope = z.object({ taskId: z.string().min(1).max(200), generation: z.number().int().positive(), toolCallId: z.string().min(1).max(200) }).strict();
 const identity = z.object({ id: z.string().min(1).max(8192), grantId: z.string().min(1).max(80), relativePath: z.string().min(1).max(4096), source: z.enum(["user", "workspace", "official-plugin", "vendor-plugin"]), digest: z.string().regex(/^[a-f0-9]{64}$/), bytes: z.number().int().nonnegative().max(512 * 1024) }).strict();
+const networkScope = z.object({ taskId: z.string().min(1).max(200), generation: z.number().int().positive(), actionId: z.string().min(1).max(200) }).strict();
+const networkGrant = z.object({ scope: networkScope, destinations: z.array(z.object({origin:z.string().min(1).max(8192),addresses:z.array(z.string().min(1).max(128)).min(1).max(8),methods:z.array(z.string().min(1).max(16)).min(1).max(7)}).strict()).min(1).max(16),
+  credentialOwner:z.literal('none'),dns:z.literal('pinned-no-lookup'),proxy:z.literal('none'),maxRequests:z.number().int().min(1).max(100),maxRequestBytes:z.number().int().min(1).max(16*1024*1024),maxResponseBytes:z.number().int().min(1).max(16*1024*1024),maxRedirects:z.number().int().min(0).max(5),timeoutMs:z.number().int().min(1).max(60000)}).strict();
 const requestBody = z.discriminatedUnion("action", [
   z.object({ action: z.literal("status") }).strict(),
   z.object({ action: z.literal("reviewServer"), input: z.unknown(), explicitUserAction: z.literal(true) }).strict(),
@@ -15,7 +18,7 @@ const requestBody = z.discriminatedUnion("action", [
   z.object({ action: z.literal("setEnabled"), enabled: z.boolean(), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("removeServer"), serverId: z.string().min(1).max(80), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("setServerEnabled"), serverId: z.string().min(1).max(80), enabled: z.boolean(), expectedRecipeSha256: z.string().regex(/^[a-f0-9]{64}$/), explicitUserAction: z.literal(true) }).strict(),
-  z.object({ action: z.literal("prepareInstall"), actionId: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/), catalogId: z.literal("official-filesystem"), allowedRoot: z.string().min(1).max(4096), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("prepareInstall"), actionId: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/), catalogId: z.enum(["official-filesystem", "official-memory", "official-sequential-thinking"]), allowedRoot: z.string().min(1).max(4096), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("installReviewed"), actionId: z.string().min(1).max(128), graphSha256: z.string().regex(/^[a-f0-9]{64}$/), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("installReceipt"), actionId: z.string().min(1).max(128) }).strict(),
   z.object({ action: z.literal("cancelInstall"), actionId: z.string().min(1).max(128), explicitUserAction: z.literal(true) }).strict(),
@@ -46,8 +49,18 @@ const requestBody = z.discriminatedUnion("action", [
   z.object({ action: z.literal('reconcileVmOperation'), scope, operationId: z.string().regex(/^[a-f0-9]{64}$/), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("grantScriptWorkspace"), scope, root: z.string().min(1).max(4096), access: z.enum(["read-only", "read-write"]), acknowledgeRestrictions: z.literal(true), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("revokeScriptWorkspace"), scope, grantId: z.string().uuid(), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal('vmNetworkStatus'), scope: scope.optional() }).strict(),
+  z.object({ action: z.literal('grantVmNetwork'), input: networkGrant, explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal('revokeVmNetwork'), scope: networkScope, grantId: z.string().uuid(), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal('pythonBuildStatus'), scope: scope.optional() }).strict(),
+  z.object({ action: z.literal('reviewPythonBuild'), scope, actionId: z.string().uuid(), selectionId: z.string().uuid(), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal('preparePythonBuild'), scope, actionId: z.string().uuid(), reviewDigest: z.string().regex(/^[a-f0-9]{64}$/), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal('attachPythonBuild'), scope, actionId: z.string().uuid(), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal('revokePythonBuild'), scope, explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal('cancelPythonBuild'), actionId: z.string().uuid(), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal('reconcilePythonBuild'), actionId: z.string().uuid(), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("pythonEnvironmentStatus") }).strict(),
-  z.object({ action: z.literal("reviewPythonEnvironment"), actionId: z.string().uuid(), wheelPaths: z.array(z.string().min(1).max(4096)).min(1).max(16), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("reviewPythonEnvironment"), actionId: z.string().uuid(), wheelPaths: z.array(z.string().min(1).max(4096)).min(1).max(16), requirements: z.array(z.string().min(1).max(4096)).max(256).optional(), directArtifacts: z.array(z.object({url:z.string().min(1).max(8192),artifactSha256:z.string().regex(/^[a-f0-9]{64}$/)}).strict()).max(256).optional(), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("preparePythonEnvironment"), actionId: z.string().uuid(), reviewDigest: z.string().regex(/^[a-f0-9]{64}$/), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("pythonEnvironmentAction"), actionId: z.string().uuid() }).strict(),
   z.object({ action: z.literal("reconcilePythonEnvironment"), actionId: z.string().uuid(), explicitUserAction: z.literal(true) }).strict(),
@@ -112,8 +125,18 @@ export function createAgentToolsRoutes(composition: AgentToolsComposition, path 
         case 'reconcileVmOperation': value = await composition.reconcileVmOperation(body.scope, body.operationId, body.explicitUserAction) ?? null; break;
         case "grantScriptWorkspace": value = composition.grantScriptWorkspace(body.scope, body.root, body.access, body.acknowledgeRestrictions, body.explicitUserAction); break;
         case "revokeScriptWorkspace": await composition.revokeScriptWorkspace(body.scope, body.grantId, body.explicitUserAction); value = { revoked: true }; break;
+        case 'vmNetworkStatus': value = composition.vmNetworkStatus(body.scope); break;
+        case 'grantVmNetwork': value = composition.grantVmNetwork(body.input, body.explicitUserAction); break;
+        case 'revokeVmNetwork': value = await composition.revokeVmNetwork(body.scope, body.grantId, body.explicitUserAction); break;
+        case 'pythonBuildStatus': value = composition.pythonBuildStatus(body.scope); break;
+        case 'reviewPythonBuild': value = await composition.reviewPythonBuild(body.actionId, body.selectionId, body.scope, body.explicitUserAction); break;
+        case 'preparePythonBuild': value = await composition.preparePythonBuild(body.actionId, body.reviewDigest, body.scope, body.explicitUserAction); break;
+        case 'attachPythonBuild': value = composition.attachPythonBuild(body.actionId, body.scope, body.explicitUserAction); break;
+        case 'revokePythonBuild': value = await composition.revokePythonBuild(body.scope, body.explicitUserAction); break;
+        case 'cancelPythonBuild': await composition.cancelPythonBuild(body.actionId, body.explicitUserAction); value = {cancelRequested:true}; break;
+        case 'reconcilePythonBuild': value = await composition.reconcilePythonBuild(body.actionId, body.explicitUserAction); break;
         case "pythonEnvironmentStatus": value = composition.pythonEnvironmentStatus(); break;
-        case "reviewPythonEnvironment": value = composition.reviewPythonEnvironment(body.actionId, body.wheelPaths, body.explicitUserAction); break;
+        case "reviewPythonEnvironment": value = composition.reviewPythonEnvironment(body.actionId, body.wheelPaths, body.explicitUserAction, {requirements:body.requirements,directArtifacts:body.directArtifacts}); break;
         case "preparePythonEnvironment": value = composition.preparePythonEnvironment(body.actionId, body.reviewDigest, body.explicitUserAction); break;
         case "pythonEnvironmentAction": value = composition.pythonEnvironmentAction(body.actionId); break;
         case "reconcilePythonEnvironment": value = composition.reconcilePythonEnvironment(body.actionId, body.explicitUserAction); break;
