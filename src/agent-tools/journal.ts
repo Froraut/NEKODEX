@@ -21,6 +21,21 @@ export function invocationFingerprint(request: Pick<ToolInvocation, "scope" | "t
   if (Buffer.byteLength(bytes) > 256 * 1024) throw new Error("Tool input limit exceeded");
   return sha256(bytes);
 }
+/** Exact existing receipt lookup for passive task recovery. No constructor,
+ * CREATE/PRAGMA, grant, dispatch or new journal row is performed. */
+export function readExistingToolOutcome(path: string, request: Pick<ToolInvocation, 'scope' | 'tool' | 'arguments' | 'idempotencyKey'>): ToolOutcome | undefined {
+  if (!existsSync(path)) return;
+  const stat = lstatSync(path);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== process.getuid?.() || (stat.mode & 0o077)) throw new Error('Unsafe retained tool journal');
+  const fingerprint = invocationFingerprint(request), db = new Database(path, { readonly: true });
+  try {
+    const row = db.query('SELECT fingerprint,receipt FROM tool_calls WHERE id=?').get(request.idempotencyKey) as { fingerprint: string; receipt: string } | null;
+    if (!row) return; if (row.fingerprint !== fingerprint) throw new Error('Retained tool identity conflict');
+    const value = JSON.parse(row.receipt) as ToolOutcome;
+    if (value.idempotencyKey !== request.idempotencyKey || canonical(value.scope) !== canonical(request.scope) || value.tool !== request.tool) throw new Error('Retained tool receipt identity conflict');
+    return value;
+  } finally { db.close(); }
+}
 /** Write an unknown receipt before dispatch. A process loss can never create a replayable gap. */
 export class ToolJournal {
   private db: Database;

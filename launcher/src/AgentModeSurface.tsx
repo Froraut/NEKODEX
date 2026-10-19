@@ -184,6 +184,13 @@ export function AgentModeSurface({ language, api, disabled = false }: {
       setNotice(text.saved);
     }
   });
+  const refreshExecution = () => {
+    const taskId = selectedRef.current;
+    void act('refresh-execution', async () => {
+      await mutate({ action: 'refresh-execution', taskId, explicitUserAction: true });
+      await refresh(taskId); if (mounted.current) setNotice(text.saved);
+    });
+  };
   const control = (action: 'pause' | 'resume' | 'stop') => {
     const taskId = selectedRef.current;
     void act(action, async () => {
@@ -309,6 +316,9 @@ export function AgentModeSurface({ language, api, disabled = false }: {
   const canRunLoop = Boolean(task?.mode === 'loop' && task.status === 'review_required' && status?.configured && status.accepting !== false
     && status.models.some(row => matchesModel(task, row) && row.accepting !== false) && task.turns < task.bounds.maxTurns
     && !detail?.dispatches.some(row => ['unknown', 'offered', 'admitted', 'acked'].includes(row.state)));
+  const currentNativeModel = task?.execution?.provider === 'owned-native' ? status?.models.find(row =>
+    row.provider === 'owned-native' && row.id === task.execution?.model && row.available === true && row.accepting !== false && row.admissionId) : undefined;
+  const staleNativeAdmission = task?.execution?.provider === 'owned-native' && !!currentNativeModel && currentNativeModel.admissionId !== task.execution.admissionId;
   const loopRunActive = Boolean(task?.loopRun && task.loopRun.generation === task.generation && task.loopRun.ownerId === status?.ownerId);
   const taskState = (value: AgentTask) => text.taskStates[value.status] ?? value.status;
   const date = (value: number) => new Intl.DateTimeFormat(language === 'ru' ? 'ru-RU' : 'en-US', { dateStyle: 'medium', timeStyle: 'short', hourCycle: 'h23' }).format(value);
@@ -391,6 +401,11 @@ export function AgentModeSurface({ language, api, disabled = false }: {
               {task.mode !== 'manual' ? <Button size="sm" disabled={locked || (!canExecute && !canRunLoop) || !status?.capabilities.autoSchedule} busy={pending === 'run'} onClick={() => execute('run')}>{task.mode === 'loop' ? text.loopRun : text.run}</Button> : null}
             </div>
             <p className="agent-mode-muted">{text.stepHint}</p>
+            {staleNativeAdmission && !terminal(task) && <Notice tone="warning">
+              <p>{language === 'ru' ? 'Для этой модели доступен новый допуск. Можно продолжить через текущий подключённый аккаунт: завершённые этапы сохранятся, а доступ к файлам потребуется подтвердить заново.' : 'A fresh admission is available for this model. Continue through the currently connected account; completed stages are retained and file access must be granted again.'}</p>
+              <Button size="sm" disabled={locked || status?.accepting === false || detail.dispatches.some(row => ['unknown', 'offered', 'admitted', 'acked'].includes(row.state))}
+                busy={pending === 'refresh-execution'} onClick={refreshExecution}>{language === 'ru' ? `Обновить допуск ${currentNativeModel?.label ?? task.execution?.model}` : `Refresh admission for ${currentNativeModel?.label ?? task.execution?.model}`}</Button>
+            </Notice>}
             {task.execution?.provider === 'owned-native' ? <p className="agent-mode-muted">{nativeTurnHint}</p> : null}
             {task.bounds.maxSpend === null ? <p className="agent-mode-muted">{text.money}</p> : null}
             {detail.coverage && Object.values(detail.coverage).some(row => row.truncated) ? <Notice tone="warning">{text.truncated}</Notice> : null}

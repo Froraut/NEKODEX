@@ -34,6 +34,7 @@ import { runCommand } from "./process";
 import { startServer } from "./server";
 import { resolveDevelopmentDesktopHelper } from "./browser-companion/desktop-helper-path";
 import { resolveDevelopmentSkillPdfHelper } from "./agent-tools/skill-pdf-helper-path";
+import { resolveDevelopmentVmRuntimeSelection } from './execution-environments/development-runtime';
 import { assertServiceIdle, cancelActiveTurns, getServiceStatus, installService, interruptActiveTurn, restartService, startService, stopService, uninstallService } from "./service";
 import { existingFullSetupCredentials, preflightSetup, setup, type SetupOptions } from "./setup";
 import { runTunnelCredentialProcess, installTunnelClient, managedRuntimeKeyPath, stopTunnel, tunnelStatus, waitForTunnelReady } from "./tunnel";
@@ -718,6 +719,7 @@ async function main(): Promise<void> {
     const server = startServer(config, {
       desktopHelper: resolveDevelopmentDesktopHelper(import.meta.url),
       pdfHelper: resolveDevelopmentSkillPdfHelper(import.meta.url),
+      vmRuntimeSelection: process.env.CODEX_CHATGPT_WEB_LAUNCHER_PROFILE === 'development' ? resolveDevelopmentVmRuntimeSelection(import.meta.url) : undefined,
       readProModelVersion: () => loadConfig().proModelVersion,
       readCompactionModel: () => loadConfig().compactionModel,
       readAccountCapabilities: readAccountCapabilityFields,

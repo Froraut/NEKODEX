@@ -5,7 +5,7 @@ import { dirname } from "node:path";
 import { activeTaskEvidence } from "./evidence";
 import { invocationFingerprint } from "../agent-tools/journal";
 import { AGENT_NATIVE_PROTOCOL, nativeDigest, nativeToolCallId } from "./native-protocol";
-import type { AgentControl, AgentDispatch, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliation, AgentWorker, AgentWorkPacket, CreateAgentTask, ExecutionResult, MailMessage, OutcomeEvidence, OutcomeReview, Requirement, StageInput } from "./types";
+import type { AgentControl, AgentDispatch, AgentExecutionConfig, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliation, AgentWorker, AgentWorkPacket, CreateAgentTask, ExecutionResult, MailMessage, OutcomeEvidence, OutcomeReview, Requirement, StageInput } from "./types";
 
 function text(value: string, name: string, max = 16_384): void {
   if (typeof value !== "string" || !value.trim() || Buffer.byteLength(value) > max) throw new Error(`Invalid ${name}`);
@@ -204,6 +204,27 @@ export class AgentModeStore {
       for (const row of this.listDispatches(taskId)) if (row.state === "admitted") {
         row.state = "cancelled"; task.reserved -= row.reservedSpend; this.saveDispatch(row); this.sleepWorker(row);
       }
+      this.saveTask(task); return task;
+    });
+  }
+  /** Host-resolved pins only. Completed work and immutable dispatch history survive rebinding. */
+  refreshExecution(taskId: string, execution: AgentExecutionConfig): AgentTask {
+    return this.atomic(() => {
+      const task = this.getTask(taskId);
+      if (["stopped", "verified_complete"].includes(task.status)) throw new Error("Task is terminal; execution cannot be refreshed");
+      if (!task.execution || task.execution.provider !== execution.provider || task.execution.model !== execution.model) throw new Error("Agent provider/model cannot change during execution refresh");
+      id(execution.model);
+      if (execution.provider === "owned-native") {
+        id(execution.admissionId);
+        if (task.bounds.maxConcurrent !== 1 || task.bounds.maxSpend !== null) throw new Error("Task Native bounds are incompatible with execution refresh");
+      }
+      if (task.reserved !== 0 || this.listDispatches(taskId).some(row => unsettled.has(row.state))
+        || this.effectiveToolOutcomes(taskId).some(row => row.state === "outcome_unknown")) throw new Error("Task has live or unknown execution; reconcile before refreshing");
+      task.execution = structuredClone(execution);
+      task.generation++;
+      delete task.ownerId; delete task.review; delete task.loopRun; delete task.workspaceSnapshotGrant;
+      task.status = task.stages.every(stage => stage.status === "completed") ? "review_required" : "ready";
+      task.reason = "execution_refreshed";
       this.saveTask(task); return task;
     });
   }
@@ -439,6 +460,17 @@ export class AgentModeStore {
     if (task.generation !== scope.generation || ["stopped", "verified_complete"].includes(task.status)) return undefined;
     for (const row of this.listDispatches(task.id).reverse()) {
       if (row.generation !== scope.generation || row.taskRevision !== task.revision || row.state !== "settled") continue;
+      const call = row.result?.continuation?.pending.find(call => call.toolCallId === scope.toolCallId);
+      if (call) return { tool: call.tool, arguments: structuredClone(call.arguments), idempotencyKey: this.toolKey(row.id, call.toolCallId) };
+    }
+    return undefined;
+  }
+  /** Canonical historical observation only. Unlike resolveToolCall this confers
+   * no current invocation authority; use solely with the matching retained journal. */
+  resolveSavedToolCall(scope: AgentToolOutcome['scope']): { tool: string; arguments: Record<string, unknown>; idempotencyKey: string } | undefined {
+    this.getTask(scope.taskId);
+    for (const row of this.listDispatches(scope.taskId).reverse()) {
+      if (row.generation !== scope.generation || row.state !== 'settled') continue;
       const call = row.result?.continuation?.pending.find(call => call.toolCallId === scope.toolCallId);
       if (call) return { tool: call.tool, arguments: structuredClone(call.arguments), idempotencyKey: this.toolKey(row.id, call.toolCallId) };
     }

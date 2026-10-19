@@ -30,6 +30,10 @@ export interface WorkspaceGitDiff {
   text: string; truncated: boolean; binary: boolean; reason?: string;
 }
 export interface LocalWorkspaceService {
+  /** Main-only opaque capture. Never project the object as an IPC capability. */
+  captureBinary(workspaceId: string, path: string): WorkspaceBinaryCapture;
+  publishBinary(capture: WorkspaceBinaryCapture, bytes: Uint8Array, beforePublish: (proof: WorkspaceBinaryPublicationProof) => void): WorkspaceBinaryPublicationResult;
+  confirmBinaryPublication(workspaceId: string, path: string, proof: WorkspaceBinaryPublicationProof): WorkspaceBinaryPublicationResult | null;
   /** Main-only freshly validated grant; do not expose over IPC. */
   resolveGrant(workspaceId: string): Readonly<{ id: string; path: string }>;
   prepareAgentWorkspaceGrant(workspaceId: string, paths: string[], binding: { taskId: string; familyId: string; generation: number }): AgentWorkspaceGrant;
@@ -53,6 +57,13 @@ export interface LocalWorkspaceService {
   gitStatus(workspaceId: string, options?: { baseOid?: string; baseId?: string }): Promise<WorkspaceGitStatus>;
   gitDiff(workspaceId: string, snapshotId: string): Promise<WorkspaceGitDiff>;
 }
+export interface WorkspaceBinaryCapture {
+  workspaceId: string; path: string; rootIdentity: { dev: string; ino: string }; parentDigest: string;
+  revision: string | null; sha256: string | null; size: number; mode: number | null;
+  node: ({ dev: string; ino: string } & Record<string, string>) | null;
+}
+export interface WorkspaceBinaryPublicationProof { node: { dev: string; ino: string; birthtimeNs: string }; sha256: string; size: number; rootIdentity: { dev: string; ino: string }; parentDigest: string }
+export type WorkspaceBinaryPublicationResult = { state: "written"; revision: string; sha256: string; size: number; node: { dev: string; ino: string; birthtimeNs: string } } | { state: "unknown" | "conflict" | "blocked"; code: string };
 /** The picker and registry path are trusted main-process dependencies, never IPC payloads. */
 export function createLocalWorkspaceService(options: {
   pickDirectory: () => Promise<string | null | undefined>; registryPath?: string | null;

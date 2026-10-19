@@ -4,10 +4,32 @@ for (const action of ['browserStatus', 'bindBrowserTools', 'revokeBrowserTools']
 for (const action of ['inspectDesktopPermissions', 'listDesktopWindows', 'setDesktopEnabled', 'selectDesktopWindow', 'revokeDesktopTools']) ACTIONS.add(action);
 for (const action of ['remoteStatus', 'bindRemoteTools', 'revokeRemoteTools']) ACTIONS.add(action);
 for (const action of ['scriptStatus', 'grantScriptWorkspace', 'revokeScriptWorkspace']) ACTIONS.add(action);
+for (const action of ['vmStatus', 'reviewVmEnvironment', 'prepareVmEnvironment', 'attachVmWorkspace', 'revokeVmWorkspace', 'cancelVmOperation', 'reconcileVmOperation']) ACTIONS.add(action);
 for (const action of ['pythonEnvironmentStatus', 'reviewPythonEnvironment', 'preparePythonEnvironment', 'pythonEnvironmentAction', 'reconcilePythonEnvironment', 'bindPythonEnvironment', 'revokePythonEnvironment']) ACTIONS.add(action);
 /** Existing IPC sender guard and owned supervisor remain the sole authority. */
-function registerAgentTools({ handle, runtimeHost, dialog, getWindow, remoteService }) {
+function registerAgentTools({ handle, runtimeHost, dialog, getWindow, remoteService, workspaceService, vmExportService }) {
   const request = async body => {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Invalid Agent tools request');
+    if (body && ['vmExportWorkspaces', 'vmExportStatus', 'prepareVmExport', 'reconcileVmExport'].includes(body.action)) {
+      if (!vmExportService || !workspaceService || Buffer.byteLength(JSON.stringify(body)) > 16384) throw new Error('VM export service is unavailable');
+      if (body.action === 'vmExportWorkspaces') {
+        if (Object.keys(body).length !== 1) throw new Error('Invalid VM workspace request');
+        return { roots: workspaceService.listRoots().map(row => ({ id: row.id, label: row.name })) };
+      }
+      const allowed = body.action === 'vmExportStatus' ? ['action', 'scope'] : body.action === 'prepareVmExport'
+        ? ['action', 'scope', 'workspaceId', 'destinationPath', 'operationId', 'candidatePath', 'candidateSha256', 'explicitUserAction'] : ['action', 'request', 'explicitUserAction'];
+      if (Object.keys(body).some(key => !allowed.includes(key))) throw new Error('Invalid VM export control');
+      if (body.action === 'reconcileVmExport') {
+        if (body.explicitUserAction !== true) throw new Error('Explicit VM export reconciliation required');
+        return vmExportService.reconcile(body.request);
+      }
+      if (!body.scope || typeof body.scope !== 'object' || Array.isArray(body.scope) || Object.keys(body.scope).some(key => !['taskId', 'generation', 'toolCallId'].includes(key))) throw new Error('Invalid VM export scope');
+      const scope = { taskId: body.scope.taskId, generation: body.scope.generation };
+      if (body.action === 'vmExportStatus') return vmExportService.list(scope);
+      if (body.explicitUserAction !== true) throw new Error('Explicit VM export review required');
+      return vmExportService.prepare({ scope, workspaceId: body.workspaceId, destinationPath: body.destinationPath, operationId: body.operationId,
+        candidatePath: body.candidatePath, candidateSha256: body.candidateSha256, explicitUserAction: true });
+    }
     if (!body || typeof body !== 'object' || Array.isArray(body) || !ACTIONS.has(body.action) || Buffer.byteLength(JSON.stringify(body), 'utf8') > 131072) throw new Error('Invalid Agent tools request');
     if (remoteService && ['remoteStatus', 'revokeRemoteTools'].includes(body.action)) {
       const allowed = body.action === 'remoteStatus' ? ['action', 'scope'] : ['action', 'scope', 'explicitUserAction'];
@@ -24,20 +46,23 @@ function registerAgentTools({ handle, runtimeHost, dialog, getWindow, remoteServ
     }
     const supervisor = runtimeHost.supervisor;
     const config = supervisor.readConfig();
-    const allowDraining = ['status', 'receipt', 'installReceipt', 'managedSkillAction', 'browserStatus', 'remoteStatus', 'scriptStatus', 'pythonEnvironmentStatus', 'pythonEnvironmentAction', 'reconcilePythonEnvironment', 'revokePythonEnvironment', 'revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools', 'revokeScriptWorkspace'].includes(body.action)
+    const allowDraining = ['status', 'receipt', 'installReceipt', 'managedSkillAction', 'browserStatus', 'remoteStatus', 'scriptStatus', 'vmStatus', 'cancelVmOperation', 'reconcileVmOperation', 'revokeVmWorkspace', 'pythonEnvironmentStatus', 'pythonEnvironmentAction', 'reconcilePythonEnvironment', 'revokePythonEnvironment', 'revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools', 'revokeScriptWorkspace'].includes(body.action)
       || body.action === 'setDesktopEnabled' && body.enabled === false;
     if (!config || !await supervisor.ownedAgentRuntimeReady(config, { allowDraining })) throw new Error('Start the current NEKODEX runtime to use Agent tools');
-    const receipt = await supervisor.control(config, 'agent-tools', { body });
+    // Observation can end while the exact approved tool remains owned by core.
+    // VM stop/revoke travels through its separate control path; timeout never
+    // authorizes a second invoke or declares physical completion.
+    const receipt = await supervisor.control(config, 'agent-tools', { body, timeoutMs: body.action === 'approveInvoke' ? 50000 : 5000 });
     if (!receipt || receipt.ok !== true) throw new Error(receipt?.message || receipt?.error || 'Agent tools operation failed');
     return receipt.value;
   };
   handle('launcher:agent-tools', async (_event, body) => request(body));
   handle('launcher:agent-tools-observe', async (_event, body) => {
-    if (!body || !['remoteStatus', 'scriptStatus', 'pythonEnvironmentStatus', 'pythonEnvironmentAction'].includes(body.action)) throw new Error('This tools action only reads provider metadata');
+    if (!body || !['remoteStatus', 'scriptStatus', 'vmStatus', 'reconcileVmOperation', 'vmExportWorkspaces', 'vmExportStatus', 'reconcileVmExport', 'pythonEnvironmentStatus', 'pythonEnvironmentAction'].includes(body.action)) throw new Error('This tools action only observes retained state or reconciles its exact metadata');
     return request(body);
   });
   handle('launcher:agent-tools-revoke', async (_event, body) => {
-    if (!body || !['revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools', 'revokeScriptWorkspace', 'revokePythonEnvironment'].includes(body.action)
+    if (!body || !['revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools', 'revokeScriptWorkspace', 'revokePythonEnvironment', 'revokeVmWorkspace', 'cancelVmOperation'].includes(body.action)
       || body.explicitUserAction !== true) throw new Error('This tools action only revokes task authority');
     return request(body);
   });

@@ -37,6 +37,13 @@ const requestBody = z.discriminatedUnion("action", [
   z.object({ action: z.literal("bindRemoteTools"), hostId: z.string().uuid(), scope: remoteTaskScopeSchema, explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("revokeRemoteTools"), scope, explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("scriptStatus"), scope: scope.optional() }).strict(),
+  z.object({ action: z.literal('vmStatus'), scope: scope.optional() }).strict(),
+  z.object({ action: z.literal('reviewVmEnvironment'), actionId: z.string().uuid(), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal('prepareVmEnvironment'), actionId: z.string().uuid(), reviewDigest: z.string().regex(/^[a-f0-9]{64}$/), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal('attachVmWorkspace'), scope, root: z.string().min(1).max(4096), acknowledgeIsolation: z.literal(true), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal('revokeVmWorkspace'), scope, bindingId: z.string().uuid(), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal('cancelVmOperation'), scope, operationId: z.string().regex(/^[a-f0-9]{64}$/), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal('reconcileVmOperation'), scope, operationId: z.string().regex(/^[a-f0-9]{64}$/), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("grantScriptWorkspace"), scope, root: z.string().min(1).max(4096), access: z.enum(["read-only", "read-write"]), acknowledgeRestrictions: z.literal(true), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("revokeScriptWorkspace"), scope, grantId: z.string().uuid(), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("pythonEnvironmentStatus") }).strict(),
@@ -96,6 +103,13 @@ export function createAgentToolsRoutes(composition: AgentToolsComposition, path 
         case "bindRemoteTools": value = await composition.bindRemoteTools(body.scope, body.hostId, body.explicitUserAction); break;
         case "revokeRemoteTools": value = await composition.revokeRemoteTools(body.scope, body.explicitUserAction); break;
         case "scriptStatus": value = composition.scriptStatus(body.scope); break;
+        case 'vmStatus': value = await composition.vmStatus(body.scope); break;
+        case 'reviewVmEnvironment': value = composition.reviewVmEnvironment(body.actionId, body.explicitUserAction); break;
+        case 'prepareVmEnvironment': value = composition.prepareVmEnvironment(body.actionId, body.reviewDigest, body.explicitUserAction); break;
+        case 'attachVmWorkspace': value = composition.attachVmWorkspace(body.scope, body.root, body.acknowledgeIsolation, body.explicitUserAction); break;
+        case 'revokeVmWorkspace': value = await composition.revokeVmWorkspace(body.scope, body.bindingId, body.explicitUserAction); break;
+        case 'cancelVmOperation': value = await composition.cancelVmOperation(body.scope, body.operationId, body.explicitUserAction); break;
+        case 'reconcileVmOperation': value = await composition.reconcileVmOperation(body.scope, body.operationId, body.explicitUserAction) ?? null; break;
         case "grantScriptWorkspace": value = composition.grantScriptWorkspace(body.scope, body.root, body.access, body.acknowledgeRestrictions, body.explicitUserAction); break;
         case "revokeScriptWorkspace": await composition.revokeScriptWorkspace(body.scope, body.grantId, body.explicitUserAction); value = { revoked: true }; break;
         case "pythonEnvironmentStatus": value = composition.pythonEnvironmentStatus(); break;

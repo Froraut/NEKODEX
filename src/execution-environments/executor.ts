@@ -36,6 +36,12 @@ function assertRuntime(runtime: AdmittedVmRuntime): VmRuntimeSelection {
   }
   return entry.selection;
 }
+/** Trusted grant validation only. Do not serialize these private paths into a
+ * model descriptor or renderer result. No helper/process is started. */
+export function vmRuntimeProtectedPaths(runtime: AdmittedVmRuntime): readonly string[] {
+  const selection = assertRuntime(runtime);
+  return Object.freeze([selection.helperPath, selection.helperManifestPath, selection.kernelPath, selection.initrdPath, selection.guestManifestPath]);
+}
 /** Explicit development preparation only. Not called by discovery/status; no VM is booted. */
 export function admitDevelopmentVmRuntime(selection: VmRuntimeSelection): AdmittedVmRuntime {
   vmAssert(process.platform === 'darwin' && process.arch === 'arm64', 'vm-platform-unavailable');
@@ -79,6 +85,13 @@ export class VmExecutor {
   private closed = false;
   private unresolvedAction?: string;
   constructor(private readonly store = new VmJobStore()) {}
+  protectedPaths(runtime: AdmittedVmRuntime): readonly string[] { return vmRuntimeProtectedPaths(runtime); }
+  status(): { available: boolean; ownerHeld: boolean; actionId?: string; reason?: string } {
+    if (process.platform !== 'darwin' || process.arch !== 'arm64') return { available: false, ownerHeld: false, reason: 'vm-platform-unavailable' };
+    const state = this.store.inspectHeld();
+    return { ...state, available: state.available && !this.closed && !this.unresolvedAction,
+      ...(this.unresolvedAction ? { ownerHeld: true, actionId: this.unresolvedAction, reason: 'vm-owner-recovery-required' } : {}) };
+  }
   cancel(actionId: string): void { if (this.live?.actionId === actionId) this.live.run.stop?.('cancelled'); }
   async close(): Promise<void> {
     this.closed = true;
@@ -99,6 +112,19 @@ export class VmExecutor {
       vmAssert(selected && selected.sha256 === expectedSha256 && Number.isSafeInteger(selected.size) && Number(selected.size) <= VM_LIMITS.outputBytes, 'vm-candidate-identity-mismatch');
       const proposed = readPrivate(join(root, 'candidates', sha256(path)), VM_LIMITS.outputBytes);
       vmAssert(proposed.length === selected.size && sha256(proposed) === expectedSha256, 'vm-candidate-changed'); return Uint8Array.from(proposed);
+    } finally { this.store.releaseLock(); }
+  }
+  /** Reads the original retained controller result, never a recomputed guest
+   * result. EOF/lost-core cases may have physical proof without a semantic result. */
+  readResult(actionId: string): VmExecutionResult | undefined {
+    vmAssert(!this.live, 'vm-owner-busy'); this.store.acquire();
+    try {
+      const row = this.store.get(actionId);
+      if (!row || row.phase !== 'settled' || row.outcome !== 'stopped' || !row.resultDigest || this.retained(row).ownerHeld) return;
+      const bytes = readPrivate(join(this.store.jobRoot(actionId), 'result.json'), 8 * 1024 * 1024);
+      vmAssert(sha256(bytes) === row.resultDigest, 'vm-result-changed'); const value = record(JSON.parse(bytes.toString('utf8')));
+      vmAssert(value.actionId === actionId && value.state === 'stopped' && value.ownerHeld === false && Array.isArray(value.candidates));
+      return { ...(value as unknown as VmExecutionResult), resultDigest: row.resultDigest };
     } finally { this.store.releaseLock(); }
   }
   private retained(row: VmJobRecord): VmExecutionResult {

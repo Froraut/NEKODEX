@@ -19,6 +19,8 @@ const { createCodexClientControl } = require('./codex-client-control.cjs');
 const { createAgentNativeBridge } = require('./agent-native-bridge.cjs');
 const { createAgentNativeDescriptorPublisher } = require('./agent-native-descriptor.cjs');
 const { createAgentRemoteDescriptorPublisher } = require('./agent-remote-descriptor.cjs');
+const { createAgentVmExportDescriptorPublisher } = require('./agent-vm-descriptor.cjs');
+const { createWorkspaceVmExportService } = require('./workspace-vm-export.cjs');
 const { createNativeAccountAuthority } = require('./native-account-authority.cjs');
 const { fileDigest: nativeFileDigest, regular: nativeRegular, VERSION: NATIVE_CLI_VERSION } = require('./owned-native-admission.cjs');
 const { registerNativeAccounts } = require('./ipc/native-accounts.cjs');
@@ -49,6 +51,7 @@ const { CAPACITY_ENV, MAX_BROWSER_CAPACITY, readBrowserCapacity, saveBrowserCapa
 const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
+const os = require('node:os');
 const { createHash } = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
@@ -155,6 +158,15 @@ let nativeClientControl = null;
 let agentNativeBridge = null;
 let agentNativeDescriptor = null;
 let agentRemoteDescriptor = null;
+let agentVmExportDescriptor = null;
+let workspaceVmExportService = null;
+async function vmCoreControl(action, body) {
+  if (quitting || shutdownInProgress || exitCommitted || lifecycleAdmission.busy()) throw new Error('VM export admission is closed');
+  const config = runtimeSupervisor?.readConfig();
+  if (!config || !await runtimeSupervisor.ownedAgentRuntimeReady(config)) throw new Error('VM export runtime owner is unavailable');
+  const result = await runtimeSupervisor.control(config, 'agent-vm-export', { body: { action, ...body }, timeoutMs: 15000 });
+  if (result?.ok !== true) throw new Error('VM export core authority is unavailable'); return result.value;
+}
 let nativeAccountAuthority = null;
 let nativeAccountInventory = null;
 let nativeAccountExecution = null;
@@ -1046,6 +1058,7 @@ function registerIpc({ logger, stateStore }) {
   });
   registerWorkspaceGitIpc({ registerIpcHandler: handle, service: workspaceGitService });
   registerWorkspaceIpc({ registerIpcHandler: handle, service: localWorkspaceService, beforeForget: id => {
+    if (workspaceVmExportService?.hasRetainedState(id)) throw new Error('Keep this workspace registered until its exact VM export outcome is reconciled');
     if (workspaceGitService.hasRetainedState(id)) throw new Error('Keep this folder registered to access its worktrees, archives and snapshots');
     if (workspaceTerminalService.list(id).some(row => ['running', 'closing'].includes(row.state))) throw new Error('Close this folder’s terminal sessions before forgetting it');
   } });
@@ -1095,7 +1108,22 @@ function registerIpc({ logger, stateStore }) {
     resolveWorkspace: id => localWorkspaceService.resolveGrant(id),
   });
   registerAgentMode({ handle, runtimeHost, workspaceService: localWorkspaceService, workspaceEvidenceService });
-  registerAgentTools({ handle, runtimeHost, dialog, getWindow: () => mainWindow, remoteService: remoteWorkspaceService });
+  workspaceVmExportService ??= createWorkspaceVmExportService({ home: path.join(app.getPath('userData'), 'workspace-vm-export'), workspaceService: localWorkspaceService,
+    protectedRoots: [CORE_HOME, app.getPath('userData'), process.env.CODEX_CHATGPT_WEB_HOME || path.join(os.homedir(), '.codex-chatgpt-web'), path.join(os.homedir(), '.nekodex-execution-vm'),
+      process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), ...['.ssh', '.aws', '.config', 'Library/Keychains', 'Library/Application Support/Google/Chrome'].map(name => path.join(os.homedir(), name))],
+    validateScope: scope => vmCoreControl('validate-task', { scope }),
+    validateIntent: async request => { await vmCoreControl('validate-intent', { request }); },
+    readCandidate: async input => {
+      const value = await vmCoreControl('candidate', { scope: { taskId: input.scope.taskId, generation: input.scope.generation }, operationId: input.operationId, path: input.path, sha256: input.sha256 });
+      if (!value || value.sha256 !== input.sha256 || !Number.isSafeInteger(value.size) || value.size < 0 || value.size > 16 * 1024 * 1024
+        || typeof value.dataBase64 !== 'string' || value.dataBase64.length !== 4 * Math.ceil(value.size / 3)) throw new Error('VM export candidate is invalid');
+      const bytes = Buffer.from(value.dataBase64, 'base64');
+      if (bytes.length !== value.size || bytes.toString('base64') !== value.dataBase64 || require('node:crypto').createHash('sha256').update(bytes).digest('hex') !== input.sha256) throw new Error('VM export candidate identity changed');
+      return bytes;
+    } });
+  registerLifecycleParticipant('workspace-vm-export', { currentOperation: () => workspaceVmExportService.currentOperation(), destroy: () => workspaceVmExportService.destroy() });
+  registerAgentTools({ handle, runtimeHost, dialog, getWindow: () => mainWindow, remoteService: remoteWorkspaceService,
+    workspaceService: localWorkspaceService, vmExportService: workspaceVmExportService });
   registerBrowserCompanion({ handle, runtimeHost, clipboard });
   registerLocalControlApi({ handle, runtimeHost, clipboard });
   externalUsageService ??= createExternalUsageService({
@@ -2351,6 +2379,8 @@ async function start() {
     getAgentNativeInstance: () => agentNativeDescriptor?.instanceId,
     getAgentRemoteService: () => remoteWorkspaceService,
     getAgentRemoteInstance: () => agentRemoteDescriptor?.instanceId,
+    getVmExportService: () => workspaceVmExportService,
+    getVmExportInstance: () => agentVmExportDescriptor?.instanceId,
     validateRemoteInvalidation: body => {
       if (!body || typeof body !== 'object' || Array.isArray(body)
         || Object.keys(body).some(key => !['taskId', 'familyId', 'beforeGeneration'].includes(key))) throw new Error('Invalid remote invalidation');
@@ -2442,6 +2472,13 @@ async function start() {
   } catch {
     agentRemoteDescriptor = null;
     logger.warn('agent_remote.descriptor_unavailable', { reasonCode: 'private-profile-unavailable' });
+  }
+  try {
+    agentVmExportDescriptor = createAgentVmExportDescriptorPublisher({ coreHome: CORE_HOME, profile: LAUNCHER_PROFILE.kind, control: browserControl.descriptor() });
+    agentVmExportDescriptor.publish();
+  } catch {
+    agentVmExportDescriptor = null;
+    logger.warn('agent_vm_export.descriptor_unavailable', { reasonCode: 'private-profile-unavailable' });
   }
   contextChangeQueue?.stop();
   contextChangeQueue = createContextChangeQueue({

@@ -772,11 +772,34 @@ Its standalone builder snapshots source/entitlements and signs only that helper.
 The separately pinned Go/Alpine guest producer creates a self-contained ARM64
 initrd with an unprivileged shell job and no host credentials/configuration.
 `scripts/dev-execution-vm.ts` is an explicit development fixture, not discovery,
-Agent tool admission or a production/installed runtime. Product Review/Prepare,
-ToolJournal integration, approved CAS export, native build tools, network grants
-and Darwin parity remain open. See
+Agent tool admission or a production/installed runtime. The development product
+controller now connects explicit Review/Prepare/Attach to the existing ToolJournal;
+native build tools, network grants and production/installed Darwin parity remain open. See
 [contract](docs/design/execution-vm-wire.md) and
 [implementation scope](docs/design/isolated-execution-environments.md).
+
+**VM product coordination:** [product.ts](src/execution-environments/product.ts)
+owns preparation, scoped attachment and exact saved-result rehydration. The common
+tool composition delegates to this controller and retains approval/journal authority.
+[output.ts](src/execution-environments/output.ts) names current task access versus
+the source generation of a retained output; both renderer consumers use its selector.
+Historical reads never restore a binding or execute a command. The private
+[control route](src/execution-environments/control.ts) distinguishes review access
+from the exact already-begun export intent. [Export DTOs](src/execution-environments/export-contract.ts)
+contain no private paths, byte payloads or filesystem identity proofs.
+
+The [main export owner](launcher/electron/workspace-vm-export.cjs) keeps the one-file
+transaction visible in order: reviewed baseline, signed intent, candidate/scope and
+exact intent revalidation, workspace-owner publication, durable settlement. Unknown
+outcomes reconcile the existing written-node proof and never publish again. This is
+application-level revision protection, not an adversarial OS-level CAS guarantee.
+
+An explicit Agent `refresh-execution` command resolves the current host-selected
+binding for the same provider/model after qualification. It sends no inference,
+retains completed stages/history and invalidates prior-generation grants/reviews.
+Live or unknown work must settle first. Original tasks do not retain an account
+source tuple; this refresh uses the visibly current connected account and does not
+claim historical account equality. It never weakens admission pin checks.
 
 Selected PDF resources add v5 descriptors and immutable raw files to the same
 store without changing v1–v4 identities. `skill-pdf-extractor.ts` owns shared

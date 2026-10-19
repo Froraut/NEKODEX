@@ -48,7 +48,8 @@ function writeJson(response, status, body) {
 class BrowserControlServer {
   constructor({ logger, getBrowserHost, getPreferences, resolveNativeProxy,
     getAgentNativeBridge, getAgentNativeInstance, validateNativeInvalidation,
-    getAgentRemoteService, getAgentRemoteInstance, validateRemoteInvalidation }) {
+    getAgentRemoteService, getAgentRemoteInstance, validateRemoteInvalidation,
+    getVmExportService, getVmExportInstance }) {
     this.logger = logger;
     this.getBrowserHost = getBrowserHost;
     this.getPreferences = getPreferences;
@@ -59,6 +60,8 @@ class BrowserControlServer {
     this.getAgentRemoteService = getAgentRemoteService;
     this.getAgentRemoteInstance = getAgentRemoteInstance;
     this.validateRemoteInvalidation = validateRemoteInvalidation;
+    this.getVmExportService = getVmExportService;
+    this.getVmExportInstance = getVmExportInstance;
     this.token = randomBytes(32).toString("base64url");
     this.automaticMutationReceipts = new Map();
     this.port = 0;
@@ -160,6 +163,8 @@ class BrowserControlServer {
     }
     const remoteAction = new Map(['status', 'attach', 'revoke', 'execute', 'receipt', 'invalidate'].map(action => [`/v1/agent-remote/${action}`, action])).get(request.url);
     if (remoteAction) { await this.handleAgentRemote(request, response, remoteAction); return; }
+    const vmExportAction = new Map(['list', 'execute', 'receipt', 'reconcile'].map(action => [`/v1/agent-vm-export/${action}`, action])).get(request.url);
+    if (vmExportAction) { await this.handleVmExport(request, response, vmExportAction); return; }
     const isNativeProxy = request.url === "/v1/network/resolve-proxy";
     const isNativeUsage = request.url === "/v1/usage/native";
     const isTurn = request.url === "/v1/turn/start"
@@ -673,6 +678,22 @@ class BrowserControlServer {
     } catch {
       // Remote content, commands and SSH diagnostics never enter control error logs.
       if (!response.destroyed && !response.writableEnded) writeJson(response, 409, { ok: false, error: 'remote_conflict', instanceId });
+    }
+  }
+
+  async handleVmExport(request, response, action) {
+    if (request.method !== 'POST') { writeJson(response, 405, { error: 'method_not_allowed' }); return; }
+    const instanceId = this.getVmExportInstance?.(), service = this.getVmExportService?.();
+    if (!instanceId || request.headers['x-nekodex-vm-export-instance'] !== instanceId) { writeJson(response, 403, { error: 'vm_export_scope_unavailable' }); return; }
+    if (!service) { writeJson(response, 503, { error: 'vm_export_unavailable', instanceId }); return; }
+    try {
+      const body = await readJson(request, 64 * 1024);
+      const value = action === 'list' ? service.list(body) : action === 'execute' ? await service.execute(body)
+        : action === 'receipt' ? service.inspect(body) : await service.reconcile(body);
+      if (Buffer.byteLength(JSON.stringify(value)) > 224 * 1024) throw new Error('VM export response exceeds limit');
+      if (!response.destroyed && !response.writableEnded) writeJson(response, 200, { ok: true, instanceId, value: value ?? null });
+    } catch {
+      if (!response.destroyed && !response.writableEnded) writeJson(response, 409, { ok: false, error: 'vm_export_conflict', instanceId });
     }
   }
 

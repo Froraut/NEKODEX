@@ -15,6 +15,11 @@ import { createAgentDesktopToolsProvider, type AgentDesktopToolsProvider } from 
 import { createMacosDesktopProvider } from "./browser-companion/macos-desktop";
 import { resolveDesktopHelper, type PinnedDesktopHelper } from "./browser-companion/desktop-helper-path";
 import { resolveSkillPdfHelper, type PinnedSkillPdfHelper } from "./agent-tools/skill-pdf-helper-path";
+import type { VmRuntimeSelection } from './execution-environments/executor';
+import { createVmExportControlRoutes } from './execution-environments/control';
+import { createLauncherVmExportBridge } from './execution-environments/launcher-export';
+import { createVmExportTools } from './execution-environments/export-tools';
+import { AGENT_VM_EXPORT_DESCRIPTOR_FILE } from '../launcher/electron/agent-vm-descriptor.cjs';
 import { release as osRelease } from "node:os";
 import { createLocalControlApiRoutes } from "./local-control-api";
 import { createAgentWorkspaceSnapshots } from "./agent-workspace/store";
@@ -852,6 +857,8 @@ export function startServer(
     /** Trusted DEV harness pin. Packaged CLI resolves its own sibling native helper. */
     desktopHelper?: PinnedDesktopHelper;
     pdfHelper?: PinnedSkillPdfHelper;
+    /** Trusted fixed development VM artifacts; installed layout remains unavailable until bundled. */
+    vmRuntimeSelection?: VmRuntimeSelection;
     /** Trusted launcher/fixture profile identity, independent of browser readiness. */
     nativeLauncherProfile?: "production" | "development";
   } = {},
@@ -891,6 +898,8 @@ export function startServer(
   };
   const nativeControlRoutes = createAgentNativeControlRoutes({ runtime: () => { getAgentRoutes(); return agentRuntime!; }, authorize: request => controlAuthorized(request) });
   const remoteControlRoutes = createAgentRemoteControlRoutes({ runtime: () => { getAgentRoutes(); return agentRuntime!; }, tools: () => getAgentTools(),
+    authorize: request => controlAuthorized(request), canStart: () => !stopPrepared && acceptingAgentTools() });
+  const vmExportControlRoutes = createVmExportControlRoutes({ runtime: () => { getAgentRoutes(); return agentRuntime!; }, tools: () => getAgentTools(),
     authorize: request => controlAuthorized(request), canStart: () => !stopPrepared && acceptingAgentTools() });
   let agentTools: AgentToolsComposition | undefined;
   let browserCompanion: BrowserCompanionRuntime | undefined;
@@ -1085,7 +1094,7 @@ export function startServer(
         isAgentScopeActive({ taskId: binding.taskId, generation: binding.generation, toolCallId: 'capability-status' })))
         || Boolean(agentRemoteTools?.status().available && agentRemoteTools.status().bindings.some(binding =>
           isAgentScopeActive({ taskId: binding.taskId, generation: binding.generation, toolCallId: 'capability-status' })))
-        || getAgentTools().hasSkillResourceTools() || getAgentTools().hasSkillScriptTools() });
+        || getAgentTools().hasSkillResourceTools() || getAgentTools().hasSkillScriptTools() || getAgentTools().hasVmShellTools(agentRuntime?.store.listTasks().map(task => ({ taskId: task.id, generation: task.generation, toolCallId: 'vm-export-discovery' })) ?? []) });
     agentRoutes = createAgentModeRoutes({ runtime: agentRuntime, authorize: controlAuthorized,
       observeWorkspaceEvidence: (task, proof) => getAgentEvidence().observe(task, proof),
       resolveEvidence: (task, reference) => {
@@ -1124,7 +1133,23 @@ export function startServer(
     desktopTools: getAgentDesktopTools(),
     remoteTools: config.browserHost === 'launcher' ? getAgentRemoteTools() : undefined,
     pdfHelper: resolveSkillPdfHelper({ explicit: dependencies.pdfHelper }),
+    vmRuntimeSelection: dependencies.nativeLauncherProfile === 'development' || process.env.CODEX_CHATGPT_WEB_LAUNCHER_PROFILE === 'development' ? dependencies.vmRuntimeSelection : undefined,
+    vmExport: config.browserHost === 'launcher' ? createVmExportTools(createLauncherVmExportBridge({ descriptorPath: join(historyHome, 'runtime', AGENT_VM_EXPORT_DESCRIPTOR_FILE),
+      expectedProfile: dependencies.nativeLauncherProfile ?? (process.env.CODEX_CHATGPT_WEB_LAUNCHER_PROFILE === 'development' ? 'development' : 'production') })) : undefined,
     isScopeActive: isAgentScopeActive, resolveToolCall: scope => agentRuntime?.resolveToolCall(scope),
+    resolveSavedVmCalls: scope => {
+      if (!agentRuntime) return [];
+      const result: Omit<import('./agent-tools/types').ToolInvocation, 'grantId'>[] = [];
+      for (const row of agentRuntime.store.listDispatches(scope.taskId)) {
+        if (row.generation > scope.generation || row.state !== 'settled') continue;
+        for (const call of row.result?.continuation?.pending ?? []) {
+          if (call.tool !== 'vm-shell/run') continue;
+          const originalScope = { taskId: scope.taskId, generation: row.generation, toolCallId: call.toolCallId }, resolved = agentRuntime.store.resolveSavedToolCall(originalScope);
+          if (resolved?.tool === 'vm-shell/run') result.push({ scope: originalScope, ...resolved });
+        }
+      }
+      return result;
+    },
     onOutcome: outcome => { if (!agentRuntime) throw new Error("Agent task owner unavailable"); agentRuntime.recordToolOutcome(outcome); },
   });
   const getAgentSnapshots = () => agentSnapshots ??= createAgentWorkspaceSnapshots({ storagePath: join(historyHome, "agent-workspace", "task-snapshots.sqlite"), keyPath: join(historyHome, "agent-workspace", "grant-key") });
@@ -1203,6 +1228,7 @@ export function startServer(
       }
       if (url.pathname === "/admin/agent-native") return nativeControlRoutes(req);
       if (url.pathname === "/admin/agent-remote") return remoteControlRoutes(req);
+      if (url.pathname === '/admin/agent-vm-export') return vmExportControlRoutes(req);
       const localApiRequest = url.pathname === "/v1/chat/completions" || url.pathname.startsWith("/v1/messages")
         || url.pathname.startsWith("/claude/") || req.headers.has("x-api-key")
         || /^Bearer sk-local-/i.test(req.headers.get("authorization") ?? "");

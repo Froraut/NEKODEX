@@ -82,11 +82,27 @@ export interface AgentSkillScriptsStatus {
   environmentBindings?: { id: string; taskId: string; generation: number; environmentId: string; closureDigest: string }[];
   activeOperations: { operationId: string; workspaceGrantId: string; taskId: string; generation: number }[];
 }
+export interface AgentVmEnvironmentReview {
+  state: 'reviewed' | 'preparing' | 'prepared' | 'failed'; reason?: string;
+  actionId: string; reviewDigest: string; helperSha256: string; guestManifestSha256: string;
+  cpuCount: 2; memoryBytes: 2147483648; network: false; hostShares: false;
+}
+export interface AgentVmToolsStatus {
+  available: boolean; reason?: string; runtimeDigest: string | null; closed: boolean;
+  bindings: { id: string; taskId: string; generation: number; label: string; runtimeDigest: string }[];
+  activeOperations: { operationId: string; actionId: string; taskId: string; generation: number; bindingId: string; ownerHeld: boolean }[];
+  operations?: { operationId: string; actionId: string; taskId: string; generation: number; bindingId: string; ownerHeld: boolean;
+    state: 'pending' | 'stopped' | 'never-started' | 'unknown'; guestExitCode: number | null;
+    candidates: { path: string; size: number; sha256: string; mode: number }[]; reason?: string; resultDigest?: string;
+  }[];
+}
 export interface AgentToolsStatus {
   config: { version: 1; enabled: boolean; servers: ServerRecipe[] };
   runtime: { enabled: boolean; servers: { id: string; connected: boolean; pid: number | null; sandbox?: string; boundary?: unknown }[]; sandbox: string };
   activeCount: number;
   descriptors: ToolDescriptor[];
+  vmEnvironment?: { prepared: boolean; supported: boolean; reason?: string; runtimeDigest?: string; review?: AgentVmEnvironmentReview };
+  vmTools?: AgentVmToolsStatus | null;
   pythonEnvironments?: { supported: boolean; reason?: string; environments: SkillPythonEnvironmentDescriptor[]; actions: SkillPythonEnvironmentAction[] };
   skillRoots: SkillRootGrant[];
   selections: { scope: ToolScope; skills: SkillIdentity[] }[];

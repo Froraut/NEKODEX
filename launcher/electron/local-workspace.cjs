@@ -12,6 +12,8 @@ const LIMITS = Object.freeze({ roots: 32, entries: 300, treeEntries: 600, depth:
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const sameNode = (a, b) => String(a.dev) === String(b.dev) && String(a.ino) === String(b.ino);
 const identity = (stat) => ({ dev: String(stat.dev), ino: String(stat.ino) });
+const binaryIdentity = (stat) => ({ ...identity(stat), birthtimeNs: String(stat.birthtimeNs) });
+const sameBinaryNode = (a, b) => a && b && sameNode(a, b) && /^\d+$/.test(a.birthtimeNs) && a.birthtimeNs === b.birthtimeNs;
 function fail(code, message) { throw Object.assign(new Error(message), { code }); }
 function relativeParts(value, allowRoot = false) {
   if (typeof value !== "string" || value.length > 4096 || value.includes("\0")
@@ -55,6 +57,7 @@ function createLocalWorkspaceService({ pickDirectory, registryPath = null, agent
   const snapshots = new Map();
   const gitBaseChoices = new Map();
   const managedOpenings = new Map();
+  const binaryCaptures = new WeakMap();
   const agentGrants = agentWorkspaceGrantKeyPath ? createAgentWorkspaceGrantAuthority({ keyPath: agentWorkspaceGrantKeyPath }) : null;
   let picking = false;
 
@@ -188,6 +191,75 @@ function createLocalWorkspaceService({ pickDirectory, registryPath = null, agent
           mtime: after.mtimeMs, ctime: after.ctimeMs })), bytes])),
         text: text === null ? null : text, size: after.size, truncated };
     } finally { fs.closeSync(fd); }
+  }
+  // Main-only binary publication seam. Shares root/ancestry ownership with the
+  // editor; no renderer path grant or second filesystem writer is introduced.
+  function captureBinary(id, relative) {
+    const captured = resolve(id, relative, { missing: true });
+    const retained = [...drafts.values()].some(d => {
+      const grant = roots.get(d.workspaceId); if (!grant) return false;
+      const target = path.join(grant.path, d.path);
+      if (target !== captured.target && !(process.platform === "darwin" && target.toLowerCase() === captured.target.toLowerCase())) return false;
+      // Parent/nested picker grants can address the same target. Validate only
+      // the matching grant's ancestry; never inspect another draft's contents.
+      rootFor(d.workspaceId); return true;
+    });
+    if (retained) fail("DRAFTS_RETAINED", "Resolve this file's retained draft before exporting.");
+    const parentDigest = digest(JSON.stringify([captured.root.ancestry, captured.parents]));
+    const metadata = { workspaceId: id, path: relative, rootIdentity: identity(fs.lstatSync(captured.root.path)), parentDigest,
+      revision: null, sha256: null, size: 0, mode: null, node: null };
+    if (captured.stat) {
+      if (!captured.stat.isFile() || captured.stat.nlink !== 1 || (captured.stat.mode & 0o7000)) fail("BINARY_UNSAFE", "Export requires an ordinary single-link file.");
+      const fd = fs.openSync(captured.target, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try {
+        const before = fs.fstatSync(fd, { bigint: true });
+        if (!sameNode(before, captured.stat) || before.nlink !== 1n || (before.mode & 0o7000n) || before.size > 16n * 1024n * 1024n) fail("BINARY_UNSAFE", "Export destination exceeds its bounded file policy.");
+        const hasher = createHash("sha256"), buffer = Buffer.alloc(65536); let total = 0;
+        while (true) { const n = fs.readSync(fd, buffer, 0, buffer.length, null); if (!n) break; total += n; if (total > 16 * 1024 * 1024) fail("FILE_CHANGED", "Export destination grew while reading."); hasher.update(buffer.subarray(0, n)); }
+        const after = fs.fstatSync(fd, { bigint: true }); unchangedParents(captured); const current = resolve(id, relative);
+        if (!sameNode(after, current.stat) || after.nlink !== 1n || current.stat.nlink !== 1 || ["size", "mtimeNs", "ctimeNs", "mode", "uid", "gid"].some(k => after[k] !== before[k])) fail("FILE_CHANGED", "Export destination changed while reading.");
+        metadata.sha256 = hasher.digest("hex"); metadata.size = total; metadata.mode = Number(after.mode & 0o777n);
+        metadata.node = { ...binaryIdentity(after), size: String(after.size), mtimeNs: String(after.mtimeNs), ctimeNs: String(after.ctimeNs), mode: String(after.mode), uid: String(after.uid), gid: String(after.gid) };
+        metadata.revision = digest(JSON.stringify({ node: metadata.node, sha256: metadata.sha256 }));
+      } finally { fs.closeSync(fd); }
+    }
+    const value = Object.freeze(metadata); binaryCaptures.set(value, captured); return value;
+  }
+  function publishBinary(capture, data, beforePublish) {
+    const captured = binaryCaptures.get(capture);
+    if (!captured || !Buffer.isBuffer(data) && !(data instanceof Uint8Array) || data.byteLength > 16 * 1024 * 1024 || typeof beforePublish !== "function") fail("BINARY_UNSAFE", "Exact main-owned binary publication required.");
+    const bytes = Buffer.from(data), candidateSha256 = digest(bytes); let temporary = null, candidateNode = null, renameAttempted = false;
+    try {
+      const fresh = captureBinary(capture.workspaceId, capture.path);
+      if (fresh.revision !== capture.revision || fresh.parentDigest !== capture.parentDigest || !sameNode(fresh.rootIdentity, capture.rootIdentity)) return { state: "conflict", code: "DESTINATION_STALE" };
+      const candidatePath = path.join(path.dirname(captured.target), `.nekodex-vm-export-${randomUUID()}`);
+      const fd = fs.openSync(candidatePath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, capture.mode ?? 0o600);
+      temporary = candidatePath; candidateNode = binaryIdentity(fs.fstatSync(fd, { bigint: true }));
+      try { fs.writeFileSync(fd, bytes); fs.fchmodSync(fd, capture.mode ?? 0o600); fs.fsyncSync(fd); candidateNode = binaryIdentity(fs.fstatSync(fd, { bigint: true })); } finally { fs.closeSync(fd); }
+      beforePublish(Object.freeze({ node: candidateNode, sha256: candidateSha256, size: bytes.length, rootIdentity: capture.rootIdentity, parentDigest: capture.parentDigest }));
+      unchangedParents(captured); const current = captureBinary(capture.workspaceId, capture.path);
+      if (current.revision !== capture.revision || current.parentDigest !== capture.parentDigest || !sameNode(current.rootIdentity, capture.rootIdentity)) return { state: "conflict", code: "DESTINATION_STALE" };
+      // Synchronous final checks/rename prevent application-turn interleaving;
+      // this is not adversarial OS filesystem CAS or a multi-file transaction.
+      const staged = fs.lstatSync(temporary, { bigint: true });
+      if (!staged.isFile() || staged.nlink !== 1n || !sameBinaryNode(binaryIdentity(staged), candidateNode)) return { state: "blocked", code: "PUBLICATION_NOT_STARTED" };
+      renameAttempted = true; fs.renameSync(temporary, captured.target); temporary = null;
+      const written = captureBinary(capture.workspaceId, capture.path);
+      if (!sameBinaryNode(written.node, candidateNode) || written.sha256 !== candidateSha256 || written.size !== bytes.length) return { state: "unknown", code: "PUBLICATION_UNCONFIRMED" };
+      const parent = fs.openSync(path.dirname(captured.target), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try { fs.fsyncSync(parent); } finally { fs.closeSync(parent); }
+      unchangedParents(captured); return { state: "written", revision: written.revision, sha256: written.sha256, size: written.size, node: written.node };
+    } catch { return { state: renameAttempted ? "unknown" : "blocked", code: renameAttempted ? "PUBLICATION_UNCONFIRMED" : "PUBLICATION_NOT_STARTED" }; }
+    finally { if (temporary) { try { unchangedParents(captured); const node = fs.lstatSync(temporary, { bigint: true }); if (node.isFile() && !node.isSymbolicLink() && candidateNode && sameBinaryNode(binaryIdentity(node), candidateNode)) fs.unlinkSync(temporary); } catch {} } }
+  }
+  function confirmBinaryPublication(id, relative, proof) {
+    const capture = captureBinary(id, relative);
+    if (!proof || !capture.node || !sameBinaryNode(capture.node, proof.node) || capture.sha256 !== proof.sha256 || capture.size !== proof.size
+        || !sameNode(capture.rootIdentity, proof.rootIdentity) || capture.parentDigest !== proof.parentDigest) return null;
+    const captured = binaryCaptures.get(capture), fd = fs.openSync(path.dirname(captured.target), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    const current = captureBinary(id, relative); if (current.revision !== capture.revision) return null;
+    return { state: "written", revision: current.revision, sha256: current.sha256, size: current.size, node: current.node };
   }
   function list(id, relative = "") {
     const captured = resolve(id, relative, { allowRoot: true });
@@ -546,6 +618,7 @@ function createLocalWorkspaceService({ pickDirectory, registryPath = null, agent
       return true;
     },
     list, preview: readFile, save, retainDraft,
+    captureBinary, publishBinary, confirmBinaryPublication,
     tree(id, relative = "", depth = 2) {
       if (!Number.isInteger(depth) || depth < 1 || depth > LIMITS.depth) fail("INVALID_DEPTH", "Use a tree depth from 1 to 4.");
       const entries = []; let truncated = false;

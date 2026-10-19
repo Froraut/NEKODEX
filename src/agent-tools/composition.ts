@@ -4,7 +4,7 @@ import { z } from "zod";
 import { defaultToolsConfig, readToolsConfig, sha256, verifyRecipeFiles, writeToolsConfig, type ServerRecipe, type ToolsConfig } from "./config";
 import { StandaloneMcpHost } from "./mcp-host";
 import { ReadOnlySkillLibrary, type SelectedSkill, type SkillIdentity, type SkillRootGrant } from "./skills";
-import { invocationFingerprint, validateToolScope } from "./journal";
+import { invocationFingerprint, readExistingToolOutcome, validateToolScope } from "./journal";
 import type { AgentRemoteToolsProvider } from "../remote-workspace/agent-tools";
 import type { RemoteTaskScope } from "../remote-workspace/protocol";
 import type { StandaloneBuiltinToolsProvider, StandaloneToolsPort, ToolDescriptor, ToolInvocation, ToolOutcome, ToolScope } from "./types";
@@ -28,6 +28,9 @@ import { SkillPdfExtractor, type SkillPdfExtractorPort } from "./skill-pdf-extra
 import type { PinnedSkillPdfHelper } from "./skill-pdf-helper-path";
 import { selectedPdfBytes, projectPdfExtraction, unavailablePdfProjection } from "./skill-pdf-resources";
 import type { SkillResource } from "./skill-resources";
+import { VmProductController } from '../execution-environments/product';
+import type { VmRuntimeSelection } from '../execution-environments/executor';
+import type { VmExecutorPort } from '../execution-environments/types';
 
 export interface AgentToolsCompositionOptions {
   home: string;
@@ -36,6 +39,8 @@ export interface AgentToolsCompositionOptions {
   canStart?: () => boolean;
   isScopeActive: (scope: ToolScope) => boolean;
   resolveToolCall?: (scope: ToolScope) => { tool: string; arguments: Record<string, unknown>; idempotencyKey: string } | undefined;
+  /** Trusted canonical saved calls only, for exact read-only VM output recovery. */
+  resolveSavedVmCalls?: (scope: Pick<ToolScope, 'taskId' | 'generation'>) => readonly Omit<ToolInvocation, 'grantId'>[];
   onOutcome?: (outcome: ToolOutcome) => void | Promise<void>;
   /** Pure browser leaf; root owns companion runtime, while this host owns approval/journal. */
   browserTools?: AgentBrowserToolsProvider;
@@ -51,6 +56,10 @@ export interface AgentToolsCompositionOptions {
   /** Trusted process/helper pin or injected platform port; never accepted from HTTP/model input. */
   pdfHelper?: PinnedSkillPdfHelper;
   pdfExtractor?: SkillPdfExtractorPort;
+  /** Fixed main/development artifact selection, never renderer/model paths. */
+  vmRuntimeSelection?: VmRuntimeSelection;
+  vmExecutor?: VmExecutorPort;
+  vmExport?: Pick<StandaloneBuiltinToolsProvider, 'discover' | 'execute' | 'reconcile'>;
 }
 function ownedPdfExtractor(home: string, helper?: PinnedSkillPdfHelper): SkillPdfExtractorPort {
   let extractor: SkillPdfExtractor | undefined;
@@ -120,12 +129,19 @@ export class AgentToolsComposition {
   private readonly pythonRuntime: () => AdmittedPythonRuntime | undefined;
   private readonly pythonEnvironments: SkillPythonEnvironmentStore;
   private readonly pdfExtractor: SkillPdfExtractorPort;
+  private readonly vm: VmProductController;
   readonly installer: ManagedMcpInstaller;
   readonly toolsPort: StandaloneToolsPort;
   readonly handle: (request: Request) => Promise<Response | undefined>;
   constructor(readonly options: AgentToolsCompositionOptions) {
     this.configPath = join(options.home, "agent-tools.json"); this.journalPath = join(options.home, "agent-tool-calls.sqlite");
     this.skillStatePath = join(options.home, "agent-skills.json");
+    this.vm = new VmProductController({ home: options.home, runtimeSelection: options.vmRuntimeSelection,
+      executor: options.vmExecutor, export: options.vmExport,
+      isScopeActive: scope => !this.closing && !this.changing && this.options.canStart?.() !== false && this.options.isScopeActive(scope),
+      assertMutation: explicit => this.vmMutation(explicit), assertScope: scope => this.scope(scope),
+      savedCalls: scope => this.options.resolveSavedVmCalls?.(scope) ?? [],
+      existingOutcome: request => this.host?.existingOutcome(request) ?? readExistingToolOutcome(this.journalPath, request) });
     let pythonRuntime = options.pythonRuntime;
     let pythonAdmissionAttempted = Boolean(pythonRuntime);
     this.pythonRuntime = () => {
@@ -157,7 +173,7 @@ export class AgentToolsComposition {
     this.toolsPort = {
       discover: (scope, opts) => this.track(async () => {
         this.scope(scope);
-        if (!readToolsConfig(this.configPath).enabled && !this.options.browserTools && !this.options.desktopTools && !this.options.remoteTools && !this.hasSkillResourceTools() && !this.hasSkillScriptTools() && !this.options.builtins?.length) return [];
+        if (!readToolsConfig(this.configPath).enabled && !this.options.browserTools && !this.options.desktopTools && !this.options.remoteTools && !this.hasSkillResourceTools() && !this.hasSkillScriptTools() && !this.hasVmShellTools([scope]) && !this.options.builtins?.length) return [];
         this.descriptors = await this.getHost().discover(scope, opts); return structuredClone(this.descriptors);
       }),
       invoke: (request, opts) => this.track(() => this.getHost().invoke(request, opts)),
@@ -176,7 +192,8 @@ export class AgentToolsComposition {
       const remote = this.options.remoteTools && !config.servers.some(server => server.id === this.options.remoteTools!.serverId) ? [this.options.remoteTools] : [];
       const resources = config.servers.some(server => server.id === this.skillResourceTools.serverId) ? [] : [this.skillResourceTools];
       const scripts = config.servers.some(server => server.id === this.skillScriptTools.serverId) ? [] : [this.skillScriptTools];
-      this.host = new StandaloneMcpHost({ config, journalPath: this.journalPath, isScopeActive: scope => !this.closing && !this.changing && this.options.canStart?.() !== false && this.options.isScopeActive(scope), builtins: [...(this.options.builtins ?? []), ...(this.options.browserTools ? [this.options.browserTools] : []), ...(this.options.desktopTools ? [this.options.desktopTools] : []), ...remote, ...resources, ...scripts] });
+      const vm = config.servers.some(server => server.id === this.vm.provider.serverId) ? [] : [this.vm.provider];
+      this.host = new StandaloneMcpHost({ config, journalPath: this.journalPath, isScopeActive: scope => !this.closing && !this.changing && this.options.canStart?.() !== false && this.options.isScopeActive(scope), builtins: [...(this.options.builtins ?? []), ...(this.options.browserTools ? [this.options.browserTools] : []), ...(this.options.desktopTools ? [this.options.desktopTools] : []), ...remote, ...resources, ...scripts, ...vm] });
     }
     return this.host;
   }
@@ -189,7 +206,7 @@ export class AgentToolsComposition {
     const heldPdf = Number.isSafeInteger(pdf.activeCount) && Number(pdf.activeCount) >= 0 ? Number(pdf.activeCount) : 0;
     return Math.max(this.pending.size, this.host?.pendingBuiltinCount ?? 0, this.options.desktopTools?.status().activeCount ?? 0,
       this.options.remoteTools?.status().activeCount ?? 0, this.skillScriptTools.status().activeOperations.length,
-      this.skillResourceTools.activeCount, heldPdf, pdf.recoveryRequired ? 1 : 0) + (this.changing ? 1 : 0) + this.installer.activeCount;
+      this.skillResourceTools.activeCount, this.vm.provider.activeCount, heldPdf, pdf.recoveryRequired ? 1 : 0) + (this.changing ? 1 : 0) + this.installer.activeCount;
   }
   private managedSkills() { if (this.closing) throw new Error("Managed skill store is closing"); return this.managedSkillStore ??= new ManagedSkillStore(this.options.home); }
   private managedSkillStatus() {
@@ -222,6 +239,31 @@ export class AgentToolsComposition {
     return this.skillScriptTools.status().grants.some(grant => this.options.isScopeActive({ taskId: grant.taskId, generation: grant.generation, toolCallId: "script-discovery" }));
   }
   scriptStatus(scope?: ToolScope) { return this.skillScriptTools.status(scope); }
+  hasVmShellTools(currentScopes: readonly ToolScope[] = []): boolean {
+    if (this.closing || this.changing || readToolsConfig(this.configPath).servers.some(server => server.id === this.vm.provider.serverId)) return false;
+    return this.vm.available(currentScopes);
+  }
+  vmStatus(scope?: ToolScope) { return this.vm.status(scope); }
+  private vmMutation(explicit: boolean) {
+    if (!explicit || this.closing || this.changing || this.options.canStart?.() === false) throw new Error('Explicit current VM control action is required');
+    if (readToolsConfig(this.configPath).servers.some(server => server.id === this.vm.provider.serverId)) throw new Error('Reserved builtin VM namespace conflicts with an existing MCP server');
+  }
+  reviewVmEnvironment(actionId: string, explicit: boolean) { return this.vm.review(actionId, explicit); }
+  prepareVmEnvironment(actionId: string, reviewDigest: string, explicit: boolean) { return this.vm.prepare(actionId, reviewDigest, explicit); }
+  attachVmWorkspace(scope: ToolScope, root: string, acknowledged: boolean, explicit: boolean) { return this.vm.attach(scope, root, acknowledged, explicit); }
+  revokeVmWorkspace(scope: ToolScope, bindingId: string, explicit: boolean) { return this.vm.provider.revoke(scope, bindingId, explicit); }
+  cancelVmOperation(scope: ToolScope, operationId: string, explicit: boolean) { return this.vm.provider.cancel(scope, operationId, explicit); }
+  reconcileVmOperation(scope: ToolScope, operationId: string, explicit: boolean) { return this.vm.provider.reconcileOperation(scope, operationId, explicit); }
+  readVmCandidate(scope: { taskId: string; generation: number }, operationId: string, path: string, sha256: string) {
+    return this.vm.provider.readCandidate(scope, operationId, path, sha256);
+  }
+  validateBegunVmExportInvocation(request: Omit<ToolInvocation, 'grantId'>): void {
+    if (request.tool !== 'vm-shell/export') throw new Error('Unsupported VM export source'); this.scope(request.scope);
+    const current = this.options.resolveToolCall?.(request.scope);
+    if (!current || current.idempotencyKey !== request.idempotencyKey || invocationFingerprint({ scope: request.scope, ...current }) !== invocationFingerprint(request)) throw new Error('No exact pending VM export tool call');
+    const prior = this.host?.existingOutcome(request);
+    if (!prior || prior.state !== 'outcome_unknown') throw new Error('VM export tool intent has not begun');
+  }
   private pythonEnvironmentControl<T>(work: () => T): T {
     try { return work(); } catch (cause) { throw asPythonEnvironmentPublicError(cause); }
   }
@@ -275,6 +317,7 @@ export class AgentToolsComposition {
       remoteTools: this.options.remoteTools?.status() ?? null,
       scriptTools: this.scriptStatus(),
       pythonEnvironments: this.pythonEnvironmentStatus(),
+      ...this.vm.projection(),
       capabilities: { stdio: process.platform !== "win32", install: process.platform !== "win32", oauth: false, secrets: false, nativeSandbox: false, mcpSandboxAvailable: sandboxProviderAvailable(), skillWrites: false, managedSkillImports: process.platform !== "win32", skillResourceReads: process.platform !== 'win32' && !config.servers.some(server => server.id === this.skillResourceTools.serverId), skillScripts: this.skillScriptTools.status().capabilities.supported && !config.servers.some(server => server.id === this.skillScriptTools.serverId), pendingToolCalls: Boolean(this.options.resolveToolCall) } };
   }
   private reviewedSandbox(input: { codeRoots: string[]; readRoots: string[]; writeRoots: string[] }, ownedReadRoots: string[] = [], ownedCodeRoots: string[] = []) {
@@ -287,7 +330,7 @@ export class AgentToolsComposition {
   reviewServer(input: unknown, explicitUserAction: boolean) {
     if (!explicitUserAction || this.closing || this.changing) throw new Error("Explicit trusted configuration review required");
     const value = recipeInput.parse(input);
-    if (value.id === this.options.browserTools?.serverId || value.id === this.options.desktopTools?.serverId || value.id === this.options.remoteTools?.serverId || value.id === this.skillResourceTools.serverId || this.options.builtins?.some(provider => provider.serverId === value.id)) throw new Error("Reserved builtin tool namespace cannot be used by an MCP server");
+    if (value.id === this.options.browserTools?.serverId || value.id === this.options.desktopTools?.serverId || value.id === this.options.remoteTools?.serverId || value.id === this.skillResourceTools.serverId || value.id === this.vm.provider.serverId || this.options.builtins?.some(provider => provider.serverId === value.id)) throw new Error("Reserved builtin tool namespace cannot be used by an MCP server");
     const command = realpathSync(value.command); const cwd = realpathSync(value.cwd);
     if (["sh", "bash", "zsh", "fish", "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "npx", "bunx", "uvx", "npm", "pnpm", "yarn", "pip", "pip3"].includes(basename(command).toLowerCase()) || value.args.some(arg => ["-e", "--eval", "-c", "--command"].includes(arg))) throw new Error("Installers, shell commands and inline evaluation are unsupported server recipes");
     const recipe: ServerRecipe = { id: value.id, enabled: false, transport: "stdio", source: { kind: "user-installed", label: value.label, version: value.version }, command, commandSha256: pinnedFile(command, 512 * 1024 * 1024).sha256, args: value.args, pinnedFiles: value.pinnedFiles.map(path => pinnedFile(path, 32 * 1024 * 1024)), cwd, envSecretRefs: {} };
@@ -394,6 +437,7 @@ export class AgentToolsComposition {
     this.options.desktopTools?.invalidate(taskId);
     this.options.remoteTools?.invalidate(taskId);
     this.skillScriptTools.invalidate?.(taskId);
+    this.vm.provider.invalidate?.(taskId);
     this.skillResourceTools.invalidate?.(taskId);
     for (const provider of this.options.builtins ?? []) provider.invalidate?.(taskId);
   }
@@ -546,6 +590,7 @@ export class AgentToolsComposition {
       this.options.browserTools?.invalidate();
       this.options.desktopTools?.invalidate();
       this.skillScriptTools.invalidate?.();
+      this.vm.provider.invalidate?.();
       this.skillResourceTools.invalidate?.();
       for (const provider of this.options.builtins ?? []) provider.invalidate?.();
     }
@@ -556,6 +601,7 @@ export class AgentToolsComposition {
       await this.options.desktopTools?.close();
       await this.options.remoteTools?.close();
       await this.skillScriptTools.close();
+      await this.vm.provider.close();
       await Promise.all([this.skillResourceTools.close(), this.pdfExtractor.close()]);
       await this.host?.close(); await Promise.allSettled([...this.pending]); this.host = undefined;
       this.managedSkillStore?.close(); this.managedSkillStore = undefined;

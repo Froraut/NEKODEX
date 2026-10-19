@@ -75,7 +75,7 @@ export function createAgentModeRoutes(options: AgentModeRouteOptions): (request:
     if (!options.authorize(request)) return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
     if (request.method !== "POST") return Response.json({ ok: false, error: "method_not_allowed" }, { status: 405, headers: { allow: "POST" } });
     try {
-      const envelope = z.object({ action: z.enum(["status", "list", "get", "create", "control", "step", "run", "review", "evidence", "verify", "workspace-grant", "resume-continuation", "enqueue-work", "cycle", "workspace-evidence", "reconcile-tool"]), taskId: identity.optional(), actionId: identity.optional(), idempotencyKey: identity.optional(), dispatchId: identity.optional(), workId: identity.optional(), work: z.unknown().optional(), input: z.unknown().optional(), control: z.unknown().optional(), scope: taskScope.optional(), grant: z.unknown().optional(), proof: z.unknown().optional(), explicitUserAction: z.boolean().optional(), workerName: identity.optional(), reviewId: identity.optional(), evidence: z.unknown().optional() }).strict().parse(await readJsonRequestBody(request, 128 * 1024, 128 * 1024));
+      const envelope = z.object({ action: z.enum(["status", "list", "get", "create", "control", "step", "run", "review", "evidence", "verify", "workspace-grant", "resume-continuation", "enqueue-work", "cycle", "workspace-evidence", "reconcile-tool", "refresh-execution"]), taskId: identity.optional(), actionId: identity.optional(), idempotencyKey: identity.optional(), dispatchId: identity.optional(), workId: identity.optional(), work: z.unknown().optional(), input: z.unknown().optional(), control: z.unknown().optional(), scope: taskScope.optional(), grant: z.unknown().optional(), proof: z.unknown().optional(), explicitUserAction: z.boolean().optional(), workerName: identity.optional(), reviewId: identity.optional(), evidence: z.unknown().optional() }).strict().parse(await readJsonRequestBody(request, 128 * 1024, 128 * 1024));
       const runtime = options.runtime;
       if (envelope.action === "status") return success({ ...runtime.status(), ...listing(runtime), capabilities: { ...runtime.status().capabilities, observedEvidence: Boolean(options.resolveEvidence || options.observeWorkspaceEvidence) } });
       if (envelope.action === "list") return success(listing(runtime));
@@ -101,6 +101,10 @@ export function createAgentModeRoutes(options: AgentModeRouteOptions): (request:
           coverage: { pendingToolCalls: { total: pendingCalls.total, truncated: pendingCalls.truncated }, dispatches: { total: dispatches.total, truncated: dispatches.truncated }, messages: { total: messages.total, truncated: messages.truncated }, receipts: { total: receipts.total, truncated: receipts.truncated }, workspaceEvidence: { total: workspaceEvidence.total, truncated: workspaceEvidence.truncated }, toolReconciliations: { total: toolReconciliations.total, truncated: toolReconciliations.truncated }, effectiveToolOutcomes: { total: effectiveToolOutcomes.total, truncated: effectiveToolOutcomes.truncated } } });
       }
       const actionId = identity.parse(envelope.actionId);
+      if (envelope.action === "refresh-execution") {
+        const refresh = z.object({ action: z.literal("refresh-execution"), taskId: identity, actionId: identity, scope: taskScope, explicitUserAction: z.boolean() }).strict().parse(envelope);
+        return success({ task: runtime.refreshExecution(taskId, actionId, refresh.scope, refresh.explicitUserAction) });
+      }
       if (envelope.action === "reconcile-tool") return success(await runtime.reconcileTool(taskId, actionId, taskScope.parse(envelope.scope), identity.parse(envelope.idempotencyKey)));
       if (envelope.action === "workspace-evidence") {
         if (!options.observeWorkspaceEvidence) return Response.json({ ok: false, error: "workspace_observer_unavailable" }, { status: 503 });

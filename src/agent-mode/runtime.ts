@@ -75,6 +75,32 @@ export class AgentModeRuntime {
     if (!command.duplicate) { this.automaticRuns.delete(taskId); this.options.onTaskScopeInvalidated?.(taskId); }
     return command.result;
   }
+  /** Explicitly refresh the same selected provider/model without offering any work. */
+  refreshExecution(taskId: string, actionId: string, scope: AgentActionScope, explicitUserAction: boolean): AgentTask {
+    if (explicitUserAction !== true) throw new Error("Task execution refresh requires an explicit user action");
+    if (this.stopping || this.options.canStart?.() === false) throw new Error("Task runtime admission is closed");
+    const command = this.store.command(taskId, actionId, "refresh_execution", { scope, explicitUserAction }, () => {
+      this.assertScope(taskId, scope);
+      const task = this.store.getTask(taskId), old = task.execution;
+      if (!old || task.ownerId && task.ownerId !== this.runner.ownerId) throw new Error("Execution owner or selected model is unavailable");
+      const dispatches = this.store.listDispatches(taskId);
+      if (dispatches.some(row => this.runner.liveDispatchIds.includes(row.id) || this.pending.has(row.id))) throw new Error("Task still has live execution");
+      const effective = this.store.effectiveToolOutcomes(taskId);
+      for (const dispatch of dispatches) for (const call of dispatch.result?.continuation?.pending ?? []) {
+        const key = this.store.toolCallReceiptKey(dispatch.id, call.toolCallId);
+        // A host journal intent can exist before its outcome has reached the task ledger.
+        if (!effective.some(row => row.idempotencyKey === key) && this.options.lookupToolOutcome?.(key)?.state === "outcome_unknown") throw new Error("Task has an unknown tool outcome; reconcile before refreshing");
+      }
+      const models = this.options.models().filter(row => row.id === old.model && (row.provider ?? "local-responses") === old.provider
+        && (old.provider === "owned-native" ? row.available === true && Boolean(row.admissionId) : row.available !== false) && row.accepting !== false);
+      if (models.length !== 1) throw new Error("Agent provider/model has no unique available current binding");
+      const execution = old.provider === "owned-native" ? { provider: old.provider, model: old.model, admissionId: models[0]!.admissionId! } : { ...old };
+      this.assertExecutionAvailable({ ...task, execution });
+      return this.store.refreshExecution(taskId, execution);
+    });
+    if (!command.duplicate) { this.automaticRuns.delete(taskId); this.options.onTaskScopeInvalidated?.(taskId); }
+    return command.result;
+  }
   step(taskId: string, actionId: string, input: { explicitUserAction: boolean; workerName?: string; automatic?: boolean }, scope?: AgentActionScope): { task: AgentTask; dispatchId?: string; duplicate: boolean } {
     if (input.explicitUserAction !== true) throw new Error("A user action is required to start Agent execution");
     if (this.stopping || this.options.canStart?.() === false) throw new Error("Task runtime admission is closed");

@@ -67,19 +67,32 @@ export class VmJobStore {
     assertPrivatePath(this.home, true);
   }
   /** Darwin O_EXLOCK|O_NONBLOCK; retained intent remains authoritative after OS lock loss. */
-  acquire(): void {
-    vmAssert(process.platform === 'darwin', 'vm-platform-unavailable'); vmAssert(this.lockFd === undefined, 'vm-owner-busy'); this.initialize();
-    const path = join(this.home, '.lock'), fd = openSync(path, constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW | 0x20 | 0x04, 0o600);
+  acquire(create = true): void {
+    vmAssert(process.platform === 'darwin', 'vm-platform-unavailable'); vmAssert(this.lockFd === undefined, 'vm-owner-busy');
+    if (create) this.initialize(); else assertPrivatePath(this.home, true);
+    const path = join(this.home, '.lock'), fd = openSync(path, constants.O_RDWR | (create ? constants.O_CREAT : 0) | constants.O_NOFOLLOW | 0x20 | 0x04, 0o600);
     try {
       assertPrivatePath(path); const st = fstatSync(fd), named = lstatSync(path);
       vmAssert(st.dev === named.dev && st.ino === named.ino); this.lockIdentity = { dev: st.dev, ino: st.ino }; this.lockFd = fd;
       const keyPath = join(this.home, 'integrity.key');
-      if (!existsSync(keyPath)) { createPrivateFile(keyPath, randomBytes(32)); syncDirectory(this.home); }
+      if (!existsSync(keyPath) && create) { createPrivateFile(keyPath, randomBytes(32)); syncDirectory(this.home); }
       this.key = readPrivate(keyPath, 32); vmAssert(this.key.length === 32);
-      const jobs = join(this.home, 'jobs'); if (!existsSync(jobs)) { mkdirSync(jobs, { mode: 0o700 }); syncDirectory(this.home); } assertPrivatePath(jobs, true);
+      const jobs = join(this.home, 'jobs'); if (!existsSync(jobs) && create) { mkdirSync(jobs, { mode: 0o700 }); syncDirectory(this.home); } assertPrivatePath(jobs, true);
     } catch (e) { closeSync(fd); this.lockFd = undefined; throw e; }
   }
   releaseLock(): void { if (this.lockFd !== undefined) { closeSync(this.lockFd); this.lockFd = undefined; } }
+  /** Read-only authority observation. Never creates the lock, key or directory,
+   * never clears a pending record and never signals another profile's owner. */
+  inspectHeld(): { available: boolean; ownerHeld: boolean; actionId?: string; reason?: string } {
+    if (!existsSync(this.home)) return { available: true, ownerHeld: false };
+    const ownLock = this.lockFd !== undefined;
+    try {
+      if (!ownLock) this.acquire(false);
+      const actionId = this.heldAction();
+      return { available: !actionId, ownerHeld: Boolean(actionId), ...(actionId ? { actionId, reason: 'vm-authority-held' } : {}) };
+    } catch { return { available: false, ownerHeld: true, reason: 'vm-authority-busy-or-unavailable' }; }
+    finally { if (!ownLock) this.releaseLock(); }
+  }
   private assertLock(): void {
     vmAssert(this.lockFd !== undefined && !this.uncertain, 'vm-owner-write-uncertain');
     const named = lstatSync(join(this.home, '.lock')); vmAssert(named.dev === this.lockIdentity?.dev && named.ino === this.lockIdentity?.ino);

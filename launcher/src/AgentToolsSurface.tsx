@@ -1,3 +1,4 @@
+import { selectVmOutputCandidates } from '../../src/execution-environments/output';
 import { useEffect, useId, useRef, useState } from 'react';
 import { Badge, Button, Checkbox, EmptyState, Notice, Page, Panel, Select, SurfaceHeader, TextField } from './design';
 import type { Language } from './types';
@@ -7,6 +8,7 @@ import './surfaces/agent-tools.css';
 import { AgentToolsInstaller } from './AgentToolsInstaller';
 import { AgentManagedSkills } from './AgentManagedSkills';
 import { AgentSkillScripts } from './AgentSkillScripts';
+import { AgentVmShell } from './AgentVmShell';
 import { AgentBrowserTools } from './AgentBrowserTools';
 import { AgentDesktopTools } from './AgentDesktopTools';
 import { AgentRemoteTools } from './AgentRemoteTools';
@@ -55,14 +57,17 @@ export function AgentToolsSurface({ api, language, disabled = false }: { api: Ag
   const resourceEnabledForTask = status?.capabilities.skillResourceReads === true && !!selectedTask && !!status.managedSkills?.attachments.some(attachment => attachment.scope.taskId === selectedTask.id && attachment.scope.generation === selectedTask.generation
     && attachment.versionIds.some(versionId => status.managedSkills?.versions.some(version => version.versionId === versionId && !version.revoked && !version.forgotten && (version.resourceCount ?? 0) > 0)));
   const scriptsEnabledForTask = status?.capabilities.skillScripts === true && !!selectedTask && status?.scriptTools?.grants.some(grant => grant.taskId === selectedTask.id && grant.generation === selectedTask.generation);
-  const discoveryEnabled = status?.config.enabled || browserEnabledForTask || desktopEnabledForTask || remoteEnabledForTask || resourceEnabledForTask || scriptsEnabledForTask;
+  const vmRunEnabledForTask = !!selectedTask && status?.vmEnvironment?.prepared === true && status.vmTools?.available === true && !status.vmTools.closed
+    && status.vmTools.bindings.some(binding => binding.taskId === selectedTask.id && binding.generation === selectedTask.generation);
+  const vmExportEnabledForTask = selectVmOutputCandidates(status?.vmTools?.operations ?? [], selectedTask ? { taskId: selectedTask.id, generation: selectedTask.generation } : undefined).length > 0;
+  const discoveryEnabled = status?.config.enabled || browserEnabledForTask || desktopEnabledForTask || remoteEnabledForTask || resourceEnabledForTask || scriptsEnabledForTask || vmRunEnabledForTask || vmExportEnabledForTask;
   const callPrefix = selectedCall?.tool.split('/')[0];
   const configuredCallServer = status?.config.servers.find(server => server.id === callPrefix);
   // Existing user MCP namespaces win over built-ins, including remote/ and skill-resource/.
   const selectedCallEnabled = !!selectedCall && (configuredCallServer ? status?.config.enabled && configuredCallServer.enabled
     : callPrefix === 'browser' ? browserEnabledForTask : callPrefix === 'desktop' ? desktopEnabledForTask
-      : callPrefix === 'remote' ? remoteEnabledForTask : callPrefix === 'skill-resource' ? resourceEnabledForTask : callPrefix === 'skill-script' ? scriptsEnabledForTask : status?.config.enabled);
-  const isInspectionOnlyReceipt = (tool: string) => ['browser/', 'desktop/', 'remote/', 'skill-resource/', 'skill-script/'].some(prefix => tool.startsWith(prefix))
+      : callPrefix === 'vm-shell' ? (selectedCall.tool === 'vm-shell/export' ? (vmExportEnabledForTask || !!selectedTask) : vmRunEnabledForTask) : callPrefix === 'remote' ? remoteEnabledForTask : callPrefix === 'skill-resource' ? resourceEnabledForTask : callPrefix === 'skill-script' ? scriptsEnabledForTask : status?.config.enabled);
+  const isInspectionOnlyReceipt = (tool: string) => ['browser/', 'desktop/', 'remote/', 'skill-resource/', 'skill-script/', 'vm-shell/'].some(prefix => tool.startsWith(prefix))
     && !status?.config.servers.some(server => tool.startsWith(`${server.id}/`));
   const scope = (toolCallId = `discovery:${taskId}`): ToolScope => { if (!selectedTask) throw new Error(choose('Select an owned Agent task.', 'Выберите существующую Agent-задачу.')); return { taskId: selectedTask.id, generation: selectedTask.generation, toolCallId }; };
   const refreshRemote = async () => {
@@ -148,6 +153,7 @@ export function AgentToolsSurface({ api, language, disabled = false }: { api: Ag
     <AgentDesktopTools api={api} desktop={status?.desktopTools} scope={selectedTask ? { taskId: selectedTask.id, generation: selectedTask.generation, toolCallId: 'desktop-selection' } : undefined} locked={locked} choose={choose} act={act} refresh={refresh} />
     <AgentRemoteTools api={api} remote={remoteStatus} scope={remoteScope} locked={locked} choose={choose} act={act} refresh={refresh} />
     <AgentSkillScripts api={api} status={status} scope={selectedTask ? { taskId: selectedTask.id, generation: selectedTask.generation, toolCallId: 'script-workspace-selection' } : undefined} locked={locked} choose={choose} act={act} onChanged={refresh} />
+    <AgentVmShell api={api} status={status} scope={selectedTask ? { taskId: selectedTask.id, generation: selectedTask.generation, toolCallId: 'vm-workspace-selection' } : undefined} locked={locked} choose={choose} act={act} onChanged={refresh} />
     <AgentManagedSkills api={api} status={status} sources={skills} scope={selectedTask ? { taskId: selectedTask.id, generation: selectedTask.generation, toolCallId: 'managed-skill-selection' } : undefined} locked={locked} choose={choose} act={act} refresh={refresh} />
   </Page>;
 }
