@@ -34,6 +34,7 @@ import type { VmRuntimeSelection } from '../execution-environments/executor';
 import type { VmExecutorPort } from '../execution-environments/types';
 import type { PythonBuildSelection } from '../execution-environments/python-build';
 import type { VmNetworkGrantInput, VmNetworkScope, VmNetworkLedger, VmNetworkTransport } from '../execution-environments/network';
+import { parsePythonBuildScope } from '../../launcher/electron/python-build-selection-contract.cjs';
 
 export interface AgentToolsCompositionOptions {
   home: string;
@@ -277,7 +278,17 @@ export class AgentToolsComposition {
     return this.vm.grantNetwork(input, explicit);
   }
   revokeVmNetwork(scope: VmNetworkScope, grantId: string, explicit: boolean) { return this.vm.revokeNetwork(scope, grantId, explicit); }
-  pythonBuildStatus(scope?: ToolScope) { return { ...this.vm.pythonBuildStatus(scope), selectionAvailable: Boolean(this.options.resolvePythonBuildSelection) }; }
+  pythonBuildStatus(scope?: ToolScope) {
+    const status = this.vm.pythonBuildStatus(scope);
+    if (scope) {
+      try { parsePythonBuildScope(scope); }
+      catch {
+        return { ...status, selectionAvailable: false,
+          reason: 'python-build-task-scope-unsupported' };
+      }
+    }
+    return { ...status, selectionAvailable: Boolean(this.options.resolvePythonBuildSelection) };
+  }
   reviewPythonBuild(actionId: string, selectionId: string, scope: ToolScope, explicit: boolean) {
     this.vmMutation(explicit); this.scope(scope);
     if (!this.options.resolvePythonBuildSelection) throw new Error('Explicit native Python build picker is unavailable');

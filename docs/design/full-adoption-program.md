@@ -408,3 +408,10 @@ real SSH full-index commit ACK loss без resend и GUI import поддержа
 Claude/Gemini fixtures с отдельным пользовательским synthetic pricing catalog.
 Данные и ставки этих usage fixtures синтетические; исторические расходы аккаунта
 и фактический счёт ими не подтверждаются.
+
+
+P16 scoped readiness теперь использует тот же native scope parser, что и picker:
+несовместимая API-задача получает недоступность до выбора файлов с понятной
+EN/RU причиной. Общий Agent-mode API и UUID VM-контракт не менялись. Один
+реальный HTTP status regression принят; ранее выполненный UUID GUI
+picker/build/attach/revoke переиспользован без нового VM запуска.

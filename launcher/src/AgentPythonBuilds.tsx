@@ -72,7 +72,11 @@ export function AgentPythonBuilds({ api, scope, locked, choose, act, onChanged }
     <p>{choose('Select source and the complete build dependency set. Review fixes the exact source bytes, backend, package hashes and admitted Linux runtime. Prepare runs the reviewed build inside the offline VM. Attaching its result to a task is separate.', 'Выберите исходники и полный набор сборочных зависимостей. Просмотр фиксирует байты исходников, backend, хеши пакетов и допущенный Linux runtime. Подготовка выполняет просмотренную сборку внутри VM без сети. Результат прикрепляется к задаче отдельно.')}</p>
     <Notice>{choose('This produces a Linux CPython 3.14 ARM64 environment. It does not install into the host Python. Reviews and selections are process-local; after a restart, retained VM receipts must be inspected before any new action.', 'Создаётся окружение Linux CPython 3.14 ARM64. В Python хоста ничего не устанавливается. Просмотры и выбор исходников действуют в текущем процессе; после перезапуска сначала проверьте сохранённые квитанции VM.')}</Notice>
     {notice ? <Notice tone="warning">{notice}</Notice> : null}
-    {status && !status.supported ? <Notice tone="warning">{status.reason || choose('The reviewed VM build runtime is unavailable.', 'Просмотренный runtime сборки VM недоступен.')}</Notice> : null}
+    {status && (!status.supported || status.selectionAvailable === false) ? <Notice tone="warning">{status.reason === 'python-build-task-scope-unsupported'
+      ? choose('Native Python source selection is unavailable for this task. Choose another compatible task or create a new task in Agent mode.', 'Для этой задачи выбор исходников native Python недоступен. Выберите другую совместимую задачу или создайте новую в Agent mode.')
+      : status.reason || (status.selectionAvailable === false
+      ? choose('Native Python source selection is unavailable for this task.', 'Выбор исходников native Python недоступен для этой задачи.')
+      : choose('The reviewed VM build runtime is unavailable.', 'Просмотренный runtime сборки VM недоступен.'))}</Notice> : null}
     <div className="agent-script-form__step"><h3>{choose('Source and dependencies', 'Исходники и зависимости')}</h3>
     <div className="nk-field"><label htmlFor={configId}>{choose('Build metadata (JSON)', 'Метаданные сборки (JSON)')}</label>
       <textarea id={configId} aria-describedby={`${configId}-hint`} className="nk-input" rows={8} maxLength={65536} value={configText} disabled={locked || held}
