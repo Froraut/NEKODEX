@@ -766,6 +766,14 @@ authenticated VZ stop receipt plus exact helper/stdio join before settling.
 Candidate bytes use host digest names and can only be read after settlement;
 they grant no workspace destination or export authority.
 
+The guest producer adds a locked offline GCC/Python development closure from
+official Alpine APK payloads, with separate extracted-package provenance and no
+package hooks. Preparation uses an isolated build directory; the current app image
+is replaced only after preparation succeeds and owned operations settle. Linux
+ARM64 C/CPython build acceptance is recorded in
+[the focused report](docs/reviews/2026-10-19-vm-native-builds.md); it is not a Darwin
+ABI or arbitrary Python package/build-system claim.
+
 `launcher/native/execution-vm-helper.swift` owns one VZ machine with fixed two CPUs,
 2 GiB, no NIC, no directory shares or storage devices and one bounded vsock port.
 Its standalone builder snapshots source/entitlements and signs only that helper.
@@ -774,7 +782,9 @@ initrd with an unprivileged shell job and no host credentials/configuration.
 `scripts/dev-execution-vm.ts` is an explicit development fixture, not discovery,
 Agent tool admission or a production/installed runtime. The development product
 controller now connects explicit Review/Prepare/Attach to the existing ToolJournal;
-native build tools, network grants and production/installed Darwin parity remain open. See
+the fixed GCC/Python development profile also passed real C shared-library and
+CPython-extension builds. General build-system/dependency automation, network grants
+and production/installed Darwin parity remain open. See
 [contract](docs/design/execution-vm-wire.md) and
 [implementation scope](docs/design/isolated-execution-environments.md).
 

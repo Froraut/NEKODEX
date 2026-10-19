@@ -1,10 +1,16 @@
 # Isolated execution environments: proposed continuation
 
-**Development implementation in progress; product acceptance remains open.**
+**Development product flow accepted; production/installed delivery remains open.**
 The dedicated helper, guest producer, strict protocol and private execution leaf
 now exist and actual pipeline/background/cancel/timeout/core EOF checks passed.
-See [focused evidence](../reviews/2026-10-19-isolated-shell.md). Product/installed
-admission and the remaining native-build/export/network work stay open.
+See [physical ownership evidence](../reviews/2026-10-19-isolated-shell.md) and
+[product export/recovery acceptance](../reviews/2026-10-19-vm-product-refactor.md).
+The ToolJournal/UI and separate revision-aware export are accepted in development.
+The fixed offline GCC/Python profile passed actual C shared-library and CPython
+extension builds through Native and separately approved export; see
+[native build acceptance](../reviews/2026-10-19-vm-native-builds.md). General build
+systems/dependency preparation, production/installed admission, network grants
+and Darwin parity remain open.
 This extends the full P16/P17 scope
 in the [adoption program](full-adoption-program.md), including real shell external
 programs/pipelines, native builds and explicit network authority. Existing
@@ -44,7 +50,9 @@ unavailable, without fallback to an unrestricted host shell.
 The development producer pins an official Alpine ARM64 kernel/minirootfs and
 Go toolchain, builds a static guest agent and self-contained initrd, and records
 their exact source/artifact identities. This is not a production guest admission
-or a full compiler/Python toolchain. Those remain separate prerequisites.
+or arbitrary build-system/package support. A fixed GCC/Python development profile
+is now pinned and tested; production admission and broader formats remain separate
+prerequisites.
 
 Linux guest native code is **not Darwin-native parity**: Linux `.so`, toolchain,
 ABI, paths and outputs differ from macOS dylibs/extensions and code signing.
