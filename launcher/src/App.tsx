@@ -917,7 +917,7 @@ function LauncherShell({
             <SidebarItem active={surface === 'remote-workspace'} icon="globe" label={language === 'ru' ? 'Удалённые проекты' : 'Remote projects'} onClick={() => navigateSurface('remote-workspace')} />
             <SidebarItem active={surface === 'history'} icon="logs" label={language === 'ru' ? 'История текста' : 'Text history'} onClick={() => navigateSurface('history')} />
             <SidebarItem active={surface === 'native-threads'} icon="accounts" label={language === 'ru' ? 'Чаты Codex' : 'Codex threads'} onClick={() => navigateSurface('native-threads')} />
-            <SidebarItem active={surface === 'agent-mode'} icon="mcp" label="Agent mode" onClick={() => navigateSurface('agent-mode')} />
+            <SidebarItem active={surface === 'agent-mode'} icon="agent" label="Agent mode" onClick={() => navigateSurface('agent-mode')} />
             <SidebarItem active={surface === 'external-usage'} icon="activity" label={language === 'ru' ? 'Расход клиентов' : 'Client usage'} onClick={() => navigateSurface('external-usage')} />
           </SidebarGroup>
           <SidebarGroup label={copy.configuration}>
