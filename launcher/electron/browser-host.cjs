@@ -1,4 +1,5 @@
 const { publishBrowserSnapshot } = require("./browser-state-publication.cjs");
+const { verifiedSessionPresentation } = require('./browser-session-presentation.cjs');
 const { BrowserArtifactTransfers } = require("./browser-artifact-transfers.cjs");
 const { BrowserManualTurns, manualPromptDigest, MANUAL_SUBMIT_TIMEOUT_MS, MANUAL_COMPACTION_SUBMIT_TIMEOUT_MS } = require("./browser-manual-turns.cjs");
 const { BrowserTurnLifecycle, TURN_HEARTBEAT_SWEEP_MS } = require("./browser-turn-lifecycle.cjs");
@@ -3623,11 +3624,7 @@ class BrowserHost {
         this.closeAuthView(authView, true, false);
       }
       const wasAuthenticated = this.state.authenticated;
-      const availability = this.activeTraceId
-        ? { status: "running", message: "ChatGPT is working" }
-        : this.manualOperation
-          ? {}
-          : { status: "ready", message: "ChatGPT is ready" };
+      const availability = verifiedSessionPresentation(this);
       if (typeof result.principalFingerprint !== "string"
         || !/^[a-f0-9]{64}$/.test(result.principalFingerprint)
         || typeof result.sessionFingerprint !== "string"

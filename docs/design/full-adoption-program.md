@@ -389,3 +389,22 @@ DEV core31382 и main31387 после этой приёмки штатно за�
 исходные config/launcher-state восстановлены byte-for-byte, source owner lock
 снят. Действующие production процессы сохранены.
 [Cleanup receipt](/Users/alex/Documents/ChatGPT/Nekodex/reviews/evidence/native-integrated-20261019/source-next-20261019/dev-acceptance/cleanup-restoration.json).
+
+
+### Browser session presentation — 19 октября 2026 года
+
+Успешный текущий session probe теперь снимает прежнюю ошибку проверки входа
+при завершении известной login/session operation. Auth identity и owners не
+меняются; ошибки навигации, сторонних операций и недоступная проверка сохраняются.
+Это устраняет противоречие между зелёным подтверждением входа и красными
+индикаторами браузера. Focused `BrowserHost.runAuthenticationProbe` case и
+независимый review прошли; actual DEV после загрузки исправления сохранил вход,
+показал зелёную вкладку ChatGPT и убрал красную отметку sidebar. Этот UI result
+не подтверждает общий model/connector readiness или новую installed поставку.
+
+Дополнительные finite acceptance receipts закрывают actual DEV local Git
+Stage/Unstage/full-index Commit с сохранением раздельных worktree/untracked bytes,
+real SSH full-index commit ACK loss без resend и GUI import поддержанных
+Claude/Gemini fixtures с отдельным пользовательским synthetic pricing catalog.
+Данные и ставки этих usage fixtures синтетические; исторические расходы аккаунта
+и фактический счёт ими не подтверждаются.

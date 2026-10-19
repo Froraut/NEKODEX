@@ -77,6 +77,9 @@ jobs:
       - name: Run focused Native schema, selected input and consent contracts
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun test tests/agent-native-wait-context.test.ts tests/native-selected-attachments.test.ts tests/agent-mode-multistage.test.ts tests/conversation-history-events.test.ts --timeout 10000
+      - name: Run successful browser session presentation regression
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun test tests/browser-session-presentation.test.ts --timeout 10000
       - name: Run bounded Loop ingress and owner recovery contracts
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun test tests/agent-loop-external-producer.test.ts tests/loop-file-watcher-recovery.test.ts tests/loop-file-watcher-integration.test.ts --timeout 10000
