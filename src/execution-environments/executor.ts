@@ -129,7 +129,8 @@ export function assertVmPublisherDetails(details: string, identifier: string): v
     && lines.some(line => line.startsWith('Timestamp=') && line.length > 10) && !lines.includes('Signature=adhoc'), 'vm-publisher-signature-required');
 }
 function verifyPublisherSignature(path: string, identifier: string, deep: boolean): void {
-  const requirement = `anchor apple generic and identifier "${identifier}" and certificate leaf[subject.OU] = "${VM_PUBLISHER_TEAM_ID}"`;
+  // '=' marks an inline requirement; without it codesign interprets this as a file path.
+  const requirement = `=anchor apple generic and identifier "${identifier}" and certificate leaf[subject.OU] = "${VM_PUBLISHER_TEAM_ID}"`;
   const verified = spawnSync('/usr/bin/codesign', ['--verify', '--strict', ...(deep ? ['--deep'] : []), '-R', requirement, path],
     { encoding: 'utf8', timeout: 15000, maxBuffer: 128 * 1024 });
   vmAssert(!verified.error && verified.status === 0, 'vm-publisher-seal-invalid');

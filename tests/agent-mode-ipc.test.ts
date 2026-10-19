@@ -2,6 +2,43 @@ import { expect, test } from 'bun:test';
 import { createRequire } from 'node:module';
 const { registerAgentMode } = createRequire(import.meta.url)('../launcher/electron/ipc/agent-mode.cjs');
 
+test('pending production upgrade preserves exact task cleanup and reads without allowing new offers', async () => {
+  let handler!: (_event: unknown, body: unknown) => Promise<unknown>;
+  let version = '6.1.32-nekodex.8', coreError = '', ready = true;
+  const received: any[] = [], readiness: any[] = [];
+  registerAgentMode({ handle: (_channel: string, callback: typeof handler) => { handler = callback; },
+    getApplicationVersion: () => '6.1.32-nekodex.10',
+    runtimeHost: { supervisor: { launcherProfile: 'production', readConfig: () => ({ releaseVersion: version }),
+      ownedAgentRuntimeReady: async (_config: unknown, options: unknown) => { readiness.push(options); return ready; },
+      control: async (_config: unknown, _endpoint: string, packet: any) => {
+        received.push(packet.body); if (coreError) throw new Error(coreError);
+        return { ok: true, value: { retained: true } };
+      } } } });
+  const call = (body: unknown) => handler(undefined, body);
+  for (const body of [{ action: 'run' }, { action: 'workspace-grant' }, { action: 'cycle' },
+    { action: 'control', control: { action: 'resume' } }, { action: 'control', control: { action: 'stop', mode: 'goal' } }]) {
+    await expect(call(body)).rejects.toThrow('Application 6.1.32-nekodex.10 is installed; runtime 6.1.32-nekodex.8 is still active');
+  }
+  expect(received).toHaveLength(0); expect(readiness).toHaveLength(0);
+  for (const body of [{ action: 'list' }, { action: 'get', taskId: 'task' },
+    { action: 'control', taskId: 'task', actionId: 'pause-id', control: { action: 'pause' } },
+    { action: 'control', taskId: 'task', actionId: 'stop-id', control: { action: 'stop' } }]) {
+    expect(await call(body)).toEqual({ retained: true });
+    expect(received.at(-1)).toEqual(body); expect(readiness.at(-1)).toEqual({ allowDraining: true });
+  }
+  ready = false;
+  await expect(call({ action: 'control', control: { action: 'stop' } })).rejects.toThrow('Start the current NEKODEX runtime');
+  expect(received).toHaveLength(4);
+  ready = true; coreError = 'HTTP 404: absent';
+  await expect(call({ action: 'list' })).rejects.toThrow('Application 6.1.32-nekodex.10 is installed; runtime 6.1.32-nekodex.8 is still active');
+  expect(received).toHaveLength(5);
+  coreError = 'HTTP 409: stale generation';
+  await expect(call({ action: 'control', control: { action: 'stop' } })).rejects.toThrow('HTTP 409: stale generation');
+  coreError = ''; version = '6.1.32-nekodex.10';
+  expect(await call({ action: 'run' })).toEqual({ retained: true });
+  expect(readiness.at(-1)).toEqual({ allowDraining: false }); expect(received).toHaveLength(7);
+});
+
 function registrar(ready: boolean, receipt: unknown = { ok: true, value: { tasks: [] } }) {
   let handler: (_event: unknown, body: unknown) => Promise<unknown>;
   const calls: unknown[] = [];

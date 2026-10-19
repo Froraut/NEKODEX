@@ -3,6 +3,48 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { registerAgentTools } = require("../launcher/electron/ipc/agent-tools.cjs");
 const { createLifecycleAdmission } = require("../launcher/electron/lifecycle-admission.cjs");
+test('pending production upgrade preserves cleanup and reads while fencing new tool work', async () => {
+  const handlers = new Map<string, (...args: any[]) => any>();
+  let version = '6.1.32-nekodex.8', coreError = '', ready = true;
+  const received: any[] = [];
+  registerAgentTools({ handle: (name: string, fn: any) => handlers.set(name, fn),
+    getApplicationVersion: () => '6.1.32-nekodex.10',
+    runtimeHost: { supervisor: { launcherProfile: 'production', readConfig: () => ({ releaseVersion: version }),
+      ownedAgentRuntimeReady: async () => ready,
+      control: async (_config: unknown, _endpoint: string, packet: any) => {
+        received.push(packet.body); if (coreError) throw new Error(coreError);
+        return { ok: true, value: { retained: true } };
+      } } },
+    remoteService: { revokeAgent: () => ({ revoked: true }) },
+    oauthIpc: { handles: (action: string) => action === 'oauthList', request: async () => ({ providers: [] }), decorateStatus: (value: unknown) => value },
+    workspaceService: { listRoots: () => [] }, vmExportService: { list: async () => ({ retained: true }) } });
+  const request = (body: unknown) => handlers.get('launcher:agent-tools')!({}, body);
+  for (const body of [{ action: 'approveInvoke' }, { action: 'grantScriptWorkspace' }, { action: 'setEnabled', enabled: true },
+    { action: 'managedSkillAction', actionId: 'saved', command: 'enable' }]) {
+    await expect(request(body)).rejects.toThrow('Application 6.1.32-nekodex.10 is installed; runtime 6.1.32-nekodex.8 is still active');
+  }
+  expect(received).toHaveLength(0);
+  expect(await request({ action: 'oauthList' })).toEqual({ providers: [] });
+  expect(await request({ action: 'vmExportStatus', scope: { taskId: 'task', generation: 1 } })).toEqual({ retained: true });
+  expect(await request({ action: 'revokeRemoteTools', scope: { taskId: 'task', generation: 1 }, explicitUserAction: true })).toEqual({ revoked: true });
+  for (const body of [{ action: 'status' }, { action: 'revokeVmWorkspace' }, { action: 'cancelVmOperation' },
+    { action: 'setEnabled', enabled: false }, { action: 'setServerEnabled', enabled: false },
+    { action: 'managedSkillAction', actionId: 'saved' }, { action: 'pythonEnvironmentAction', actionId: '11111111-1111-4111-8111-111111111111' }]) {
+    expect(await request(body)).toEqual({ retained: true });
+    expect(received.at(-1)).toEqual(body);
+  }
+  ready = false;
+  await expect(request({ action: 'revokeVmWorkspace' })).rejects.toThrow('Start the current NEKODEX runtime');
+  expect(received).toHaveLength(7);
+  ready = true; coreError = 'HTTP 404: absent';
+  await expect(request({ action: 'receipt' })).rejects.toThrow('Application 6.1.32-nekodex.10 is installed; runtime 6.1.32-nekodex.8 is still active');
+  expect(received).toHaveLength(8);
+  coreError = 'HTTP 409: owner conflict';
+  await expect(request({ action: 'cancelVmOperation' })).rejects.toThrow('HTTP 409: owner conflict');
+  coreError = ''; version = '6.1.32-nekodex.10';
+  expect(await request({ action: 'approveInvoke' })).toEqual({ retained: true });
+  expect(received).toHaveLength(10);
+});
 test("Agent tools IPC preserves owned runtime admission and the explicit native root picker", async () => {
   const handlers = new Map<string, (...args: any[]) => any>(); const received: any[] = []; let ready = true;
   const admission = createLifecycleAdmission();

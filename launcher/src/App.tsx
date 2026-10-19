@@ -9,7 +9,7 @@ import { BrowserSurface } from "./BrowserSurface";
 import { SetupSurface } from './SetupSurface';
 import { McpSurface } from './McpSurface';
 import { IconButton, ContentSurface, messageOf } from './launcher-ui';
-import { currentToolProof } from './launcher-readiness';
+import { currentToolProof, runtimeCapabilities } from './launcher-readiness';
 
 import { taskCenterSubtitle, taskCenterTitle } from './task-center-copy';
 import { QueueControls } from './QueueControls';
@@ -591,6 +591,11 @@ function LauncherShell({
     && browserAuthenticationStatus === "signed-out";
   const needsSetup = !needsBrowser && !interactionSetupComplete;
   const transitionBusy = Boolean(snapshot.lifecycle?.transition);
+  const activeRuntimeVersion = runtimeCapabilities(snapshot)?.releaseVersion;
+  const agentRuntimeUpdatePending = snapshot.profile === 'production'
+    && snapshot.state.runtimeMigrationPending === true
+    && typeof activeRuntimeVersion === 'string' && activeRuntimeVersion.length > 0
+    && activeRuntimeVersion !== snapshot.version;
   const updateCopy = updateCopyFor(language);
   const {
     updateError, setUpdateError, updateCheckBusy, updateInstallPending, updateCancelPending,
@@ -1009,6 +1014,13 @@ function LauncherShell({
             className="nk-shell__scroll"
             key={surface}
           >
+            {agentRuntimeUpdatePending && (surface === 'agent-mode' || surface === 'agent-tools') ? (
+              <Notice tone="warning" role="status">
+                {language === 'ru'
+                  ? `Приложение ${snapshot.version} установлено. Сейчас работает среда ${activeRuntimeVersion}. Новые функции станут доступны после автоматического безопасного переключения среды. Текущая работа продолжается.`
+                  : `Application ${snapshot.version} is installed. Runtime ${activeRuntimeVersion} is currently active. New features will be available after the automatic safe runtime switch. Existing work continues.`}
+              </Notice>
+            ) : null}
             {surface === "overview" ? <Overview copy={copy} browser={browser} catalogFailure={catalogFailure}
               snapshot={snapshot} toolsReady={toolProof} logStore={logStore} navigate={navigateSurface}
               openTab={(tabId) => void openBrowserTab(tabId)} onMuteNetworkNotice={muteNetworkNotice} /> : null}

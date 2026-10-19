@@ -9,7 +9,7 @@ for (const action of ['vmStatus', 'reviewVmEnvironment', 'prepareVmEnvironment',
 for (const action of ['pythonEnvironmentStatus', 'reviewPythonEnvironment', 'preparePythonEnvironment', 'pythonEnvironmentAction', 'reconcilePythonEnvironment', 'bindPythonEnvironment', 'revokePythonEnvironment']) ACTIONS.add(action);
 for (const action of ['pythonBuildStatus', 'reviewPythonBuild', 'preparePythonBuild', 'attachPythonBuild', 'revokePythonBuild', 'cancelPythonBuild', 'reconcilePythonBuild', 'vmNetworkStatus', 'grantVmNetwork', 'revokeVmNetwork']) ACTIONS.add(action);
 /** Existing IPC sender guard and owned supervisor remain the sole authority. */
-function registerAgentTools({ handle, runtimeHost, dialog, getWindow, remoteService, workspaceService, vmExportService, pythonBuildSelectionService, oauthIpc }) {
+function registerAgentTools({ handle, runtimeHost, dialog, getWindow, remoteService, workspaceService, vmExportService, pythonBuildSelectionService, oauthIpc, getApplicationVersion }) {
   const request = async body => {
     if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Invalid Agent tools request');
     if (oauthIpc?.handles(body.action)) return oauthIpc.request(body);
@@ -49,13 +49,35 @@ function registerAgentTools({ handle, runtimeHost, dialog, getWindow, remoteServ
     }
     const supervisor = runtimeHost.supervisor;
     const config = supervisor.readConfig();
+    const applicationVersion = getApplicationVersion?.();
+    // Main-owned privacy, OAuth and retained export controls above do not depend
+    // on the core API. New core controls wait for the existing safe upgrade owner.
+    const pendingVersion = supervisor.launcherProfile === 'production'
+      && typeof applicationVersion === 'string' && applicationVersion.length > 0
+      && typeof config?.releaseVersion === 'string' && config.releaseVersion.length > 0
+      && config.releaseVersion !== applicationVersion;
+    const pendingMessage = `Application ${applicationVersion} is installed; runtime ${config?.releaseVersion} is still active. This Agent tools action requires the automatic safe runtime switch. Existing work continues.`;
     const allowDraining = ['status', 'receipt', 'installReceipt', 'managedSkillAction', 'browserStatus', 'remoteStatus', 'scriptStatus', 'vmStatus', 'cancelVmOperation', 'reconcileVmOperation', 'revokeVmWorkspace', 'pythonEnvironmentStatus', 'pythonEnvironmentAction', 'reconcilePythonEnvironment', 'revokePythonEnvironment', 'pythonBuildStatus', 'revokePythonBuild', 'cancelPythonBuild', 'reconcilePythonBuild', 'vmNetworkStatus', 'revokeVmNetwork', 'revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools', 'revokeScriptWorkspace'].includes(body.action)
-      || body.action === 'setDesktopEnabled' && body.enabled === false;
+      || ['setDesktopEnabled', 'setEnabled', 'setServerEnabled'].includes(body.action) && body.enabled === false
+      || ['removeServer', 'removeSkillRoot', 'detachManagedSkill', 'revokeManagedSkill'].includes(body.action);
+    // These two "Action" endpoints only inspect a saved action ID. Do not
+    // accidentally admit an extended mutation payload under their read names.
+    const savedActionLookup = !['managedSkillAction', 'pythonEnvironmentAction'].includes(body.action)
+      || Object.keys(body).sort().join(',') === 'action,actionId'
+        && typeof body.actionId === 'string'
+        && (body.action === 'pythonEnvironmentAction' ? /^[a-f0-9-]{36}$/i : /^[a-zA-Z0-9_-]{1,128}$/).test(body.actionId);
+    if (pendingVersion && (!allowDraining || !savedActionLookup)) throw new Error(pendingMessage);
     if (!config || !await supervisor.ownedAgentRuntimeReady(config, { allowDraining })) throw new Error('Start the current NEKODEX runtime to use Agent tools');
     // Observation can end while the exact approved tool remains owned by core.
     // VM stop/revoke travels through its separate control path; timeout never
     // authorizes a second invoke or declares physical completion.
-    const receipt = await supervisor.control(config, 'agent-tools', { body, timeoutMs: body.action === 'approveInvoke' ? 50000 : 5000 });
+    let receipt;
+    try {
+      receipt = await supervisor.control(config, 'agent-tools', { body, timeoutMs: body.action === 'approveInvoke' ? 50000 : 5000 });
+    } catch (error) {
+      if (pendingVersion && /\bHTTP 404\b/.test(error instanceof Error ? error.message : String(error))) throw new Error(pendingMessage);
+      throw error;
+    }
     if (!receipt || receipt.ok !== true) throw new Error(receipt?.message || receipt?.error || 'Agent tools operation failed');
     return body.action === 'status' && oauthIpc ? oauthIpc.decorateStatus(receipt.value) : receipt.value;
   };

@@ -12,7 +12,7 @@ function selection(value) {
 }
 /** The existing guarded handle and owned supervisor are the only transport.
  * Main alone derives/signs snapshot authority from a previously picked root. */
-function registerAgentMode({ handle, runtimeHost, workspaceService, workspaceEvidenceService }) {
+function registerAgentMode({ handle, runtimeHost, workspaceService, workspaceEvidenceService, getApplicationVersion }) {
   handle('launcher:agent-mode', async (_event, body) => {
     if (!record(body) || !ACTIONS.has(body.action) || Buffer.byteLength(JSON.stringify(body), 'utf8') > 600000) throw new Error('Invalid Agent mode request');
     if (owns(body, 'grant') || owns(body, 'workspaceSnapshotGrant') || (record(body.input) && owns(body.input, 'workspaceSnapshotGrant'))) {
@@ -25,9 +25,27 @@ function registerAgentMode({ handle, runtimeHost, workspaceService, workspaceEvi
     if (owns(body, 'evidenceSelection') && body.action !== 'workspace-evidence') throw new Error('Invalid Agent evidence action');
     const supervisor = runtimeHost.supervisor;
     const config = supervisor.readConfig();
-    if (!config || !await supervisor.ownedAgentRuntimeReady(config)) throw new Error('Start the current NEKODEX runtime to use Agent mode');
+    const applicationVersion = getApplicationVersion?.();
+    // Native account inventory and closure use separate main-owned IPC. Only
+    // core-backed task requests wait for the safe runtime generation switch.
+    const pendingVersion = supervisor.launcherProfile === 'production'
+      && typeof applicationVersion === 'string' && applicationVersion.length > 0
+      && typeof config?.releaseVersion === 'string' && config.releaseVersion.length > 0
+      && config.releaseVersion !== applicationVersion;
+    const pendingMessage = `Application ${applicationVersion} is installed; runtime ${config?.releaseVersion} is still active. This Agent mode action requires the automatic safe runtime switch. Existing work continues.`;
+    const allowDraining = ['status', 'list', 'get', 'reconcile-tool'].includes(body.action)
+      || body.action === 'control' && record(body.control)
+        && Object.keys(body.control).join(',') === 'action' && ['pause', 'stop'].includes(body.control.action);
+    if (pendingVersion && !allowDraining) throw new Error(pendingMessage);
+    if (!config || !await supervisor.ownedAgentRuntimeReady(config, { allowDraining })) throw new Error('Start the current NEKODEX runtime to use Agent mode');
     const send = async payload => {
-      const receipt = await supervisor.control(config, 'agent-mode', { body: payload, returnErrorReceipt: true });
+      let receipt;
+      try {
+        receipt = await supervisor.control(config, 'agent-mode', { body: payload, returnErrorReceipt: true });
+      } catch (error) {
+        if (pendingVersion && /\bHTTP 404\b/.test(error instanceof Error ? error.message : String(error))) throw new Error(pendingMessage);
+        throw error;
+      }
       if (!receipt || receipt.ok !== true) throw new Error(receipt?.message || receipt?.error || 'Agent mode operation failed');
       return receipt.value;
     };

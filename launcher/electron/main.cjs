@@ -1121,7 +1121,8 @@ function registerIpc({ logger, stateStore }) {
     keyPath: path.join(CORE_HOME, 'agent-workspace', 'grant-key'),
     resolveWorkspace: id => localWorkspaceService.resolveGrant(id),
   });
-  registerAgentMode({ handle, runtimeHost, workspaceService: localWorkspaceService, workspaceEvidenceService });
+  registerAgentMode({ handle, runtimeHost, workspaceService: localWorkspaceService, workspaceEvidenceService,
+    getApplicationVersion: () => app.getVersion() });
   workspaceVmExportService ??= createWorkspaceVmExportService({ home: path.join(app.getPath('userData'), 'workspace-vm-export'), workspaceService: localWorkspaceService,
     protectedRoots: [CORE_HOME, app.getPath('userData'), process.env.CODEX_CHATGPT_WEB_HOME || path.join(os.homedir(), '.codex-chatgpt-web'), path.join(os.homedir(), '.nekodex-execution-vm'),
       process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), ...['.ssh', '.aws', '.config', 'Library/Keychains', 'Library/Application Support/Google/Chrome'].map(name => path.join(os.homedir(), name))],
@@ -1159,7 +1160,8 @@ function registerIpc({ logger, stateStore }) {
     destroy: () => agentOAuthService.close(),
   });
   registerAgentTools({ handle, runtimeHost, dialog, getWindow: () => mainWindow, remoteService: remoteWorkspaceService,
-    workspaceService: localWorkspaceService, vmExportService: workspaceVmExportService, pythonBuildSelectionService, oauthIpc });
+    workspaceService: localWorkspaceService, vmExportService: workspaceVmExportService, pythonBuildSelectionService, oauthIpc,
+    getApplicationVersion: () => app.getVersion() });
   registerBrowserCompanion({ handle, runtimeHost, clipboard });
   registerLocalControlApi({ handle, runtimeHost, clipboard });
   externalUsageService ??= createExternalUsageService({
