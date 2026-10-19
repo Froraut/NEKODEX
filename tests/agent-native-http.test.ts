@@ -122,7 +122,7 @@ test.skipIf(process.platform !== "darwin")("Native private HTTP crosses the actu
     expect(history.status().totalMessages).toBe(1); // Duplicate HTTP observation does not capture again.
     expect(offers).toBe(1); expect(factories).toBe(1); expect(validations).toBeGreaterThanOrEqual(3); expect(browserReads).toBe(0);
     expect((await rawPost("invalidate", { taskId, familyId: taskId, beforeGeneration: 999 })).status).toBe(409);
-    expect(retirements).toBe(0);
+    expect(retirements).toBe(1); expect(closed).toBe(1);
     runtime.control(taskId, "pause", { action: "pause" }); await client.invalidateTask(store.getTask(taskId));
     expect(retirements).toBe(1); expect(closed).toBe(1); expect(offers).toBe(1);
   } finally {

@@ -11,8 +11,10 @@ import { NativeAttachmentsPanel, type NativeSelectedAttachment } from './NativeA
 
 const lines = (text: string) => text.split('\n').map(value => value.trim()).filter(Boolean);
 const requirementRows = (text: string) => lines(text).map((value, index) => ({ id: `r${index + 1}`, text: value }));
-const stageRows = (text: string, requirementIds: string[], independent = false) => lines(text).map((instruction, index) => ({
-  id: `s${index + 1}`, instruction, requirementIds, dependsOn: index && !independent ? [`s${index}`] : [],
+type StageOrder = 'sequence' | 'independent' | 'custom';
+const stageRows = (text: string, requirementIds: string[], order: StageOrder = 'sequence', dependencies: Record<string, string[]> = {}) => lines(text).map((instruction, index) => ({
+  id: `s${index + 1}`, instruction, requirementIds, dependsOn: order === 'custom' ? (dependencies[`s${index + 1}`] ?? []).filter(id => /^s[1-9]\d*$/.test(id) && Number(id.slice(1)) <= index)
+    : index && order === 'sequence' ? [`s${index}`] : [],
 }));
 const errorText = (error: unknown) => stripIpcErrorPrefix(error instanceof Error ? error.message : String(error));
 const terminal = (task: AgentTask) => task.status === 'stopped' || task.status === 'verified_complete';
@@ -63,7 +65,9 @@ export function AgentModeSurface({ language, api, disabled = false }: {
   const [model, setModel] = useState('');
   const [turns, setTurns] = useState('8');
   const [concurrent, setConcurrent] = useState('1');
-  const [independentStages, setIndependentStages] = useState(false);
+  const [stageOrder, setStageOrder] = useState<StageOrder>('sequence');
+  const [stageDependencies, setStageDependencies] = useState<Record<string, string[]>>({});
+  const [dependencyStage, setDependencyStage] = useState('s2');
   const [userReply, setUserReply] = useState('');
   const [nativeAttachments, setNativeAttachments] = useState<NativeSelectedAttachment[]>([]);
   const [correction, setCorrection] = useState('');
@@ -170,12 +174,12 @@ export function AgentModeSurface({ language, api, disabled = false }: {
       || !Number.isSafeInteger(maxTurns) || maxTurns < 1 || maxTurns > 10000
       || !Number.isSafeInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 32) throw new Error(text.invalid);
     if (mode === 'loop' && !recurring) throw new Error(text.recurringRequired);
-    if (selectedModel.provider === 'owned-native' && (selectedModel.available !== true || !selectedModel.admissionId || maxConcurrent !== 1)) throw new Error(text.invalid);
+    if (selectedModel.provider === 'owned-native' && (selectedModel.available !== true || !selectedModel.admissionId || maxConcurrent > (selectedModel.maxConcurrent ?? 1))) throw new Error(text.invalid);
     const rows = requirementRows(requirements);
     const input = {
       id: createId.current, familyId: createId.current, ownerMode: 'agent', mode, recurringAuthorized: mode === 'loop' && recurring,
       ...(selectedModel.provider === 'owned-native' && nativeAttachments.length ? { nativeAttachments } : {}),
-      originalRequest: request.trim(), requirements: rows, stages: stageRows(stages, rows.map(row => row.id), independentStages && maxConcurrent > 1 && selectedModel.provider !== 'owned-native'),
+      originalRequest: request.trim(), requirements: rows, stages: stageRows(stages, rows.map(row => row.id), stageOrder, stageDependencies),
       bounds: { maxConcurrent, maxTurns, maxSpend: null }, execution: selectedModel.provider === 'owned-native'
         ? { provider: 'owned-native', model: selectedModel.id, admissionId: selectedModel.admissionId }
         : { provider: 'local-responses', model: selectedModel.id },
@@ -183,7 +187,7 @@ export function AgentModeSurface({ language, api, disabled = false }: {
     const workspaceSelection = snapshotOptIn ? selectedWorkspace(snapshotRoot, snapshotPaths) : undefined;
     await mutate({ action: 'create', input, ...(workspaceSelection ? { workspaceSelection } : {}) });
     const created = createId.current; createId.current = crypto.randomUUID();
-    if (mounted.current) { setRequest(''); setRequirements(''); setStages(''); setRecurring(false); setSnapshotOptIn(false); setSnapshotPaths(''); setNativeAttachments([]); }
+    if (mounted.current) { setRequest(''); setRequirements(''); setStages(''); setStageOrder('sequence'); setStageDependencies({}); setRecurring(false); setSnapshotOptIn(false); setSnapshotPaths(''); setNativeAttachments([]); }
     await refresh(created);
     if (mounted.current) {
       setNotice(text.saved);
@@ -313,10 +317,21 @@ export function AgentModeSurface({ language, api, disabled = false }: {
     void act('get', async () => { await getDetail(id); });
   };
   const task = detail?.task;
-  const nativeSelection = status?.models.find(row => modelChoice(row) === model)?.provider === 'owned-native';
-  const nativeTurnHint = language === 'ru'
-    ? 'Лимит считает ходы, отправленные в Native. Точное число внутренних запросов Codex и их денежная стоимость пока недоступны. У Native-задачи один исполнитель. Поддерживающие изображения модели принимают до двух вложений общим размером 160 КиБ за весь поток; после исчерпания лимита новые изображения не отправляются.'
-    : 'The bound counts turns offered to Native. Exact internal Codex requests and monetary cost are unavailable. A Native task has one worker. Models with image support accept at most two attachments totaling 160 KiB across the entire thread; further images are not sent once that budget is exhausted.';
+  const selectedModel = status?.models.find(row => modelChoice(row) === model);
+  const nativeSelection = selectedModel?.provider === 'owned-native';
+  const concurrentLimit = nativeSelection ? selectedModel.maxConcurrent ?? 1 : 32;
+  const stageInstructions = lines(stages);
+  const dependencyIndex = Math.min(Math.max(Number(dependencyStage.slice(1)) - 1, 0), stageInstructions.length - 1);
+  const changeStageOrder = (value: string) => {
+    if (value === 'custom') setStageDependencies(Object.fromEntries(stageRows(stages, [], stageOrder, stageDependencies).map(row => [row.id, row.dependsOn])));
+    setStageOrder(value as StageOrder);
+  };
+  const nativeTurnHint = (limit: number) => language === 'ru'
+    ? `Лимит считает ходы, отправленные в Native. Точное число внутренних запросов Codex и их денежная стоимость пока недоступны. Лимит исполнителей: ${limit}; общий лимит аккаунта делится между задачами и диалогами. Поддерживающие изображения модели принимают до двух вложений общим размером 160 КиБ за весь поток; после исчерпания лимита новые изображения не отправляются.`
+    : `The bound counts turns offered to Native. Exact internal Codex requests and monetary cost are unavailable. Worker limit: ${limit}; account capacity is shared across tasks and conversations. Models with image support accept at most two attachments totaling 160 KiB across the entire thread; further images are not sent once that budget is exhausted.`;
+  useEffect(() => {
+    if (nativeSelection) setConcurrent(current => Number(current) > concurrentLimit ? '1' : current);
+  }, [nativeSelection, concurrentLimit]);
   useEffect(() => { if (detail?.task.id) heading.current?.focus(); }, [detail?.task.id]);
   useEffect(() => {
     setEvidenceMapped(false);
@@ -353,7 +368,7 @@ export function AgentModeSurface({ language, api, disabled = false }: {
     {status?.accepting === false ? <Notice tone="warning">{text.admissionHold}</Notice> : null}
     {!status && pending ? <p role="status">{text.loading}</p> : null}
     {status ? <>
-      <Notice tone={status.configured ? 'info' : 'warning'} title={status.configured ? text.configured : text.unconfigured}>
+      <Notice tone={status.configured ? 'info' : 'warning'} title={status.configured ? nativeSelection ? text.nativeConfigured : text.configured : text.unconfigured}>
         {status.capabilities.tools ? text.toolsHint : text.textOnly}
       </Notice>
       <Panel title={text.capability} padding="compact">
@@ -367,9 +382,31 @@ export function AgentModeSurface({ language, api, disabled = false }: {
         <TextArea label={text.request} value={request} onChange={setRequest} disabled={locked} required rows={3} />
         <div className="agent-mode-columns">
           <TextArea label={text.requirements} value={requirements} onChange={setRequirements} disabled={locked} required />
-          <TextArea label={text.stages} value={stages} onChange={setStages} disabled={locked} required hint={text.stagesHint} />
+          <TextArea label={text.stages} value={stages} onChange={value => { setStages(value); setStageOrder('sequence'); setStageDependencies({}); setDependencyStage('s2'); }} disabled={locked} required hint={text.stagesHint} />
         </div>
-          {Number(concurrent) > 1 && status?.models.find(row => modelChoice(row) === model)?.provider !== 'owned-native' ? <Checkbox label={language === 'ru' ? 'Этапы независимы и могут выполняться параллельно' : 'Stages are independent and may run in parallel'} checked={independentStages} onChange={setIndependentStages} disabled={locked} /> : null}
+        {stageInstructions.length > 1 ? <div className="nk-field">
+          <label htmlFor="agent-stage-order">{language === 'ru' ? 'Порядок этапов' : 'Stage order'}</label>
+          <Select id="agent-stage-order" value={stageOrder} onChange={changeStageOrder} disabled={locked} options={[
+            { value: 'sequence', label: language === 'ru' ? 'Последовательно' : 'In sequence' },
+            { value: 'independent', label: language === 'ru' ? 'Все независимы' : 'All independent' },
+            { value: 'custom', label: language === 'ru' ? 'Выбрать зависимости' : 'Choose dependencies' },
+          ]} />
+          <p className="nk-field__hint">{language === 'ru' ? 'Независимые этапы выполняются в пределах лимита исполнителей. Изменение инструкций сбрасывает порядок к последовательному.' : 'Independent stages run within the worker limit. Editing instructions resets the order to a sequence.'}</p>
+          {stageOrder === 'custom' ? <div className="agent-mode-dependencies">
+            <label htmlFor="agent-dependency-stage">{language === 'ru' ? 'Настроить этап' : 'Configure stage'}</label>
+            <Select id="agent-dependency-stage" value={`s${dependencyIndex + 1}`} onChange={setDependencyStage} disabled={locked} options={stageInstructions.map((instruction, index) => ({ value: `s${index + 1}`, label: `${index + 1}. ${instruction}` }))} />
+            <fieldset disabled={locked}>
+            <legend>{dependencyIndex + 1}. {stageInstructions[dependencyIndex]}</legend>
+            <p className="nk-field__hint">{language === 'ru' ? 'Без выбранных зависимостей этап может начаться сразу.' : 'Without selected dependencies, this stage can start immediately.'}</p>
+            {stageInstructions.slice(0, dependencyIndex).map((previous, before) => {
+              const id = `s${dependencyIndex + 1}`, dependency = `s${before + 1}`;
+              return <Checkbox key={dependency} label={`${language === 'ru' ? 'После этапа' : 'After stage'} ${before + 1}: ${previous}`} checked={stageDependencies[id]?.includes(dependency) ?? false} disabled={locked}
+                onChange={checked => setStageDependencies(current => ({ ...current, [id]: checked ? [...(current[id] ?? []).filter(value => value !== dependency), dependency] : (current[id] ?? []).filter(value => value !== dependency) }))} />;
+            })}
+            </fieldset>
+            <ol>{stageRows(stages, [], stageOrder, stageDependencies).map(row => <li key={row.id}>{row.instruction} · {row.dependsOn.length ? `${language === 'ru' ? 'после' : 'after'} ${row.dependsOn.map(id => id.slice(1)).join(', ')}` : language === 'ru' ? 'независимый' : 'independent'}</li>)}</ol>
+          </div> : null}
+        </div> : null}
         <div className="agent-mode-columns">
           <div className="nk-field"><label htmlFor="agent-mode-select">{text.mode}</label>
             <Select id="agent-mode-select" value={mode} options={modeOptions} onChange={value => { setMode(value as typeof mode); setRecurring(false); }} disabled={locked} />
@@ -377,13 +414,13 @@ export function AgentModeSurface({ language, api, disabled = false }: {
           </div>
           <div className="nk-field"><label htmlFor="agent-mode-model">{text.model}</label>
             <Select id="agent-mode-model" value={model} options={status?.models.length ? status.models.map(row => ({ value: modelChoice(row), label: `${row.label || row.id}${row.provider === 'owned-native' ? ` · Native · ${row.imageInput ? (language === 'ru' ? 'изображения' : 'images') : (language === 'ru' ? 'текст' : 'text')}` : ''}` })) : [{ value: '', label: text.noModels }]}
-              onChange={value => { setModel(value); setNativeAttachments([]); if (status?.models.find(row => modelChoice(row) === value)?.provider === 'owned-native') setConcurrent('1'); }} disabled={locked || !status?.models.length} />
+              onChange={value => { setModel(value); setNativeAttachments([]); const next = status?.models.find(row => modelChoice(row) === value); if (next?.provider === 'owned-native' && Number(concurrent) > (next.maxConcurrent ?? 1)) setConcurrent('1'); }} disabled={locked || !status?.models.length} />
           </div>
           <TextField type="number" label={text.turns} value={turns} onChange={event => setTurns(event.target.value)} min={1} max={10000} step={1} required disabled={locked} />
-          <TextField type="number" label={text.concurrent} value={concurrent} onChange={event => setConcurrent(event.target.value)} min={1} max={nativeSelection ? 1 : 32} step={1} required disabled={locked || nativeSelection} />
+          <TextField type="number" label={text.concurrent} value={concurrent} onChange={event => setConcurrent(event.target.value)} min={1} max={concurrentLimit} step={1} required disabled={locked || concurrentLimit === 1} />
         </div>
         {nativeSelection ? <>
-          <p className="agent-mode-muted">{nativeTurnHint}</p>
+          <p className="agent-mode-muted">{nativeTurnHint(concurrentLimit)}</p>
           <NativeAttachmentsPanel language={language} scopeKey={`${createId.current}:${model}`} attachments={nativeAttachments} onChange={setNativeAttachments}
             modelImageInput={status?.models.find(row => modelChoice(row) === model)?.imageInput === true} disabled={locked} />
           <p className="agent-mode-muted">{language === 'ru' ? 'Выбранные байты сохраняются вместе с задачей и используются при явном запуске. Доступ к исходным папкам не предоставляется.' : 'Selected bytes are retained with this task and used when explicitly run. Source-folder access is not granted.'}</p>
@@ -422,13 +459,13 @@ export function AgentModeSurface({ language, api, disabled = false }: {
                 busy={pending === 'step'} onClick={() => execute('step')}>{text.step}</Button>
               {task.mode !== 'manual' ? <Button size="sm" disabled={locked || (!canExecute && !canRunLoop) || !status?.capabilities.autoSchedule} busy={pending === 'run'} onClick={() => execute('run')}>{task.mode === 'loop' ? text.loopRun : text.run}</Button> : null}
             </div>
-            <p className="agent-mode-muted">{text.stepHint}</p>
+            <p className="agent-mode-muted">{task.execution?.provider === 'owned-native' ? text.nativeStepHint : text.stepHint}</p>
             {staleNativeAdmission && !terminal(task) && <Notice tone="warning">
               <p>{language === 'ru' ? 'Для этой модели доступен новый допуск. Можно продолжить через текущий подключённый аккаунт: завершённые этапы сохранятся, а доступ к файлам потребуется подтвердить заново.' : 'A fresh admission is available for this model. Continue through the currently connected account; completed stages are retained and file access must be granted again.'}</p>
               <Button size="sm" disabled={locked || status?.accepting === false || detail.dispatches.some(row => ['unknown', 'offered', 'admitted', 'acked'].includes(row.state))}
                 busy={pending === 'refresh-execution'} onClick={refreshExecution}>{language === 'ru' ? `Обновить допуск ${currentNativeModel?.label ?? task.execution?.model}` : `Refresh admission for ${currentNativeModel?.label ?? task.execution?.model}`}</Button>
             </Notice>}
-            {task.execution?.provider === 'owned-native' ? <p className="agent-mode-muted">{nativeTurnHint}</p> : null}
+            {task.execution?.provider === 'owned-native' ? <p className="agent-mode-muted">{nativeTurnHint(task.bounds.maxConcurrent)}</p> : null}
             {task.bounds.maxSpend === null ? <p className="agent-mode-muted">{text.money}</p> : null}
             {detail.coverage && Object.values(detail.coverage).some(row => row.truncated) ? <Notice tone="warning">{text.truncated}</Notice> : null}
             <dl className="agent-mode-meta">
@@ -455,7 +492,7 @@ export function AgentModeSurface({ language, api, disabled = false }: {
               return <li key={row.id}><Badge tone={task.status === 'verified_complete' ? 'success' : observed ? 'neutral' : 'warning'}>{label}</Badge> <code>{row.id}</code> {row.text}</li>;
             })}</RecordList>
             <h3>{text.stages.split(' — ')[0]}</h3>
-            <RecordList empty={text.none}>{task.stages.map(row => <li key={row.id}><Badge>{text.stageStates[row.status] ?? row.status}</Badge> <strong>{row.id}</strong><p className="agent-mode-prose">{row.instruction}</p><small>{row.requirementIds.join(', ')}</small></li>)}</RecordList>
+            <RecordList empty={text.none}>{task.stages.map(row => <li key={row.id}><Badge>{text.stageStates[row.status] ?? row.status}</Badge> <strong>{row.id}</strong><p className="agent-mode-prose">{row.instruction}</p><small>{row.requirementIds.join(', ')}</small><p className="agent-mode-muted">{row.dependsOn?.length ? `${language === 'ru' ? 'После этапов' : 'After stages'}: ${row.dependsOn.join(', ')}` : language === 'ru' ? 'Независимый этап' : 'Independent stage'}</p></li>)}</RecordList>
           </Panel>
           {task.status === 'awaiting_input' && task.stages.some(stage => stage.waitingFor === 'user') ? <Panel title={language === 'ru' ? 'Нужен ваш ответ' : 'Your input is required'}>
             <p>{language === 'ru' ? 'Прочитайте вопрос в результате этапа. Сохранение ответа не запускает модель автоматически.' : 'Read the question in the stage result. Saving your reply does not automatically run the model.'}</p>

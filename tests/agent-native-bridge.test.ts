@@ -14,6 +14,7 @@ test('main Native bridge binds durable claims, one owned sender, held late recei
   let holdNextCreation = false, releaseCreation: (() => void) | undefined, creationStarted: (() => void) | undefined;
   const journals = new Map<string, any>(); const services: any[] = [];
   const finalText = JSON.stringify({ protocol: AGENT_NATIVE_PROTOCOL, kind: 'final', requestId: null, toolId: null, argumentsJson: null, summary: 'Matched canonical fixture result' });
+  const toolText = JSON.stringify({ protocol: AGENT_NATIVE_PROTOCOL, kind: 'tool_request', requestId: 'fixture-read-1', toolId: 'fixture/read', argumentsJson: '{}', summary: null });
   const options = {
     canStart: () => running,
     validateOffer: async (e: AgentNativeOfferEnvelope, hash: string) => { validations++; return allowed ? { scope: e.scope, payloadDigest: hash, claimId: 'durable-fixture-claim' } : false; },
@@ -42,7 +43,7 @@ test('main Native bridge binds durable claims, one owned sender, held late recei
           service.emitOlder = () => notify(prepared);
           service.complete = () => {
             const canonicalItems = [{ messageId: randomUUID(), turnId: row.turnId, role: 'user', authorship: 'automatic-host', text, timestampMs: Date.now() },
-              { messageId: randomUUID(), turnId: row.turnId, role: 'assistant', authorship: 'native-assistant', phase: 'final_answer', text: finalText, timestampMs: Date.now() }];
+              { messageId: randomUUID(), turnId: row.turnId, role: 'assistant', authorship: 'native-assistant', phase: 'final_answer', text: service.replyText ?? finalText, timestampMs: Date.now() }];
             const result = update(row, { state: 'completed', ownerHeld: false, canonicalItems, structuredOutput: { summary: 'Untrusted alternate metadata must not become assistantText' } }); active = undefined; return result;
           };
           if (service.holdNext) { service.holdNext = false; return update(row, { state: 'unknown', ownerHeld: true }); }
@@ -93,11 +94,16 @@ test('main Native bridge binds durable claims, one owned sender, held late recei
     const cancelled = new AbortController(); const observing = bridge.waitReceipt({ ...lookup(first), afterRevision: held.revision }, { signal: cancelled.signal });
     cancelled.abort(); await expect(observing).rejects.toBeDefined(); expect(destroys).toBe(0); expect(retirements).toBe(0);
     expect(await bridge.waitReceipt({ ...lookup(first), afterRevision: held.revision })).toBeUndefined(); expect(offers).toBe(1);
+    services[0].replyText = toolText;
     const waiting = bridge.waitReceipt({ ...lookup(first), afterRevision: held.revision }); services[0].complete(); const terminal = (await waiting)!;
-    expect(terminal).toMatchObject({ state: 'completed', ownerHeld: false, assistantText: finalText }); expect(terminal.revision).toBeGreaterThan(held.revision);
+    expect(terminal).toMatchObject({ state: 'completed', ownerHeld: false, assistantText: toolText }); expect(terminal.revision).toBeGreaterThan(held.revision);
     expect(callbacks.some(row => row.state === 'acknowledged')).toBe(true); expect(bridge.status().activeCount).toBe(0);
     const second = envelope(); second.continuation = { workerBindingId: terminal.workerBindingId!, workerGeneration: terminal.workerGeneration!, previousNativeTurnReceiptId: terminal.nativeTurnReceiptId! };
-    const secondResult = await bridge.offer(second); expect(secondResult.state).toBe('completed'); expect(creates).toBe(1); expect(offers).toBe(2);
+    services[0].replyText = finalText;
+    let secondResult = await bridge.offer(second);
+    while (!['completed', 'unknown', 'failed', 'not_sent'].includes(secondResult.state)) secondResult = await bridge.waitReceipt({ ...lookup(second), afterRevision: secondResult.revision }) ?? secondResult;
+    expect(secondResult.state).toBe('completed'); expect(creates).toBe(1); expect(offers).toBe(2);
+    expect(retirements).toBe(1); expect(destroys).toBe(1);
     const stale = envelope(); stale.continuation = second.continuation; expect((await bridge.offer(stale)).state).toBe('not_sent'); expect(offers).toBe(2);
     const newer = envelope(2); const newHeld = await bridge.offer(newer); expect(creates).toBe(2); expect(newHeld.ownerHeld).toBe(true);
     await bridge.invalidateTask('task', { familyId: 'family', beforeGeneration: 2 });

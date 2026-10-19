@@ -3,7 +3,7 @@ import { AgentModeRunner } from "./runner";
 import { AgentModeStore } from "./store";
 import { projectNativeSelectedAttachments } from "./native-images";
 import { activeTaskEvidence } from "./evidence";
-import { agentModelConfigured, agentModelAccepting, type AgentModelOption } from "./provider";
+import { agentModelConfigured, agentModelAccepting, agentNativeConcurrency, type AgentModelOption } from "./provider";
 import { nativeScopeOf, sameNativeScope, type AgentNativeScope } from "./native-protocol";
 import type { AgentControl, AgentDispatch, AgentExecutionPort, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliationResult, AgentWorkPacket, CreateAgentTask, OutcomeEvidence, OutcomeReview } from "./types";
 
@@ -75,7 +75,7 @@ export class AgentModeRuntime {
         if (!model) throw new Error("Task selected attachments require Native execution");
         projectNativeSelectedAttachments({ attachments: input.nativeAttachments, modelImageInput: model.imageInput === true });
       }
-      return this.store.createTask(input);
+      return this.store.createTask(input, input.execution?.provider === "owned-native" ? agentNativeConcurrency(input, this.options.models()) : 1);
     }).result;
   }
   control(taskId: string, actionId: string, control: AgentControl, scope?: AgentActionScope): AgentTask {
@@ -104,7 +104,7 @@ export class AgentModeRuntime {
       if (models.length !== 1) throw new Error("Agent provider/model has no unique available current binding");
       const execution = old.provider === "owned-native" ? { provider: old.provider, model: old.model, admissionId: models[0]!.admissionId! } : { ...old };
       this.assertExecutionAvailable({ ...task, execution });
-      return this.store.refreshExecution(taskId, execution);
+      return this.store.refreshExecution(taskId, execution, execution.provider === "owned-native" ? agentNativeConcurrency({ execution }, models) : 1);
     });
     if (!command.duplicate) { this.automaticRuns.delete(taskId); this.options.onTaskScopeInvalidated?.(taskId); }
     return command.result;
@@ -385,6 +385,7 @@ export class AgentModeRuntime {
     if (task.familyId !== scope.familyId || task.generation !== scope.generation || task.revision !== scope.revision) throw new Error("Stale task action scope");
   }
   private assertExecutionAvailable(task: AgentTask): void {
+    if (task.execution?.provider === "owned-native" && task.bounds.maxConcurrent > agentNativeConcurrency(task, this.options.models())) throw new Error("Native task exceeds current concurrency capacity");
     if (!agentModelAccepting(task, this.options.models()) || this.options.configured?.() === false || this.options.canExecute?.(task) === false) throw new Error("Agent provider/model is unavailable");
   }
 }

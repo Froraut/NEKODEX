@@ -10,6 +10,7 @@ function syncPath(file) { const fd = fs.openSync(file, 'r'); try { fs.fsyncSync(
 /** Main-only account generation owner. No arbitrary RPC, auth bytes or foreign thread API. */
 function createNativeAccountExecutionService({ authority, inventory, getWrapperPin, storageRoot, onChange,
   requestTimeoutMs, terminalTimeoutMs, stopGraceMs, maxConcurrentThreads = 2, testHooks = {} } = {}) {
+  if (!Number.isInteger(maxConcurrentThreads) || maxConcurrentThreads < 1 || maxConcurrentThreads > 2) throw fail('invalid_execution_owner', 'Native account capacity must be one or two threads');
   if (!authority?.acquireProfileOwner || !inventory?.trustedInventory || typeof getWrapperPin !== 'function' || !path.isAbsolute(storageRoot || '')) throw fail('invalid_execution_owner', 'Trusted Native execution dependencies are required');
   let current, preparing, closing, destroyed = false;
   const notify = () => { try { onChange?.(); } catch {} };
@@ -48,7 +49,7 @@ function createNativeAccountExecutionService({ authority, inventory, getWrapperP
     try { await preparing; } finally { preparing = undefined; notify(); }
     return { models: models(), serverGeneration: current.serverGeneration };
   }
-  function models() { const status = current?.server?.inspect(); return !destroyed && !preparing && !closing && !current?.failed && status?.ready && status.accepting ? current.admission.models.map(row => ({ ...row })) : []; }
+  function models() { const status = current?.server?.inspect(); return !destroyed && !preparing && !closing && !current?.failed && status?.ready && status.accepting ? current.admission.models.map(row => ({ ...row, maxConcurrent: maxConcurrentThreads })) : []; }
   return Object.freeze({ admit, models,
     // Trusted main-only view of the already admitted owner. This accessor never
     // starts a process or reopens a profile and is never exposed through IPC.

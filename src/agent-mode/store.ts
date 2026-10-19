@@ -128,7 +128,7 @@ export class AgentModeStore {
     if (old.taskId !== taskId || old.kind !== kind || !same(body.input, input)) throw new Error("Action identity conflict");
     return { result: body.result };
   }
-  createTask(input: CreateAgentTask): AgentTask {
+  createTask(input: CreateAgentTask, nativeMaxConcurrent = 1): AgentTask {
     if (input.ownerMode !== "agent") throw new Error("Client-owned tasks cannot acquire an Agent scheduler");
     if (!["manual", "goal", "loop"].includes(input.mode) || (input.mode === "loop" && input.recurringAuthorized !== true)) throw new Error("Loop requires explicit recurrence authorization");
     text(input.originalRequest, "original request"); plan(input.requirements, input.stages);
@@ -136,7 +136,7 @@ export class AgentModeStore {
     if (input.execution) {
       if (!["local-responses", "owned-native"].includes(input.execution.provider)) throw new Error("Unsupported execution provider");
       id(input.execution.model);
-      if (input.execution.provider === "owned-native") { id(input.execution.admissionId); if (input.bounds.maxConcurrent !== 1) throw new Error("Native adapter requires one concurrent offer per task"); }
+      if (input.execution.provider === "owned-native") { id(input.execution.admissionId); if (!Number.isSafeInteger(nativeMaxConcurrent) || nativeMaxConcurrent < 1 || nativeMaxConcurrent > 2 || input.bounds.maxConcurrent > nativeMaxConcurrent) throw new Error("Native task exceeds admitted concurrency capacity"); }
     }
     const task: AgentTask = { schemaVersion: 1, id: input.id ?? randomUUID(), familyId: input.familyId ?? randomUUID(), ownerMode: "agent", mode: input.mode, status: "ready", generation: 1, revision: 1, originalRequest: input.originalRequest, corrections: [], requirements: structuredClone(input.requirements), stages: input.stages.map(stage => ({ ...structuredClone(stage), status: "pending" })), bounds: { ...input.bounds }, turns: 0, spent: 0, reserved: 0, unpricedTurns: 0, ...(input.execution ? { execution: { ...input.execution } } : {}), evidenceRevision: 0, evidence: [], cycle: 1, createdAt: this.now(), updatedAt: this.now() };
     task.turnUnit = input.execution?.provider === "owned-native" ? "native-offers" : "responses-requests";
@@ -227,7 +227,7 @@ export class AgentModeStore {
     });
   }
   /** Host-resolved pins only. Completed work and immutable dispatch history survive rebinding. */
-  refreshExecution(taskId: string, execution: AgentExecutionConfig): AgentTask {
+  refreshExecution(taskId: string, execution: AgentExecutionConfig, nativeMaxConcurrent = 1): AgentTask {
     return this.atomic(() => {
       const task = this.getTask(taskId);
       if (["stopped", "verified_complete"].includes(task.status)) throw new Error("Task is terminal; execution cannot be refreshed");
@@ -235,7 +235,7 @@ export class AgentModeStore {
       id(execution.model);
       if (execution.provider === "owned-native") {
         id(execution.admissionId);
-        if (task.bounds.maxConcurrent !== 1 || task.bounds.maxSpend !== null) throw new Error("Task Native bounds are incompatible with execution refresh");
+        if (!Number.isSafeInteger(nativeMaxConcurrent) || nativeMaxConcurrent < 1 || nativeMaxConcurrent > 2 || task.bounds.maxConcurrent > nativeMaxConcurrent || task.bounds.maxSpend !== null) throw new Error("Task Native bounds are incompatible with execution refresh");
       }
       if (task.reserved !== 0 || this.listDispatches(taskId).some(row => unsettled.has(row.state))
         || this.effectiveToolOutcomes(taskId).some(row => row.state === "outcome_unknown")) throw new Error("Task has live or unknown execution; reconcile before refreshing");

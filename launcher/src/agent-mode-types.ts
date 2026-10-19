@@ -37,7 +37,7 @@ export interface AgentModeStatus {
   configured: boolean;
   accepting?: boolean;
   ownerId?: string;
-  models: { id: string; label?: string; provider?: 'local-responses' | 'owned-native'; admissionId?: string; available?: boolean; accepting?: boolean; imageInput?: boolean }[];
+  models: { id: string; label?: string; provider?: 'local-responses' | 'owned-native'; admissionId?: string; available?: boolean; accepting?: boolean; imageInput?: boolean; maxConcurrent?: number }[];
   capabilities: { tools: boolean; workspace: boolean; autoSchedule: boolean; observedEvidence?: boolean; loopSource?: 'mailbox'; externalWatchers?: boolean };
   tasks: AgentTask[];
   total?: number;

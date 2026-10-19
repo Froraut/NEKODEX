@@ -50,7 +50,7 @@ test.skipIf(process.platform !== 'darwin')('one qualified account generation own
   };
   const child: any = new EventEmitter(); child.pid = 43121; child.stdout = new PassThrough(); child.stderr = new PassThrough();
   const received: any[] = [], starts: any[] = [], turns = new Map<string, any>(), threadIds: string[] = [];
-  const firstTurn = deferred(), secondTurn = deferred(), firstUnsubscribe = deferred();
+  const firstTurn = deferred(), secondTurn = deferred(), firstUnsubscribe = deferred(), secondUnsubscribe = deferred();
   const startupAccountRead = deferred(), releaseStartup = deferred(); let holdStartup = true;
   let launches = 0, endings = 0, closed = false, input = '';
   const respond = (message: any, result: any) => child.stdout.write(JSON.stringify({ id: message.id, result }) + '\n');
@@ -76,7 +76,11 @@ test.skipIf(process.platform !== 'darwin')('one qualified account generation own
             modelProvider: 'openai', cwd: p.cwd, instructionSources: [], approvalPolicy: 'never', approvalsReviewer: 'user', sandbox: { type: 'readOnly' } });
         }
         if (message.method === 'turn/start') { turns.set(message.params.threadId, message); if (turns.size === 1) firstTurn.resolve(); else secondTurn.resolve(); }
-        if (message.method === 'thread/unsubscribe') { respond(message, { status: 'unsubscribed' }); firstUnsubscribe.resolve(); }
+        if (message.method === 'thread/unsubscribe') {
+          respond(message, { status: 'unsubscribed' });
+          if (message.params.threadId === threadIds[0]) firstUnsubscribe.resolve();
+          if (message.params.threadId === threadIds[1]) secondUnsubscribe.resolve();
+        }
       });
     }
     done();
@@ -147,7 +151,15 @@ test.skipIf(process.platform !== 'darwin')('one qualified account generation own
     const retiring = bridge.invalidateTask('task-a', { familyId: 'task-a', beforeGeneration: 2 }).then(() => { retiredA = true; });
     await firstUnsubscribe.promise; expect(retiredA).toBe(false); expect(endings).toBe(0); expect(releases).toBe(0);
     finish(threadIds[1]!, turnB);
-    expect(await pendingB).toMatchObject({ state: 'completed', ownerHeld: false, assistantText: finalText });
+    await pendingB; await secondUnsubscribe.promise;
+    const lookupB = { actionId: b.actionId, scope: b.scope, payloadDigest: digest(JSON.stringify(b)) };
+    const unloadingB = (await bridge.readReceipt(lookupB))!;
+    expect(unloadingB).toMatchObject({ state: 'acknowledged', ownerHeld: true });
+    expect(unloadingB.assistantText).toBeUndefined();
+    event('thread/closed', { threadId: threadIds[1] });
+    let completedB = unloadingB;
+    while (completedB.state !== 'completed') completedB = await bridge.waitReceipt({ ...lookupB, afterRevision: completedB.revision }) ?? completedB;
+    expect(completedB).toMatchObject({ state: 'completed', ownerHeld: false, assistantText: finalText });
     expect(retiredA).toBe(false); expect(launches).toBe(1);
     const turnA = randomUUID(); respond(turns.get(threadIds[0]!), { turn: { id: turnA, status: 'inProgress' } }); finish(threadIds[0]!, turnA);
     event('thread/closed', { threadId: threadIds[0] }); await retiring;
@@ -157,9 +169,11 @@ test.skipIf(process.platform !== 'darwin')('one qualified account generation own
     expect(threadIds).toHaveLength(2); expect(turns.size).toBe(2); expect(endings).toBe(0); expect(releases).toBe(0);
     usage.ordinaryUsageAllowed = true;
     expect(bridge.status().bindings.find(row => row.taskId === 'task-a')).toMatchObject({ retired: true, closed: true });
-    // Retire B separately; its exact close must still avoid closing the account process.
-    const retireB = bridge.invalidateTask('task-b', { familyId: 'task-b', beforeGeneration: 2 });
-    await new Promise<void>(resolve => queueMicrotask(resolve)); event('thread/closed', { threadId: threadIds[1] }); await retireB;
+    // B's semantic final already closed only its exact subscription. Later
+    // generation invalidation must not unsubscribe again or close the account.
+    const unsubscribeCount = received.filter(row => row.method === 'thread/unsubscribe').length;
+    await bridge.invalidateTask('task-b', { familyId: 'task-b', beforeGeneration: 2 });
+    expect(received.filter(row => row.method === 'thread/unsubscribe')).toHaveLength(unsubscribeCount);
     expect(endings).toBe(0); expect(leases).toBe(1); expect(releases).toBe(0); expect(service.currentOperation()).toBeNull();
     expect(received.filter(row => row.method === 'turn/start')).toHaveLength(2); expect(received.filter(row => row.method === 'thread/start')).toHaveLength(2);
     await Promise.all([service.destroy(), service.destroy()]); expect(endings).toBe(1); expect(releases).toBe(1); expect(lease).toBeUndefined();

@@ -41,6 +41,14 @@ function compileAgentNativeOutputSchema(schema) {
     && ['requestId', 'toolId', 'argumentsJson', 'summary'].every(key => value[key] === null || typeof value[key] === 'string');
 }
 const leafSchemaHash = digest(canonical(AGENT_NATIVE_OUTPUT_SCHEMA));
+function semanticFinal(text) {
+  try {
+    const value = JSON.parse(text);
+    return compileAgentNativeOutputSchema(AGENT_NATIVE_OUTPUT_SCHEMA)(value) && value.kind === 'final'
+      && value.requestId === null && value.toolId === null && value.argumentsJson === null
+      && typeof value.summary === 'string' && Boolean(value.summary.trim()) && Buffer.byteLength(value.summary) <= 16_384;
+  } catch { return false; }
+}
 function uuidFor(value) {
   const bytes = createHash('sha256').update(canonical(value)).digest().subarray(0, 16);
   bytes[6] = bytes[6] & 15 | 80; bytes[8] = bytes[8] & 63 | 128;
@@ -113,6 +121,27 @@ function createAgentNativeBridge(options = {}) {
           threadId: row.threadId, timestampMs: final.timestampMs, rawTextSha256: digest(final.text) };
       }
     }
+    if (row.state === 'completed' && semanticFinal(changes.assistantText) && !binding.closed) {
+      // A canonical final is retained at the leaf, but the task may only advance
+      // after this exact subscription releases its shared account slot. Tool and
+      // awaiting-input branches retain their original continuation authority.
+      entry.terminalChanges = changes;
+      const receipt = publish(entry, { ...changes, state: 'acknowledged', ownerHeld: true, assistantText: undefined });
+      entry.terminalRelease ??= Promise.resolve().then(async () => {
+        // The leaf publishes before clearing its offer's busy flag. Join that
+        // original operation before retiring; this is never a second send.
+        await entry.operation;
+        try {
+          await retire(binding);
+          publish(entry, { ...entry.terminalChanges, state: 'completed', ownerHeld: false });
+        } catch {
+          binding.unsettled = true;
+          publish(entry, { ...entry.terminalChanges, state: 'unknown', ownerHeld: true, assistantText: undefined });
+        }
+      });
+      return receipt;
+    }
+    if (entry.terminalRelease) return entry.receipt;
     const receipt = publish(entry, changes);
     if (receipt.state === 'unknown' && !receipt.ownerHeld) binding.unsettled = true;
     if (['completed', 'failed'].includes(receipt.state)) binding.lastAction = entry.envelope.actionId;
@@ -143,7 +172,7 @@ function createAgentNativeBridge(options = {}) {
         // A malformed/unprojectable leaf row cannot keep a successfully closed physical
         // owner held forever. Release only this exact binding, without claiming success,
         // not-sent delivery or changing the previously observed write disposition.
-        for (const entry of actions.values()) if (entry.binding === binding && entry.receipt?.ownerHeld) {
+        for (const entry of actions.values()) if (entry.binding === binding && entry.receipt?.ownerHeld && !entry.terminalRelease) {
           publish(entry, { state: 'unknown', ownerHeld: false, writeDisposition: entry.receipt.writeDisposition, assistantText: undefined });
         }
       } catch (error) { binding.unsettled = true; throw error; }
@@ -170,6 +199,7 @@ function createAgentNativeBridge(options = {}) {
       const claim = await options.validateOffer(structuredClone(e), entry.payloadDigest);
       if (claim !== true && (!plain(claim) || claim.payloadDigest !== entry.payloadDigest || !scopeValid(claim.scope) || !sameScope(claim.scope, e.scope))) return knownUnsent(entry);
       if (destroyed || fenced(e.scope) || !options.canStart() || (epochs.get(e.scope.taskId) ?? 0) !== epoch) return knownUnsent(entry);
+      if ([...bindings.values()].some(value => value.unsettled)) return knownUnsent(entry);
       // Publish the durably claimed host intent before potentially long startup. HTTP may
       // finish this observation while the same operation continues; it must never re-offer.
       publish(entry, { state: 'prepared', ownerHeld: false, writeDisposition: 'not-written' });

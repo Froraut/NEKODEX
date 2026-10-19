@@ -3,6 +3,7 @@ export interface AgentNativeAdvertisedModel {
   id: string; admissionId: string; label?: string; provider: 'owned-native'; available: true; accepting?: boolean;
   historySource?: import('./agent-native-protocol.cjs').AgentNativeHistorySource;
   imageInput?: boolean;
+  maxConcurrent?: number;
 }
 export function createAgentNativeDescriptorPublisher(options: {
   coreHome: string; profile: 'production' | 'development'; control: { endpoint: string; token: string };

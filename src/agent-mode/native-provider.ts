@@ -9,7 +9,7 @@ import { projectNativeToolImages, projectNativeSelectedAttachments, type NativeS
 import type { OwnedNativeImage } from "./native-protocol";
 import { validateOwnedNativeImages } from "../../launcher/electron/owned-native-images.cjs";
 import type { AgentExecutionPort, AgentNativeContinuation, AgentNativeToolDefinition, ExecutionRequest, ExecutionResult } from "./types";
-import { agentModelAccepting, type AgentModelOption } from "./provider";
+import { agentModelAccepting, agentNativeConcurrency, type AgentModelOption } from "./provider";
 import { AGENT_NATIVE_ENVELOPE_BYTES, AGENT_NATIVE_OUTPUT_SCHEMA_HASH, AGENT_NATIVE_OUTPUT_SCHEMA_ID, AGENT_NATIVE_PROTOCOL, AGENT_NATIVE_TEXT_BYTES,
   nativeDigest, nativeScopeOf, nativeToolCallId, nativeToolValidator, parseNativeResult, sameNativeScope,
   type AgentNativeBridge, type AgentNativeOfferEnvelope, type AgentNativeReceipt } from "./native-protocol";
@@ -50,7 +50,8 @@ export function createOwnedNativeExecutionPort(options: OwnedNativeExecutionPort
     let imageUsage = { count: 0, byteLength: 0 };
     try {
       const configured = request.task.execution;
-      if (!configured || configured.provider !== "owned-native" || !agentModelAccepting(request.task, options.models()) || request.task.bounds.maxSpend !== null) return notSent(request);
+      if (!configured || configured.provider !== "owned-native" || !agentModelAccepting(request.task, options.models()) || request.task.bounds.maxSpend !== null
+        || request.task.bounds.maxConcurrent > agentNativeConcurrency(request.task, options.models())) return notSent(request);
       if (request.continuation && request.continuation.source.kind !== "owned-native") return notSent(request);
       source = request.continuation?.source as AgentNativeContinuation | undefined;
       let toolResults: unknown[] = [], images: OwnedNativeImage[] = [], selectedAttachments: NativeSelectedAttachmentContext[] = [];

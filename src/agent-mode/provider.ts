@@ -17,6 +17,8 @@ export interface AgentModelOption {
   historySource?: import("./native-protocol").AgentNativeHistorySource;
   /** True only for the exact admitted Native model's typed image modality. */
   imageInput?: boolean;
+  /** Explicit current Native account capacity; omitted legacy advertisements allow one worker. */
+  maxConcurrent?: number;
 }
 export interface LocalResponsesProviderOptions {
   /** Fixed host configuration, never a URL supplied by a task or model. */
@@ -151,6 +153,14 @@ export function agentModelConfigured(task: Pick<AgentTask, "execution">, models:
 }
 export function agentModelAccepting(task: Pick<AgentTask, "execution">, models: readonly AgentModelOption[]): boolean {
   return agentModelConfigured(task, models) && models.some(row => agentModelConfigured(task, [row]) && row.accepting !== false);
+}
+
+export function agentNativeConcurrency(task: Pick<AgentTask, "execution">, models: readonly AgentModelOption[]): number {
+  const rows = models.filter(row => agentModelConfigured(task, [row]));
+  if (rows.length !== 1) throw new Error("Native model has no unique current capacity");
+  const capacity = rows[0]!.maxConcurrent ?? 1;
+  if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > 2) throw new Error("Invalid Native concurrency capability");
+  return capacity;
 }
 
 /** Dispatches through one runner; never switches providers after a send or on failure. */

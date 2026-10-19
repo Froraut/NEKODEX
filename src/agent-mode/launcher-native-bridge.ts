@@ -11,7 +11,7 @@ const identity = z.string().min(1).max(128).regex(/^[^\u0000-\u001f]+$/u);
 const historySource = z.object({ sourceId: z.string().regex(/^[a-f0-9]{64}$/), profileId: z.string().uuid(),
   backendAccountId: identity.regex(/^[^\u0000-\u0020]+$/u), authEpoch: z.string().uuid() }).strict();
 const model = z.object({ id: identity, admissionId: identity, provider: z.literal("owned-native"), available: z.literal(true),
-  accepting: z.boolean(), label: z.string().min(1).max(200).optional(), historySource: historySource.optional(), imageInput: z.boolean().optional() }).strict();
+  accepting: z.boolean(), label: z.string().min(1).max(200).optional(), historySource: historySource.optional(), imageInput: z.boolean().optional(), maxConcurrent: z.number().int().min(1).max(2).optional() }).strict();
 const descriptor = z.object({ version: z.literal(1), kind: z.literal("nekodex-agent-native"), profile: z.enum(["production", "development"]),
   pid: z.number().int().positive(), instanceId: z.string().uuid(), control: z.object({ endpoint: z.string(), token: z.string().regex(/^[A-Za-z0-9_-]{40,}$/) }).strict(),
   protocol: z.literal(AGENT_NATIVE_PROTOCOL), outputSchemaHash: z.literal(AGENT_NATIVE_OUTPUT_SCHEMA_HASH), accepting: z.boolean(),

@@ -24,11 +24,12 @@ function createAgentNativeDescriptorPublisher({ coreHome, profile, control }) {
   function publish({ models = [], accepting = false } = {}) {
     if (!Array.isArray(models) || models.length > 64 || typeof accepting !== 'boolean'
       || new Set(models.map(row => `${row.id}:${row.admissionId}`)).size !== models.length
-      || models.some(row => !row || Object.keys(row).some(key => !['id', 'admissionId', 'label', 'available', 'accepting', 'provider', 'historySource', 'imageInput'].includes(key))
+      || models.some(row => !row || Object.keys(row).some(key => !['id', 'admissionId', 'label', 'available', 'accepting', 'provider', 'historySource', 'imageInput', 'maxConcurrent'].includes(key))
         || !text(row.id, 128) || !text(row.admissionId, 128) || row.available !== true
         || row.provider !== 'owned-native' || row.label !== undefined && !text(row.label, 200)
         || row.accepting !== undefined && typeof row.accepting !== 'boolean'
         || row.historySource !== undefined && !isAgentNativeHistorySource(row.historySource)
+        || row.maxConcurrent !== undefined && (!Number.isSafeInteger(row.maxConcurrent) || row.maxConcurrent < 1 || row.maxConcurrent > 2)
         || row.imageInput !== undefined && typeof row.imageInput !== 'boolean')) throw new Error('Native descriptor requires explicitly admitted models');
     const value = { version: 1, kind: 'nekodex-agent-native', profile, pid: process.pid, instanceId,
       control: { endpoint: endpoint.origin, token }, protocol: AGENT_NATIVE_PROTOCOL,

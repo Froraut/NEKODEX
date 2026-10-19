@@ -19,10 +19,22 @@ an offline configured Web task can still be created, while execution is held.
 Runtime `canStart` is global local-service drain/shutdown admission. Optional
 `canExecute(task)` is provider-specific admission and is checked before offers
 and automatic scheduling. Host composition must not use Web readiness as the
-Native readiness gate. Native tasks currently require maxConcurrent=1 and an
-explicit finite maxTurns with maxSpend=null. Their stored turnUnit is
+Native readiness gate. Native model rows may advertise `maxConcurrent: 1|2`;
+an absent field preserves the legacy limit of one. Creation, admission refresh,
+scheduling and transport claims require the task bound to fit that exact current
+model/admission capability. Account subscription capacity remains shared with
+other tasks and retained conversations. Existing tasks are never upgraded
+automatically. Native tasks require an explicit finite maxTurns with maxSpend=null. Their stored turnUnit is
 `native-offers`; no exact internal provider-request count or monetary price is
 claimed. Internal retry/compaction accounting is outside this adapter.
+
+A schema-valid semantic `final` retains its canonical leaf result while the
+bridge reports an acknowledged, held owner. The original offer operation is
+joined, then its exact binding retires and its subscription physically closes
+before `completed` is published. This releases capacity before a dependent
+stage creates a fresh binding. `tool_request` and `awaiting_input` preserve the
+binding for exact continuation. Uncertain retirement retains ownership and
+the canonical leaf receipt without publishing success or replaying the offer.
 
 ## Qualified account readiness precedes model advertisement
 
