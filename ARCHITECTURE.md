@@ -751,9 +751,32 @@ rejects overlapping writes before staging a run. Existing isolation, control-FD,
 fork/exec/network denial and physical settlement remain in force.
 See [contract](docs/design/python-skill-environments.md) and
 [focused evidence](docs/reviews/2026-10-19-python-environments.md).
-Actual environment GUI/PyPI-wheel/Native and installed acceptance remain pending;
-the earlier stdlib Python proof above is not that evidence. General dependencies,
-shell/network, other OSes and the complete adoption scope remain open.
+Actual GUI Review/Prepare/Attach and a real dateutil/six Native Goal produced an
+independently checked CSV with a main file observer and explicit QA verification;
+see the focused evidence above. Installed acceptance remains separate. General
+dependencies, shell/network, other OSes and the complete adoption scope remain open.
+
+**Isolated Linux shell development leaf:** `src/execution-environments/protocol.ts`
+owns bounded scoped NDJSON and untrusted proposal capture; `storage.ts` owns a
+user-wide private advisory lock, authenticated job/gate journals and exact pending
+release reconciliation. The default authority is independent of launcher profiles.
+`executor.ts` explicitly admits pinned development helper/guest artifacts, records
+the helper PID/start and START intent before its gated write, and requires an
+authenticated VZ stop receipt plus exact helper/stdio join before settling.
+Candidate bytes use host digest names and can only be read after settlement;
+they grant no workspace destination or export authority.
+
+`launcher/native/execution-vm-helper.swift` owns one VZ machine with fixed two CPUs,
+2 GiB, no NIC, no directory shares or storage devices and one bounded vsock port.
+Its standalone builder snapshots source/entitlements and signs only that helper.
+The separately pinned Go/Alpine guest producer creates a self-contained ARM64
+initrd with an unprivileged shell job and no host credentials/configuration.
+`scripts/dev-execution-vm.ts` is an explicit development fixture, not discovery,
+Agent tool admission or a production/installed runtime. Product Review/Prepare,
+ToolJournal integration, approved CAS export, native build tools, network grants
+and Darwin parity remain open. See
+[contract](docs/design/execution-vm-wire.md) and
+[implementation scope](docs/design/isolated-execution-environments.md).
 
 Selected PDF resources add v5 descriptors and immutable raw files to the same
 store without changing v1–v4 identities. `skill-pdf-extractor.ts` owns shared

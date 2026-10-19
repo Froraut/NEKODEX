@@ -22,3 +22,5 @@ notes.md
 launcher/electron/credential-helper/
 launcher/electron/desktop-helper/
 launcher/electron/skill-pdf-helper/
+launcher/electron/execution-vm-helper/
+launcher/native/execution-guest/.build/

@@ -65,6 +65,9 @@ jobs:
       - name: Run persistent Native ownership regressions
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun test tests/persistent-native-conversations.test.ts tests/native-persistent-ipc.test.ts tests/native-account-ipc.test.ts --timeout 10000
+      - name: Run isolated VM protocol regressions without booting a VM
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun test tests/execution-vm-contract.test.ts --timeout 10000
       - name: Run scoped local API consumer regressions
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun test tests/local-control-api-client.test.ts --timeout 10000

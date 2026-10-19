@@ -1,6 +1,11 @@
 # Isolated execution environments: proposed continuation
 
-**Design only; not implemented or accepted.** This extends the full P16/P17 scope
+**Development implementation in progress; product acceptance remains open.**
+The dedicated helper, guest producer, strict protocol and private execution leaf
+now exist and actual pipeline/background/cancel/timeout/core EOF checks passed.
+See [focused evidence](../reviews/2026-10-19-isolated-shell.md). Product/installed
+admission and the remaining native-build/export/network work stay open.
+This extends the full P16/P17 scope
 in the [adoption program](full-adoption-program.md), including real shell external
 programs/pipelines, native builds and explicit network authority. Existing
 [restricted scripts](restricted-skill-scripts.md) and
@@ -18,8 +23,8 @@ Do not use a shared Docker VM, attach another application's VM or accept a
 user-supplied VM control socket as this action's ownership proof.
 
 Proposed initial resource envelope: **one owned VM, two virtual CPUs, 2 GiB RAM**.
-These are planning values, not measured performance or verified platform support;
-implementation must validate host/framework limits and record admitted values.
+These values were admitted and asserted on the actual development VZ configuration;
+the small fixture is not a host-performance guarantee or production acceptance.
 Wall-time, output, disk-growth, snapshot/import/export and vsock message budgets
 must be explicit bounded fields in the reviewed action manifest. A deadline may
 request stop; it cannot independently declare physical completion.
@@ -36,9 +41,10 @@ The pinned base image/kernel/initrd/agent/toolchain manifest identifies all inpu
 mutable guest work never modifies the shared base. Missing helper/image/signature,
 unsupported host architecture or unavailable virtualization entitlement produces
 unavailable, without fallback to an unrestricted host shell.
-The current product has no admitted NEKODEX Linux guest bundle or static guest
-agent/toolchain build contract. These are prerequisites, not supplied by the
-presence of a host SDK or another application's bundled kernel/image.
+The development producer pins an official Alpine ARM64 kernel/minirootfs and
+Go toolchain, builds a static guest agent and self-contained initrd, and records
+their exact source/artifact identities. This is not a production guest admission
+or a full compiler/Python toolchain. Those remain separate prerequisites.
 
 Linux guest native code is **not Darwin-native parity**: Linux `.so`, toolchain,
 ABI, paths and outputs differ from macOS dylibs/extensions and code signing.
