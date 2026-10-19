@@ -1,5 +1,5 @@
 const { publishBrowserSnapshot } = require("./browser-state-publication.cjs");
-const { verifiedSessionPresentation } = require('./browser-session-presentation.cjs');
+const { verifiedSessionPresentation, idleSessionPresentation } = require('./browser-session-presentation.cjs');
 const { BrowserArtifactTransfers } = require("./browser-artifact-transfers.cjs");
 const { BrowserManualTurns, manualPromptDigest, MANUAL_SUBMIT_TIMEOUT_MS, MANUAL_COMPACTION_SUBMIT_TIMEOUT_MS } = require("./browser-manual-turns.cjs");
 const { BrowserTurnLifecycle, TURN_HEARTBEAT_SWEEP_MS } = require("./browser-turn-lifecycle.cjs");
@@ -496,6 +496,9 @@ class BrowserHost {
     this.selectedTabId = "home";
     this.manualOperation = null;
     this.loginOperation = null;
+    this.primaryDocumentRevision = 0;
+    this.verifiedHomeDocument = null;
+    this.browserPresentationError = null;
     this.authGeneration = 0;
     this.authProbeRevision = 0;
     this.authProbeTail = Promise.resolve();
@@ -1337,6 +1340,7 @@ class BrowserHost {
         this.setState({ url });
         return;
       }
+      this.primaryDocumentRevision = (this.primaryDocumentRevision ?? 0) + 1;
       this.primaryNavigationFailed = false;
       this.primaryRendererReady = false;
       this.primaryDeviceEmulationDirty = true;
@@ -1953,18 +1957,20 @@ class BrowserHost {
     const contents = this.activeView()?.webContents;
     const selected = this.selectedTurnTab();
     const manualInteraction = browserInteractionModeFor(this) === "manual";
+    const idlePresentation = manualInteraction ? null : idleSessionPresentation(this);
+    const homeState = idlePresentation ? { ...this.state, ...idlePresentation } : this.state;
     const homeTab = {
       id: "home",
       traceId: null,
-      title: manualInteraction ? "ChatGPT" : this.state.title || "ChatGPT",
-      status: this.state.status,
-      loading: this.state.loading === true,
+      title: manualInteraction ? "ChatGPT" : homeState.title || "ChatGPT",
+      status: homeState.status,
+      loading: homeState.loading === true,
       active: this.selectedTabId === "home",
       closable: false,
     };
     const state = selected
       ? {
-          ...this.state,
+          ...homeState,
           status: selected.status,
           message: selected.message,
           url: selected.url,
@@ -1972,8 +1978,8 @@ class BrowserHost {
           loading: selected.loading,
         }
       : manualInteraction
-        ? { ...this.state, title: "ChatGPT" }
-        : this.state;
+        ? { ...homeState, title: "ChatGPT" }
+        : homeState;
     return {
       ...readBrowserNavigationState(contents, {
         ...state,
@@ -1999,7 +2005,17 @@ class BrowserHost {
     };
   }
 
-  setState(patch) {
+  setState(patch, presentationOwner) {
+    if (patch.status) {
+      // A wrapping operation failure cannot downgrade a current document error.
+      const surfaceFailure = this.state?.status === 'error' && this.browserPresentationError?.owner === 'surface';
+      this.browserPresentationError = patch.status === 'error'
+        ? { owner: presentationOwner?.operation && !surfaceFailure ? 'operation'
+          : patch.authenticationStatus ? 'authentication' : 'surface',
+          operation: presentationOwner?.operation, message: patch.message,
+          contents: this.view?.webContents, documentRevision: this.primaryDocumentRevision ?? 0 }
+        : null;
+    }
     if (patch.authenticationStatus) {
       patch = { ...patch, authenticationIssue: patch.authenticationStatus === "unavailable"
         ? authenticationIssue(patch.message) : null };
@@ -3536,6 +3552,7 @@ class BrowserHost {
     const probeRevision = ++this.authProbeRevision;
     const primaryView = this.view;
     const primaryContents = primaryView.webContents;
+    const documentRevision = this.primaryDocumentRevision ?? 0;
     let authView = this.authView;
     // Page-load event probes run independently of the tracked login operation.
     // A response from an old session or a replaced popup must not alter the new one.
@@ -3646,6 +3663,9 @@ class BrowserHost {
         this.onAuthIdentityChanged(this.accountId, this.authIdentityEpoch);
       }
       const verifiedAt = new Date().toISOString();
+      this.verifiedHomeDocument = { contents: primaryContents, documentRevision,
+        identityEpoch: this.authIdentityEpoch, principalFingerprint: this.authPrincipalFingerprint,
+        sessionFingerprint: this.authSessionFingerprint, verifiedAt, url: result.url || url };
       this.setState({ ...availability, authenticated: true, authenticationStatus: "verified",
         authenticationCheckedAt: verifiedAt, lastVerifiedAt: verifiedAt,
         accountLabel: result.accountLabel ?? null, url: result.url });
@@ -3833,7 +3853,7 @@ class BrowserHost {
       const message = error instanceof Error ? error.message : String(error);
       this.setState(signal?.aborted
         ? { status: this.state.authenticated ? "ready" : "idle", message, loading: false }
-        : { status: "error", message });
+        : { status: "error", message }, signal?.aborted ? undefined : { operation: name });
       throw error;
     } finally {
       // Native renderer bookkeeping must not retain the operation lease if it throws.

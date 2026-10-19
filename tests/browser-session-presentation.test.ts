@@ -33,3 +33,53 @@ test('a current verified login probe clears superseded verification errors, whil
   const stillUnavailable = fixture('chrome-account-unverified', 'ChatGPT passkey login', false);
   await expect(stillUnavailable.runAuthenticationProbe()).resolves.toMatchObject({ status: 'error', authenticated: false, authenticationStatus: 'unavailable' });
 });
+
+test('a loaded verified home presents idle readiness after a retired preflight failure without rewriting retained task failures', async () => {
+  const host = fixture('old operation', '');
+  let observations = 0;
+  const contents = host.view.webContents;
+  const inspect = contents.executeJavaScript;
+  Object.assign(contents, { getTitle: () => 'ChatGPT', isLoading: () => false, isLoadingMainFrame: () => false, isCrashed: () => false,
+    navigationHistory: { canGoBack: () => false, canGoForward: () => false }, setBackgroundThrottling() {},
+    executeJavaScript: async () => { observations++; return inspect(); } });
+  Object.assign(host, { primaryDocumentRevision: 1, primaryRendererReady: true, primaryNavigationFailed: false,
+    selectedTabId: 'home', visible: true, surfaceActive: true, ready: async () => {}, activateHomeSurface() {},
+    publishState() {}, sessionRecheckEnabled: () => false,
+    setState: BrowserHost.prototype.setState, snapshot: BrowserHost.prototype.snapshot });
+  const failedTask = { id: 'task-receipt', terminal: true, status: 'failed', submission: 'not-sent', failure: 'personalization preflight deadline' };
+  host.taskLedger = { get: () => failedTask };
+  host.turnTabs.set('retained-task', { id: 'retained-task', traceId: 'saved-failed-turn', status: 'error', message: 'Task failed', loading: false,
+    label: 'Retained failed task', pageTitle: 'ChatGPT', taskRecordId: failedTask.id, view: { webContents: contents } });
+  const failOperation = () => host.withManualOperation('connector verification', async () => { throw new Error('ChatGPT personalization preflight exceeded its readiness deadline'); });
+  await expect(host.withManualOperation('connector verification', async () => {
+    host.setState({ status: 'error', message: 'ChatGPT session verification unavailable: Temporary Chat surface unavailable',
+      authenticated: false, authenticationStatus: 'unavailable' });
+    await host.runAuthenticationProbe();
+    throw new Error('ChatGPT personalization preflight exceeded its readiness deadline');
+  })).rejects.toThrow('personalization preflight');
+  const home = host.snapshot();
+  expect(home).toMatchObject({ status: 'ready', authenticated: true, authenticationStatus: 'verified' });
+  expect(home.tabs.find((row: any) => row.id === 'home').status).toBe('ready');
+  expect(home.tabs.find((row: any) => row.id === 'retained-task').status).toBe('error');
+  expect(failedTask).toMatchObject({ terminal: true, status: 'failed', submission: 'not-sent' });
+  expect(observations).toBe(1); // Snapshot readiness does not start another probe/login.
+  host.selectedTabId = 'retained-task';
+  expect(host.snapshot().status).toBe('error');
+  host.turnTabs.get('retained-task').status = 'running';
+  expect(host.snapshot().status).toBe('running');
+  host.turnTabs.get('retained-task').status = 'error'; host.selectedTabId = 'home';
+  host.primaryNavigationFailed = true;
+  expect(host.snapshot().status).toBe('error');
+  host.primaryNavigationFailed = false; host.primaryRendererReady = false;
+  expect(host.snapshot().status).toBe('error');
+  host.primaryRendererReady = true; host.primaryDocumentRevision++;
+  expect(host.snapshot().status).toBe('error'); // Same URL in another document cannot reuse old proof.
+  await host.runAuthenticationProbe();
+  await expect(failOperation()).rejects.toThrow('personalization preflight');
+  host.setState({ status: 'error', message: 'ERR_CONNECTION_RESET' });
+  expect(host.snapshot()).toMatchObject({ status: 'error', message: 'ERR_CONNECTION_RESET' });
+  await expect(failOperation()).rejects.toThrow('personalization preflight');
+  expect(host.snapshot().status).toBe('error'); // An operation wrapper cannot relabel a current surface failure.
+  host.setState({ authenticated: false, authenticationStatus: 'unavailable', message: 'ChatGPT session verification unavailable: session HTTP 403' });
+  expect(host.snapshot()).toMatchObject({ status: 'error', authenticated: false, authenticationStatus: 'unavailable' });
+});
