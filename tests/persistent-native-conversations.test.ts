@@ -11,7 +11,7 @@ const { createOwnedNativeAccountServer } = require('../launcher/electron/owned-n
 const { createPersistentNativeConversations } = require('../launcher/electron/persistent-native-conversations.cjs');
 const { compileAgentNativeOutputSchema } = require('../launcher/electron/agent-native-bridge.cjs');
 
-function fixture(capacity = 3) {
+async function fixture(capacity = 3) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'neko-persistent-conversations-')));
   const paths = { home: join(root, 'home'), codexHome: join(root, 'codex'), cwd: join(root, 'home', 'work') };
   for (const value of Object.values(paths)) mkdirSync(value, { recursive: true, mode: 0o700 });
@@ -70,6 +70,8 @@ function fixture(capacity = 3) {
     } },
   };
   let server = createOwnedNativeAccountServer(serverOptions);
+  // Production publishes an execution context only after account preparation, without a thread or turn.
+  await server.prepare();
   let context: any = { server, models: [{ id: model, admissionId, historySource }], profileId, epoch, serverGeneration: admission.serverGeneration };
   let expectedContext = { profileId: context.profileId, epoch: context.epoch, serverGeneration: context.serverGeneration };
   const storageRoot = join(root, 'persistent');
@@ -81,6 +83,7 @@ function fixture(capacity = 3) {
     async restart() {
       await Promise.all([service.destroy(), server.destroy()]);
       admission.serverGeneration = randomUUID(); admissionId = 'b'.repeat(64); server = createOwnedNativeAccountServer(serverOptions);
+      await server.prepare();
       context = { ...context, server, serverGeneration: admission.serverGeneration, models: [{ id: model, admissionId, historySource }] };
       expectedContext = { profileId, epoch, serverGeneration: admission.serverGeneration };
       service = createPersistentNativeConversations({ getExecution: () => context, storageRoot });
@@ -91,11 +94,14 @@ function fixture(capacity = 3) {
 }
 
 test('explicit persistent ownership keeps same-thread followup and fork context without changing ephemeral defaults', async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
-    expect(f.service.list().conversations).toEqual([]); expect(f.launches()).toBe(0);
+    expect(f.service.list().conversations).toEqual([]); expect(f.launches()).toBe(1);
+    expect(f.server.inspect()).toMatchObject({ ready: true, accepting: true });
+    expect(f.methods.some(row => row.method.startsWith('thread/') || row.method.startsWith('turn/'))).toBe(false);
     const denied = { ...f.create(), retainContext: false };
-    await expect(f.service.create(denied)).rejects.toMatchObject({ actionRecorded: false }); expect(f.launches()).toBe(0);
+    await expect(f.service.create(denied)).rejects.toMatchObject({ actionRecorded: false }); expect(f.launches()).toBe(1);
+    expect(f.methods.some(row => row.method.startsWith('thread/') || row.method.startsWith('turn/'))).toBe(false);
     const first = f.create(); expect((await f.service.create(first)).busy).toBe(false);
     const original = f.service.list().conversations[0]; expect(original).toMatchObject({ status: 'idle', revision: 1, lastSummary: 'Observed first' });
     const turnCount = () => f.methods.filter(row => row.method === 'turn/start').length;
@@ -128,7 +134,7 @@ test('explicit persistent ownership keeps same-thread followup and fork context 
 });
 
 test('held unknown conversation blocks all senders, duplicate never reoffers, late exact receipt settles and restart never resumes', async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     f.hold(); const input = f.create('held'); const pending = f.service.create(input);
     // Wait for the owned operation to reach its observation boundary, not a polling loop.
@@ -161,7 +167,7 @@ test('held unknown conversation blocks all senders, duplicate never reoffers, la
 });
 
 test('account context is rechecked after asynchronous account readiness before durable claim', async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     const work = f.service.create(f.create()); f.switchContext();
     await expect(work).rejects.toMatchObject({ actionRecorded: false, code: 'stale_account' });
@@ -171,7 +177,7 @@ test('account context is rechecked after asynchronous account readiness before d
 });
 
 test('capacity refusal before a leaf intent is a failed durable action rather than an unknown send', async () => {
-  const f = fixture(2);
+  const f = await fixture(2);
   try {
     await f.service.create(f.create());
     const original = f.service.list().conversations[0];
@@ -185,7 +191,7 @@ test('capacity refusal before a leaf intent is a failed durable action rather th
 });
 
 test('known RPC creation rejection retains failed nonheld leaf authority despite wrapped error', async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     f.rejectCreate(); const input = f.create();
     await expect(f.service.create(input)).rejects.toMatchObject({ actionRecorded: true });
@@ -199,7 +205,7 @@ test('known RPC creation rejection retains failed nonheld leaf authority despite
 });
 
 test('explicit idle close frees capacity; same-server Resume uses new binding and retained thread, then supports fork', async () => {
-  const f = fixture(2);
+  const f = await fixture(2);
   try {
     await f.service.create(f.create('remembered-context'));
     const original = f.service.list().conversations[0];
@@ -230,7 +236,7 @@ test('explicit idle close frees capacity; same-server Resume uses new binding an
 });
 
 test('restart Resume refreshes admission and binding but never sends without a new explicit followup', async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     await f.service.create(f.create('persist-across-owner'));
     const original = f.service.list().conversations[0];
@@ -250,7 +256,7 @@ test('restart Resume refreshes admission and binding but never sends without a n
 });
 
 test('unexpected historical close after Resume cannot mark the new subscription closed or free its owner', async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     await f.service.create(f.create()); const original = f.service.list().conversations[0];
     await f.service.closeIdle({ actionId: randomUUID(), conversationId: original.id, revision: 1, expectedContext: f.expectedContext });
@@ -264,7 +270,7 @@ test('unexpected historical close after Resume cannot mark the new subscription 
 });
 
 test('lost Resume ACK remains unknown after physical owner close and cannot be replayed', async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     await f.service.create(f.create()); const original = f.service.list().conversations[0];
     await f.service.closeIdle({ actionId: randomUUID(), conversationId: original.id, revision: 1, expectedContext: f.expectedContext });
@@ -281,7 +287,7 @@ test('lost Resume ACK remains unknown after physical owner close and cannot be r
 });
 
 test('legacy retained rows remain readable metadata but cannot Resume without proven account identity', async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     await f.service.create(f.create());
     const original = f.service.list().conversations[0];

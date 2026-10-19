@@ -40,6 +40,7 @@ and installed packaging are open scope.
 | Root and renderer TypeScript | **Final PASS** | Root rechecked the final public-error routing/overlap guard; renderer rechecked the integrated UI. Development renderer build passed (204 modules). |
 | Scoped source peer | **No remaining material finding at reviewed boundary** | Archive/durability/brand/gate, pending recovery, exclusive comparisons and typed error projection. |
 | Native readiness correction | **2 PASS / 108 assertions** | Warm-before-advertising lifecycle; root TypeScript, main syntax and architecture map also passed. |
+| Persistent conversation consumer fixture | **10 PASS / 94 assertions** | Initial and restarted execution contexts await real inert account preparation; original ownership/unknown/late-close/Resume/no-replay checks remain. |
 | User-requested UI repair | **Actual wide/narrow UI observations passed** | No background ChatGPT overlay; queue-focused checks **3 PASS / 16 assertions**. This is separate from the inert rendered fixture above. |
 
 The store cases establish passive status without storage creation or forged
@@ -116,6 +117,12 @@ the owned process before advertising readiness while preserving freshness,
 account/lease authority and exact configuration/executable pins. In the successful
 new flow the prepared owned process existed before Run with zero turn bindings;
 no model offer was spent by preparation. The earlier NOT_SENT task was not replayed.
+
+The first source CI run exposed an outdated persistent-conversation fixture:
+it supplied an account context before preparation, so ten cases refused at the
+new readiness prerequisite. The fixture now prepares initial and restarted
+contexts before publication. Only those ten affected cases were rerun locally;
+production readiness guards and the accepted macOS runtime were unchanged.
 
 ## Publication, cleanup and remaining scope
 
