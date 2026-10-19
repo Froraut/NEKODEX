@@ -175,7 +175,13 @@ export class AgentModeStore {
     return this.atomic(() => {
       const task = this.getTask(taskId);
       if (task.status === "stopped" && control.action !== "stop") throw new Error("Stopped task is terminal; create a new task");
-      if (control.action === "correct") { text(control.text, "correction"); plan(control.requirements, control.stages); }
+      let correctionWork: AgentWorkPacket | undefined;
+      if (control.action === "correct") {
+        text(control.text, "correction"); plan(control.requirements, control.stages);
+        const current = this.listWork(taskId).filter(packet => packet.state === "claimed" && packet.cycle === task.cycle);
+        if (current.length > 1 || current.some(packet => packet.workKey !== task.lastWorkKey || packet.enqueuedGeneration > task.generation)) throw new Error("Task current mailbox input requires reconciliation");
+        correctionWork = current[0];
+      }
       if (control.action === "resume" && task.status === "awaiting_input" && task.stages.some(stage => stage.waitingFor === "user")) throw new Error("Task requires a substantive reply before resuming");
       if (control.action === "reply") {
         text(control.text, "user reply");
@@ -197,7 +203,13 @@ export class AgentModeStore {
           const reusable = old?.status === "completed" && old.instruction === row.instruction && same(old.requirementIds, row.requirementIds) && same(old.dependsOn ?? [], row.dependsOn ?? [])
             && row.requirementIds.every(key => unchangedRequirements.has(key)) && (row.dependsOn ?? []).every(key => retained.has(key));
           if (reusable) retained.add(row.id);
-          return { ...structuredClone(row), status: reusable ? "completed" : "pending", ...(reusable && old.dispatchId ? { dispatchId: old.dispatchId } : {}) };
+          // StageInput carries plan intent only. Current-cycle mailbox data is
+          // restored from its durable claimed packet, including replacement IDs;
+          // caller fields never transfer tool continuations or execution grants.
+          const { id, instruction, requirementIds, dependsOn } = row;
+          return { ...structuredClone({ id, instruction, requirementIds, ...(dependsOn ? { dependsOn } : {}) }),
+            ...(correctionWork ? { userInput: correctionWork.text } : {}), status: reusable ? "completed" : "pending",
+            ...(reusable && old.dispatchId ? { dispatchId: old.dispatchId } : {}) };
         });
         task.requirements = structuredClone(control.requirements);
         if (task.stages.every(row => row.status === "completed")) task.status = "review_required";

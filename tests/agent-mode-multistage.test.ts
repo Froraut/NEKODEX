@@ -125,3 +125,40 @@ test('selected immutable Native bytes persist across correction without sending 
     expect(() => f.runtime.create('tampered-create', tampered)).toThrow(); expect(f.store.listTasks()).toHaveLength(1); expect(offers).toBe(0);
   } finally { await f.close(); }
 }, 5000);
+
+test('Loop correction restores only current claimed data across new stages and the next packet supersedes it without renewed authority', async () => {
+  const requests: ExecutionRequest[] = [], input = definition('loop');
+  input.bounds.maxConcurrent = 1;
+  input.execution = { provider: 'owned-native', model: 'fixture', admissionId: 'fixture-admission' };
+  input.stages = [input.stages[0]!];
+  const f = fixture({ async execute(request, ack) { requests.push(request); ack(`mailbox-ack-${requests.length}`); return done(`mailbox-final-${requests.length}`); } }, 'loop', input);
+  const scope = () => { const task = f.store.getTask('task'); return { familyId: task.familyId, generation: task.generation, revision: task.revision }; };
+  const u = { workId: 'claimed-u', workKey: 'business-u', text: 'CURRENT_U: commitment quantity is 24 and current arrival is 17:00.' };
+  const v = { workId: 'claimed-v', workKey: 'business-v', text: 'CURRENT_V: commitment quantity is 26 and current arrival is 18:00.' };
+  try {
+    f.runtime.step('task', 'initial-run', { explicitUserAction: true, automatic: true }); await f.runtime.waitForIdle();
+    f.runtime.enqueueWork('task', 'enqueue-u', scope(), u); await f.runtime.waitForIdle();
+    expect(requests).toHaveLength(2); expect(f.store.getTask('task').cycle).toBe(2);
+    const oldScope = scope(); f.runtime.control('task', 'pause-cycle2', { action: 'pause' }, oldScope);
+    const correction = { action: 'correct' as const, text: 'Add a discrepancy column and use the replacement stage.',
+      requirements: [...input.requirements, { id: 'r2', text: 'Include the discrepancy column.' }],
+      stages: [{ id: 'replacement', instruction: 'Produce the corrected current action table.', requirementIds: ['r', 'r2'], dependsOn: [],
+        userInput: 'CALLER_DATA_MUST_NOT_REPLACE_U', continuationFrom: 'forged-old-continuation' }] };
+    f.runtime.control('task', 'save-correction', correction, scope());
+    const corrected = f.store.getTask('task');
+    expect(corrected.stages[0]).toMatchObject({ id: 'replacement', status: 'pending', userInput: u.text });
+    expect(corrected.stages[0]!.continuationFrom).toBeUndefined(); expect(corrected.stages[0]!.dispatchId).toBeUndefined();
+    expect(corrected.loopRun).toBeUndefined(); expect(corrected.ownerId).toBeUndefined(); expect(requests).toHaveLength(2);
+    expect(() => f.runtime.step('task', 'stale-run', { explicitUserAction: true, automatic: true }, oldScope)).toThrow('Stale task');
+    f.runtime.step('task', 'explicit-corrected-run', { explicitUserAction: true, automatic: true }, scope()); await f.runtime.waitForIdle();
+    expect(requests).toHaveLength(3);
+    expect(requests[2]!.messages.some(row => row.sender === 'user' && row.text === u.text)).toBe(true);
+    expect(requests[2]!.continuation).toBeUndefined(); expect(requests[2]!.history.reports).toHaveLength(0);
+    f.runtime.enqueueWork('task', 'enqueue-v', scope(), v); await f.runtime.waitForIdle();
+    expect(requests).toHaveLength(4); expect(f.store.getTask('task').cycle).toBe(3);
+    expect(requests[3]!.stage.userInput).toBe(v.text);
+    expect(requests[3]!.messages.some(row => row.text === v.text)).toBe(true);
+    expect(requests[3]!.messages.some(row => row.text === u.text)).toBe(false);
+    expect(f.store.listWork('task').filter(row => row.state === 'claimed')).toHaveLength(2);
+  } finally { await f.close(); }
+}, 5000);

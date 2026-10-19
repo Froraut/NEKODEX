@@ -154,6 +154,14 @@ changed stages and their dependent checks are pending. Old outcome evidence
 remains visible but cannot certify the new task revision without a current
 observed binding.
 
+For a task with a claimed packet in its current cycle, correction restores that
+packet's text as data-only `userInput` on every corrected stage, including new
+stage IDs and changed requirement associations. It resolves this input from the
+durable claimed work row, checks uniqueness, current `lastWorkKey` and enqueue
+generation, and refuses ambiguous state. Caller-supplied runtime fields cannot
+replace that provenance. Historical data is not a continuation, tool approval or
+new Run grant. A later claimed packet supersedes the current input normally.
+
 ## Delivery and recovery
 
 The execution outbox records `admitted → offered → acked → settled`. `offered`
