@@ -31,11 +31,12 @@ function fixture() {
     protectedPaths() { throw new Error('Status must never admit a runtime'); },
     reconcile(id) { state.reconcile++; busy(); return id === actionId ? settled : undefined; },
     readResult(id) { busy(); return id === actionId ? settled : undefined; },
+    readCandidate(id, path, digest) { busy(); expect([id, path, digest]).toEqual([actionId, 'out.txt', sha256(bytes)]); return Uint8Array.from(bytes); },
     status: () => ({ available: false, ownerHeld: true, reason: 'vm-authority-held' }),
     cancel() {},
   };
   const composition = new AgentToolsComposition({ home, authorize: () => false, isScopeActive: () => true, vmExecutor: port, resolveSavedVmCalls: () => [call] });
-  return { call, state, composition, async close() { await composition.close(); rmSync(root, { recursive: true, force: true }); } };
+  return { call, state, composition, bytes, async close() { await composition.close(); rmSync(root, { recursive: true, force: true }); } };
 }
 
 test('VM status stays observable while the retained owner is busy and restores the result once it settles', async () => {
@@ -48,5 +49,15 @@ test('VM status stays observable while the retained owner is busy and restores t
     const restored = await f.composition.vmStatus(f.call.scope);
     expect(restored.vmTools.operations).toEqual([expect.objectContaining({ operationId: invocationFingerprint(f.call), state: 'stopped', ownerHeld: false })]);
     expect(f.state.reconcile).toBe(2);
+  } finally { await f.close(); }
+});
+
+test('candidate read after a core restart restores the exact retained run without a prior status call', async () => {
+  const f = fixture();
+  try {
+    f.state.busy = false;
+    const operationId = invocationFingerprint(f.call);
+    expect(await f.composition.readVmCandidate({ taskId: f.call.scope.taskId, generation: 2 }, operationId, 'out.txt', sha256(f.bytes))).toEqual(Uint8Array.from(f.bytes));
+    expect(f.state.reconcile).toBe(1);
   } finally { await f.close(); }
 });

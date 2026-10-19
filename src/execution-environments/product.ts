@@ -53,6 +53,12 @@ export class VmProductController {
     }
     return this.projection(); // Global held owners remain reachable for cancellation.
   }
+  /** A fresh core restores the exact retained run first, so an export review
+   * prepared before a restart can still read its candidate. */
+  async readCandidate(scope: Pick<ToolScope, 'taskId' | 'generation'>, operationId: string, path: string, sha256: string) {
+    await this.status({ ...scope, toolCallId: 'vm-export-candidate' });
+    return this.provider.readCandidate(scope, operationId, path, sha256);
+  }
   review(actionId: string, explicit: boolean) {
     this.options.assertMutation(explicit); return this.environment.review(actionId, true).review!;
   }
