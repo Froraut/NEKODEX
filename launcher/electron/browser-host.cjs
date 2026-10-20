@@ -2107,6 +2107,9 @@ class BrowserHost {
       this.logger.info("browser.cloudflare_challenge_recovered", {
         proof: this.cloudflareChallengeRecoveryArmed ? "backend-response" : "session-verified",
       });
+      // A recovery proven by the session check alone saw no 2xx backend response, which is what
+      // re-arms recovery. Re-arm it here, or a later challenge would only be logged as persisted.
+      this.cloudflareChallengeRecoveryArmed = true;
     } finally {
       this.setHomeThrottling(contents, true);
     }
