@@ -94,6 +94,65 @@ test("a read-only check unthrottles the hidden page for its duration", async () 
   expect(throttling).toEqual([false, true]);
 });
 
+function releasedHomeHost(url: string, loadURL: (next: string) => Promise<void>) {
+  const fixture = homeHost({ readOnlyInspection: null, manualOperation: null, ready: async () => {},
+    state: { status: "ready", authenticated: true, authenticationStatus: "verified" } });
+  let current = url;
+  fixture.contents.getURL = () => current;
+  fixture.contents.loadURL = async (next: string) => { fixture.loads.push(next); await loadURL(next); current = next; };
+  const probes: any[] = [];
+  let observed: Promise<void> | undefined;
+  const observe = fixture.host.observeReleasedHome;
+  fixture.host.observeReleasedHome = function () { observed = observe.call(this); return observed; };
+  return { ...fixture, probes, observed: () => observed };
+}
+
+test("a check that leaves the home page on its saved chat brings it back before observing it", async () => {
+  const { host, loads, logs, probes, observed } = releasedHomeHost("https://chatgpt.com/", async () => {});
+  host.runAuthenticationProbe = async (options: any = {}) => {
+    probes.push(options);
+    // Still loading on the first look, verified on the second.
+    return probes.length > 1 ? { authenticated: true } : { authenticated: false, authenticationStatus: "unknown" };
+  };
+  await host.withReadOnlyInspection("connector verification", async () => {}, { preserveSelection: true });
+  await observed();
+  expect(loads).toEqual([TEMPORARY_CHAT]);
+  expect(logs).toContainEqual(["browser.session_surface_reloaded", { reason: "check-released" }]);
+  expect(probes).toHaveLength(2);
+  // Every look while the page came back kept a verified session from being published as lost.
+  expect(probes.every(options => options.preserveVerified === true)).toBe(true);
+}, 10_000);
+
+test("a new check cancels the observation of the page the previous one released", async () => {
+  const { host, probes, observed } = releasedHomeHost("https://chatgpt.com/", () => new Promise<void>(() => {}));
+  host.runAuthenticationProbe = async (options: any = {}) => { probes.push(options); return { authenticated: true }; };
+  await host.withReadOnlyInspection("connector verification", async () => {}, { preserveSelection: true });
+  let release!: () => void;
+  const next = host.withReadOnlyInspection("session verification retry",
+    () => new Promise<void>(resolve => { release = resolve; }), { preserveSelection: true });
+  await observed();
+  // The page belongs to the new check, so nothing was observed or published for the old one.
+  expect(probes).toEqual([]);
+  release();
+  await next;
+});
+
+test("connector verification gets the helper's limit plus the session wait, other checks keep 90 s", async () => {
+  const { host } = homeHost({ readOnlyInspection: null, manualOperation: null, ready: async () => {} });
+  const deadlines: Array<number | undefined> = [];
+  const inspect = host.withReadOnlyInspection;
+  host.withReadOnlyInspection = (name: string, action: unknown, options: any = {}) => {
+    deadlines.push(options.timeoutMs);
+    return Promise.resolve();
+  };
+  await host.verifyConnector("Codex Native6");
+  expect(deadlines).toEqual([120_000]);
+  host.withReadOnlyInspection = inspect;
+  await expect(host.withReadOnlyInspection("session verification retry",
+    (signal: AbortSignal) => new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason))),
+    { preserveSelection: true, timeoutMs: 20 })).rejects.toThrow("Browser check timed out");
+});
+
 test("account logs carry the account id unless the event already names one", () => {
   const events: any[] = [];
   const base = { info: (event: string, detail: unknown) => events.push([event, detail]), recent: () => "kept" };

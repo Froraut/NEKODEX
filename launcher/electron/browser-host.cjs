@@ -18,6 +18,7 @@ const { BrowserTaskLedger } = require('./browser-task-ledger.cjs');
 const { createTaskArtifactDownloadGuard } = require('./task-artifact-download.cjs');
 const { awaitInspection, inspectionAbortError } = require("./inspection-control.cjs");
 const {
+  BROWSER_HELPER_OPERATION_TIMEOUT_MS,
   hasUnsettledBrowserHelpers,
   runBrowserHelperOperation,
   verifyConnectorWithBrowserHelper,
@@ -92,6 +93,12 @@ const { cancelSessionRecheck, syncSessionRecheck } = require("./session-recheck.
 const INTERACTION_MODE_CHANGE_OPERATION = "browser interaction mode change";
 const HIDDEN_TURN_VIEWPORT = Object.freeze({ width: 800, height: 600 });
 const BROWSER_NAVIGATION_TIMEOUT_MS = 60_000;
+const BROWSER_CHECK_TIMEOUT_MS = 90_000;
+// Connector verification is the helper's own operation plus the wait for the home page to show the
+// session again; a slow but successful proof must not be cut off by the generic check deadline.
+const CONNECTOR_SESSION_SETTLE_MS = 30_000;
+const CONNECTOR_VERIFICATION_TIMEOUT_MS = BROWSER_HELPER_OPERATION_TIMEOUT_MS + CONNECTOR_SESSION_SETTLE_MS;
+const RELEASED_HOME_OBSERVATION_MS = 30_000;
 // A crashed or hung primary ChatGPT page never heals on its own: Electron keeps the dead
 // WebContents (and its CDP target) until something reloads it, so every later turn and
 // readiness probe stalls on it. Reload it with backoff, bounded per window.
@@ -718,10 +725,12 @@ class BrowserHost {
       || (hasUnsettledBrowserHelpers(this.descriptorPath) ? "browser helper cleanup" : null);
   }
 
-  withReadOnlyInspection(name, action, { preserveSelection = false } = {}) {
+  withReadOnlyInspection(name, action, { preserveSelection = false, timeoutMs = BROWSER_CHECK_TIMEOUT_MS } = {}) {
     if (this.activeTraceId || this.currentOperation()) {
       return Promise.reject(new Error("Finish the account's active task or operation before checking it"));
     }
+    // This check owns the page now; it observes the page itself when it releases it.
+    this.releasedHomeObservation?.abort();
     const controller = new AbortController();
     const contents = this.view?.webContents;
     const inspection = { name, controller, done: null };
@@ -736,7 +745,7 @@ class BrowserHost {
       }
     };
     controller.signal.addEventListener("abort", onAbort, { once: true });
-    const deadline = setTimeout(() => controller.abort(new Error("Browser check timed out")), 90_000);
+    const deadline = setTimeout(() => controller.abort(new Error("Browser check timed out")), timeoutMs);
     deadline.unref?.();
     const run = preserveSelection
       ? (async () => {
@@ -759,15 +768,50 @@ class BrowserHost {
         if (this.readOnlyInspection === inspection) {
           this.readOnlyInspection = null;
           publishBrowserSnapshot(this);
-          // Page loads during the check were not observed; observe the released page once, so a
-          // real sign-out during the check is still published.
-          if (this.authProbeDeferredForInspection && !this.destroyed) {
-            this.authProbeDeferredForInspection = false;
-            void this.probeAuthentication().catch(() => {});
+          // Page loads during the check were not observed, and a check that failed or was cut off
+          // can leave the page on its saved chat. Observe the released page once, so a real
+          // sign-out during the check is still published.
+          const deferred = this.authProbeDeferredForInspection;
+          this.authProbeDeferredForInspection = false;
+          if ((deferred || this.homeLeftOffTemporaryChat()) && !this.destroyed) {
+            void this.observeReleasedHome().catch(() => {});
           }
         }
       });
     return inspection.done;
+  }
+
+  homeLeftOffTemporaryChat() {
+    const contents = this.view?.webContents;
+    if (!contents || contents.isDestroyed() || browserInteractionModeFor(this) !== "automatic") return false;
+    const url = contents.getURL();
+    return httpsOrigin(url) === CHATGPT_ORIGIN && !isTemporaryChatUrl(url);
+  }
+
+  // Bring the released home page back to Temporary Chat and wait for its composer before
+  // publishing, so a page that is merely loading is not reported as a lost sign-in. The next
+  // check cancels this and observes the page itself.
+  async observeReleasedHome() {
+    this.releasedHomeObservation?.abort();
+    const controller = new AbortController();
+    this.releasedHomeObservation = controller;
+    const timeout = setTimeout(() => controller.abort(), RELEASED_HOME_OBSERVATION_MS);
+    timeout.unref?.();
+    try {
+      if (this.homeLeftOffTemporaryChat()) {
+        this.logger.info("browser.session_surface_reloaded", { reason: "check-released" });
+        await awaitInspection(this.view.webContents.loadURL(TEMPORARY_CHAT_URL), controller.signal).catch(() => {});
+      }
+      await this.waitForAuthenticated(RELEASED_HOME_OBSERVATION_MS, controller.signal, { preserveVerified: true });
+    } catch {
+      // Not back in time: publish what the page shows now, unless a new check owns it.
+      if (this.releasedHomeObservation === controller && !this.readOnlyInspection && !this.destroyed) {
+        await this.probeAuthentication();
+      }
+    } finally {
+      clearTimeout(timeout);
+      if (this.releasedHomeObservation === controller) this.releasedHomeObservation = null;
+    }
   }
 
   async cancelReadOnlyInspection() {
@@ -3906,14 +3950,17 @@ class BrowserHost {
 
   async verifyConnector(appName) {
     requireAutomaticBrowserInspection(this, "ChatGPT connector verification");
-    return await this.withReadOnlyInspection("connector verification", signal => this.runConnectorVerification(appName, signal));
+    return await this.withReadOnlyInspection("connector verification", signal => this.runConnectorVerification(appName, signal),
+      { timeoutMs: CONNECTOR_VERIFICATION_TIMEOUT_MS });
   }
 
   async runConnectorVerification(appName, signal) {
     requireAutomaticBrowserInspection(this, "ChatGPT connector verification");
     const connectorName = validateConnectorName(appName);
     this.setState({ status: "testing", message: "Checking ChatGPT connector" });
-    await this.refreshChatGptHomeDocument(signal);
+    // The helper opens a new saved chat, a fresh document with the current plugin catalog, so
+    // refreshing the Temporary Chat page first would only spend the check's time budget.
+    signal?.throwIfAborted();
     try {
       const result = await verifyConnectorWithBrowserHelper({
         helper: this.helper,
@@ -3924,7 +3971,7 @@ class BrowserHost {
       });
       signal?.throwIfAborted();
       // The helper returns the page to Temporary Chat; publish ready only once it has loaded again.
-      await this.waitForAuthenticated(30_000, signal, { preserveVerified: true });
+      await this.waitForAuthenticated(CONNECTOR_SESSION_SETTLE_MS, signal, { preserveVerified: true });
       this.logger.info("connector.verified", { appName: connectorName });
       this.setState({ status: "ready", message: "ChatGPT connector is available" });
       return result;
@@ -4165,6 +4212,8 @@ class BrowserHost {
 
   destroy() {
     this.destroyed = true;
+    this.releasedHomeObservation?.abort();
+    this.releasedHomeObservation = null;
     clearInterval(this.cloudflareChallengeDeferredTimer);
     this.cloudflareChallengeDeferredTimer = null;
     clearTimeout(this.authenticationRefreshTimer);

@@ -37,7 +37,7 @@ function worker(failures: Error[]) {
 
 test("a new chat keeps retrying through a network drop and says so", async () => {
   const run = worker([networkError("ERR_TIMED_OUT"), networkError("ERR_CONNECTION_CLOSED")]);
-  await run.open();
+  await run.open(new AbortController().signal);
   expect(run.navigations()).toBe(3);
   expect(run.waits).toEqual([3_000, 6_000]);
   expect(run.notes).toEqual([
@@ -47,9 +47,17 @@ test("a new chat keeps retrying through a network drop and says so", async () =>
   ]);
 });
 
+test("a launcher check, which cannot be cancelled cooperatively, makes one attempt", async () => {
+  const check = worker([networkError("ERR_TIMED_OUT")]);
+  await expect(check.open()).rejects.toThrow("ERR_TIMED_OUT");
+  expect(check.navigations()).toBe(1);
+  expect(check.waits).toEqual([]);
+  expect(check.notes).toEqual([]);
+});
+
 test("other failures and cancellation are not retried", async () => {
   const other = worker([new Error("ChatGPT returned an error page")]);
-  await expect(other.open()).rejects.toThrow("error page");
+  await expect(other.open(new AbortController().signal)).rejects.toThrow("error page");
   expect(other.navigations()).toBe(1);
   const controller = new AbortController();
   controller.abort();

@@ -785,6 +785,8 @@ export class ChatGptBrowserWorker {
    * Opening a new chat sends nothing, so a dropped or timed-out connection (a VPN reconnecting,
    * Wi-Fi changing) is retried with growing pauses for up to five minutes. Each retry is reported
    * to the caller, which shows it in Codex, instead of failing the whole task on the first error.
+   * Only a caller that can cancel retries. Launcher checks pass no signal: they make one attempt
+   * and the launcher retries the check, so a cancelled check never keeps navigating its page.
    */
   private async openChatGptWithNetworkRetry(
     page: Page,
@@ -804,7 +806,7 @@ export class ChatGptBrowserWorker {
         return;
       } catch (error) {
         if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
-        const reason = chatGptNavigationRetryReason(error);
+        const reason = abortSignal ? chatGptNavigationRetryReason(error) : null;
         const delayMs = reason ? chatGptNavigationRetryDelayMs(attempt, Date.now() - startedAt) : null;
         if (!reason || delayMs === null) throw error;
         const note = `ChatGPT is unreachable (${reason}); nothing was sent. Retrying in ${Math.round(delayMs / 1_000)} s`
@@ -830,10 +832,10 @@ export class ChatGptBrowserWorker {
     onNetworkRetry?: (note: string) => void,
   ): Promise<Locator> {
     if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
-    // Launcher verification refreshes its owned page before attaching Playwright so a newly added
-    // connector is present in the catalog. Navigating again here destroys that freshly hydrated
-    // document and made the first verification race a second SPA bootstrap. A leased turn starts on
-    // about:blank and therefore still performs exactly one navigation through this same method.
+    // Session inspection can refresh its owned Temporary Chat page before attaching Playwright.
+    // Navigating again here would destroy that freshly hydrated document and race a second SPA
+    // bootstrap. Connector verification (a saved chat) and a leased turn (about:blank) still
+    // perform exactly one navigation through this same method.
     const chatUrl = chatGptNewChatUrl(useSavedChats);
     if (page.url() !== chatUrl) {
       await this.openChatGptWithNetworkRetry(page, chatUrl, abortSignal, onNetworkRetry, captureDiagnostic);
@@ -2154,9 +2156,11 @@ export class ChatGptBrowserWorker {
     const temporaryUrl = chatGptNewChatUrl(false);
     if (page.isClosed() || page.url() === temporaryUrl) return;
     try {
-      await page.goto(temporaryUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
+      // Bounded well inside the launcher's check deadline: the launcher waits for the session on
+      // this page next, and brings it back itself if this step fails.
+      await page.goto(temporaryUrl, { waitUntil: "domcontentloaded", timeout: CHATGPT_NETWORK_ATTEMPT_TIMEOUT_MS });
       // The launcher observes this page next; hand it back with its composer, not mid-load.
-      await this.activeComposer(page, 30_000);
+      await this.activeComposer(page, 15_000);
     } catch (error) {
       console.warn(`[chatgpt-web] could not return the home page to Temporary Chat: ${error instanceof Error ? error.message : String(error)}`);
     }
