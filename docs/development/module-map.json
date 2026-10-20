@@ -821,7 +821,7 @@
   {"path":"src/execution-environments/tools.ts","dependencies":["node:crypto","src/agent-tools/journal.ts","src/execution-environments/output.ts","src/execution-environments/protocol.ts","src/execution-environments/snapshot.ts","src/execution-environments/storage.ts"]},
   {"path":"src/execution-environments/types.ts","dependencies":[]},
   {"path":"src/existing-chrome-login-control.ts","dependencies":[]},
-  {"path":"src/existing-chrome-login.ts","dependencies":["node:fs","node:module","node:os","node:path","src/browser-login.ts","src/lib/json-record.ts"]},
+  {"path":"src/existing-chrome-login.ts","dependencies":["node:fs","node:fs/promises","node:module","node:os","node:path","src/browser-login.ts","src/lib/json-record.ts"]},
   {"path":"src/external-client-context.ts","dependencies":[]},
   {"path":"src/file-transactions.ts","dependencies":["node:crypto","node:fs","node:path"]},
   {"path":"src/firefox-login.ts","dependencies":["bun:sqlite","node:child_process","node:fs","node:path","src/browser-login.ts","src/passkey-login-control.ts"]},
