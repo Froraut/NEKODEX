@@ -837,10 +837,11 @@ function LauncherShell({
   const shell = shellCopy(language);
   // Live browser runs, as counted on Overview (Active browser runs).
   const runningTabs = browser?.tabs.filter(tab => tab.id !== "home" && ["running", "loading", "testing"].includes(tab.status)).length ?? 0;
-  // The Browser item reports the session with the Overview row's word and tone: sign-in needed (pulsing) and
-  // verification unavailable (amber, steady; not an error), else a browser error, else the running count.
+  // The Browser item reports the session with the Overview row's word and tone: sign-in needed and a pending
+  // Cloudflare check, both done in Browser (pulsing), and verification unavailable (amber, steady; not an error),
+  // else a browser error, else the running count.
   const sessionConnection = readiness.connections.session;
-  const browserAttention = needsBrowser ? "required"
+  const browserAttention = needsBrowser || sessionConnection.key === "security-check" ? "required"
     : sessionConnection.key === "verification-unavailable" ? "warning"
       : browser?.status === "error" ? "error" : null;
   // The Connections item reports what its two tabs report (the session belongs to the Browser item): a failed or

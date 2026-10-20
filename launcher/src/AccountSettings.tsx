@@ -757,7 +757,8 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
                     await api.openAccountLogin(account.id);
                     return api.accounts();
                   })}>{credentialLabel}</Button> : null}
-                {authUnavailable ? <Button size="sm" icon="reload"
+                {/* Only a person passes Cloudflare's check, and a retry reloads the page that shows it. */}
+                {authUnavailable && account.authenticationIssue !== "challenge" ? <Button size="sm" icon="reload"
                   busy={authRefreshBusy}
                   disabled={authRetryDisabled}
                   aria-describedby={describedBy(authRetryDisabled, credentialReason)}

@@ -263,6 +263,7 @@ export function connectionStatusWord(status: ConnectionStatus, app: Copy, langua
     case "confirm-in-codex": return app.modelsConfirmShort;
     case "needs-sign-in": return app.signInNeededShort;
     case "verification-unavailable": return session.verificationUnavailable;
+    case "security-check": return session.securityCheckTitle;
     case "catalog-unavailable": return app.catalogUnavailable;
     case "needs-setup": return app.connectionPending;
     case "not-connected": return words.notConnected;
@@ -291,6 +292,7 @@ export function connectionActionWord(action: ConnectionAction, app: Copy, langua
     // Runs the check in place (Overview) rather than naming a page.
     case "retry": return workflowCopy(language).session.retryVerification;
     case "open": return app.overviewOpenRun;
+    case "open-browser": return workflowCopy(language).session.securityCheckAction;
     case "open-routing-checks": return app.openRoutingChecks;
   }
 }

@@ -2216,7 +2216,8 @@ class BrowserHost {
       if (this.state.authenticationStatus === "verified" || this.state.authenticationStatus === "signed-out") {
         this.state.securityCheckRequired = false;
         this.logger?.info?.("browser.security_check_cleared", { proof: "session-check" });
-      } else if (this.state.authenticationStatus === "unavailable") {
+      } else {
+        // Also while a session check runs ("unknown"): the check itself does not pass Cloudflare.
         this.state.authenticationIssue = "challenge";
       }
     }
@@ -2229,6 +2230,9 @@ class BrowserHost {
     this.setState({ securityCheckRequired: false,
       ...(this.state.authenticationIssue === "challenge"
         ? { authenticationIssue: authenticationIssue(this.state.message) } : {}) });
+    // ChatGPT answers again, but the account still reads unavailable, and the background re-check
+    // does not run while the browser is shown. Observe the session now.
+    if (proof === "backend-response") void this.probeAuthentication().catch(() => {});
   }
 
   sessionRecheckEnabled() {

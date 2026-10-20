@@ -55,3 +55,19 @@ test("a verified session check also clears the warning", async () => {
   expect(target.state.securityCheckRequired).toBe(false);
   expect(target.state.authenticationIssue).toBeNull();
 });
+
+test("the warning stays up while a session check runs", async () => {
+  const { host: target } = host();
+  await failRecovery(target);
+  target.setState({ status: "loading", message: "Checking saved ChatGPT session", authenticationStatus: "unknown" });
+  expect(target.state).toMatchObject({ securityCheckRequired: true, authenticationIssue: "challenge" });
+});
+
+test("passing the check observes the session at once instead of leaving the account unavailable", async () => {
+  const { host: target } = host();
+  await failRecovery(target);
+  let probes = 0;
+  target.probeAuthentication = async () => { probes += 1; return target.snapshot(); };
+  target.handleChatGptBackendResponse(success);
+  expect(probes).toBe(1);
+});
