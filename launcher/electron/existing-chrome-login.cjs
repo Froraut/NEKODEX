@@ -179,6 +179,7 @@ function openExistingChromeLogin(host, confirmImport, { selectConnectionFile } =
     const cleanupFailed = failure.code === "existing_chrome_cleanup_failed";
     const cancelled = controller.signal.aborted && !cleanupFailed;
     const timeout = failure.code === "existing_chrome_timeout" || failure.code === "chrome-permission-timeout"
+      || failure.code === "chrome-discovery-timeout"
       || failure.code === "existing_chrome_handoff_timeout";
     const phase = cancelled ? "cancelled" : timeout ? "timed-out" : "failed";
     updateExistingChromeProgress(host, { phase, error: cancelled ? null : cleanupFailed ? "existing-chrome-cleanup-failed"

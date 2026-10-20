@@ -374,7 +374,7 @@
   "freshConversation": "턴마다 새 채팅 (실험적)",
   "freshConversationBody": "매 턴 전체 작업 문맥을 새 채팅에 전송합니다. 입력량이 늘어나며 기존 채팅을 재사용하지 않습니다. 로컬 도구 연결은 유지됩니다.",
   "savedChats": "ChatGPT에 채팅 저장",
-  "savedChatsBody": "켜면 채팅이 ChatGPT 기록에 저장됩니다. ChatGPT가 저장된 메모리와 맞춤 지침을 적용할 수 있습니다.",
+  "savedChatsBody": "켜면 채팅이 ChatGPT 기록에 저장됩니다. ChatGPT가 저장된 메모리와 맞춤 지침을 적용할 수 있습니다. ChatGPT 임시 채팅에서는 더 이상 플러그인을 사용할 수 없으므로 도구 작업은 항상 저장되는 채팅에서 실행됩니다.",
   "pacingTitle": "계정 실행 간격",
   "pacingBody": "새 턴에 적용됩니다. 사용량 제한 대기는 항상 적용되며 다른 계정으로 작업을 전환하지 않습니다. 계정 안전을 보장하지는 않습니다.",
   "pacingStopped": "계정이 일시 중지되었습니다. 재개 전에 ChatGPT 계정을 확인하세요.",
