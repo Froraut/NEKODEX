@@ -38,7 +38,7 @@ jobs:
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - id: plan
@@ -57,19 +57,19 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.3
       - run: bun install --frozen-lockfile
       - run: bun install --frozen-lockfile
         working-directory: launcher
       - name: Prepare AVX2-independent Windows runtime
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./scripts/prepare-windows-baseline-bun.ps1 -Version 1.4.0 -GitHubEnv $env:GITHUB_ENV
+        run: ./scripts/prepare-windows-baseline-bun.ps1 -Version 1.4.3 -GitHubEnv $env:GITHUB_ENV
       - name: Prepare compatible Linux libnotify
         if: runner.os == 'Linux'
         run: |
@@ -133,12 +133,12 @@ jobs:
         run: bun run licenses
       - name: Upload third-party notices
         if: matrix.notices
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-notices
           path: dist/THIRD_PARTY_NOTICES.txt
           if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-${{ matrix.runner }}
           path: |
@@ -171,18 +171,18 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.3
       - run: bun install --frozen-lockfile
       - run: bun install --frozen-lockfile
         working-directory: launcher
       - name: Prepare AVX2-independent Windows runtime
         shell: pwsh
-        run: ./scripts/prepare-windows-baseline-bun.ps1 -Version 1.4.0 -GitHubEnv $env:GITHUB_ENV
+        run: ./scripts/prepare-windows-baseline-bun.ps1 -Version 1.4.3 -GitHubEnv $env:GITHUB_ENV
       - name: Build explicitly unsigned Windows preview
         env:
           CODEX_WEB_GPT_RELEASE: "0"
@@ -200,7 +200,7 @@ jobs:
           if ($files.Count -ne 2) { throw 'Expected exactly the Windows installer and ZIP' }
           "UNSIGNED WINDOWS PREVIEW`nVersion: $version`nSource: $env:GITHUB_SHA`nThis development build has no Authenticode publisher signature. It is not an authenticated in-app update. Integrity hashes do not replace a publisher certificate." | Set-Content launcher/artifacts/UNSIGNED-PREVIEW.txt -Encoding utf8
           $files | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)" } | Set-Content launcher/artifacts/preview-checksums.txt -Encoding utf8
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: NEKODEX-${{ github.ref_name }}-windows-x64-unsigned
           path: |
@@ -221,10 +221,10 @@ jobs:
       attestations: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: release-assets
           pattern: release-*
@@ -236,7 +236,7 @@ jobs:
       - name: Add licenses and installers
         run: |
           cp LICENSE release-assets/LICENSE
-          cp LICENSES/Bun-1.4.0.md release-assets/Bun-1.4.0.md
+          cp LICENSES/Bun-1.4.3.md release-assets/Bun-1.4.3.md
           cp LICENSES/libnotify-0.8.7-LGPL-2.1.md release-assets/libnotify-0.8.7-LGPL-2.1.md
           cp scripts/install.sh release-assets/install.sh
           cp scripts/install-launcher.sh release-assets/install-launcher.sh

@@ -324,7 +324,7 @@ class BrowserControlServer {
           if (body.useSavedChats !== undefined && typeof body.useSavedChats !== "boolean") {
             throw new Error("manual saved-chat policy is invalid");
           }
-          const lease = host.beginManualTurn(
+          const lease = await host.beginManualTurn(
             body.traceId,
             body.helperPid,
             body.prompt,

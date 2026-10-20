@@ -97,14 +97,15 @@ class BrowserManualTurns {
     tab.manualDeadlineTimer.unref?.();
   }
 
-  writeManualPrompt(prompt) {
+  async writeManualPrompt(prompt) {
     if (!this.context.clipboard || typeof this.context.clipboard.writeText !== "function") {
       throw new Error("Electron clipboard is unavailable");
     }
-    this.context.clipboard.writeText(prompt);
+    // Electron 44's clipboard.writeText returns a promise. Older Electron returns undefined.
+    await this.context.clipboard.writeText(prompt);
   }
 
-  beginManualTurn(traceId, helperPid, prompt, conversationKey, resumePrompt, compaction = false, useSavedChats = false) {
+  async beginManualTurn(traceId, helperPid, prompt, conversationKey, resumePrompt, compaction = false, useSavedChats = false) {
     if (this.context.manualOperation) {
       throw new Error(`ChatGPT browser is busy with ${this.context.manualOperation}`);
     }
@@ -196,7 +197,7 @@ class BrowserManualTurns {
       if (typeof resumePrompt !== "string" || !resumePrompt) {
         throw new Error("A retained Manual mode conversation requires an incremental resume prompt");
       }
-      this.writeManualPrompt(resumePrompt);
+      await this.writeManualPrompt(resumePrompt);
       tab.traceId = traceId;
       tab.helperPid = helperPid;
       tab.status = "running";
@@ -220,7 +221,7 @@ class BrowserManualTurns {
         useSavedChats,
       );
       try {
-        this.writeManualPrompt(prompt);
+        await this.writeManualPrompt(prompt);
       } catch (error) {
         this.signalManualTerminal(tab, "failed");
         this.lifecycle.removeTurnTab(tab, true);
@@ -297,12 +298,12 @@ class BrowserManualTurns {
     });
   }
 
-  copyManualPrompt(tabId) {
+  async copyManualPrompt(tabId) {
     const tab = this.tabs.get(tabId);
     if (!tab || tab.interactionMode !== "manual" || typeof tab.prompt !== "string") {
       throw new Error("Manual prompt is no longer available");
     }
-    this.writeManualPrompt(tab.prompt);
+    await this.writeManualPrompt(tab.prompt);
     if (tab.manualState === "awaiting-user" && tab.manualSubmitTimeoutMs) {
       tab.manualDeadlineAt = Date.now() + tab.manualSubmitTimeoutMs;
       this.armManualTurnDeadline(tab);
