@@ -21,6 +21,20 @@ const { AccountOperationLeases, validateRead, validateExclusive } = require('./a
 // Under the runtime's 30 s session-inspection deadline, leaving time for its own short read.
 const READ_ONLY_INSPECTION_WAIT_MS = 20_000;
 
+/** Hosts share one launcher log; stamp each event with its account unless it already names one. */
+function accountScopedLogger(logger, accountId) {
+  if (!logger) return logger;
+  const scoped = Object.create(logger);
+  for (const level of ['debug', 'info', 'warn', 'error']) {
+    if (typeof logger[level] !== 'function') continue;
+    scoped[level] = (event, detail, ...rest) => logger[level](event,
+      detail === undefined ? { accountId }
+        : detail && typeof detail === 'object' && !Array.isArray(detail) ? { accountId, ...detail } : detail,
+      ...rest);
+  }
+  return scoped;
+}
+
 function validateWorkspaceId(value) {
   if (typeof value !== 'string' || value.length < 1 || value.length > 128
     || /[\u0000-\u001f\u007f]/.test(value)) throw new Error('Browser workspace identity is invalid');
@@ -240,6 +254,7 @@ class AccountBrowserPool {
     if (!this.taskLedgers.has(id)) this.taskLedgers.set(id,
       new BrowserTaskLedger(path.join(this.options.coreHome, 'runtime', `tasks-${id}.json`)));
     try { host = new BrowserHost({ ...this.options,
+      logger: accountScopedLogger(this.options.logger, id),
       taskLedger: this.taskLedgers.get(id),
       accountId: id,
       onTurnTabOwned: receipt => this.bindUnsentAdmissionOwner(receipt),
@@ -896,44 +911,70 @@ class AccountBrowserPool {
     // Authenticate enabled saved sessions, without treating persisted metadata as proof.
     this.evidenceRefreshing ??= new Set();
     const registry = this.registry.snapshot();
-    // These checks are intentionally serial. Make the selected account usable first rather
-    // than holding its first request behind another account's sign-in and connector probes.
-    const accounts = registry.accounts.filter(account => account.enabled)
-      .sort((left, right) => Number(right.id === registry.selectedId) - Number(left.id === registry.selectedId));
+    // These checks are intentionally serial. The selected account goes first, session through
+    // connector, so its first request never waits behind another account. The other accounts
+    // then check every saved session before any model or connector probe, so a slow probe never
+    // leaves another account on "Checking sign-in" long enough to invite a needless new sign-in.
+    const accounts = registry.accounts.filter(account => account.enabled);
     const pending = accounts.map(account => account.id).filter(id => !this.evidenceRefreshing.has(id));
     for (const id of pending) this.evidenceRefreshing.add(id);
-    try {
-    for (const account of accounts) {
-      if (this.inspectionsPaused || this.destroyed) break;
-      const reserved = this.leases().exclusiveLabel(account.id);
-      if (reserved) {
-        this.logger.info('browser.account_refresh_deferred', { accountId: account.id, operation: reserved });
-        if (pending.includes(account.id)) this.evidenceRefreshing.delete(account.id);
-        continue;
+    const release = id => { if (pending.includes(id)) this.evidenceRefreshing.delete(id); };
+    const sessions = new Map();
+    const reserved = account => {
+      const label = this.leases().exclusiveLabel(account.id);
+      if (!label) return false;
+      this.logger.info('browser.account_refresh_deferred', { accountId: account.id, operation: label });
+      release(account.id);
+      return true;
+    };
+    const checkSessions = async group => {
+      for (const account of group) {
+        if (this.inspectionsPaused || this.destroyed) return;
+        if (reserved(account)) continue;
+        const epoch = this.invalidateEvidence(account.id);
+        try {
+          await this.getHost(account.id).refreshAuthentication();
+          sessions.set(account.id, epoch);
+        } catch (error) {
+          this.logger.warn('browser.account_refresh_failed', { accountId: account.id, message: error.message });
+          release(account.id);
+        }
       }
-      const host = this.getHost(account.id);
-      const epoch = this.invalidateEvidence(account.id);
-      try {
-        await host.refreshAuthentication();
-        if (!this.inspectionsPaused && host.state.authenticated && this.evidenceIsCurrent(account.id, epoch)) {
-          const evidence = await host.inspectSession(true);
-          if (this.evidenceIsCurrent(account.id, epoch)) {
-            this.recordCapabilityEvidence(account.id, evidence);
-            // Connector readiness lives only in memory; restore it for every enabled account, not just
-            // the primary one, so a restart does not strand the other accounts' tool turns.
-            if (!this.inspectionsPaused && this.options.bootstrapAccountConnectors?.() === true) {
-              await host.verifyConnector(host.connectorName());
-              if (!this.evidenceIsCurrent(account.id, epoch)) {
-                throw new Error('ChatGPT account readiness changed while bootstrapping its connector');
+    };
+    const checkEvidence = async group => {
+      for (const account of group) {
+        if (this.inspectionsPaused || this.destroyed) return;
+        if (!sessions.has(account.id) || reserved(account)) continue;
+        const host = this.getHost(account.id);
+        const epoch = sessions.get(account.id);
+        try {
+          if (!this.inspectionsPaused && host.state.authenticated && this.evidenceIsCurrent(account.id, epoch)) {
+            const evidence = await host.inspectSession(true);
+            if (this.evidenceIsCurrent(account.id, epoch)) {
+              this.recordCapabilityEvidence(account.id, evidence);
+              // Connector readiness lives only in memory; restore it for every enabled account, not just
+              // the primary one, so a restart does not strand the other accounts' tool turns.
+              if (!this.inspectionsPaused && this.options.bootstrapAccountConnectors?.() === true) {
+                await host.verifyConnector(host.connectorName());
+                if (!this.evidenceIsCurrent(account.id, epoch)) {
+                  throw new Error('ChatGPT account readiness changed while bootstrapping its connector');
+                }
+                this.connectors.set(account.id, host.connectorName());
               }
-              this.connectors.set(account.id, host.connectorName());
             }
           }
         }
+        catch (error) { this.logger.warn('browser.account_refresh_failed', { accountId: account.id, message: error.message }); }
+        finally { release(account.id); }
       }
-      catch (error) { this.logger.warn('browser.account_refresh_failed', { accountId: account.id, message: error.message }); }
-      finally { if (pending.includes(account.id)) this.evidenceRefreshing.delete(account.id); }
-    }
+    };
+    try {
+      const selected = accounts.filter(account => account.id === registry.selectedId);
+      const others = accounts.filter(account => account.id !== registry.selectedId);
+      await checkSessions(selected);
+      await checkEvidence(selected);
+      await checkSessions(others);
+      await checkEvidence(others);
     } finally { for (const id of pending) this.evidenceRefreshing.delete(id); }
     this.publish();
     return this.snapshot();
@@ -1983,4 +2024,4 @@ class AccountBrowserPool {
     try { if (JSON.parse(fs.readFileSync(this.options.descriptorPath, 'utf8')).pid === process.pid) fs.rmSync(this.options.descriptorPath); } catch {}
   }
 }
-module.exports = { AccountBrowserPool, newWebSessionReservationId };
+module.exports = { AccountBrowserPool, accountScopedLogger, newWebSessionReservationId };

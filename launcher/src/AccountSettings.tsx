@@ -603,7 +603,10 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
           const selectReason = blockedReason ?? readinessReason
             ?? (!manual && !account.checked ? text.selectNeedsCheck : undefined);
           const checkReason = blockedReason ?? (manual ? copy.accountsManual : readinessReason);
+          // Signing in again while the saved session is still being checked replaces a session that may be fine.
+          const sessionCheckPending = authChecking && !account.authenticated;
           const credentialReason = blockedReason ?? (quotaReadBusy ? codexCopy.quotaChecking : undefined)
+            ?? (sessionCheckPending ? text.waitForSessionCheck : undefined)
             ?? (account.authenticated && !selected && !manual && !account.checked ? text.selectNeedsCheck : undefined);
           const anotherLoginReason = (startingAccountId !== null && startingAccountId !== account.id)
             || Boolean(login && (login.active || login.settling) && login.accountId !== account.id)
@@ -648,7 +651,8 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
           const enabledDisabled = mutationsDisabled || loginBoundActive;
           // Opening a signed-in account selects it, so it needs the same check as Select.
           const opensUncheckedAccount = account.authenticated && !selected && !manual && !account.checked;
-          const credentialDisabled = mutationsDisabled || active || loginBoundActive || quotaReadBusy || opensUncheckedAccount;
+          const credentialDisabled = mutationsDisabled || active || loginBoundActive || quotaReadBusy || opensUncheckedAccount
+            || sessionCheckPending;
           const authRetryDisabled = Boolean(credentialReason);
           const selectDisabled = mutationsDisabled || loginBoundActive || !account.authenticated || (!manual && !account.checked);
           const checkDisabled = mutationsDisabled || manual || active || loginBoundActive || !account.authenticated;

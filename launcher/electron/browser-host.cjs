@@ -130,6 +130,8 @@ const SHELL_ZOOM_LEVEL_LIMIT = 5;
 const CLOUDFLARE_CHALLENGE_RECOVERY_DELAY_MS = 500;
 const CLOUDFLARE_CHALLENGE_RECOVERY_SETTLE_MS = 1_000;
 const CLOUDFLARE_CHALLENGE_RECOVERY_PROOF_TIMEOUT_MS = 8_000;
+const CLOUDFLARE_CHALLENGE_DEFERRED_POLL_MS = 2_000;
+const DEFERRED_CHALLENGE_SIGN_IN_RELOAD_MS = 15_000;
 const SESSION_TOKEN_COOKIE = /^__Secure-next-auth\.session-token(?:\.\d+)?$/;
 const SESSION_TOKEN_SETTLE_MS = 1_500;
 const NETWORK_EGRESS_CHECK_INTERVAL_MS = 10 * 60_000;
@@ -525,6 +527,8 @@ class BrowserHost {
     this.authenticationRemovalPending = false;
     this.cloudflareChallengeRecovery = null;
     this.cloudflareChallengeRecoveryArmed = true;
+    this.cloudflareChallengeDeferred = false;
+    this.cloudflareChallengeDeferredTimer = null;
     this.viewportCssKey = null;
     this.primaryRendererReady = false;
     this.primaryDeviceEmulationViewport = null;
@@ -736,7 +740,14 @@ class BrowserHost {
       ? (async () => {
           await awaitInspection(this.ready(), controller.signal);
           controller.signal.throwIfAborted();
-          return await action(controller.signal);
+          // A throttled hidden page renders no frames, so ChatGPT's own browser check cannot
+          // finish during the reload a check may need. Selection is preserved either way.
+          this.setHomeThrottling(contents, false);
+          try {
+            return await action(controller.signal);
+          } finally {
+            this.setHomeThrottling(contents, true);
+          }
         })()
       : this.withManualOperation(name, () => action(controller.signal), controller.signal);
     inspection.done = run
@@ -1828,6 +1839,7 @@ class BrowserHost {
 
     if (details.statusCode >= 200 && details.statusCode < 400) {
       this.cloudflareChallengeRecoveryArmed = true;
+      this.cloudflareChallengeDeferred = false;
       return false;
     }
     if (!isChatGptCloudflareChallengeResponse(details)) return false;
@@ -1836,19 +1848,56 @@ class BrowserHost {
       this.cloudflareChallengeRecoveryArmed = false;
       return true;
     }
-    if (this.activeTraceId || this.manualOperation) {
-      this.logger.warn("browser.cloudflare_challenge_not_reloaded", {
-        reason: this.activeTraceId ? "turn-active" : "manual-operation-active",
-        origin: navigationOriginForLog(details.url),
-      });
+    if (this.activeTraceId || this.manualOperation || this.loginOperation || this.readOnlyInspection) {
+      // The work owns the page now; recover once it ends unless a later response proves recovery.
+      if (!this.cloudflareChallengeDeferred) {
+        this.logger.warn("browser.cloudflare_challenge_not_reloaded", {
+          reason: this.activeTraceId ? "turn-active" : "manual-operation-active",
+          origin: navigationOriginForLog(details.url),
+          deferred: true,
+        });
+      }
+      this.cloudflareChallengeDeferred = true;
+      this.watchDeferredCloudflareChallenge();
       return true;
     }
     if (!this.cloudflareChallengeRecoveryArmed) {
       this.logger.warn("browser.cloudflare_challenge_persisted", { origin: navigationOriginForLog(details.url) });
       return true;
     }
+    this.startCloudflareChallengeRecovery(navigationOriginForLog(details.url));
+    return true;
+  }
+
+  /** Poll until the work that owned the page ends; every owner releases it on its own path. */
+  watchDeferredCloudflareChallenge() {
+    if (this.cloudflareChallengeDeferredTimer || this.destroyed) return;
+    this.cloudflareChallengeDeferredTimer = setInterval(() => {
+      if (this.cloudflareChallengeDeferred && !this.destroyed && (this.cloudflareChallengeRecovery
+        || this.activeTraceId || this.manualOperation || this.loginOperation || this.readOnlyInspection)) return;
+      clearInterval(this.cloudflareChallengeDeferredTimer);
+      this.cloudflareChallengeDeferredTimer = null;
+      this.resumeDeferredCloudflareChallenge();
+    }, CLOUDFLARE_CHALLENGE_DEFERRED_POLL_MS);
+    this.cloudflareChallengeDeferredTimer.unref?.();
+  }
+
+  /** Recover a challenge that arrived while other work owned the page, once that work has ended. */
+  resumeDeferredCloudflareChallenge() {
+    if (!this.cloudflareChallengeDeferred || this.destroyed || this.cloudflareChallengeRecovery
+      || this.activeTraceId || this.manualOperation || this.loginOperation || this.readOnlyInspection) return;
+    const contents = this.view?.webContents;
+    if (!contents || contents.isDestroyed() || httpsOrigin(contents.getURL()) !== CHATGPT_ORIGIN) {
+      this.cloudflareChallengeDeferred = false;
+      return;
+    }
+    this.startCloudflareChallengeRecovery(CHATGPT_ORIGIN);
+  }
+
+  startCloudflareChallengeRecovery(origin) {
+    this.cloudflareChallengeDeferred = false;
     this.cloudflareChallengeRecoveryArmed = false;
-    this.logger.warn("browser.cloudflare_challenge_detected", { origin: navigationOriginForLog(details.url) });
+    this.logger.warn("browser.cloudflare_challenge_detected", { origin });
     const recovery = this.reloadHomeAfterCloudflareChallenge();
     const tracked = recovery
       .catch((error) => {
@@ -1863,7 +1912,6 @@ class BrowserHost {
         if (this.cloudflareChallengeRecovery === tracked) this.cloudflareChallengeRecovery = null;
       });
     this.cloudflareChallengeRecovery = tracked;
-    return true;
   }
 
   /**
@@ -1949,24 +1997,40 @@ class BrowserHost {
     // Only responses from this new document may prove that the challenge cleared.
     this.setState({ status: "loading", message: "Refreshing ChatGPT security check", loading: true });
     this.cloudflareChallengeRecoveryArmed = false;
-    await contents.loadURL(url);
-    // A hidden, throttled home page can stay silent well past one second after the reload, so a
-    // fixed settle reported every recovery as failed while the challenge had already cleared.
-    // Wait for a successful backend response; failing that, ChatGPT's own session check decides.
-    const deadline = Date.now() + CLOUDFLARE_CHALLENGE_RECOVERY_PROOF_TIMEOUT_MS;
-    await sleep(CLOUDFLARE_CHALLENGE_RECOVERY_SETTLE_MS);
-    while (!this.cloudflareChallengeRecoveryArmed && Date.now() < deadline) {
+    // The challenge can only complete on a page that renders frames.
+    this.setHomeThrottling(contents, false);
+    try {
+      await contents.loadURL(url);
+      // A hidden, throttled home page can stay silent well past one second after the reload, so a
+      // fixed settle reported every recovery as failed while the challenge had already cleared.
+      // Wait for a successful backend response; failing that, ChatGPT's own session check decides.
+      const deadline = Date.now() + CLOUDFLARE_CHALLENGE_RECOVERY_PROOF_TIMEOUT_MS;
+      await sleep(CLOUDFLARE_CHALLENGE_RECOVERY_SETTLE_MS);
+      while (!this.cloudflareChallengeRecoveryArmed && Date.now() < deadline) {
+        assertCurrent();
+        await sleep(250);
+      }
       assertCurrent();
-      await sleep(250);
+      const state = await this.probeAuthentication();
+      if (!this.cloudflareChallengeRecoveryArmed && state?.authenticationStatus !== "verified") {
+        throw new Error("ChatGPT security check is still blocking backend requests. Reload ChatGPT and retry.");
+      }
+      this.logger.info("browser.cloudflare_challenge_recovered", {
+        proof: this.cloudflareChallengeRecoveryArmed ? "backend-response" : "session-verified",
+      });
+    } finally {
+      this.setHomeThrottling(contents, true);
     }
-    assertCurrent();
-    const state = await this.probeAuthentication();
-    if (!this.cloudflareChallengeRecoveryArmed && state?.authenticationStatus !== "verified") {
-      throw new Error("ChatGPT security check is still blocking backend requests. Reload ChatGPT and retry.");
-    }
-    this.logger.info("browser.cloudflare_challenge_recovered", {
-      proof: this.cloudflareChallengeRecoveryArmed ? "backend-response" : "session-verified",
-    });
+  }
+
+  /**
+   * Throttle the hidden home page only while nothing else needs it to render. Work that owns
+   * the page (a task, a manual operation or a sign-in) manages throttling itself.
+   */
+  setHomeThrottling(contents, throttled) {
+    if (!contents || contents.isDestroyed() || this.view?.webContents !== contents) return;
+    if (throttled && (this.activeTraceId || this.manualOperation || this.loginOperation)) return;
+    try { contents.setBackgroundThrottling(throttled); } catch {}
   }
 
   turnTabSnapshots() {
@@ -3731,6 +3795,7 @@ class BrowserHost {
 
   async waitForAuthenticated(timeoutMs = 180_000, signal) {
     const deadline = Date.now() + timeoutMs;
+    let challengeReloadAt = 0;
     while (Date.now() < deadline) {
       signal?.throwIfAborted();
       if (this.authNavigationError) {
@@ -3741,6 +3806,20 @@ class BrowserHost {
       const state = await awaitInspection(this.probeAuthentication({ signal }), signal);
       signal?.throwIfAborted();
       if (state.authenticated) return state;
+      // A challenge during sign-in leaves ChatGPT on "We couldn't load your account" with no
+      // composer, and the user's own Reload is locked meanwhile. Reload that ChatGPT page (never
+      // an auth provider page) at a bounded rate.
+      const surface = this.lastAuthenticationSurfaceObservation;
+      const contents = this.view?.webContents;
+      if (this.cloudflareChallengeDeferred && surface?.composer === false && surface.readyState === "complete"
+        && contents && !contents.isDestroyed() && httpsOrigin(contents.getURL()) === CHATGPT_ORIGIN
+        && Date.now() - challengeReloadAt >= DEFERRED_CHALLENGE_SIGN_IN_RELOAD_MS) {
+        challengeReloadAt = Date.now();
+        this.cloudflareChallengeDeferred = false;
+        this.logger.info("browser.session_surface_reloaded", { reason: "deferred-challenge" });
+        await awaitInspection(contents.loadURL(TEMPORARY_CHAT_URL), signal);
+        continue;
+      }
       await delay(750, undefined, { signal });
     }
     throw new Error("ChatGPT login was not completed before the timeout");
@@ -4043,6 +4122,8 @@ class BrowserHost {
 
   destroy() {
     this.destroyed = true;
+    clearInterval(this.cloudflareChallengeDeferredTimer);
+    this.cloudflareChallengeDeferredTimer = null;
     clearTimeout(this.authenticationRefreshTimer);
     clearTimeout(this.networkEgressRecheckTimer);
     cancelSessionRecheck(this);
