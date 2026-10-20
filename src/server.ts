@@ -120,14 +120,18 @@ import { VERSION } from "./version";
 import { HermesIntegration, type HermesContext } from "./hermes-integration";
 
 import { HttpTurnCounter, type NativeCodexTurnIdentity } from "./http-turn-lifecycle";
-import { ServerAdmission, TUNNEL_UNAVAILABLE_REASON_PATTERN, webAdmissionFailureMessage } from "./server-admission";
+import { ServerAdmission, TUNNEL_UNAVAILABLE_REASON_PATTERN, waitForWebAdmission, webAdmissionFailureMessage } from "./server-admission";
 import { inferenceRoutePolicy, type InferenceRoutePolicy } from "./server-route-policy";
 
 type ChatGptWebAdapterFactory = (provider: CodexProviderConfig) => ProviderAdapter;
 
+/** How long a Web request waits for the tool tunnel before NEKODEX answers with the reason. */
+export const WEB_TUNNEL_HOLD_MS = 60_000;
+const WEB_TUNNEL_HOLD_POLL_MS = 1_000;
+
 export interface ResponseRequestOptions {
   /** Native passthrough remains available independently of the browser/tool broker. */
-  webAdmission?: () => Response | undefined;
+  webAdmission?: (signal?: AbortSignal) => Response | undefined | Promise<Response | undefined>;
   fetchUpstream?: NativeFetch;
   hermesContext?: HermesContext;
   clientContext?: ExternalClientContext;
@@ -387,7 +391,7 @@ export async function responseRequest(
   // The native byte-for-byte replay branch is unused for a Web request. Release its tee buffer
   // before the browser turn, which may stay active for minutes.
   void nativeRequest.body?.cancel().catch(() => {});
-  const webRejection = options.webAdmission?.();
+  const webRejection = await options.webAdmission?.(req.signal);
   if (webRejection) return webRejection;
   const requestedPreviousResponseId = raw && typeof raw === "object" && !Array.isArray(raw)
     ? (raw as { previous_response_id?: unknown }).previous_response_id
@@ -761,7 +765,7 @@ export async function compactRequest(
     return forwardNativeOr502(nativeRequest, "responses/compact", options.fetchUpstream, raw);
   }
   void nativeRequest.body?.cancel().catch(() => {});
-  const webRejection = options.webAdmission?.();
+  const webRejection = await options.webAdmission?.(req.signal);
   if (webRejection) return webRejection;
   let route: ChatGptWebModelRoute;
   try {
@@ -983,7 +987,16 @@ export function startServer(
     "server_error",
     webAdmissionFailureMessage({ draining: admission.draining, launcherDetached,
       brokerReady: brokerReady(), tunnelUnavailableReason: tunnelReady ? null : tunnelUnavailableReason }),
+    "nekodex_unavailable",
   );
+  // Only the tool tunnel is missing (a VPN reconnecting, the Mac just woke): wait for it briefly
+  // instead of failing the request. A restart, a detached launcher or a broken broker still answer
+  // at once. A request still refused after the hold gets the real reason, and Codex retries it.
+  const webAdmissionRecoverable = () => admission.accepting && !launcherDetached && brokerReady() && !tunnelReady;
+  const awaitWebAdmission = (signal?: AbortSignal): Promise<boolean> => waitForWebAdmission({
+    accepting: acceptingTurns, recoverable: webAdmissionRecoverable,
+    holdMs: WEB_TUNNEL_HOLD_MS, pollMs: WEB_TUNNEL_HOLD_POLL_MS, signal,
+  });
   if (config.mode === "full") {
     turnBroker!.setExternalOwnersAccepted(false);
     void turnBroker!.listen().then(() => {
@@ -1247,8 +1260,8 @@ export function startServer(
     bindWeb: () => void,
   ): ResponseRequestOptions => ({
     onTurnIdentity: bindIdentity,
-    webAdmission: () => {
-      if (!acceptingTurns()) return admissionFailure();
+    webAdmission: async (signal?: AbortSignal) => {
+      if (!acceptingTurns() && !await awaitWebAdmission(signal)) return admissionFailure();
       bindWeb();
       return undefined;
     },
