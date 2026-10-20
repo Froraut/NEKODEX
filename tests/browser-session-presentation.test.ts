@@ -114,3 +114,21 @@ test('page-load probes wait while a check owns the page and run once after it re
   await new Promise(resolve => setTimeout(resolve, 0));
   expect(probes).toBe(1);
 });
+
+test('a renewed session for the same ChatGPT user is reported as such, a different user is not', async () => {
+  const renewed = fixture('', '');
+  renewed.authPrincipalFingerprint = 'a'.repeat(64);
+  renewed.authSessionFingerprint = 'c'.repeat(64);
+  const calls: unknown[] = [];
+  renewed.onAuthIdentityChanged = (...args: unknown[]) => { calls.push(args[2]); };
+  await renewed.runAuthenticationProbe();
+  expect(calls).toEqual([{ principalChanged: false }]);
+
+  const replaced = fixture('', '');
+  replaced.authPrincipalFingerprint = 'd'.repeat(64);
+  replaced.authSessionFingerprint = 'b'.repeat(64);
+  const replacedCalls: unknown[] = [];
+  replaced.onAuthIdentityChanged = (...args: unknown[]) => { replacedCalls.push(args[2]); };
+  await replaced.runAuthenticationProbe();
+  expect(replacedCalls).toEqual([{ principalChanged: true }]);
+});

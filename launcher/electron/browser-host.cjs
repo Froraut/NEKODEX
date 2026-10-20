@@ -3788,7 +3788,8 @@ class BrowserHost {
         this.authPrincipalFingerprint = result.principalFingerprint;
         this.authSessionFingerprint = result.sessionFingerprint;
         this.authIdentityEpoch += 1;
-        this.onAuthIdentityChanged(this.accountId, this.authIdentityEpoch);
+        this.onAuthIdentityChanged(this.accountId, this.authIdentityEpoch,
+          { principalChanged: previousPrincipal !== result.principalFingerprint });
       }
       const verifiedAt = new Date().toISOString();
       this.verifiedHomeDocument = { contents: primaryContents, documentRevision,

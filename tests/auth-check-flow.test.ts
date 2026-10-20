@@ -135,3 +135,23 @@ test("startup checks the selected account first, then every other session before
     "inspect:prim2", "connector:prim2", "inspect:third", "connector:third",
   ]);
 });
+
+test("an account whose evidence is being rebuilt reports it as checking", () => {
+  const host = { state: { authenticated: true, authenticationStatus: "verified" }, turnTabs: new Map(),
+    readOnlyInspection: null, connectorName: () => "Codex Native6", authPrincipalFingerprint: null };
+  const pool: any = Object.assign(Object.create(AccountBrowserPool.prototype), {
+    registry: { snapshot: () => ({ selectedId: "default", accounts: [{ id: "default", enabled: true }, { id: "prim2", enabled: true }] }) },
+    reservations: new Map(), hosts: new Map([["default", host]]), capabilities: new Map(), connectors: new Map(),
+    evidenceRefreshing: new Set(["default"]), evidenceRestores: new Map(), authenticationRefreshOperations: new Map(),
+    network: { get: () => null }, safety: { snapshot: () => null, availability: () => "available" },
+    toolProof: { snapshot: () => null }, accountTunnel: () => null, observationStamp: () => 1, evidenceEpoch: () => 1,
+  });
+  const [primary, other] = pool.accountSnapshot().accounts;
+  expect(primary).toMatchObject({ evidenceChecking: true, checked: false });
+  // A host that is not created yet but is queued for its check reads as checking, not as signed out.
+  pool.evidenceRefreshing.add("prim2");
+  expect(pool.accountSnapshot().accounts[1]).toMatchObject({ evidenceChecking: true, authenticationStatus: "unknown" });
+  pool.evidenceRefreshing.clear();
+  expect(pool.accountSnapshot().accounts[0]).toMatchObject({ evidenceChecking: false });
+  expect(other.evidenceChecking).toBe(false);
+});

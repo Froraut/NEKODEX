@@ -472,7 +472,7 @@ export interface AccountPoolSnapshot {
     proxy: AccountProxy;
     safety: { policy: AccountSafetyPolicy; cooldownUntil: number; stopped: boolean;
       newSessionWindow: AccountNewSessionWindowStatus | null };
-    accountLabel: string | null; activeTurns: number; checked: boolean; connectorReady: boolean; evidenceEpoch?: number;
+    accountLabel: string | null; activeTurns: number; checked: boolean; connectorReady: boolean; evidenceEpoch?: number; evidenceChecking?: boolean;
     /** Last completed task on this account whose tool returned without an error. */
     toolProof?: { at: number; tool: string } | null }>;
 }

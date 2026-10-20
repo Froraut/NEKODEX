@@ -267,8 +267,15 @@ class AccountBrowserPool {
       workspaceSessionMutation: this.workspaceCoordinator(id),
       workspaceManifestPath: path.join(this.options.coreHome, 'runtime', `browser-workspaces-${id}.json`),
       workspaceChanged: () => this.publish(),
-      onAuthIdentityChanged: (accountId) => {
+      onAuthIdentityChanged: (accountId, _identityEpoch, { principalChanged = true } = {}) => {
         if (accountId !== id) throw new Error('Browser host reported an unexpected account identity');
+        // A renewed session for the same ChatGPT user keeps its models and connector; only a
+        // different user, a sign-out or a rejected session invalidates the account's evidence.
+        if (principalChanged === false) {
+          this.logger?.info?.('browser.account_session_renewed', { accountId: id });
+          return;
+        }
+        this.logger?.info?.('browser.account_evidence_invalidated', { accountId: id, reason: 'identity-changed' });
         this.invalidateEvidence(id);
       },
       publishState: () => this.publish(),
@@ -413,8 +420,14 @@ class AccountBrowserPool {
       const capabilities = this.capabilities.get(account.id);
       const activeTurns = host ? [...host.turnTabs.values()].filter(tab => tab.status === 'running').length : 0;
       const reserved = reservedByAccount.get(account.id) ?? 0;
+      // Evidence is rebuilt after every launch and sign-in; say so instead of "Needs setup".
+      const restore = this.evidenceRestores?.get(account.id);
+      const evidenceChecking = Boolean(this.evidenceRefreshing?.has(account.id)
+        || (restore && !restore.cancelled && !restore.waitForTunnel)
+        || this.authenticationRefreshOperations.has(account.id) || host?.readOnlyInspection);
       return { ...account, proxy: this.network.get(account.id), safety: this.safety.snapshot(account.id), authenticated: host?.state.authenticated === true,
-        authenticationStatus: host?.state.authenticationStatus,
+        authenticationStatus: host?.state.authenticationStatus ?? (evidenceChecking ? 'unknown' : undefined),
+        evidenceChecking,
         authenticationIssue: host?.state.authenticationIssue ?? null,
         authenticationCheckedAt: host?.state.authenticationCheckedAt ?? null,
         lastVerifiedAt: host?.state.lastVerifiedAt ?? null,

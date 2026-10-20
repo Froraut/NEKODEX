@@ -611,13 +611,14 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
             : authChecking ? text.waitForSessionCheck
             : !account.authenticated ? codexCopy.quotaSignedOut : undefined;
           const selectReason = blockedReason ?? readinessReason
-            ?? (!manual && !account.checked ? text.selectNeedsCheck : undefined);
+            ?? (!manual && !account.checked ? account.evidenceChecking ? text.waitForSessionCheck : text.selectNeedsCheck : undefined);
           const checkReason = blockedReason ?? (manual ? copy.accountsManual : readinessReason);
           // Signing in again while the saved session is still being checked replaces a session that may be fine.
           const sessionCheckPending = authChecking && !account.authenticated;
           const credentialReason = blockedReason ?? (quotaReadBusy ? codexCopy.quotaChecking : undefined)
             ?? (sessionCheckPending ? text.waitForSessionCheck : undefined)
-            ?? (account.authenticated && !selected && !manual && !account.checked ? text.selectNeedsCheck : undefined);
+            ?? (account.authenticated && !selected && !manual && !account.checked
+              ? account.evidenceChecking ? text.waitForSessionCheck : text.selectNeedsCheck : undefined);
           const anotherLoginReason = (startingAccountId !== null && startingAccountId !== account.id)
             || Boolean(login && (login.active || login.settling) && login.accountId !== account.id)
             ? (login?.settling ? codexCopy.loginSettlingCurrent : codexCopy.loginCurrent)
@@ -680,13 +681,18 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
           else if (authChecking) facts.push({ label: copy.checkingSignIn, dot: "busy" });
           else if (!account.authenticated) facts.push({ label: copy.accountsSignInNeeded, tone: "warning", dot: "optional" });
           facts.push({ label: `${copy.accountsActive}: ${account.activeTurns}`, dot: active ? "busy" : undefined });
+          // Evidence is rebuilt after every launch and sign-in: a pending check reads as checking, not as missing setup.
+          const evidenceChecking = account.evidenceChecking === true || authChecking;
+          const checkingFact = (label: string) => ({ label: `${label}: ${workflow.session.checkingVerification}`, dot: "busy" as Status });
           facts.push(account.checked
             ? { label: `${copy.accountsChecked}: ${copy.connectionVerified}`, tone: "success", dot: "ready" }
+            : evidenceChecking ? checkingFact(copy.accountsChecked)
             : { label: `${copy.accountsChecked}: ${copy.connectionPending}`, dot: "idle" });
           // The same derived step as the tools setup section: a verified connector without this account's tunnel
           // still needs setup (the page notice names that step), so the badge never says Verified next to it.
           facts.push(toolsStep === "verified"
             ? { label: `${copy.toolConnection}: ${copy.connectionVerified}`, tone: "success", dot: "ready" }
+            : evidenceChecking ? checkingFact(copy.toolConnection)
             : { label: `${copy.toolConnection}: ${copy.connectionPending}`, dot: "idle" });
           if (pacing && (pacing.held || !account.safety)) {
             facts.push({ label: `${pacing.label}: ${pacing.value}`, tone: pacing.held ? "warning" : undefined, dot: pacing.held ? "busy" : "ready" });
