@@ -1,0 +1,11 @@
+:root { color-scheme: light dark; font: 14px/1.5 system-ui, sans-serif; }
+body { margin: 0; width: 390px; }
+main { padding: 20px; }
+h1 { font-size: 20px; line-height: 1.25; }
+label, textarea, button { display: block; box-sizing: border-box; width: 100%; }
+textarea { margin: 6px 0 12px; padding: 8px; font: 12px/1.4 monospace; resize: vertical; }
+button { padding: 9px; margin: 8px 0; font: inherit; cursor: pointer; }
+button:disabled { cursor: default; opacity: .6; }
+textarea:focus-visible, button:focus-visible { outline: 3px solid #457ddd; outline-offset: 2px; }
+#status { min-height: 42px; padding: 10px; border: 1px solid #888; border-radius: 6px; overflow-wrap: anywhere; }
+.note { font-size: 12px; opacity: .8; }

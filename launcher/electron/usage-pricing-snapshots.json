@@ -1,0 +1,39 @@
+[
+  {
+    "version": "openai-standard-short-observed-20261019",
+    "effectiveDate": "2026-10-19",
+    "currency": "USD",
+    "provenance": {
+      "kind": "official-provider-snapshot",
+      "dateBasis": "observed-on",
+      "retrievedAt": "2026-10-19T09:30:00.000Z",
+      "pricingScenario": "Standard API, short-context text token rates observed on this date. Hypothetical equivalent only: actual request context tier, processing tier, regional uplift, tools, taxes and subscription charges are not inferred from usage logs.",
+      "sources": [{"id": "openai-pricing", "provider": "openai", "url": "https://developers.openai.com/api/docs/pricing"}]
+    },
+    "models": [
+      {"model":"gpt-6-astra","priceModel":"gpt-6-astra","sourceId":"openai-pricing","inputPerMillion":10,"cachedInputPerMillion":1,"cacheWritePerMillion":12.5,"outputPerMillion":50},
+      {"model":"gpt-6.1-sol","priceModel":"gpt-6.1-sol","sourceId":"openai-pricing","inputPerMillion":2,"cachedInputPerMillion":0.1,"cacheWritePerMillion":2.5,"outputPerMillion":10},
+      {"model":"gpt-6-luna","priceModel":"gpt-6-luna","sourceId":"openai-pricing","inputPerMillion":0.1,"cachedInputPerMillion":0.01,"cacheWritePerMillion":0.125,"outputPerMillion":0.5}
+    ]
+  },
+  {
+    "version": "anthropic-standard-observed-20261019",
+    "effectiveDate": "2026-10-19",
+    "currency": "USD",
+    "provenance": {
+      "kind": "official-provider-snapshot",
+      "dateBasis": "observed-on",
+      "retrievedAt": "2026-10-19T09:30:00.000Z",
+      "pricingScenario": "Standard Claude API base text and cache-hit rates observed on this date. Cache-write price remains unknown because imported aggregate counts do not identify the 5-minute versus 1-hour cache lifetime. Tools, batch/fast tiers, regional uplifts, taxes and subscription charges are excluded.",
+      "sources": [
+        {"id":"anthropic-pricing","provider":"anthropic","url":"https://platform.claude.com/docs/en/about-claude/pricing"},
+        {"id":"anthropic-models","provider":"anthropic","url":"https://platform.claude.com/docs/en/models/overview"}
+      ]
+    },
+    "models": [
+      {"model":"claude-fable-5-1","priceModel":"claude-fable-5-1","sourceId":"anthropic-pricing","inputPerMillion":10,"cachedInputPerMillion":0.25,"cacheWritePerMillion":null,"outputPerMillion":50},
+      {"model":"claude-opus-5-5","priceModel":"claude-opus-5-5","sourceId":"anthropic-pricing","inputPerMillion":4,"cachedInputPerMillion":0.2,"cacheWritePerMillion":null,"outputPerMillion":20},
+      {"model":"claude-sonnet-5-5","priceModel":"claude-sonnet-5-5","sourceId":"anthropic-pricing","inputPerMillion":2,"cachedInputPerMillion":0.1,"cacheWritePerMillion":null,"outputPerMillion":10}
+    ]
+  }
+]

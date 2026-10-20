@@ -53,6 +53,7 @@
 .nk-root:lang(ko) { word-break: keep-all; overflow-wrap: break-word; }
 
 /* The nav list scrolls (overflow clips outer rings), so nav items draw their focus ring inside. */
+.nk-sidebar__nav { padding-bottom: var(--space-3); scroll-padding-block: var(--space-2); }
 .nk-sidebar .nk-nav-item:focus-visible { outline-offset: -2px; }
 
 /* Attention dots on nav items (StateDot variants). */
@@ -89,8 +90,12 @@
 /* The location keeps its room: the Local workspace pill gives way first, down to its globe (AppShell
    useStatusPillFit; the label stays as its text and tooltip), and only then does the current crumb ellipsize.
    The flex weights keep that order while a resize is being measured. */
+.nk-titlebar__lead { flex: none; }
 .nk-titlebar__trail { flex: 0 1 auto; }
-.nk-titlebar__trail li[aria-current="page"] { min-width: 0; }
+/* Nested Connections labels also need to shrink; a long middle crumb must not push the status offscreen. */
+.nk-titlebar__trail li { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.nk-titlebar__trail li:first-child { flex: none; }
+.nk-titlebar__trail li:not(:first-child):not([aria-current="page"]) { flex-shrink: 2; }
 .nk-titlebar__end { flex: 0 1000 auto; min-width: 28px; }
 .nk-titlebar__status { min-width: 0; max-width: 100%; }
 .nk-titlebar__status-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -139,13 +144,18 @@
   scrollbar-gutter: stable;
 }
 .nk-shell[data-surface="browser"] .nk-shell__scroll { padding-bottom: 0; overflow: hidden; scrollbar-gutter: auto; }
+/* Keep useful room for controls at compact widths, with the notice aligned to the page below it. */
+@container workspace (max-width: 640px) {
+  .nk-shell__scroll .nk-page,
+  .nk-shell[data-surface] .nk-shell__notice { width: calc(100% - 2 * var(--space-4)); }
+}
 
 /* ---------- Overlays ---------- */
 /* Overlays cover the titlebar; a press on them must not start a window drag. */
 :is(.nk-dialog-backdrop, .nk-shell__scrim, .nk-menu__scrim, .nk-media.is-expanded) { -webkit-app-region: no-drag; }
 .nk-dialog__body > .nk-dialog__setting { min-height: 0; margin: var(--space-2) 0 0; border-top: 1px solid var(--border-light); border-bottom: 1px solid var(--border-light); }
 .nk-dialog__setting strong { color: var(--text-primary); }
-.nk-dialog__note { margin: var(--space-3) 0 0; color: var(--text-warning); font-size: 14px; line-height: 20px; }
+.nk-dialog__body > .nk-dialog__note { margin: var(--space-3) 0 0; color: var(--text-warning); font-size: 14px; line-height: 20px; }
 /* A failed save from the dialog is shown in it, under the setting it concerns. */
 .nk-dialog__error { margin-top: var(--space-3); }
 

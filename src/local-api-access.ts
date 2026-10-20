@@ -69,5 +69,6 @@ export function localApiCommand(args: string[]): void {
     process.stdout.write(`${key}\n`); return;
   }
   process.stdout.write(JSON.stringify({ ...localApiStatus(), baseUrl: `http://${config.host}:${config.port}/v1`,
-    protocols: ["chat-completions", "messages"] }, null, 2) + "\n");
+    protocols: ["chat-completions", "messages"], purpose: "model-protocol-api",
+    localControlApi: { separateCredential: true, route: "/api/v1", consumer: "task-monitor", enableFrom: "Local control API settings" } }, null, 2) + "\n");
 }

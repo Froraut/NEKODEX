@@ -1,6 +1,8 @@
 /* Task center and Updates: layout only. Components come from the kit (design/components.css). */
 
 /* ---------- Task center (size-content) ---------- */
+.task-center { display: grid; gap: var(--space-6); min-width: 0; margin-bottom: var(--space-6); }
+.task-center > * { min-width: 0; }
 .task-queue { margin-bottom: var(--space-6); }
 /* Pause scope + pause button: a control row under the header, aligned like the recorded-task filters. */
 .task-queue__scope { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3); min-width: 0; padding: var(--space-2) var(--space-5) var(--space-4); }

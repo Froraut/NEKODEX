@@ -52,3 +52,24 @@ test("a sent execution stays ended and its cleanup does not mark the owner cance
     expect(() => q.request({ ...owner })).not.toThrow("cancelled before admission");
   } finally { cleanup(); }
 });
+
+test("a turn whose tab a failed navigation already removed is still retired as never sent", async () => {
+  const { AccountBrowserPool } = require("../launcher/electron/account-pool.cjs");
+  const retired: unknown[] = [];
+  const owner = {
+    turnTabs: new Map(), connectorName: () => "Codex Native6", authPrincipalFingerprint: null,
+    endTurn: async () => ({}),
+    taskLedger: { get: () => undefined, snapshot: () => [
+      { traceId: "trace_navfail01", terminal: true, submission: "not-sent", updatedAt: 2 },
+      { traceId: "trace_other0001", terminal: true, submission: "sent", updatedAt: 3 },
+    ] },
+  };
+  const pool: any = Object.assign(Object.create(AccountBrowserPool.prototype), {
+    ownerForTrace: () => owner, traceOwners: new Map([["trace_navfail01", "default"]]), unsentAdmissions: new Map(),
+    pendingAffinity: new Map(), admissionQueue: { retire: (...args: unknown[]) => retired.push(args) },
+    recordUsage() {}, usage: { finish() {} }, safety: { fail() {} }, toolProof: { record() {} }, connectors: new Map(),
+    logger: { warn() {} }, publish() {},
+  });
+  await pool.endTurn("trace_navfail01", 4242, "failed", false, "page.goto: net::ERR_TIMED_OUT", false, false, "browser_failure");
+  expect(retired).toEqual([["trace_navfail01", 4242, true]]);
+});

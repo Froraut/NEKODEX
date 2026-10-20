@@ -1,0 +1,35 @@
+/* VM presentation only; approvals, ownership and retained receipts stay in their components. */
+.agent-vm-surface,
+.agent-vm-stack,
+.agent-vm-stack > *,
+.agent-vm-stack .nk-badge-row > *,
+.agent-vm-stack .agent-tools-grid > *,
+.agent-vm-records > li,
+.agent-vm-records > li > * { min-width: 0; }
+.agent-vm-stack { display: grid; gap: var(--space-4); overflow-wrap: anywhere; }
+.agent-vm-stack > p,
+.agent-vm-records p { margin: 0; }
+.agent-vm-stack .agent-tools-grid { align-items: start; }
+.agent-vm-stack .nk-select,
+.agent-vm-stack .nk-select select { width: 100%; min-width: 0; max-width: 100%; }
+.agent-vm-stack .nk-check { justify-self: start; align-items: flex-start; max-width: 100%; min-width: 0; }
+.agent-vm-stack .nk-check input { flex: 0 0 16px; margin-top: 2px; }
+.agent-vm-stack .nk-check > span { min-width: 0; overflow-wrap: anywhere; }
+.agent-vm-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
+.agent-vm-action { justify-self: start; max-width: 100%; min-width: 0; height: auto; min-height: var(--size-control); padding-block: var(--space-2); white-space: normal; overflow-wrap: anywhere; text-align: start; }
+.agent-vm-action > span { min-width: 0; overflow-wrap: anywhere; }
+.agent-vm-action--small { min-height: var(--size-control-sm); padding-block: var(--space-1); }
+.agent-vm-review { padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-control); }
+.agent-vm-details { min-width: 0; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.agent-vm-details > summary { cursor: pointer; font-weight: 500; overflow-wrap: anywhere; }
+.agent-vm-details[open] > summary { margin-bottom: var(--space-3); }
+.agent-vm-details > p { margin: 0; overflow-wrap: anywhere; }
+.agent-vm-details > p + p { margin-top: var(--space-2); }
+.agent-vm-metadata { display: grid; gap: var(--space-2); margin: 0; min-width: 0; }
+.agent-vm-metadata dt { min-width: 0; color: var(--text-secondary); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
+.agent-vm-metadata dd { margin: 0 0 var(--space-2); min-width: 0; overflow-wrap: anywhere; }
+.agent-vm-metadata dd:last-child { margin-bottom: 0; }
+.agent-vm-stack code { white-space: normal; overflow-wrap: anywhere; }
+.agent-vm-records { margin: 0; }
+.agent-vm-records small { color: var(--text-secondary); }
+.agent-vm-divider { width: 100%; margin: var(--space-1) 0; border: 0; border-top: 1px solid var(--border); }

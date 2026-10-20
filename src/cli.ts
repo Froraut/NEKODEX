@@ -3,6 +3,9 @@ import { clearTunnelRuntimeKeyEnvironment, importSavedTunnelCredential, readRunt
 import { clientConnectionsCommand } from "./client-connections";
 import { claudeIntegrationCommand } from "./claude-integration";
 import { localApiCommand } from "./local-api-access";
+import { localControlApiCommand } from "./local-control-api/client";
+import { loopEventProducerCommand } from './agent-mode/external-producer-cli';
+import { localControlTaskMonitorCommand } from "./local-control-api/task-monitor-command";
 import { codexProviderCommand } from "./codex-provider-command";
 import { createInterface } from "node:readline/promises";
 import { Writable } from "node:stream";
@@ -31,6 +34,10 @@ import { runChatGptMcpMain } from "./adapters/chatgpt-web/mcp-main";
 import { setChatGptMcpCliTunnelId } from "./adapters/chatgpt-web/mcp-server";
 import { runCommand } from "./process";
 import { startServer } from "./server";
+import { resolveDevelopmentDesktopHelper } from "./browser-companion/desktop-helper-path";
+import { resolveDevelopmentSkillPdfHelper } from "./agent-tools/skill-pdf-helper-path";
+import { resolveDevelopmentVmRuntimeSelection } from './execution-environments/development-runtime';
+import { resolveProductionVmRuntimeSelection } from './execution-environments/production-runtime';
 import { assertServiceIdle, cancelActiveTurns, getServiceStatus, installService, interruptActiveTurn, restartService, startService, stopService, uninstallService } from "./service";
 import { existingFullSetupCredentials, preflightSetup, setup, type SetupOptions } from "./setup";
 import { runTunnelCredentialProcess, installTunnelClient, managedRuntimeKeyPath, stopTunnel, tunnelStatus, waitForTunnelReady } from "./tunnel";
@@ -58,6 +65,10 @@ Usage:
   codex-chatgpt-web subagents <status|compatibility-v1|native>
   codex-chatgpt-web provider <status|mixed|web-only> [--catalog PATH]
   codex-chatgpt-web api <status|enable|disable|rotate|key>
+  codex-chatgpt-web local-api <status|tasks|agent-tasks|history-coverage|action|action-receipt> --origin http://127.0.0.1:PORT --token-stdin
+  codex-chatgpt-web loop-events <publish|receipt> --origin http://127.0.0.1:PORT --journal-dir PATH --token-stdin; publish --event-file PATH; receipt --producer-id ID --event-id ID
+  codex-chatgpt-web task-monitor <snapshot|pause|reconcile> --origin http://127.0.0.1:PORT --journal-dir PATH --token-stdin
+  codex-chatgpt-web local-api action --operation pause|resume|stop|step|review --task-id ID --action-id ID --family-id ID --generation N --revision N --origin http://127.0.0.1:PORT --token-stdin
   codex-chatgpt-web claude <status|connect|disconnect>
   codex-chatgpt-web config pro-model-version <follow|5.6|5.5|6> --launcher-control
   codex-chatgpt-web config compaction-model <follow|extra-high|5.6-pro|5.5-pro> --launcher-control
@@ -682,6 +693,9 @@ async function main(): Promise<void> {
   else if (command === "connections") clientConnectionsCommand(args);
   else if (command === "claude") claudeIntegrationCommand(args);
   else if (command === "api") localApiCommand(args);
+  else if (command === "local-api") { if (!await localControlApiCommand(args)) process.exitCode = 1; }
+  else if (command === "loop-events") { if (!await loopEventProducerCommand(args)) process.exitCode = 1; }
+  else if (command === "task-monitor") { if (!await localControlTaskMonitorCommand(args)) process.exitCode = 1; }
   else if (command === "provider") codexProviderCommand(args);
   else if (command === "subagents") await subagentsCommand(args);
   else if (command === "config") {
@@ -710,6 +724,9 @@ async function main(): Promise<void> {
     assertNoArgs(args);
     const config = loadConfig();
     const server = startServer(config, {
+      desktopHelper: resolveDevelopmentDesktopHelper(import.meta.url),
+      pdfHelper: resolveDevelopmentSkillPdfHelper(import.meta.url),
+      vmRuntimeSelection: process.env.CODEX_CHATGPT_WEB_LAUNCHER_PROFILE === 'development' ? resolveDevelopmentVmRuntimeSelection(import.meta.url) : resolveProductionVmRuntimeSelection(import.meta.url, process.env.NEKODEX_PACKAGED_VM_ORIGIN),
       readProModelVersion: () => loadConfig().proModelVersion,
       readCompactionModel: () => loadConfig().compactionModel,
       readAccountCapabilities: readAccountCapabilityFields,

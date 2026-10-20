@@ -1,0 +1,8 @@
+.nk-remote-git__target { overflow-wrap: anywhere; }
+.nk-remote-git__files { display: grid; gap: 8px; max-height: 340px; overflow: auto; padding-block: 8px; }
+.nk-remote-git__file { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--border, rgba(128,128,128,.25)); border-radius: 8px; }
+.nk-remote-git__file code { flex: 1; min-width: 130px; overflow-wrap: anywhere; }
+.nk-remote-git__diff { padding: 12px; border: 1px solid var(--border, rgba(128,128,128,.25)); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 430px; overflow: auto; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.nk-remote-git__message { display: block; box-sizing: border-box; width: 100%; min-height: 90px; padding: 10px; background: var(--surface, transparent); color: inherit; border: 1px solid var(--border, rgba(128,128,128,.3)); border-radius: 8px; font: inherit; resize: vertical; }
+.nk-remote-git__review { padding: 12px; border: 1px solid var(--border, rgba(128,128,128,.3)); border-radius: 10px; }
+.nk-remote-git__details { overflow-wrap: anywhere; margin-block: 10px; }

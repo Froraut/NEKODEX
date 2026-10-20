@@ -12,12 +12,16 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { VERSION } from "../src/version";
 import { createRequire } from "node:module";
 const { beginDirectoryBuild } = createRequire(import.meta.url)("./build-output.cjs");
 const { compileCredentialHelper } = createRequire(import.meta.url)("./build-credential-helper.cjs");
-const { signEmbeddedRuntime } = createRequire(import.meta.url)("../launcher/scripts/release-signing.cjs");
+const { compileOAuthVaultHelper } = createRequire(import.meta.url)("./build-oauth-vault-helper.cjs");
+const { compileDesktopHelper } = createRequire(import.meta.url)("./build-desktop-helper.cjs");
+const { compileSkillPdfHelper } = createRequire(import.meta.url)("./build-skill-pdf-helper.cjs");
+const { prepareExecutionVmRuntime, prepareOwnedNativeRuntime } = createRequire(import.meta.url)("../launcher/scripts/prepare-runtime.cjs");
+const { signingConfiguration, signEmbeddedRuntime, signDesktopHelper, signSkillPdfHelper } = createRequire(import.meta.url)("../launcher/scripts/release-signing.cjs");
 
 const root = resolve(import.meta.dir, "..");
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
@@ -86,6 +90,20 @@ if (!browserHelperBuild.success) {
   throw new Error(`Browser helper bundle failed: ${browserHelperBuild.logs.map(log => log.message).join("; ")}`);
 }
 
+// Keep the reviewed MV3 artifact adjacent to cli.js, where the bundled runtime resolves it.
+// Copy only its shipped resources; session pairing data never belongs to this source tree.
+const companionDir = join(appDir, "browser-companion");
+mkdirSync(companionDir, { recursive: true });
+const companionResources = ["popup.html", "popup.css", "popup.js", "page.js", "dispatch.js", "transport.js", "session.html", "session.js"];
+for (const name of ["manifest.json", "manifest.firefox.json", ...companionResources, "README.md"]) {
+  copyFileSync(join(root, "browser-companion", name), join(companionDir, name));
+}
+// Firefox requires its manifest as manifest.json. Keep Chrome's existing loader path intact.
+const firefoxCompanionDir = join(companionDir, "firefox");
+mkdirSync(firefoxCompanionDir, { recursive: true });
+copyFileSync(join(root, "browser-companion", "manifest.firefox.json"), join(firefoxCompanionDir, "manifest.json"));
+for (const name of companionResources) copyFileSync(join(root, "browser-companion", name), join(firefoxCompanionDir, name));
+
 copyFileSync(join(root, "package.json"), join(appDir, "package.json"));
 copyFileSync(join(root, "bun.lock"), join(appDir, "bun.lock"));
 const install = Bun.spawnSync([process.execPath, "install", "--production", "--frozen-lockfile", "--ignore-scripts"], {
@@ -111,7 +129,36 @@ if (credentialHelper.supported) {
   copyFileSync(credentialHelper.executable, join(helperDirectory, "nekodex-credential-helper"));
   chmodSync(join(helperDirectory, "nekodex-credential-helper"), 0o755);
 }
+const oauthVaultHelper = compileOAuthVaultHelper({ repositoryRoot: root, development: true });
+if (oauthVaultHelper.supported) {
+  const helperDirectory = join(appDir, "oauth-vault-helper", `${process.platform}-${process.arch}`);
+  mkdirSync(helperDirectory, { recursive: true });
+  copyFileSync(oauthVaultHelper.executable, join(helperDirectory, "nekodex-oauth-vault-helper"));
+  chmodSync(join(helperDirectory, "nekodex-oauth-vault-helper"), 0o755);
+}
+const desktopHelper = compileDesktopHelper({ repositoryRoot: root, development: true,
+  sign: (candidate: string) => signDesktopHelper(candidate, process.platform, process.env, { development: true }) });
+if (desktopHelper.supported) {
+  const helperDirectory = join(appDir, "desktop-helper", `${process.platform}-${process.arch}`);
+  mkdirSync(helperDirectory, { recursive: true });
+  copyFileSync(desktopHelper.executable, join(helperDirectory, "nekodex-desktop-helper"));
+  chmodSync(join(helperDirectory, "nekodex-desktop-helper"), 0o755);
+}
+const pdfPublisher = process.platform === "darwin" && (signingConfiguration(process.platform).release || Boolean(process.env.NEKODEX_LOCAL_APP_SIGNING_IDENTITY));
+const pdfHelper = compileSkillPdfHelper({ repositoryRoot: root, development: !pdfPublisher,
+  ...(pdfPublisher ? { sign: (candidate: string) => signSkillPdfHelper(candidate, process.platform, process.env, { development: false }) } : {}) });
+if (pdfHelper.supported) {
+  const helperDirectory = join(appDir, "skill-pdf-helper", `${process.platform}-${process.arch}`);
+  mkdirSync(helperDirectory, { recursive: true });
+  copyFileSync(pdfHelper.executable, join(helperDirectory, "nekodex-skill-pdf-helper"));
+  copyFileSync(join(dirname(pdfHelper.executable), "manifest.json"), join(helperDirectory, "manifest.json"));
+  chmodSync(join(helperDirectory, "nekodex-skill-pdf-helper"), 0o755);
+}
 
+// Production VM assets stay under the signed app runtime with their fixed
+// publisher identity. Add them before hashing; never fall back to checkout paths.
+prepareExecutionVmRuntime(appDir, { root });
+prepareOwnedNativeRuntime(appDir, { root });
 
 const launcherName = process.platform === "win32" ? "codex-chatgpt-web.cmd" : "codex-chatgpt-web";
 const launcher = process.platform === "win32" ? `@echo off

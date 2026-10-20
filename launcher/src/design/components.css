@@ -121,6 +121,10 @@ body {
 .nk-dot.is-optional { background: var(--dot-optional); }
 @keyframes nk-pulse { 0%, 100% { opacity: 0.42; } 50% { opacity: 1; } }
 
+/* ---------- Badge groups ---------- */
+.nk-badge-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); min-width: 0; }
+.nk-badge-row > .nk-badge { max-width: 100%; min-height: 28px; height: auto; padding-block: var(--space-1); white-space: normal; overflow-wrap: anywhere; }
+
 /* ---------- Badge ---------- */
 .nk-badge {
   display: inline-flex;
@@ -355,6 +359,9 @@ body {
 .nk-page { width: min(var(--size-content), calc(100% - 2 * var(--space-8))); margin: 0 auto; padding: var(--space-6) 0 var(--space-12); }
 .nk-page--narrow { width: min(var(--size-content-narrow), calc(100% - 2 * var(--space-8))); }
 .nk-page--wide { width: min(var(--size-content-wide), calc(100% - 2 * var(--space-8))); }
+.nk-panel-stack { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-6); min-width: 0; }
+.nk-panel-stack > * { min-width: 0; }
+.nk-panel-stack > :where(p, ul, ol, dl) { margin-block: 0; }
 .nk-window-controls { display: flex; gap: var(--space-2); }
 .nk-window-controls > i { width: 12px; height: 12px; border-radius: var(--radius-pill); background: var(--border-heavy); }
 

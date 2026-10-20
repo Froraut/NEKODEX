@@ -1,6 +1,56 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { createHash } = require("node:crypto");
+const { isDeepStrictEqual } = require("node:util");
+
+// This checks the installed asset contract without launching any helper, browser
+// or VM. The outer runtime manifest additionally authenticates every file byte.
+function validatePackagedRuntimeAssets(runtimeRoot, { platform = process.platform, arch = process.arch } = {}) {
+  const app = path.join(runtimeRoot, "app");
+  const required = ["cli.js", "browser-helper.cjs", "browser-companion/manifest.json",
+    "browser-companion/manifest.firefox.json", "browser-companion/firefox/manifest.json"];
+  const browserResources = ["popup.html", "popup.css", "popup.js", "page.js", "dispatch.js", "transport.js", "session.html", "session.js"];
+  for (const name of browserResources) required.push(`browser-companion/${name}`, `browser-companion/firefox/${name}`);
+  if (platform === "darwin") {
+    for (const [directory, executable] of [["credential-helper", "nekodex-credential-helper"], ["oauth-vault-helper", "nekodex-oauth-vault-helper"],
+      ["desktop-helper", "nekodex-desktop-helper"], ["skill-pdf-helper", "nekodex-skill-pdf-helper"]]) {
+      required.push(`${directory}/${platform}-${arch}/${executable}`);
+    }
+    required.push(`skill-pdf-helper/${platform}-${arch}/manifest.json`);
+  }
+  const read = file => {
+    const metadata = fs.lstatSync(file);
+    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size < 1) throw new Error(`Packaged runtime asset is missing or unsafe: ${file}`);
+    return fs.readFileSync(file);
+  };
+  for (const name of required) read(path.join(app, name));
+  if (platform === "darwin" && arch === "arm64") {
+    const directory = path.join(app, "execution-vm", "darwin-arm64");
+    const names = ["Image", "guest-manifest.json", "helper-manifest.json", "initrd.gz", "nekodex-execution-vm-helper", "runtime-manifest.json"];
+    if (!isDeepStrictEqual(fs.readdirSync(directory).sort(), names)) throw new Error("Packaged execution VM must contain exactly its six fixed runtime files");
+    const { createProductionVmRuntimeManifest } = require("../../scripts/build-execution-vm-helper.cjs");
+    const expected = createProductionVmRuntimeManifest(read(path.join(directory, "helper-manifest.json")), read(path.join(directory, "guest-manifest.json")));
+    if (!isDeepStrictEqual(JSON.parse(read(path.join(directory, "runtime-manifest.json"))), expected)) throw new Error("Packaged execution VM metadata closure is invalid");
+    for (const [name, digest] of [[expected.helper.path, expected.helper.sha256],
+      [expected.guest.kernelPath, expected.guest.kernelSha256], [expected.guest.initrdPath, expected.guest.initrdSha256]]) {
+      if (createHash("sha256").update(read(path.join(directory, name))).digest("hex") !== digest) throw new Error(`Packaged execution VM checksum mismatch: ${name}`);
+    }
+    const executable = path.join(directory, expected.helper.path);
+    if ((fs.statSync(executable).mode & 0o111) === 0) throw new Error("Packaged execution VM helper is not executable");
+  }
+  return { platform, arch, executionVm: platform === "darwin" && arch === "arm64", browserCompanion: ["chrome", "firefox"] };
+}
+
+function validateOwnedNativePackagedAssets(runtimeRoot, { platform = process.platform, arch = process.arch } = {}) {
+  if (platform !== "darwin" || arch !== "arm64") return { ownedNative: false };
+  const sourceRoot = path.join(runtimeRoot, "app", "owned-native"), target = "aarch64-apple-darwin";
+  const executable = path.join(sourceRoot, "build", target, "nekodex-owned-native-worker");
+  const { validateOwnedNativeProductionManifest } = require("../electron/owned-native-production-pin.cjs");
+  const manifest = validateOwnedNativeProductionManifest({ sourceRoot, executable, target });
+  if ((fs.statSync(executable).mode & 0o111) === 0) throw new Error("Packaged Owned Native worker is not executable");
+  return { ownedNative: true, distribution: manifest.distribution, target };
+}
 
 function signingConfiguration(platform, env = process.env) {
   if (env.CODEX_WEB_GPT_RELEASE !== "1") return { release: false };
@@ -52,6 +102,22 @@ function signEmbeddedRuntime(target, platform = process.platform, env = process.
     verifyWindowsPublisher(target, env);
   }
 }
+// The copied Native worker has a separate stable identity and no JIT, VM,
+// Keychain or desktop entitlements. Its original DEV provenance stays unchanged.
+function signOwnedNativeWorker(target, platform = process.platform, env = process.env) {
+  if (platform !== "darwin") throw new Error("Owned Native production signing requires macOS");
+  const release = signingConfiguration(platform, env).release;
+  const identity = release ? env.CSC_NAME : env.NEKODEX_LOCAL_APP_SIGNING_IDENTITY;
+  const keychain = release ? env.CODEX_WEB_GPT_SIGNING_KEYCHAIN : env.NEKODEX_LOCAL_APP_SIGNING_KEYCHAIN;
+  if (typeof identity !== "string" || !/^Developer ID Application: .+ \(CNMWGJF2CG\)$/.test(identity)
+    || release && env.APPLE_TEAM_ID !== "CNMWGJF2CG") throw new Error("Owned Native production signing requires the configured NEKODEX publisher");
+  run("codesign", ["--force", "--options", "runtime", "--timestamp", "--identifier", "dev.nekodex.owned-native-worker.v1",
+    ...(keychain ? ["--keychain", keychain] : []), "--sign", identity, target], { env });
+  run("codesign", ["--verify", "--strict", target], { env });
+  const details = run("codesign", ["--display", "--verbose=4", target], { env, capture: true });
+  assertMacPublisher(details, "CNMWGJF2CG");
+  if (!details.split(/\r?\n/).includes("Identifier=dev.nekodex.owned-native-worker.v1")) throw new Error("Owned Native production signing identifier changed");
+}
 // The Keychain ACL follows this helper's stable designated requirement. Sign
 // before copying it into either bundle and before sealing runtime file hashes.
 function signCredentialHelper(target, platform = process.platform, env = process.env, { development = false } = {}) {
@@ -71,6 +137,42 @@ function signCredentialHelper(target, platform = process.platform, env = process
   if (!development) throw new Error("Protected credential helper requires an explicit publisher identity outside development");
   run("codesign", ["--force", "--identifier", identifier, "--sign", "-", target], { env });
 }
+// Desktop TCC identity is distinct from the vault helper and needs no Bun/JIT entitlements.
+function signDesktopHelper(target, platform = process.platform, env = process.env, { development = false } = {}) {
+  if (platform !== "darwin") return;
+  const identifier = "dev.nekodex.desktop-provider.v1";
+  const release = signingConfiguration(platform, env).release;
+  const identity = release ? env.CSC_NAME : env.NEKODEX_LOCAL_APP_SIGNING_IDENTITY;
+  const keychain = release ? env.CODEX_WEB_GPT_SIGNING_KEYCHAIN : env.NEKODEX_LOCAL_APP_SIGNING_KEYCHAIN;
+  if (identity) {
+    if (!identity.startsWith("Developer ID Application:")) throw new Error("Desktop helper requires a Developer ID Application identity");
+    run("codesign", ["--force", "--options", "runtime", "--timestamp", "--identifier", identifier,
+      ...(keychain ? ["--keychain", keychain] : []), "--sign", identity, target], { env });
+    run("codesign", ["--verify", "--strict", target], { env });
+    if (release) verifyMacPublisher(target, env);
+    return;
+  }
+  if (!development) throw new Error("Desktop helper requires an explicit publisher identity outside development");
+  run("codesign", ["--force", "--identifier", identifier, "--sign", "-", target], { env });
+}
+// PDF parsing has its own identity; it must never borrow the desktop/TCC identity.
+function signSkillPdfHelper(target, platform = process.platform, env = process.env, { development = false } = {}) {
+  if (platform !== "darwin") return;
+  const identifier = "dev.nekodex.skill-pdf-reader.v1";
+  const release = signingConfiguration(platform, env).release;
+  const identity = release ? env.CSC_NAME : env.NEKODEX_LOCAL_APP_SIGNING_IDENTITY;
+  const keychain = release ? env.CODEX_WEB_GPT_SIGNING_KEYCHAIN : env.NEKODEX_LOCAL_APP_SIGNING_KEYCHAIN;
+  if (identity) {
+    if (!identity.startsWith("Developer ID Application:")) throw new Error("PDF helper requires a Developer ID Application identity");
+    run("codesign", ["--force", "--options", "runtime", "--timestamp", "--identifier", identifier,
+      ...(keychain ? ["--keychain", keychain] : []), "--sign", identity, target], { env });
+    run("codesign", ["--verify", "--strict", target], { env });
+    if (release) verifyMacPublisher(target, env);
+    return;
+  }
+  if (!development) throw new Error("PDF helper requires an explicit publisher identity outside development");
+  run("codesign", ["--force", "--identifier", identifier, "--sign", "-", target], { env });
+}
 function verifyWindowsTree(directory, env = process.env) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
     const file = path.join(directory, entry.name);
@@ -78,4 +180,4 @@ function verifyWindowsTree(directory, env = process.env) {
     else if (entry.isFile() && /\.exe$/i.test(entry.name)) verifyWindowsPublisher(file, env);
   }
 }
-module.exports = { signingConfiguration, assertMacPublisher, verifyMacPublisher, verifyWindowsPublisher, verifyWindowsTree, signEmbeddedRuntime, signCredentialHelper };
+module.exports = { validatePackagedRuntimeAssets, validateOwnedNativePackagedAssets, signingConfiguration, assertMacPublisher, verifyMacPublisher, verifyWindowsPublisher, verifyWindowsTree, signEmbeddedRuntime, signOwnedNativeWorker, signCredentialHelper, signDesktopHelper, signSkillPdfHelper };

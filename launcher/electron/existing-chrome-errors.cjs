@@ -8,6 +8,7 @@ const MESSAGES = Object.freeze({
   "invalid-endpoint": "Chrome connection information is invalid; reopen its remote debugging settings",
   "chrome-permission-denied": "Chrome did not approve the connection",
   "chrome-permission-timeout": "Chrome permission timed out",
+  "chrome-discovery-timeout": "Chrome did not provide its connection or the selected profile in time",
   "chrome-too-old": "Existing Chrome import requires Google Chrome 144 or later",
   "chrome-disconnected": "Chrome disconnected before the sign-in could be imported",
   "chrome-profile-claim-missing": "The approved Chrome connection did not expose the selected profile; make that profile Chrome's default and retry",

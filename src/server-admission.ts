@@ -40,3 +40,27 @@ export function webAdmissionFailureMessage(state: {
   }
   return "NEKODEX tool tunnel is not ready; native models remain available. Reconnect the tunnel before retrying this Web request.";
 }
+
+/**
+ * Waits while Web admission is closed for a recoverable reason (only the tool tunnel is missing).
+ * Resolves true once admission opens, false at the deadline, on a non-recoverable state or when
+ * the client goes away, so the caller can answer with the real reason.
+ */
+export async function waitForWebAdmission(options: {
+  accepting: () => boolean;
+  recoverable: () => boolean;
+  holdMs: number;
+  pollMs: number;
+  signal?: AbortSignal;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+}): Promise<boolean> {
+  const now = options.now ?? Date.now;
+  const sleep = options.sleep ?? (ms => new Promise<void>(resolve => setTimeout(resolve, ms)));
+  const deadline = now() + options.holdMs;
+  while (!options.accepting()) {
+    if (!options.recoverable() || now() >= deadline || options.signal?.aborted) return false;
+    await sleep(options.pollMs);
+  }
+  return true;
+}

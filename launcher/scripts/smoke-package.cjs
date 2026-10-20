@@ -4,6 +4,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { validateRuntimeBundle } = require("../electron/runtime-install.cjs");
 const { stageWindowsSmoke } = require("./stage-windows-smoke.cjs");
+const { validatePackagedRuntimeAssets, validateOwnedNativePackagedAssets } = require("./release-signing.cjs");
 
 const launcherRoot = path.resolve(__dirname, "..");
 const artifactsDirectory = path.join(launcherRoot, "artifacts");
@@ -111,6 +112,8 @@ try {
     platform: process.platform,
     arch: process.arch,
   });
+  const assets = validatePackagedRuntimeAssets(installedRuntime, { platform: process.platform, arch: process.arch });
+  Object.assign(assets, validateOwnedNativePackagedAssets(installedRuntime, { platform: process.platform, arch: process.arch }));
   if (installedManifest.schemaVersion !== 2
     || installedManifest.appVersion !== expectedVersion
     || installedManifest.platform !== process.platform
@@ -120,7 +123,7 @@ try {
     || !/^[a-f0-9]{64}$/.test(installedManifest.bundleId)) {
     throw new Error(`Packaged launcher installed the wrong durable runtime: ${JSON.stringify(installedManifest)}`);
   }
-  process.stdout.write(`PACKAGED_LAUNCHER_SMOKE_OK ${process.platform}/${process.arch}\n`);
+  process.stdout.write(`PACKAGED_LAUNCHER_SMOKE_OK ${process.platform}/${process.arch} ${JSON.stringify(assets)}\n`);
 } finally {
   try {
     if (macAppBundle) {

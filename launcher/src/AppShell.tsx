@@ -99,7 +99,15 @@ export function TitleBar({
   sidebarToggle: RefObject<HTMLButtonElement | null>;
   toggleSidebar: () => void;
 }) {
-  const surfaceLabel = ({ overview: copy.overview, accounts: copy.accountsNav, browser: copy.browser, tasks: taskCenterTitle(language), setup: copy.connectionsNav, mcp: copy.connectionsNav, activity: copy.activity, settings: copy.settings, updates: updateCopyFor(language).title })[surface];
+  const surfaceLabel = ({ overview: copy.overview, accounts: copy.accountsNav, browser: copy.browser, tasks: taskCenterTitle(language),
+    workspace: language === 'ru' ? 'Проекты и файлы' : 'Projects and files', history: language === 'ru' ? 'История текста' : 'Text history',
+    'remote-workspace': language === 'ru' ? 'Удалённые проекты' : 'Remote projects',
+    'external-usage': language === 'ru' ? 'Расход клиентов' : 'Client usage',
+    'agent-tools': language === 'ru' ? 'Инструменты агентов' : 'Agent tools',
+    'browser-companion': language === 'ru' ? 'Расширение Chrome' : 'Chrome companion',
+    'local-control-api': language === 'ru' ? 'Локальный API' : 'Local API',
+    'native-threads': language === 'ru' ? 'Чаты Codex' : 'Codex threads', 'agent-mode': 'Agent mode',
+    setup: copy.connectionsNav, mcp: copy.connectionsNav, activity: copy.activity, settings: copy.settings, updates: updateCopyFor(language).title })[surface];
   // Nested surfaces add one crumb: Connections / Models and Codex route · Local tools connector.
   const nested = surface === "setup" ? copy.modelsConnectionTab : surface === "mcp" ? copy.toolsConnectionTab : null;
   const trail = [copy.product, surfaceLabel, ...(nested ? [nested] : [])];
@@ -122,7 +130,7 @@ export function TitleBar({
       )}
       <ol aria-label={shellCopy(language).location} className="nk-titlebar__trail">
         {trail.map((crumb, index) => (
-          <li aria-current={index === trail.length - 1 && index > 0 ? "page" : undefined} key={index}>{crumb}</li>
+          <li aria-current={index === trail.length - 1 && index > 0 ? "page" : undefined} key={index} title={crumb}>{crumb}</li>
         ))}
       </ol>
       {/* At most one quiet status: the DEV tag replaces the Local workspace pill. The pill gives way before the
@@ -152,15 +160,15 @@ function useStatusPillFit(header: RefObject<HTMLElement | null>, content: string
     if (!bar || !pill || !label || !trail) return;
     const clipped = (element: Element | null) => Boolean(element && element.scrollWidth > element.clientWidth);
     const fit = () => {
-      const current = trail.querySelector('li[aria-current="page"]');
+      const locationClipped = () => [...trail.querySelectorAll("li")].some(clipped);
       if (!pill.classList.contains("is-icon-only")) {
-        if (clipped(current) || clipped(label)) pill.classList.add("is-icon-only");
+        if (locationClipped() || clipped(label)) pill.classList.add("is-icon-only");
         return;
       }
       // Icon only: the pill takes the label back when the free room before it holds the label, the label's gap and
       // the pill's wider padding (2 x 5px), with a pixel to spare.
       const room = pill.getBoundingClientRect().left - trail.getBoundingClientRect().right - 12;
-      if (!clipped(current) && room >= label.scrollWidth + 8 + 10 + 1) pill.classList.remove("is-icon-only");
+      if (!locationClipped() && room >= label.scrollWidth + 8 + 10 + 1) pill.classList.remove("is-icon-only");
     };
     // Start from the full pill for new content (another page, language or window state).
     pill.classList.remove("is-icon-only");

@@ -320,4 +320,9 @@ async function verifyConnectorWithBrowserHelper(options) {
   return { ok: true, appName: options.appName };
 }
 
-module.exports = { hasUnsettledBrowserHelpers, runBrowserHelperOperation, verifyConnectorWithBrowserHelper };
+module.exports = {
+  BROWSER_HELPER_OPERATION_TIMEOUT_MS,
+  hasUnsettledBrowserHelpers,
+  runBrowserHelperOperation,
+  verifyConnectorWithBrowserHelper,
+};

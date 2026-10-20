@@ -77,6 +77,50 @@ export function verifyCurrentCodexObservationIdentity(codexHome: string, identit
   } catch { return false; }
 }
 
+export type CurrentCodexPlanSource =
+  | { kind: "unavailable" }
+  | { kind: "verified"; records: Array<Record<string, unknown>> };
+
+/** Opt-in plan content source. Only the indexed, canonical current turn is read;
+ * request XML, model prose and unrelated tool arguments never establish a plan. */
+export function readCurrentCodexPlanSource(codexHome: string, identity: RolloutIdentity,
+  turnId: string): CurrentCodexPlanSource {
+  if (!CODEX_ID.test(identity.threadId) || !CODEX_ID.test(turnId)
+    || ("parentThreadId" in identity && !CODEX_ID.test(identity.parentThreadId))) return { kind: "unavailable" };
+  try {
+    const indexed = indexedRollout(configuredSqliteHome(codexHome), identity);
+    if (indexed.kind !== "found") return { kind: "unavailable" };
+    const fd = openSync(validateRolloutPath(codexHome, indexed.path, identity.threadId), "r");
+    try {
+      const size = fstatSync(fd).size;
+      validateSessionMeta(firstRolloutRecord(fd, size), identity);
+      const length = Math.min(size, 1024 * 1024);
+      const tail = Buffer.alloc(length);
+      if (readSync(fd, tail, 0, length, size - length) !== length) return { kind: "unavailable" };
+      const lines = tail.toString("utf8").split("\n");
+      if (size > length) lines.shift();
+      // A partial final write has no authority, even if it parses as JSON.
+      lines.pop();
+      const records: Array<Record<string, unknown>> = [];
+      for (const line of lines.reverse()) {
+        if (!line.trim()) continue;
+        const event = record(JSON.parse(line));
+        const payload = record(event?.payload);
+        if (!event || !payload) return { kind: "unavailable" };
+        if (event.type === "turn_context") {
+          if (payload.turn_id !== turnId || fstatSync(fd).size !== size) return { kind: "unavailable" };
+          return { kind: "verified", records: records.reverse() };
+        }
+        if (event.type !== "response_item" || payload.type !== "function_call" || payload.name !== "update_plan") continue;
+        if (records.length >= 128) return { kind: "unavailable" };
+        records.push(payload);
+      }
+      // A bounded suffix without the current turn boundary cannot prove ownership.
+      return { kind: "unavailable" };
+    } finally { closeSync(fd); }
+  } catch { return { kind: "unavailable" }; }
+}
+
 const CODEX_ID_SOURCE = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const CODEX_ID = new RegExp(`^${CODEX_ID_SOURCE}$`, "i");
 const ROLLOUT_READ_CHUNK_BYTES = 64 * 1024;

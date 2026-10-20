@@ -125,7 +125,7 @@
   "freshConversation": "ターンごとに新しいチャット（試験的）",
   "freshConversationBody": "毎ターン、新しいチャットに完全なタスク履歴を送ります。入力は増えますが、既存チャットを再利用しません。ローカルツール接続は維持します。",
   "savedChats": "ChatGPT にチャットを保存",
-  "savedChatsBody": "有効にすると、チャットは ChatGPT の履歴に保存されます。ChatGPT が保存済みメモリやカスタム指示を適用する場合があります。",
+  "savedChatsBody": "有効にすると、チャットは ChatGPT の履歴に保存されます。ChatGPT が保存済みメモリやカスタム指示を適用する場合があります。 ChatGPT の一時チャットではプラグインを使えなくなったため、ツールを使うタスクは常に保存されるチャットで実行されます。",
   "manualSubmitTime": "手動送信の制限時間",
   "manualSubmitTimeBody": "送信済みを確認する前にプロンプトを貼り付け、添付ファイルを準備する時間。変更は新しいターンに適用されます。",
   "skillAttachments": "スキルをファイルで送信（試験的）",

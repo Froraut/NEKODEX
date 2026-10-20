@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+/bin/mount -t proc proc /proc
+/bin/mount -t sysfs sysfs /sys
+/bin/mount -t devtmpfs devtmpfs /dev
+/bin/mkdir -p /dev/pts /run /workspace /tmp
+/bin/mount -t devpts devpts /dev/pts
+/bin/chmod 1777 /tmp
+# Exact pinned Alpine modules and their dependency table are inside this initrd.
+for module in virtio_pci virtio_mmio virtio_console vmw_vsock_virtio_transport; do
+ /sbin/modprobe -q "$module" || true
+done
+/bin/chmod 0700 /workspace
+exec /usr/local/bin/neko-guest-agent

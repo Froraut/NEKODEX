@@ -1,0 +1,92 @@
+import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ManagedSkillStore } from "../src/agent-tools/managed-skills";
+import { ReadOnlySkillLibrary } from "../src/agent-tools/skills";
+import { classifySkillResourcePath, snapshotSkillPackageSource } from "../src/agent-tools/skill-resources";
+
+test("explicit selected resources remain digest-bound across review, immutable update, recovery and revocation", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "nekodex-skill-package-")));
+  const home = join(root, "private"); const source = join(root, "source"); mkdirSync(home, { mode: 0o700 }); mkdirSync(source);
+  mkdirSync(join(source, "references")); mkdirSync(join(source, "assets")); mkdirSync(join(source, "scripts"));
+  mkdirSync(join(source, "references/nested/deeper"), { recursive: true });
+  const instructions = "---\nname: selected-resource-fixture\ndescription: Describe the explicitly selected inert fixture data.\n---\nRead references/format.md only when the user selected it. Executable resources require a separate supported executor.\n";
+  writeFileSync(join(source, "SKILL.md"), instructions);
+  writeFileSync(join(source, "references/format.md"), "Fixture reference version one.\n");
+  writeFileSync(join(source, "references/nested/deeper/example.txt"), "Nested retained fixture source.\n");
+  writeFileSync(join(source, "assets/template.csv"), "column,value\nfixture,one\n");
+  writeFileSync(join(source, "references/unselected.txt"), "Unselected content must never be copied or delivered.");
+  writeFileSync(join(source, "scripts/unsupported.sh"), "# Inert unsupported script fixture; never executed.\n");
+  const grant = { id: "fixture", root: source, source: "workspace" as const, label: "Explicit fixture source" };
+  const library = new ReadOnlySkillLibrary([grant]); const identity = library.discover(grant.id).skills[0]!;
+  const selection = { identity, resources: ["references/format.md", "assets/template.csv", "references/nested/deeper/example.txt"] };
+  let store = new ManagedSkillStore(home);
+  const scope = { taskId: "fixture-task", generation: 1, toolCallId: "package-selection" };
+  try {
+    const snapshot = snapshotSkillPackageSource(grant, selection);
+    expect(snapshot.resources.map(row => row.relativePath)).toEqual(["assets/template.csv", "references/format.md", "references/nested/deeper/example.txt"]);
+    expect(JSON.stringify(snapshot.resources)).not.toContain(root);
+    expect(snapshot.resources.every(row => row.role === "selected-skill-source-material")).toBe(true);
+    for (const path of ["../outside.md", "/outside.md", "references/../outside.md", "scripts/unsupported.sh", "assets/photo.webp", "references/secrets.txt", "assets/example.constructor", "assets/example.__proto__", "assets/example.toString"]) {
+      expect(classifySkillResourcePath(path).supported).toBe(false);
+      expect(() => snapshotSkillPackageSource(grant, { identity, resources: [path] })).toThrow("unsupported");
+    }
+    symlinkSync(join(source, "references/format.md"), join(source, "references/link.md"));
+    expect(() => snapshotSkillPackageSource(grant, { identity, resources: ["references/link.md"] })).toThrow("canonical");
+    const review = store.reviewPackage("package-v1", grant, selection, "Fixture package");
+    expect(review.resources).toEqual(snapshot.resources);
+    expect(store.list().capacity.reservedTextBytes).toBe(snapshot.manifest.package!.totalBytes * 2);
+    const imported = store.commit(review.action.actionId, review.action.reviewDigest, grant);
+    expect(imported.state).toBe("imported");
+    expect(readFileSync(join(imported.target, "resources/references/nested/deeper/example.txt"), "utf8")).toBe("Nested retained fixture source.\n");
+    expect(existsSync(join(imported.target, "resources/references/unselected.txt"))).toBe(false);
+    expect(existsSync(join(imported.target, "scripts"))).toBe(false);
+    const packet = store.attach(scope, imported.versionId);
+    expect(packet.packageDigest).toBe(snapshot.manifest.package!.packageDigest);
+    expect(packet.bytes).toBe(snapshot.manifest.package!.totalBytes);
+    expect(packet.unsupportedResources).toContain("unselected-scripts-and-other-executables");
+    const resource = packet.resources!.find(row => row.relativePath === "references/format.md")!;
+    expect(store.readResource(scope, imported.versionId, packet.packageDigest!, resource.relativePath, resource.digest)).toEqual(resource);
+    expect(() => store.readResource({ ...scope, generation: 2 }, imported.versionId, packet.packageDigest!, resource.relativePath, resource.digest)).toThrow("not attached");
+    expect(() => store.readResource(scope, imported.versionId, "0".repeat(64), resource.relativePath, resource.digest)).toThrow("identity or package digest");
+    expect(() => store.readResource(scope, imported.versionId, packet.packageDigest!, "../SKILL.md", resource.digest)).toThrow("identity or package digest");
+    writeFileSync(join(source, "references/format.md"), "Fixture reference version two.\n");
+    expect(store.selected(scope)[0]!.resources!.find(row => row.relativePath === resource.relativePath)!.content).toBe(resource.content);
+    const update = store.reviewPackage("package-v2", grant, selection, "Fixture package v2", imported.lineageId);
+    expect(update.action.versionId).not.toBe(imported.versionId);
+    expect(update.action.manifest.identity.digest).toBe(imported.manifest.identity.digest);
+    expect(update.action.manifest.package!.packageDigest).not.toBe(packet.packageDigest);
+    const updated = store.commit(update.action.actionId, update.action.reviewDigest, grant);
+    expect(store.selected(scope)[0]!.packageDigest).toBe(packet.packageDigest);
+    const scope2 = { ...scope, generation: 2 }; expect(store.selected(scope2)).toEqual([]);
+    store.attach(scope2, updated.versionId);
+    expect(store.selected(scope2)[0]!.resources!.find(row => row.relativePath === resource.relativePath)!.content).toBe("Fixture reference version two.\n");
+    const stale = store.reviewPackage("changed-before-commit", grant, selection, "Changed fixture", imported.lineageId);
+    writeFileSync(join(source, "references/format.md"), "Changed after explicit review.\n");
+    expect(() => store.commit(stale.action.actionId, stale.action.reviewDigest, grant)).toThrow("source changed after review");
+    const retainedPath = join(imported.target, "resources", resource.relativePath); const inode = statSync(retainedPath).ino;
+    store.close();
+    const db = new Database(join(home, "managed-skills/metadata.sqlite"));
+    db.transaction(() => { db.query("DELETE FROM skill_versions WHERE id=?").run(imported.versionId); db.query("UPDATE skill_actions SET receipt=? WHERE id=?").run(JSON.stringify({ ...imported, state: "committing" }), imported.actionId); })(); db.close();
+    store = new ManagedSkillStore(home);
+    expect(store.action(imported.actionId)?.state).toBe("imported"); expect(statSync(retainedPath).ino).toBe(inode);
+    expect(store.selected(scope)[0]!.resources!.find(row => row.relativePath === "references/nested/deeper/example.txt")!.content).toBe("Nested retained fixture source.\n");
+    chmodSync(retainedPath, 0o600); writeFileSync(retainedPath, "Changed retained bytes."); chmodSync(retainedPath, 0o400);
+    expect(() => store.selected(scope)).toThrow("immutable resource digest");
+    chmodSync(retainedPath, 0o600); writeFileSync(retainedPath, resource.content); chmodSync(retainedPath, 0o400);
+    expect(store.selected(scope)[0]!.resources).toEqual(packet.resources);
+    store.revoke(imported.versionId, true);
+    expect(() => store.selected(scope)).toThrow("revoked");
+    expect(() => store.readResource(scope, imported.versionId, packet.packageDigest!, resource.relativePath, resource.digest)).toThrow("revoked");
+    expect(readFileSync(retainedPath, "utf8")).toBe(resource.content);
+    expect(store.selected(scope2)[0]!.packageDigest).toBe(updated.manifest.package!.packageDigest);
+    const boundedHome = join(root, "bounded"); mkdirSync(boundedHome, { mode: 0o700 });
+    const bounded = new ManagedSkillStore(boundedHome, { maxRetainedTextBytes: identity.bytes * 2 });
+    try {
+      expect(() => bounded.reviewPackage("too-large", grant, selection, "Package exceeds text-only budget")).toThrow("capacity reached");
+      expect(bounded.action("too-large")).toBeUndefined();
+    } finally { bounded.close(); }
+  } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});

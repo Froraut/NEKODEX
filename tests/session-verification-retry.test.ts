@@ -175,3 +175,33 @@ test("cancelling a chooser after it stopped an embedded page keeps that page rec
   await host.retryAuthenticationCheck();
   expect(loads).toEqual([TEMPORARY_CHAT_URL]);
 });
+
+test("retry reloads a ChatGPT error page that rendered no composer, then verifies", async () => {
+  const { host, loads } = fixture();
+  const verified = host.probeAuthentication;
+  let probes = 0;
+  host.probeAuthentication = async (options: any) => {
+    probes += 1;
+    if (probes > 1) return verified(options);
+    // "We couldn't load your account": Temporary Chat URL, loaded document, no composer.
+    host.lastAuthenticationSurfaceObservation = { composer: false, temporary: true, readyState: "complete" };
+    host.setState({ authenticated: false, authenticationStatus: "unavailable", status: "error",
+      message: "ChatGPT session verification unavailable: Temporary Chat surface unavailable" });
+    return host.snapshot();
+  };
+  await expect(host.retryAuthenticationCheck()).resolves.toMatchObject({ authenticationStatus: "verified" });
+  expect(loads).toEqual([TEMPORARY_CHAT_URL]);
+  expect(probes).toBe(2);
+});
+
+test("retry does not reload a page whose composer is present", async () => {
+  const { host, loads } = fixture();
+  host.probeAuthentication = async () => {
+    host.lastAuthenticationSurfaceObservation = { composer: true, temporary: true, readyState: "complete" };
+    host.setState({ authenticated: false, authenticationStatus: "unavailable", status: "error",
+      message: "ChatGPT session verification unavailable: session HTTP 403" });
+    return host.snapshot();
+  };
+  await expect(host.retryAuthenticationCheck()).rejects.toThrow("session HTTP 403");
+  expect(loads).toEqual([]);
+});

@@ -1,0 +1,75 @@
+import type { RemoteWorktreeApi, RemoteWorktreeService } from './remote-worktrees.cjs';
+import type { RemoteGitReviewApi, RemoteGitReviewService } from './remote-git-review.cjs';
+export type { RemoteGitReviewAction, RemoteGitReviewAuthor, RemoteGitReviewBases, RemoteGitReviewCapture, RemoteGitReviewDiff, RemoteGitReviewDiffInput, RemoteGitReviewEntry, RemoteGitReviewOperation, RemoteGitReviewPrepareInput, RemoteGitReviewRepository, RemoteGitReviewState, RemoteGitReviewSummary, RemoteGitReviewTarget } from './remote-git-review.cjs';
+import type { RemoteAgentScope, RemoteAgentTaskScope, RemoteAgentInvocation, RemoteAgentOutcome, RemoteAgentStatus } from './agent-remote-types.cjs';
+export type { RemoteAgentScope, RemoteAgentTaskScope, RemoteAgentBinding, RemoteAgentInvocation, RemoteAgentOutcome, RemoteAgentStatus } from './agent-remote-types.cjs';
+export type RemoteHostInput = { label: string; hostname: string; username: string; port: number | null; root: string; connectionMode?: 'direct' | 'ssh-config-alias' };
+export type RemoteOperationCancellation = { requested: boolean; operation: string | null; remoteOutcome: 'not-cancelled' | 'requires-terminal-proof' };
+export type RemoteHost = RemoteHostInput & { id: string; fingerprint: string; connected: boolean; canonicalRoot: string | null; busy: boolean; connectionState?: 'connected' | 'connecting' | 'disconnected'; reconnectRequired?: boolean; activeOperation?: string | null; cancellationRequested?: boolean; unknownReceiptIds?: string[]; sshAlias?: string; aliasResolved?: boolean; configuredEndpoint?: Pick<RemoteHostInput, 'hostname' | 'username' | 'port' | 'connectionMode'> };
+export type RemoteListing = { path: string; truncated: boolean; entries: { name: string; path: string; kind: 'directory' | 'file' | 'blocked'; size: number | null }[] };
+export type RemotePreview = { path: string; state: 'text' | 'binary' | 'missing'; revision: string | null; text: string | null; size: number };
+export type RemoteDraftInput = { path: string; text: string; expectedRevision: string | null };
+export type RemoteDraft = RemoteDraftInput & { id: string; hostId: string; fingerprint: string; time: string };
+export type RemoteReceipt = { id: string; hostId: string; hostFingerprint: string; root: string; kind: 'connect' | 'write' | 'command' | 'worktree-create' | 'worktree-archive' | 'agent-list' | 'agent-read' | 'git-stage' | 'git-unstage' | 'git-commit'; time: string; state: 'started' | 'completed' | 'conflict' | 'failed' | 'unknown' | 'reconciled'; path?: string; command?: string; message?: string; revision?: string; exitCode?: number; temporaryPath?: string; signature: string; reconciliation?: string; actionId?: string; reviewDigest?: string; commitOid?: string; treeOid?: string; indexDigest?: string | null };
+export type RemoteCommandApproval = { token: string; hostId: string; fingerprint: string; hostname: string; username: string; port: number; root: string; command: string; timeoutSeconds: number };
+export type RemoteCommandResult = { exitCode: number | null; stdout: string; stderr: string; stopped?: string | null; truncated?: boolean; receipt: RemoteReceipt };
+export type RemoteSaveResult = { state: 'saved'; revision: string; draftRetained: boolean; receipt: RemoteReceipt } | { state: 'conflict' | 'failed' | 'unknown'; draftId: string; receipt: RemoteReceipt };
+export interface RemoteWorkspaceApi extends RemoteWorktreeApi, RemoteGitReviewApi {
+  remoteWorkspaceHosts(): Promise<RemoteHost[]>;
+  remoteWorkspaceAddHost(input: RemoteHostInput): Promise<RemoteHost>;
+  remoteWorkspaceForgetHost(id: string): Promise<{ removed: boolean }>;
+  remoteWorkspaceConnect(id: string): Promise<RemoteHost>;
+  remoteWorkspaceDisconnect(id: string): Promise<{ disconnected: boolean }>;
+  remoteWorkspaceCancelOperation?(id: string): Promise<RemoteOperationCancellation>;
+  remoteWorkspaceList(id: string, directory?: string): Promise<RemoteListing>;
+  remoteWorkspacePreview(id: string, file: string): Promise<RemotePreview>;
+  remoteWorkspaceRetainDraft(id: string, input: RemoteDraftInput): Promise<RemoteDraft>;
+  remoteWorkspaceDrafts(id: string): Promise<RemoteDraft[]>;
+  remoteWorkspaceDiscardDraft(id: string, draftId: string): Promise<{ discarded: boolean }>;
+  remoteWorkspaceSave(id: string, input: RemoteDraftInput): Promise<RemoteSaveResult>;
+  remoteWorkspaceApproveCommand(id: string, input: { command: string; timeoutSeconds: number }): Promise<RemoteCommandApproval>;
+  remoteWorkspaceExecuteCommand(id: string, token: string): Promise<RemoteCommandResult>;
+  remoteWorkspaceReceipts(id: string): Promise<RemoteReceipt[]>;
+  remoteWorkspaceReconcile(id: string, receiptId: string, note: string): Promise<RemoteReceipt>;
+}
+export interface RemoteWorkspaceService extends RemoteWorktreeService {
+  gitBases: RemoteGitReviewService['bases'];
+  gitCapture: RemoteGitReviewService['capture'];
+  gitDiff: RemoteGitReviewService['diff'];
+  gitPrepare: RemoteGitReviewService['prepare'];
+  gitApply: RemoteGitReviewService['apply'];
+  gitInspectAction: RemoteGitReviewService['inspectAction'];
+  gitListActions: RemoteGitReviewService['listActions'];
+  gitPruneActions: RemoteGitReviewService['pruneActions'];
+  agentStatus(scope?: RemoteAgentScope): RemoteAgentStatus;
+  attachAgent(input: { hostId: string; scope: RemoteAgentTaskScope; explicitUserAction: true }): Promise<RemoteAgentStatus>;
+  revokeAgent(scope: RemoteAgentScope): RemoteAgentStatus;
+  invalidateAgentTask(scope: { taskId: string; familyId: string; beforeGeneration: number }): RemoteAgentStatus;
+  executeAgentTool(request: RemoteAgentInvocation): Promise<RemoteAgentOutcome>;
+  agentReceipt(request: RemoteAgentInvocation): RemoteAgentOutcome | null;
+  listHosts(): RemoteHost[];
+  addHost(input: RemoteHostInput): RemoteHost;
+  forgetHost(id: string): { removed: boolean };
+  connect(id: string): Promise<RemoteHost>;
+  disconnect(id: string): { disconnected: boolean };
+  /** Cancel our transport only; the original owner retains terminal/unknown settlement. */
+  cancelOperation(id: string): RemoteOperationCancellation;
+  list(id: string, directory?: string): Promise<RemoteListing>;
+  preview(id: string, file: string): Promise<RemotePreview>;
+  retainDraft(id: string, input: RemoteDraftInput): RemoteDraft;
+  listDrafts(id: string): RemoteDraft[];
+  discardDraft(id: string, draftId: string): { discarded: boolean };
+  save(id: string, input: RemoteDraftInput): Promise<RemoteSaveResult>;
+  approveCommand(id: string, input: { command: string; timeoutSeconds: number }): RemoteCommandApproval;
+  executeCommand(id: string, token: string): Promise<RemoteCommandResult>;
+  listReceipts(id: string): RemoteReceipt[];
+  reconcile(id: string, receiptId: string, note: string): RemoteReceipt;
+  currentOperation(): string | null;
+  destroy(): Promise<void>;
+  dispose(): void;
+}
+export function createRemoteWorkspaceService(options: {
+  storagePath: string; agentInstanceId?: string;
+  validateAgentTask?: (scope: RemoteAgentTaskScope) => RemoteAgentTaskScope | Promise<RemoteAgentTaskScope>;
+  validateAgentIntent?: (request: RemoteAgentInvocation) => RemoteAgentTaskScope | Promise<RemoteAgentTaskScope>;
+}): RemoteWorkspaceService;

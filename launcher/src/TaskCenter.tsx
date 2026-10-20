@@ -2,6 +2,7 @@ import { taskCenterCopy, type TaskCenterCopy } from "./task-center-copy";
 import { taskOverview, taskKey, eligibleTaskConfirmation, requiresDismissConfirmation, type HistoryStatus, type TaskOrder, type TaskConfirmationTarget } from "./task-center-model";
 import { focusableHeading, rowFocusMemory, rowFocusTarget, useRowFocusRecovery, type RowFocusMemory } from "./task-center-focus";
 import { TaskDetails } from "./TaskDetails";
+import { TaskPlanCapture } from './TaskPlans';
 import { taskDetailCopy } from "./task-detail-copy";
 import { queueEntryReason } from "./QueueControls";
 import { TaskActionConfirmation } from "./TaskActionConfirmation";
@@ -141,6 +142,7 @@ export function TaskCenter({ tasks, language, disabled, open, cancel, dismiss, o
         }} />;
       });
   return <div className="task-center">
+    <TaskPlanCapture language={language} />
     <Panel padding="flush" className="task-history" title={detailText.overview} titleId={historyTitleId}
       actions={total ? <span className="task-history-count">{text.recordCount!.replace('{shown}', String(overview.length)).replace('{total}', String(total))}</span> : undefined}>
       {historyHealth.length ? <div className="task-history-notices">

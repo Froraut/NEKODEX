@@ -529,6 +529,7 @@ class RuntimeSupervisor {
         ...process.env,
         ...invocation.env,
         CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR: this.browserDescriptorPath,
+        CODEX_CHATGPT_WEB_LAUNCHER_PROFILE: this.launcherProfile,
         ...(background ? { CODEX_CHATGPT_WEB_BACKGROUND_RUNTIME: "1" } : {}),
       },
       // A GUI-owned pipe can close underneath a surviving daemon after an app crash.
@@ -1708,9 +1709,12 @@ class RuntimeSupervisor {
       const env = await this.nativeProxyEnvironmentProvider();
       if (this.stopping) throw new Error("Responses startup was cancelled while resolving the system proxy");
       this.assertCanStart(recoverySignal);
+      const invocation = this.runtimeCommand(["serve"], config.releaseVersion);
       child = this.spawnChild("daemon", {
-        ...this.runtimeCommand(["serve"], config.releaseVersion),
-        env,
+        ...invocation,
+        // Fixed packaged-origin claims belong to the runtime command. Proxy
+        // discovery must not discard or replace that execution binding.
+        env: { ...env, ...invocation.env },
         nativeBackgroundRoute: config.nativeBackgroundRoute,
       }, recoverySignal);
       await this.waitForProxy(config, 20_000, recoverySignal);
@@ -2210,6 +2214,20 @@ class RuntimeSupervisor {
     return true;
   }
 
+  async ownedAgentRuntimeReady(config, { allowDraining = false } = {}) {
+    // Agent Native inference owns its own provider admission. Web tunnel health
+    // cannot authorize it, and a drain must still allow exact-owner cleanup.
+    const health = await this.proxyHealthPayload(config);
+    const daemon = this.daemon;
+    const owned = this.launcherProfile === "development"
+      ? health?.service === "codex-chatgpt-web" && health.status === "ok"
+        && health.version === config.releaseVersion && health.mode === config.mode
+        && Number.isInteger(health.pid) && processRunning(health.pid)
+      : this.ownedHealthMatches(config, health, daemon)
+        && processRunning(daemon.pid);
+    return Boolean(owned && (allowDraining || this.nativeHealthAccepting(health)));
+  }
+
   async control(config, action, options = {}) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 5_000);
@@ -2223,7 +2241,66 @@ class RuntimeSupervisor {
         ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
         signal: controller.signal,
       });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok) {
+        // Only these exact action-bound public diagnostics may reach the UI.
+        // Other tools errors, late failures and lost ACKs retain generic errors.
+        if (action === 'agent-tools' && ['grantVmNetwork', 'reviewPythonBuild'].includes(options.body?.action) && response.status === 409) {
+          const reader = response.body?.getReader();
+          if (reader) {
+            const chunks = []; let size = 0;
+            try {
+              while (true) {
+                const part = await reader.read(); if (part.done) break;
+                size += part.value.byteLength;
+                if (size > 8192) { await reader.cancel(); throw new Error('Grant error receipt exceeds limit'); }
+                chunks.push(Buffer.from(part.value));
+              }
+              const receipt = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+              const refusals = options.body.action === 'reviewPythonBuild'
+                ? new Set(['Python source build has no backend wheels. Set backendPath to the selected in-tree backend (for example ["."]) or select its backend wheels, then select and review again.'])
+                : new Set(['vm-network-destination-invalid', 'vm-network-origin-invalid', 'vm-network-limits-invalid', 'vm-network-address-mismatch', 'vm-network-url-invalid']);
+              if (receipt && Object.keys(receipt).sort().join(',') === 'error,message,ok' && receipt.ok === false
+                && receipt.error === 'agent_tools_conflict' && refusals.has(receipt.message)) return { ok: false, error: receipt.error, message: receipt.message };
+            } catch { /* Malformed, oversized or generic errors cannot prove pre-admission refusal. */ }
+            finally { reader.releaseLock(); }
+          }
+        }
+        // Agent mode opts into bounded, fixed error receipts. Other control
+        // callers keep their existing HTTP-error contract. Never forward an
+        // arbitrary daemon message, response body, path, or credential.
+        if (action === 'agent-mode' && options.returnErrorReceipt === true) {
+          const reader = response.body?.getReader();
+          if (reader) {
+            const chunks = []; let size = 0;
+            try {
+              while (true) {
+                const part = await reader.read();
+                if (part.done) break;
+                size += part.value.byteLength;
+                if (size > 8192) { await reader.cancel(); throw new Error('Agent error receipt exceeds limit'); }
+                chunks.push(Buffer.from(part.value));
+              }
+              const receipt = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+              const messages = {
+                unauthorized: 'Agent mode administrative authorization is unavailable.',
+                method_not_allowed: 'The Agent mode request method is unsupported.',
+                invalid_request: 'The Agent action does not match its bounded schema.',
+                explicit_action_required: 'An explicit user action is required.',
+                workspace_observer_unavailable: 'Trusted workspace artifact observation is unavailable.',
+                observed_evidence_unavailable: 'A trusted outcome observer is not configured.',
+                agent_action_conflict: 'The Agent action could not be completed; inspect its current durable state before retrying.',
+              };
+              if (receipt?.ok === false && typeof receipt.error === 'string' && Object.prototype.hasOwnProperty.call(messages, receipt.error)) {
+                const staleFile = 'The workspace file changed after observation. Inspect its current revision and observe it again before verification.';
+                const message = receipt.error === 'agent_action_conflict' && receipt.message === staleFile ? staleFile : messages[receipt.error];
+                return { ok: false, error: receipt.error, message };
+              }
+            } catch { /* Preserve the existing generic HTTP error for malformed or oversized bodies. */ }
+            finally { reader.releaseLock(); }
+          }
+        }
+        throw new Error(`HTTP ${response.status}`);
+      }
       return await response.json();
     } finally {
       clearTimeout(timeout);

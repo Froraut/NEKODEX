@@ -1,0 +1,7 @@
+.support-report-action { display: inline-grid; grid-template-columns: minmax(0, 1fr); justify-items: start; min-width: 0; max-width: min(340px, 100%); }
+.nk-setting-row__control > .support-report-action { justify-items: end; text-align: end; }
+.support-report-action > .nk-btn { max-width: 100%; height: auto; min-height: var(--size-control); padding-block: var(--space-2); white-space: normal; overflow-wrap: anywhere; text-align: start; }
+.support-report-action > .nk-btn > span { min-width: 0; }
+.support-report-action__result { min-width: 0; max-width: 100%; overflow-wrap: anywhere; color: var(--text-secondary); user-select: text; }
+.support-report-action__result:not(:empty) { margin-block-start: var(--space-2); }
+@container workspace (max-width: 640px) { .nk-setting-row__control > .support-report-action { justify-items: start; text-align: start; } }

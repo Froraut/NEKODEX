@@ -44,5 +44,17 @@ function googleRefusedEmbeddedSignIn(value) {
   } catch { return false; }
 }
 
+/**
+ * Passkeys (Touch ID, iCloud Keychain) need a real browser: an embedded Electron window has no
+ * platform authenticator, so OpenAI disables "Continue with passkey" there. Hand that step off too.
+ */
+function passkeyRequiredInEmbeddedSignIn(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "auth.openai.com"
+      && /^\/auth_challenge\/(?:passkey|webauthn)(?:\/|$)/.test(url.pathname);
+  } catch { return false; }
+}
+
 module.exports = { OPENAI_API_TUNNELS_URL, API_PANEL_URLS, openAiApiPanelUrl, allowedOpenAiApiPanelUrl,
-  openAiApiSessionMutation, isOpenAiApiSessionMutationRequest, googleRefusedEmbeddedSignIn };
+  openAiApiSessionMutation, isOpenAiApiSessionMutationRequest, googleRefusedEmbeddedSignIn, passkeyRequiredInEmbeddedSignIn };

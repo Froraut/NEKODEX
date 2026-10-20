@@ -6,15 +6,15 @@ import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type R
 import { flushSync } from "react-dom";
 import { type Copy } from "./i18n";
 import { LocaleNotice } from "./LocaleNotice";
-import { RouteDiagnostics } from "./RouteDiagnostics";
+import { SettingsDiagnostics } from "./SettingsDiagnostics";
 import { workflowCopy } from "./workflow-copy";
 import { APPEARANCE_OPTIONS, appearanceCopy } from "./appearance-copy";
 import { settingsCopy } from "./settings-copy";
 import { SettingsSearch } from "./SettingsSearch";
-import { SupportReportButton, supportReportCopy } from "./SupportReportButton";
+import { workflowHelpCopy, type WorkflowHelpTopic } from "./workflow-help-copy";
 import type { Appearance, BrowserCapacitySettings, BrowserInteractionMode, BrowserState, DoctorReport, Language, LauncherSnapshot, LauncherState, OperationState, ProModelVersion } from "./types";
-import { Button, Disclosure, Mark, Notice, Page, Select, SettingRow, SettingsGroup, SurfaceHeader, Switch, TextField, cx } from "./design";
-import { messageOf, DoctorSummary, InteractionModePicker, ContextBudgetTable, LanguageMenu, ProModelVersionMenu, platformLabel } from './launcher-ui';
+import { Button, Disclosure, Mark, Notice, Page, Select, SettingRow, SettingsGroup, SurfaceHeader, Switch, TextField } from "./design";
+import { messageOf, InteractionModePicker, ContextBudgetTable, LanguageMenu, ProModelVersionMenu, platformLabel } from './launcher-ui';
 import "./surfaces/settings.css";
 const api = window.codexWebLauncher;
 
@@ -137,6 +137,7 @@ export function SettingsSurface({
   catalogFailure,
   showModelSetup,
   showActivity,
+  showWorkflow,
   configureInteractionMode,
   copy,
   devProfile,
@@ -155,6 +156,8 @@ export function SettingsSurface({
   showModelSetup: () => void;
   /** Opens Activity (the routing check's failure advice points there). */
   showActivity?: () => void;
+  /** Navigation only; the destination owns refresh, permissions and task attachment. */
+  showWorkflow?: (workflow: WorkflowHelpTopic) => void;
   configureInteractionMode: (mode: BrowserInteractionMode) => void;
   copy: Copy;
   devProfile: boolean;
@@ -186,7 +189,7 @@ export function SettingsSurface({
   const [turnsCancelled, setTurnsCancelled] = useState<string | null>(null);
   const taskCopy = taskControlCopy[language] ?? taskControlCopy.en;
   const settings = settingsCopy(language);
-  const supportReport = supportReportCopy(language);
+  const workflowHelp = workflowHelpCopy(language);
   const appearance = appearanceCopy(language);
   const network = workflowCopy(language).network;
   const [integrationRemoved, setIntegrationRemoved] = useState(false);
@@ -607,78 +610,21 @@ export function SettingsSurface({
           </Disclosure>
         </section>
 
-        <section className="nk-settings-group" id="settings-diagnostics">
-          <header><h2>{copy.diagnostics}</h2></header>
-          {codexStatus ? (
-            <section className="settings-codex-status" aria-label={copy.modelsConnectionTab}>
-              <Notice
-                tone={codexStatus === "catalog-error" ? "warning" : "info"}
-                title={codexStatus === "picker" ? copy.setupConfirmTitle
-                  : codexStatus === "catalog-error" ? copy.catalogUnavailable
-                  : codexStatus === "catalog" ? copy.setupCatalogTitle
-                  : codexStatus === "removed" ? copy.integrationRemoved : copy.codexSettingsSaved}
-                action={<Button size="sm" onClick={showModelSetup}>{copy.openModelSettings}</Button>}
-              >
-                {codexStatus === "picker"
-                  ? snapshot.state.codexRestartRequired === true ? copy.setupConfirmRestartBody : copy.setupConfirmBody
-                  : codexStatus === "catalog-error" ? copy.catalogFailureKeptInstall
-                  : codexStatus === "removed" ? copy.codexIntegrationRemovedBody
-                  : codexStatus === "manual-refresh" ? copy.codexManualRefreshBody : copy.setupCatalogBody}
-              </Notice>
-            </section>
-          ) : null}
-          <div className="nk-panel">
-            {!devProfile ? (
-              <RouteDiagnostics
-                key={routeDiagnosticsGeneration}
-                disabled={locked || saving("mode") || saving("uninstall") || operation?.status === "running" || browser?.navigationLocked === true}
-                language={language}
-                onActionError={cause => setError(messageOf(cause))}
-                onExport={() => api!.exportLogs()}
-                onViewActivity={showActivity}
-                readReport={() => api!.routeDiagnostics()}
-              />
-            ) : null}
-            <SettingRow data-settings-search
-              title={supportReport.action}
-              description={supportReport.body}
-              control={<SupportReportButton language={language} onError={setError} />}
-            />
-            <SettingRow data-settings-search
-              className={cx(doctor && "settings-row--with-result")}
-              title={copy.runDoctor}
-              description={settings.doctorBody}
-              control={(
-                <Button icon="activity" busy={saving("doctor")} disabled={locked} onClick={() => void runDoctor()}>{copy.runDoctor}</Button>
-              )}
-            />
-            {doctor ? (
-              <div className="settings-row-result">
-                <DoctorSummary copy={copy} language={language} report={doctor} />
-              </div>
-            ) : null}
-            {/* Both destructive rows open the launcher's own confirmation dialog, whose Cancel all / Remove is the
-                confirming (danger) step; the row button is only the first, secondary click. */}
-            {!devProfile ? (
-              <SettingRow data-settings-search
-                title={taskCopy.all}
-                description={turnsCancelled ?? taskCopy.detail}
-                control={<Button busy={saving("cancelTurns")} disabled={locked} onClick={() => void cancelTurns()}>{taskCopy.confirm}</Button>}
-              />
-            ) : null}
-            {!devProfile ? (
-              <SettingRow data-settings-search
-                title={copy.uninstallIntegration}
-                description={integrationGone ? copy.integrationRemoved : copy.uninstallIntegrationBody}
-                control={(
-                  <Button busy={saving("uninstall")} disabled={locked || integrationGone} onClick={() => void uninstallIntegration()}>
-                    {settings.remove}
-                  </Button>
-                )}
-              />
-            ) : null}
-          </div>
-        </section>
+        <SettingsDiagnostics
+          copy={copy} language={language} devProfile={devProfile} locked={locked}
+          codexStatus={codexStatus} codexRestartRequired={snapshot.state.codexRestartRequired === true}
+          showModelSetup={showModelSetup} showWorkflow={showWorkflow} onError={setError}
+          route={{
+            generation: routeDiagnosticsGeneration,
+            disabled: locked || saving("mode") || saving("uninstall") || operation?.status === "running" || browser?.navigationLocked === true,
+            onActionError: cause => setError(messageOf(cause)),
+            onExport: () => api!.exportLogs(), onViewActivity: showActivity,
+            readReport: () => api!.routeDiagnostics(),
+          }}
+          doctor={{ report: doctor, busy: saving("doctor"), onRun: () => void runDoctor() }}
+          cancelTurns={{ message: turnsCancelled, busy: saving("cancelTurns"), onCancel: () => void cancelTurns() }}
+          integration={{ removed: integrationGone, busy: saving("uninstall"), onRemove: () => void uninstallIntegration() }}
+        />
 
         <SettingsGroup id="settings-about" title={settings.about}>
           <div className="settings-about">
@@ -687,8 +633,9 @@ export function SettingsSurface({
               <strong className="nk-type-body-strong">{copy.product}</strong>
               <p className="nk-type-small">
                 {devProfile ? `${copy.devBadge} · ${snapshot.profilePaths.coreHome} · ` : ""}
-                FroRaut · {platformLabel(snapshot.platform)} · v{snapshot.version}
+                FroRaut · {platformLabel(snapshot.platform)} · {snapshot.packaged ? workflowHelp.packaged : workflowHelp.development} · v{snapshot.version}
               </p>
+              <p className="nk-type-small">{workflowHelp.versionBoundary}</p>
             </div>
           </div>
         </SettingsGroup>

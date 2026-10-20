@@ -9,6 +9,52 @@ const { showChromeProfilePicker } = require("./chrome-profile-picker.cjs");
 const { createProfileFirstLogin } = require("./profile-first-login.cjs");
 const { catalogReceipt } = require("./catalog-receipt.cjs");
 const { AccountBrowserPool } = require("./account-pool.cjs");
+const { createTaskPlanStore } = require('./task-plans.cjs');
+const { createLocalWorkspaceService } = require('./local-workspace.cjs');
+const { registerWorkspaceIpc } = require('./ipc/workspace.cjs');
+const { registerConversationHistory } = require('./ipc/conversation-history.cjs');
+const { createCanonicalNativeHistoryRecorder } = require('./canonical-native-history.cjs');
+const { createOwnedConversationDescriptorPublisher } = require('./owned-conversation-descriptor.cjs');
+const { createOwnedNativeTranscriptProducer } = require('./owned-conversation-transcript.cjs');
+const { registerAgentMode } = require('./ipc/agent-mode.cjs');
+const { createLoopFileWatcherIntegration } = require('./loop-file-watcher-integration.cjs');
+const { registerAgentLoopProducers } = require('./ipc/agent-loop-producers.cjs');
+const { createCodexClientControl } = require('./codex-client-control.cjs');
+const { createAgentNativeBridge } = require('./agent-native-bridge.cjs');
+const { createAgentNativeDescriptorPublisher } = require('./agent-native-descriptor.cjs');
+const { createAgentRemoteDescriptorPublisher } = require('./agent-remote-descriptor.cjs');
+const { createAgentVmExportDescriptorPublisher } = require('./agent-vm-descriptor.cjs');
+const { createAgentPythonBuildDescriptorPublisher } = require('./agent-python-build-descriptor.cjs');
+const { createPythonBuildSelectionService } = require('./python-build-selection.cjs');
+const { createAgentOAuthService } = require('./agent-oauth-service.cjs');
+const { oauthProtectedVaultAvailable } = require('./agent-oauth-vault.cjs');
+const { createAgentOAuthIpc } = require('./ipc/agent-oauth.cjs');
+const { createAgentOAuthMcpController } = require('./oauth-mcp-controller.cjs');
+const { createAgentOAuthMcpDescriptorPublisher } = require('./agent-oauth-mcp-descriptor.cjs');
+const { createWorkspaceVmExportService } = require('./workspace-vm-export.cjs');
+const { createNativeAccountAuthority } = require('./native-account-authority.cjs');
+const { fileDigest: nativeFileDigest, regular: nativeRegular, VERSION: NATIVE_CLI_VERSION } = require('./owned-native-admission.cjs');
+const { registerNativeAccounts } = require('./ipc/native-accounts.cjs');
+const { createNativeAccountInventoryService } = require('./native-account-inventory.cjs');
+const { reviewedOwnedNativeDevPin } = require('./owned-native-dev-pin.cjs');
+const { reviewedOwnedNativeProductionPin } = require('./owned-native-production-pin.cjs');
+const { createNativeAccountExecutionService, settleNativeConversationOwners } = require('./native-account-execution.cjs');
+const { createPersistentNativeConversations } = require('./persistent-native-conversations.cjs');
+const { registerPersistentNativeConversations } = require('./ipc/native-persistent-conversations.cjs');
+const { registerCodexClientControlIpc } = require('./ipc/codex-client-control.cjs');
+const { resolveCodexExecutable } = require('./codex-login.cjs');
+const { createWorkspaceTerminalService } = require('./workspace-terminal.cjs');
+const { registerWorkspaceTerminalIpc } = require('./ipc/workspace-terminal.cjs');
+const { createRemoteWorkspaceService } = require('./remote-workspace.cjs');
+const { registerRemoteWorkspaceIpc } = require('./ipc/remote-workspace.cjs');
+const { createWorkspaceGitService } = require('./workspace-git-mutations.cjs');
+const { registerWorkspaceGitIpc } = require('./ipc/workspace-git.cjs');
+const { createExternalUsageService } = require('./external-usage.cjs');
+const { registerExternalUsageIpc } = require('./ipc/external-usage.cjs');
+const { registerAgentTools } = require('./ipc/agent-tools.cjs');
+const { registerBrowserCompanion } = require('./ipc/browser-companion.cjs');
+const { registerLocalControlApi } = require('./ipc/local-control-api.cjs');
+const { createAgentWorkspaceEvidenceAuthority } = require('./agent-workspace-evidence.cjs');
 const { currentPickerContract, pickerReconciliationPatch } = require("./codex-picker-contract.cjs");
 const { syncConversationPreferences, changeConversationPreference } = require("./conversation-preferences.cjs");
 const { createCodexAccountTools } = require("./codex-account-tools.cjs");
@@ -17,6 +63,8 @@ const { CAPACITY_ENV, MAX_BROWSER_CAPACITY, readBrowserCapacity, saveBrowserCapa
 const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
+const os = require('node:os');
+const { createHash } = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 const {
@@ -40,7 +88,7 @@ const { applicationMenu } = require("./application-menu.cjs");
 const { reloadApplicationPage } = require("./application-reload.cjs");
 const { nativeCopyFor, rendererRecoveryCopyFor, updateCheckLabelFor } = require("./native-copy.cjs");
 const { installHermesProvider } = require("./hermes-integration.cjs");
-const { navigationErrorForLog } = require("./browser-host.cjs");
+const { navigationErrorForLog, bindRendererSurfaceInvalidation } = require("./browser-host.cjs");
 const { BrowserControlServer } = require("./control-server.cjs");
 const { getAutostart, setAutostart } = require("./autostart.cjs");
 const {
@@ -113,6 +161,161 @@ const SOURCE_ROOT = path.resolve(__dirname, "../..");
 const LAUNCHER_PROFILE = resolveLauncherProfile({ appData: app.getPath("appData") });
 const IS_DEV_PROFILE = LAUNCHER_PROFILE.kind === DEVELOPMENT_PROFILE;
 const CORE_HOME = LAUNCHER_PROFILE.coreHome;
+function reviewedNativeWorkerPin() {
+  return IS_DEV_PROFILE ? reviewedOwnedNativeDevPin(SOURCE_ROOT)
+    : reviewedOwnedNativeProductionPin({ resourcesPath: process.resourcesPath, executablePath: process.execPath });
+}
+const taskPlans = createTaskPlanStore({
+  coreHome: CORE_HOME,
+  resolveTask: ({ accountId, taskId }) => browserHost?.taskLedgers.get(accountId)?.get(taskId) ?? null,
+});
+let localWorkspaceService = null;
+let nativeClientControl = null;
+let agentNativeBridge = null;
+let agentNativeDescriptor = null;
+let agentRemoteDescriptor = null;
+let agentVmExportDescriptor = null;
+let agentPythonBuildDescriptor = null;
+let pythonBuildSelectionService = null;
+let agentOAuthService = null;
+let agentOAuthMcpController = null;
+let agentOAuthMcpDescriptor = null;
+let loopFileWatcher = null;
+let loopProducerController = null;
+let ownedConversationDescriptor = null;
+let ownedConversationTranscript = null;
+let workspaceVmExportService = null;
+async function vmCoreControl(action, body) {
+  if (quitting || shutdownInProgress || exitCommitted || lifecycleAdmission.busy()) throw new Error('VM export admission is closed');
+  const config = runtimeSupervisor?.readConfig();
+  if (!config || !await runtimeSupervisor.ownedAgentRuntimeReady(config)) throw new Error('VM export runtime owner is unavailable');
+  const result = await runtimeSupervisor.control(config, 'agent-vm-export', { body: { action, ...body }, timeoutMs: 15000 });
+  if (result?.ok !== true) throw new Error('VM export core authority is unavailable'); return result.value;
+}
+async function oauthMcpCoreControl(action, body) {
+  if (quitting || shutdownInProgress || exitCommitted || lifecycleAdmission.busy()) throw new Error('OAuth MCP admission is closed');
+  if (!agentOAuthMcpDescriptor?.instanceId) throw new Error('OAuth MCP launcher bridge is unavailable');
+  const config = runtimeSupervisor?.readConfig();
+  const pendingVersion = runtimeSupervisor?.launcherProfile === 'production' && config?.releaseVersion
+    && config.releaseVersion !== app.getVersion();
+  if (pendingVersion) throw new Error('OAuth MCP requires the automatic safe runtime switch to the installed application version');
+  const captured = JSON.stringify(config);
+  if (!config || !await runtimeSupervisor.ownedAgentRuntimeReady(config)) throw new Error('OAuth MCP runtime owner is unavailable');
+  if (quitting || shutdownInProgress || exitCommitted || lifecycleAdmission.busy()
+    || JSON.stringify(runtimeSupervisor.readConfig()) !== captured) throw new Error('OAuth MCP runtime owner changed');
+  const receipt = await runtimeSupervisor.control(config, 'agent-oauth-mcp', { body: { action, ...body }, returnErrorReceipt: true });
+  if (receipt?.ok !== true) throw new Error(receipt?.message || receipt?.error || 'OAuth MCP core authority is unavailable');
+  return receipt.value;
+}
+function invalidateAgentSourceOwners() {
+  try { loopFileWatcher?.beforeOwnerTeardown(); }
+  finally {
+    try { agentOAuthMcpController?.invalidate(); }
+    finally {
+      // Deny in-memory capture even if another owner's persistence or the
+      // descriptor write fails; such a failure must not skip local revocation.
+      void ownedConversationTranscript?.revoke().catch(() => {});
+      ownedConversationDescriptor?.publish({ scopes: [], accepting: false });
+    }
+  }
+}
+let nativeAccountAuthority = null;
+let nativeAccountInventory = null;
+let nativeAccountExecution = null;
+let persistentNativeConversations = null;
+function publishOwnedConversationScopes() {
+  if (!ownedConversationDescriptor) return;
+  const accepting = !quitting && !shutdownInProgress && !exitCommitted && !lifecycleAdmission.busy();
+  ownedConversationDescriptor.publish({ scopes: accepting ? persistentNativeConversations?.currentHistoryScopes() ?? [] : [], accepting });
+}
+async function ownedConversationHistoryCore(action, input) {
+  const allowDraining = action === 'owned-conversation-release';
+  if (!ownedConversationDescriptor || !allowDraining && (quitting || shutdownInProgress || exitCommitted || lifecycleAdmission.busy())) {
+    throw new Error('Owned conversation recording admission is closed');
+  }
+  const config = runtimeSupervisor.readConfig(), captured = JSON.stringify(config);
+  if (!config || !allowDraining && runtimeSupervisor.launcherProfile === 'production' && config.releaseVersion !== app.getVersion()) {
+    throw new Error('Owned conversation recording is waiting for the safe runtime switch');
+  }
+  if (!await runtimeSupervisor.ownedAgentRuntimeReady(config, { allowDraining })
+      || JSON.stringify(runtimeSupervisor.readConfig()) !== captured) throw new Error('Owned conversation recording runtime changed');
+  const receipt = await runtimeSupervisor.control(config, 'owned-conversation-history', {
+    body: { action, instanceId: ownedConversationDescriptor.instanceId, input }, returnErrorReceipt: true,
+  });
+  if (receipt?.ok !== true) throw new Error('Owned conversation recording was not confirmed');
+  return receipt.value;
+}
+function getOwnedConversationTranscript() {
+  return ownedConversationTranscript ??= createOwnedNativeTranscriptProducer({
+    history: {
+      begin: input => ownedConversationHistoryCore('owned-conversation-begin', input),
+      record: input => ownedConversationHistoryCore('owned-conversation-record', input),
+      release: lease => ownedConversationHistoryCore('owned-conversation-release', { lease }),
+    },
+    resolveScope: scope => persistentNativeConversations?.transcriptScope(scope.conversationId) ?? null,
+  });
+}
+async function revokeOwnedConversationRecording(body) {
+  const producer = getOwnedConversationTranscript();
+  if (body.action === 'set-recording') { await producer.revoke(); return; }
+  // The conversation row can exist before its Native thread ACK and scope.
+  // Retain an ID-level tombstone even when no capture has been created yet.
+  await producer.revokeConversation(body.conversationId);
+}
+function beginOwnedConversationRecordingConsent(body) {
+  const producer = getOwnedConversationTranscript();
+  const scope = body.action === 'owned-conversation-consent' ? persistentNativeConversations?.transcriptScope(body.conversationId) ?? null : undefined;
+  return scope === null ? null : { scope, authority: producer.recordingAuthority(scope) };
+}
+function allowOwnedConversationRecording(body, value, attempt) {
+  if (!ownedConversationTranscript || !attempt) return;
+  if (body.action === 'set-recording' && value?.recordingEnabled === true) {
+    ownedConversationTranscript.allowRecording(undefined, attempt.authority); return;
+  }
+  if (body.action === 'owned-conversation-consent' && value?.enabled === true) {
+    const scope = persistentNativeConversations?.transcriptScope(body.conversationId);
+    if (scope && value.scope && attempt.scope && Object.keys(scope).length === Object.keys(value.scope).length
+        && Object.keys(scope).every(key => scope[key] === value.scope[key] && scope[key] === attempt.scope[key])) {
+      ownedConversationTranscript.allowRecording(scope, attempt.authority);
+    }
+  }
+}
+function projectOwnedConversationRecordingStatus(body, value) {
+  if (!['owned-conversation-status', 'owned-conversation-consent'].includes(body.action) || !value || typeof value !== 'object') return value;
+  const local = ownedConversationTranscript?.recordingStatus(body.conversationId);
+  return { ...value, localCaptureDenied: local?.locallyDenied ?? true,
+    localCaptureReason: !local ? 'main-source-unavailable' : local.locallyDenied ? 'local-capture-held' : null };
+}
+async function closeNativeConversationOwners(execution = nativeAccountExecution) {
+  const conversations = persistentNativeConversations;
+  // Stop admission synchronously in both owners, then let account transport
+  // closure settle a lost creation ACK instead of awaiting that ACK first.
+  await settleNativeConversationOwners(execution, conversations);
+  if (persistentNativeConversations === conversations) persistentNativeConversations = null;
+}
+let lastNativeModelPublication = null;
+async function validateRemoteCoreAuthority(action, body, allowDraining = false) {
+  if (!allowDraining && (quitting || shutdownInProgress || exitCommitted || lifecycleAdmission.busy())) throw new Error('Remote admission is closed');
+  const config = runtimeSupervisor?.readConfig();
+  if (!config || !await runtimeSupervisor.ownedAgentRuntimeReady(config, { allowDraining })) throw new Error('Remote runtime owner is unavailable');
+  const receipt = await runtimeSupervisor.control(config, 'agent-remote', { body: { action, ...body } });
+  if (receipt?.ok !== true) throw new Error('Remote task authority changed');
+  return receipt.value;
+}
+function publishNativeAccountModels() {
+  publishOwnedConversationScopes();
+  if (!agentNativeDescriptor) return;
+  const models = nativeAccountExecution?.models() ?? [];
+  const value = { models, accepting: models.length > 0 && !quitting && !shutdownInProgress && !exitCommitted };
+  const identity = JSON.stringify(value);
+  if (identity === lastNativeModelPublication) return;
+  agentNativeDescriptor.publish(value); lastNativeModelPublication = identity;
+}
+let workspaceTerminalService = null;
+let remoteWorkspaceService = null;
+let workspaceGitService = null;
+let externalUsageService = null;
+let workspaceEvidenceService = null;
 const ACTIVE_BROWSER_CAPACITY = readBrowserCapacity(CORE_HOME);
 process.env[CAPACITY_ENV] = String(ACTIVE_BROWSER_CAPACITY);
 function browserCapacitySnapshot() {
@@ -624,6 +827,7 @@ function createWindow({ logger, stateStore, windowStatePath, startHidden, foregr
   };
   window.webContents.on("will-navigate", guardRendererNavigation);
   window.webContents.on("will-redirect", guardRendererNavigation);
+  bindRendererSurfaceInvalidation(window, () => mainWindow, () => browserHost);
   window.webContents.on("did-fail-load", (_event, errorCode, _errorDescription, _validatedURL, isMainFrame) => {
     if (isMainFrame !== true || errorCode === -3 || !rendererStartupComplete || quitting || exitCommitted) return;
     void recoverMainRenderer(`main-frame-load-${errorCode}`);
@@ -910,6 +1114,7 @@ function smokePassedForCurrentVersion(state) {
 
 async function closeBrowserResources() {
   let cleanupError = null;
+  try { invalidateAgentSourceOwners(); } catch (error) { cleanupError = error; }
   // Stop official account flows while their bound browser sessions still exist.
   for (const [name, participant] of additionalLifecycleParticipants) {
     try { await participant.destroy(); }
@@ -941,6 +1146,265 @@ function registerIpc({ logger, stateStore }) {
   const handle = (channel, handler) => registerLoggedIpc(
     ipcMain, logger, channel, lifecycleAdmission.guard(channel, handler), authorize,
   );
+  // Exact privacy revocation remains sender-authorized while another lifecycle
+  // action is pending. The registrar still validates the complete request.
+  const privacyHandle = (channel, handler, isPrivacyRequest) => registerLoggedIpc(
+    ipcMain, logger, channel, (event, body) => isPrivacyRequest(body)
+      ? handler(event, body) : lifecycleAdmission.guard(channel, handler)(event, body), authorize,
+  );
+  handle('launcher:task-plan-policy', async () => taskPlans.status());
+  handle('launcher:task-plan-capture', async (_event, enabled, revision) => taskPlans.setEnabled(enabled, revision));
+  handle('launcher:task-plan-read', async (_event, accountId, taskId) => taskPlans.get({ accountId, taskId }));
+  handle('launcher:task-plan-delete', async (_event, accountId, taskId) => taskPlans.delete({ accountId, taskId }));
+  handle('launcher:task-requirements-read', async (_event, accountId, taskId) => taskPlans.requirements({ accountId, taskId }));
+  handle('launcher:task-requirements-save', async (_event, input) => taskPlans.saveRequirements(input));
+  handle('launcher:task-requirements-coverage', async (_event, input) => taskPlans.updateCoverage(input));
+  handle('launcher:task-requirements-delete', async (_event, accountId, taskId, expectedRevision) => taskPlans.deleteRequirements({ accountId, taskId, expectedRevision }));
+  localWorkspaceService ??= createLocalWorkspaceService({
+    registryPath: path.join(app.getPath('userData'), 'workspace-private', 'registry.json'),
+    agentWorkspaceGrantKeyPath: path.join(CORE_HOME, 'agent-workspace', 'grant-key'),
+    resolveManagedWorktree: (sourceRootId, worktreeId) => workspaceGitService.resolveManagedRoot(sourceRootId, worktreeId),
+    pickDirectory: async () => {
+      const chosen = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
+      return chosen.canceled ? null : chosen.filePaths[0] || null;
+    },
+  });
+  workspaceTerminalService ??= createWorkspaceTerminalService();
+  workspaceGitService ??= createWorkspaceGitService({
+    resolveWorkspace: id => localWorkspaceService.resolveGrant(id),
+    getDraftPaths: id => localWorkspaceService.listDrafts(id).map(draft => draft.path),
+    storagePath: path.join(app.getPath('userData'), 'workspace-git'),
+    canArchiveWorktree: (sourceRootId, worktreeId) => !localWorkspaceService.hasManagedRootGrant(sourceRootId, worktreeId),
+  });
+  registerLifecycleParticipant('workspace-git', {
+    currentOperation: () => workspaceGitService.currentOperation(),
+    destroy: () => workspaceGitService.destroy(),
+  });
+  registerWorkspaceGitIpc({ registerIpcHandler: handle, service: workspaceGitService });
+  registerWorkspaceIpc({ registerIpcHandler: handle, service: localWorkspaceService, beforeForget: id => {
+    loopFileWatcher?.beforeForget(id);
+    if (workspaceVmExportService?.hasRetainedState(id)) throw new Error('Keep this workspace registered until its exact VM export outcome is reconciled');
+    if (workspaceGitService.hasRetainedState(id)) throw new Error('Keep this folder registered to access its worktrees, archives and snapshots');
+    if (workspaceTerminalService.list(id).some(row => ['running', 'closing'].includes(row.state))) throw new Error('Close this folder’s terminal sessions before forgetting it');
+  } });
+  registerWorkspaceTerminalIpc({ registerIpcHandler: handle, service: workspaceTerminalService,
+    resolveGrant: id => localWorkspaceService.resolveGrant(id) });
+  registerLifecycleParticipant('workspace-terminal', {
+    currentOperation: () => workspaceTerminalService.currentOperation?.() ?? null,
+    destroy: async () => { await workspaceTerminalService.destroy(); },
+  });
+  const getNativeClient = () => {
+    nativeClientControl ??= createCodexClientControl({
+      executable: resolveCodexExecutable({ environment: process.env }),
+      codexHome: LAUNCHER_PROFILE.codexHome,
+      cwd: LAUNCHER_PROFILE.codexHome,
+      journalPath: path.join(CORE_HOME, 'native-thread-control', 'forks.json'),
+    });
+    return nativeClientControl;
+  };
+  const canonicalRecorder = createCanonicalNativeHistoryRecorder({
+    sourceId: createHash('sha256').update(JSON.stringify({
+      kind: 'native-codex', profile: LAUNCHER_PROFILE.codexHome, transport: 'owned-stdio-server',
+    })).digest('hex'),
+    getClient: getNativeClient,
+    requestHistory: async body => {
+      const supervisor = runtimeHost.supervisor;
+      const config = supervisor.readConfig();
+      const allowDraining = body.action === 'canonical-status' || body.action === 'canonical-consent' && body.enabled === false;
+      if (!config || !await supervisor.ownedAgentRuntimeReady(config, { allowDraining })) throw new Error('Start the current NEKODEX runtime to record selected native history');
+      const receipt = await supervisor.control(config, 'conversation-history', { body });
+      if (!receipt || receipt.ok !== true) throw new Error('Selected native history operation failed');
+      return receipt.value;
+    },
+  });
+  registerConversationHistory({ handle, runtimeHost, clipboard, dialog, canonicalRecorder,
+    getApplicationVersion: () => app.getVersion(), beforeRecordingRevoke: revokeOwnedConversationRecording,
+    beforeRecordingConsent: beginOwnedConversationRecordingConsent,
+    afterRecordingConsent: allowOwnedConversationRecording, projectRecordingStatus: projectOwnedConversationRecordingStatus });
+  remoteWorkspaceService ??= createRemoteWorkspaceService({ storagePath: path.join(CORE_HOME, 'remote-workspaces', 'registry.json'),
+    agentInstanceId: agentRemoteDescriptor?.instanceId,
+    validateAgentTask: scope => validateRemoteCoreAuthority('validate-task', { scope }),
+    validateAgentIntent: request => validateRemoteCoreAuthority('validate-intent', { request }),
+  });
+  registerRemoteWorkspaceIpc({ registerIpcHandler: handle, service: remoteWorkspaceService });
+  registerLifecycleParticipant('remote-workspaces', {
+    currentOperation: () => remoteWorkspaceService.currentOperation?.() ?? null,
+    destroy: async () => { await remoteWorkspaceService.destroy(); },
+  });
+  workspaceEvidenceService ??= createAgentWorkspaceEvidenceAuthority({
+    keyPath: path.join(CORE_HOME, 'agent-workspace', 'grant-key'),
+    resolveWorkspace: id => localWorkspaceService.resolveGrant(id),
+  });
+  loopFileWatcher ??= createLoopFileWatcherIntegration({
+    directory: path.join(CORE_HOME, 'loop-file-sources'), workspaceService: localWorkspaceService, runtimeHost,
+    getApplicationVersion: () => app.getVersion(),
+    canRequest: () => !quitting && !shutdownInProgress && !exitCommitted && !lifecycleAdmission.busy(),
+  });
+  loopFileWatcher.register({ privacyHandle, dialog, getWindow: () => mainWindow });
+  registerLifecycleParticipant('loop-file-sources', {
+    currentOperation: () => loopFileWatcher.currentOperation(), destroy: () => loopFileWatcher.close(),
+  });
+  registerAgentMode({ handle, runtimeHost, workspaceService: localWorkspaceService, workspaceEvidenceService,
+    beforeTaskAuthorityChange: body => loopFileWatcher.beforeTaskAuthorityChange(body),
+    getApplicationVersion: () => app.getVersion() });
+  loopProducerController = registerAgentLoopProducers({
+    handle: (channel, handler) => privacyHandle(channel, handler, body => body?.action === 'revoke'),
+    runtimeHost, clipboard, getApplicationVersion: () => app.getVersion(),
+  });
+  registerLifecycleParticipant('agent-loop-producers', {
+    currentOperation: () => loopProducerController?.currentOperation() ?? null,
+    destroy: () => loopProducerController?.close(),
+  });
+  workspaceVmExportService ??= createWorkspaceVmExportService({ home: path.join(app.getPath('userData'), 'workspace-vm-export'), workspaceService: localWorkspaceService,
+    protectedRoots: [CORE_HOME, app.getPath('userData'), process.env.CODEX_CHATGPT_WEB_HOME || path.join(os.homedir(), '.codex-chatgpt-web'), path.join(os.homedir(), '.nekodex-execution-vm'),
+      process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), ...['.ssh', '.aws', '.config', 'Library/Keychains', 'Library/Application Support/Google/Chrome'].map(name => path.join(os.homedir(), name))],
+    validateScope: scope => vmCoreControl('validate-task', { scope }),
+    validateIntent: async request => { await vmCoreControl('validate-intent', { request }); },
+    readCandidate: async input => {
+      const value = await vmCoreControl('candidate', { scope: { taskId: input.scope.taskId, generation: input.scope.generation }, operationId: input.operationId, path: input.path, sha256: input.sha256 });
+      if (!value || value.sha256 !== input.sha256 || !Number.isSafeInteger(value.size) || value.size < 0 || value.size > 16 * 1024 * 1024
+        || typeof value.dataBase64 !== 'string' || value.dataBase64.length !== 4 * Math.ceil(value.size / 3)) throw new Error('VM export candidate is invalid');
+      const bytes = Buffer.from(value.dataBase64, 'base64');
+      if (bytes.length !== value.size || bytes.toString('base64') !== value.dataBase64 || require('node:crypto').createHash('sha256').update(bytes).digest('hex') !== input.sha256) throw new Error('VM export candidate identity changed');
+      return bytes;
+    } });
+  registerLifecycleParticipant('workspace-vm-export', { currentOperation: () => workspaceVmExportService.currentOperation(), destroy: () => workspaceVmExportService.destroy() });
+  pythonBuildSelectionService ??= createPythonBuildSelectionService({
+    assertScope: scope => vmCoreControl('validate-task', { scope: { taskId: scope.taskId, generation: scope.generation } }),
+  });
+  registerLifecycleParticipant('python-build-selections', {
+    currentOperation: () => null,
+    destroy: () => pythonBuildSelectionService.close(),
+  });
+  agentOAuthService ??= createAgentOAuthService({
+    coreHome: CORE_HOME,
+    getAuthority: () => {
+      const current = nativeAccountExecution?.inspect();
+      if (!current?.profileId || !current.epoch || current.failed || !current.server?.ready) return null;
+      return { accountId: `native:${current.profileId}`, epoch: current.epoch };
+    },
+    protectedAvailable: () => oauthProtectedVaultAvailable(),
+    openExternal: url => shell.openExternal(url),
+  });
+  const oauthIpc = createAgentOAuthIpc({ service: agentOAuthService, handle, dialog, getWindow: () => mainWindow });
+  agentOAuthMcpController ??= createAgentOAuthMcpController({ coreHome: CORE_HOME, oauthService: agentOAuthService,
+    validateTask: scope => oauthMcpCoreControl('validate-task', { scope }),
+    validateIntent: request => oauthMcpCoreControl('validate-intent', { request }),
+  });
+  privacyHandle('launcher:oauth-mcp', (_event, body) => agentOAuthMcpController.request(body),
+    body => body?.action === 'oauthMcpDisconnect');
+  registerLifecycleParticipant('agent-oauth-mcp', {
+    currentOperation: () => agentOAuthMcpController.currentOperation(), destroy: () => agentOAuthMcpController.close(),
+  });
+  registerLifecycleParticipant('agent-oauth', {
+    currentOperation: () => agentOAuthService.currentOperation(),
+    destroy: () => agentOAuthService.close(),
+  });
+  registerAgentTools({ handle, runtimeHost, dialog, getWindow: () => mainWindow, remoteService: remoteWorkspaceService,
+    workspaceService: localWorkspaceService, vmExportService: workspaceVmExportService, pythonBuildSelectionService, oauthIpc,
+    getApplicationVersion: () => app.getVersion() });
+  registerBrowserCompanion({ handle, runtimeHost, clipboard });
+  registerLocalControlApi({ handle, runtimeHost, clipboard });
+  externalUsageService ??= createExternalUsageService({
+    statePath: path.join(CORE_HOME, 'external-usage', 'state.json'),
+    pickDirectory: async () => {
+      const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
+      return result.canceled ? null : result.filePaths[0] ?? null;
+    },
+  });
+  registerExternalUsageIpc({ handle, service: externalUsageService });
+  registerCodexClientControlIpc({ handle, getClient: getNativeClient });
+  registerLifecycleParticipant('native-thread-control', {
+    currentOperation: () => nativeClientControl?.currentOperation?.() ?? null,
+    destroy: async () => { await nativeClientControl?.destroy(); },
+  });
+  registerLifecycleParticipant('agent-native', {
+    currentOperation: () => persistentNativeConversations?.currentOperation()
+      || nativeAccountExecution?.currentOperation()
+      || (agentNativeBridge?.status().activeCount ? 'Native Agent inference' : null),
+    destroy: async () => { await closeNativeConversationOwners(); await agentNativeBridge?.destroy(); },
+  });
+  const getNativeAccountAuthority = () => {
+    if (nativeAccountAuthority) return nativeAccountAuthority;
+    try {
+      const target = { arm64: 'aarch64-apple-darwin', x64: 'x86_64-apple-darwin' }[process.arch];
+      if (process.platform !== 'darwin' || !target) throw new Error('Unsupported Native login platform');
+      // Use the already installed official, version-specific standalone package.
+      // A current/Desktop resolver could silently select a different protocol version.
+      const root = fs.realpathSync(path.join(app.getPath('home'), '.codex', 'packages', 'standalone', 'releases', `${NATIVE_CLI_VERSION}-${target}`));
+      const metadata = JSON.parse(nativeRegular(path.join(root, 'codex-package.json'), 16384));
+      if (metadata.version !== NATIVE_CLI_VERSION || metadata.target !== target || metadata.variant !== 'codex'
+        || metadata.layoutVersion !== 1 || metadata.entrypoint !== 'bin/codex') throw new Error('Native CLI package changed');
+      const executable = fs.realpathSync(path.join(root, 'bin', 'codex'));
+      nativeAccountAuthority = createNativeAccountAuthority({ authorityHome: path.join(CORE_HOME, 'native-accounts'),
+        executable, executableSha256: nativeFileDigest(executable),
+        recovery: {
+          executionRoot: path.join(CORE_HOME, 'native-account-execution'),
+          inventoryRoot: path.join(CORE_HOME, 'native-account-inventories'),
+          getWorkerPin: async () => reviewedNativeWorkerPin(),
+          getMetadataRuntimePin: async () => {
+            // Resolve the already owned runtime without running its CLI or searching PATH.
+            const invocation = runtimeHost.supervisor.runtimeCommand(['--version']);
+            if (!path.isAbsolute(invocation.executable)) throw new Error('Native recovery requires the pinned owned runtime');
+            const bunPath = fs.realpathSync(invocation.executable);
+            if (!/^bun(?:\.exe)?$/.test(path.basename(bunPath))) throw new Error('Native recovery runtime is unavailable');
+            return { bunPath, bunSha256: nativeFileDigest(bunPath) };
+          },
+        } });
+      return nativeAccountAuthority;
+    } catch {
+      const unavailable = () => { throw new Error('The admitted official Native CLI is unavailable'); };
+      return { inspect: () => ({ available: false, reasonCode: 'admitted_cli_unavailable', profiles: [], receipts: [], activeCount: 0, executionAvailable: false }),
+        prepareProfile: unavailable, beginDeviceLogin: unavailable, cancelLogin: unavailable };
+    }
+  };
+  const getNativeAccountInventory = () => {
+    const authority = getNativeAccountAuthority();
+    nativeAccountInventory ??= createNativeAccountInventoryService({ authority,
+      getWrapperPin: reviewedNativeWorkerPin,
+      acquireProfileOwner: input => authority.acquireProfileOwner(input),
+      storageRoot: path.join(CORE_HOME, 'native-account-inventories') });
+    return nativeAccountInventory;
+  };
+  const getNativeAccountExecution = () => {
+    const authority = getNativeAccountAuthority();
+    nativeAccountExecution ??= createNativeAccountExecutionService({ authority, inventory: getNativeAccountInventory(),
+      getWrapperPin: reviewedNativeWorkerPin,
+      storageRoot: path.join(CORE_HOME, 'native-account-execution'), maxConcurrentThreads: 2,
+      onChange: publishNativeAccountModels });
+    return nativeAccountExecution;
+  };
+  registerNativeAccounts({ handle, getAuthority: getNativeAccountAuthority, getInventory: getNativeAccountInventory,
+    getExecution: getNativeAccountExecution,
+    beforeExecutionClosed: execution => closeNativeConversationOwners(execution),
+    onExecutionClosed: execution => { if (nativeAccountExecution === execution) nativeAccountExecution = null; publishNativeAccountModels(); },
+    openExternal: url => shell.openExternal(url), clipboard });
+  registerPersistentNativeConversations({ handle,
+    getContext: () => nativeAccountExecution?.persistentContext() ?? null,
+    getService: () => {
+      persistentNativeConversations ??= createPersistentNativeConversations({
+        getExecution: () => nativeAccountExecution?.persistentContext() ?? null,
+        storageRoot: path.join(CORE_HOME, 'native-conversations'),
+        transcript: getOwnedConversationTranscript(), onChange: publishOwnedConversationScopes,
+      });
+      return persistentNativeConversations;
+    },
+  });
+  registerLifecycleParticipant('owned-conversation-transcript', {
+    currentOperation: () => ownedConversationTranscript?.currentOperation() ?? null,
+    destroy: async () => {
+      ownedConversationDescriptor?.publish({ scopes: [], accepting: false });
+      await ownedConversationTranscript?.close();
+    },
+  });
+  registerLifecycleParticipant('native-account-inventory', {
+    currentOperation: () => nativeAccountInventory?.currentOperation() ?? null,
+    destroy: async () => { await nativeAccountInventory?.destroy(); },
+  });
+  registerLifecycleParticipant('native-account-login', {
+    currentOperation: () => nativeAccountAuthority?.currentOperation() ?? null,
+    destroy: async () => { await nativeAccountAuthority?.destroy(); },
+  });
   const syncConversationState = owner => {
     if (owner) lifecycleAdmission.assertOwner(owner);
     return syncConversationPreferences({
@@ -1054,7 +1518,8 @@ function registerIpc({ logger, stateStore }) {
     confirmExistingChromeImport: () => confirmExistingChromeImport(dialog, mainWindow, stateStore.read().language),
     selectChromeConnectionFile: signal => selectChromeConnectionFile({
       dialog, window: mainWindow, homeDir: app.getPath("home"), language: stateStore.read().language, signal,
-      isCurrent: () => browserHost.existingChromeLoginController?.signal === signal
+      // browserHost is the account pool; the import (and its controller) runs on the default host.
+      isCurrent: () => browserHost?.getHost("default").existingChromeLoginController?.signal === signal
         && stateStore.read().browserInteractionMode === "automatic" && mainWindow && !mainWindow.isDestroyed(),
     }),
     copyChromeSettingsAddress: () => clipboard.writeText(CHROME_SETTINGS_ADDRESS),
@@ -1822,6 +2287,7 @@ async function activatePendingRuntime(reason) {
       if (currentGlobalOperation() || browserHost?.hasActiveTurns() || runtimeHost.currentOperation()) continue;
       let upgrade;
       try {
+        invalidateAgentSourceOwners();
         upgrade = await runtimeHost.upgradeManagedRuntime();
       } catch (error) {
         // A turn that started after the idle check, or a transient status probe, refuses the
@@ -1928,6 +2394,7 @@ async function requestQuit({ admissionHeld = false, restart = false, stopRuntime
     // Ordinary Quit preserves the background Native runtime. An explicit restart
     // replaces that runtime and uses the existing idle drain; it must not require
     // a healthy background route just to recover a failed application.
+    invalidateAgentSourceOwners();
     shutdownResult = stopRuntime || restart || IS_DEV_PROFILE
       ? await runtimeSupervisor?.shutdown({ cancelActiveTurns: false, force: false })
       : await runtimeSupervisor?.detachForQuit();
@@ -2096,6 +2563,33 @@ async function start() {
     logger,
     getBrowserHost: () => browserHost,
     getPreferences: () => stateStore.read(),
+    getAgentNativeBridge: () => agentNativeBridge,
+    getAgentNativeInstance: () => agentNativeDescriptor?.instanceId,
+    getAgentRemoteService: () => remoteWorkspaceService,
+    getAgentRemoteInstance: () => agentRemoteDescriptor?.instanceId,
+    getVmExportService: () => workspaceVmExportService,
+    getVmExportInstance: () => agentVmExportDescriptor?.instanceId,
+    getPythonBuildSelectionService: () => pythonBuildSelectionService,
+    getPythonBuildSelectionInstance: () => agentPythonBuildDescriptor?.instanceId,
+    getAgentOAuthMcpController: () => agentOAuthMcpController,
+    getAgentOAuthMcpInstance: () => agentOAuthMcpDescriptor?.instanceId,
+    getOwnedConversationHistoryService: () => persistentNativeConversations,
+    getOwnedConversationHistoryInstance: () => ownedConversationDescriptor?.instanceId,
+    validateRemoteInvalidation: body => {
+      if (!body || typeof body !== 'object' || Array.isArray(body)
+        || Object.keys(body).some(key => !['taskId', 'familyId', 'beforeGeneration'].includes(key))) throw new Error('Invalid remote invalidation');
+      return validateRemoteCoreAuthority('validate-invalidation', body, true);
+    },
+    validateNativeInvalidation: async body => {
+      if (!body || typeof body !== 'object' || Array.isArray(body)
+        || Object.keys(body).some(key => !['actionId', 'taskId', 'familyId', 'beforeGeneration'].includes(key))) throw new Error('Invalid Native invalidation');
+      const config = runtimeSupervisor.readConfig();
+      if (!config || !await runtimeSupervisor.ownedAgentRuntimeReady(config, { allowDraining: true })) throw new Error('Native runtime owner is unavailable');
+      const receipt = await runtimeSupervisor.control(config, 'agent-native', { body: { action: 'validate-invalidation',
+        taskId: body.taskId, familyId: body.familyId, beforeGeneration: body.beforeGeneration } });
+      if (receipt?.ok !== true) throw new Error('Native invalidation scope changed');
+      return receipt.value;
+    },
     // A dedicated system-proxy session must not inherit any account's fixed/PAC proxy.
     resolveNativeProxy: url => resolveNativeRequestProxy(
       session.fromPartition(`nekodex-native-network-${LAUNCHER_PROFILE.kind}`), url),
@@ -2140,7 +2634,68 @@ async function start() {
     supervisor: runtimeSupervisor,
     getBrowserInteractionMode: () => stateStore.read().browserInteractionMode,
   });
+  agentNativeBridge = createAgentNativeBridge({
+    canStart: () => !quitting && !shutdownInProgress && !exitCommitted && !lifecycleAdmission.busy(),
+    validateOffer: async (envelope, payloadDigest) => {
+      const config = runtimeSupervisor.readConfig();
+      if (!config || !await runtimeSupervisor.ownedAgentRuntimeReady(config)) throw new Error('Native runtime owner is unavailable');
+      const receipt = await runtimeSupervisor.control(config, 'agent-native', { body: { action: 'validate-offer',
+        scope: envelope.scope, model: envelope.model, admissionId: envelope.admissionId, payloadDigest } });
+      if (receipt?.ok !== true) throw new Error('Native offer scope changed');
+      return receipt.value;
+    },
+    // Only qualified own-profile metadata can create a model admission. Readiness
+    // never starts a profile, child, thread, inventory transaction or login.
+    resolveAdmission: (admissionId, model) => nativeAccountExecution?.resolveAdmission(admissionId, model),
+  });
+  if (process.platform === 'darwin') {
+    try {
+      agentNativeDescriptor = createAgentNativeDescriptorPublisher({ coreHome: CORE_HOME, profile: LAUNCHER_PROFILE.kind,
+        control: browserControl.descriptor() });
+      agentNativeDescriptor.publish({ models: [], accepting: false });
+    } catch {
+      // Optional Native admission cannot prevent unrelated launcher functions from opening.
+      agentNativeDescriptor = null;
+      logger.warn('agent_native.descriptor_unavailable', { reasonCode: 'private-profile-unavailable' });
+    }
+  }
   const configuredInteractionMode = runtimeHost.runtimeConfigSnapshot().config?.browserInteractionMode;
+  try {
+    agentRemoteDescriptor = createAgentRemoteDescriptorPublisher({ coreHome: CORE_HOME, profile: LAUNCHER_PROFILE.kind, control: browserControl.descriptor() });
+    agentRemoteDescriptor.publish();
+  } catch {
+    agentRemoteDescriptor = null;
+    logger.warn('agent_remote.descriptor_unavailable', { reasonCode: 'private-profile-unavailable' });
+  }
+  try {
+    agentVmExportDescriptor = createAgentVmExportDescriptorPublisher({ coreHome: CORE_HOME, profile: LAUNCHER_PROFILE.kind, control: browserControl.descriptor() });
+    agentVmExportDescriptor.publish();
+  } catch {
+    agentVmExportDescriptor = null;
+    logger.warn('agent_vm_export.descriptor_unavailable', { reasonCode: 'private-profile-unavailable' });
+  }
+  try {
+    agentPythonBuildDescriptor = createAgentPythonBuildDescriptorPublisher({ coreHome: CORE_HOME, profile: LAUNCHER_PROFILE.kind, control: browserControl.descriptor() });
+    agentPythonBuildDescriptor.publish();
+  } catch {
+    agentPythonBuildDescriptor = null;
+    logger.warn('agent_python_build.descriptor_unavailable', { reasonCode: 'private-profile-unavailable' });
+  }
+  try {
+    agentOAuthMcpDescriptor = createAgentOAuthMcpDescriptorPublisher({ coreHome: CORE_HOME, profile: LAUNCHER_PROFILE.kind, control: browserControl.descriptor() });
+    agentOAuthMcpDescriptor.publish();
+  } catch {
+    agentOAuthMcpDescriptor = null;
+    logger.warn('agent_oauth_mcp.descriptor_unavailable', { reasonCode: 'private-profile-unavailable' });
+  }
+  try {
+    ownedConversationDescriptor = createOwnedConversationDescriptorPublisher({ coreHome: CORE_HOME,
+      profile: LAUNCHER_PROFILE.kind, control: browserControl.descriptor() });
+    publishOwnedConversationScopes();
+  } catch {
+    ownedConversationDescriptor = null;
+    logger.warn('owned_conversation.descriptor_unavailable', { reasonCode: 'private-profile-unavailable' });
+  }
   contextChangeQueue?.stop();
   contextChangeQueue = createContextChangeQueue({
     read: () => stateStore.read(),
@@ -2197,6 +2752,7 @@ async function start() {
     }),
   });
   browserHost = new AccountBrowserPool({
+    taskPlans,
     skipInitialNavigation: launcherSmokeTest,
     getManualSubmitTimeoutSec: () => stateStore.read().manualSubmitTimeoutSec,
     coreHome: CORE_HOME,
@@ -2262,6 +2818,7 @@ async function start() {
     getPool: () => browserHost,
     getInteractionMode: () => stateStore.read().browserInteractionMode,
     BrowserWindow, clipboard, codexHome: LAUNCHER_PROFILE.codexHome, logger,
+    openExternal: url => shell.openExternal(url),
   });
   registerLifecycleParticipant("Codex account sign-in", accountToolsService);
   const startupOwner = lifecycleAdmission.acquire("local runtime startup");

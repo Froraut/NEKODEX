@@ -1,0 +1,2 @@
+export function createAgentLoopProducerController(options: { runtimeHost: unknown; clipboard: { writeText(value: string): void }; getApplicationVersion?: () => string }): { request(body: unknown): Promise<unknown>; currentOperation(): string | null; close(): void };
+export function registerAgentLoopProducers(options: { handle(channel: string, handler: (event: unknown, body: unknown) => Promise<unknown>): void; runtimeHost: unknown; clipboard: { writeText(value: string): void }; getApplicationVersion?: () => string }): ReturnType<typeof createAgentLoopProducerController>;

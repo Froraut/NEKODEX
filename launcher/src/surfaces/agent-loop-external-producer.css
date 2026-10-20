@@ -1,0 +1,20 @@
+.agent-loop-external-producer{min-width:0}
+.agent-loop-external-producer .nk-panel-stack{gap:var(--space-4)}
+.agent-loop-external-producer :is(p,h4,ul){margin-block:0}
+.agent-loop-external-producer :is(p,li,code,summary,.nk-field,.nk-select,.nk-notice strong){min-width:0;overflow-wrap:anywhere}
+.agent-loop-external-producer__card{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--space-3);min-width:0;padding:var(--space-4);border:1px solid var(--border);border-radius:var(--radius-md)}
+.agent-loop-external-producer__actions{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3)}
+.agent-loop-external-producer .nk-btn{height:auto;min-height:var(--size-control);max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:start;padding-block:var(--space-2)}
+.agent-loop-external-producer :is(code,.agent-loop-external-producer__identity){font-family:var(--font-mono,monospace);font-size:12px;white-space:normal;overflow-wrap:anywhere;user-select:text}
+.agent-loop-external-producer__instruction{white-space:pre-wrap;overflow-wrap:anywhere}
+.agent-loop-external-producer__setup{display:grid;gap:var(--space-3)}
+.agent-loop-external-producer__setup pre{min-width:0;max-width:100%;margin:0;padding:var(--space-3);border:1px solid var(--border);border-radius:var(--radius-md);white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
+.agent-loop-external-producer details[open]>:not(summary){margin-block-start:var(--space-3)}
+.agent-loop-external-producer .nk-check{align-items:flex-start;min-width:0;max-width:100%}
+.agent-loop-external-producer .nk-check input{flex:0 0 16px;margin-top:2px}
+.agent-loop-external-producer .nk-check>span{min-width:0;overflow-wrap:anywhere}
+.agent-loop-external-producer textarea{max-width:100%;resize:vertical}
+.agent-loop-external-producer__receipts{display:grid;gap:var(--space-4);padding-inline-start:var(--space-5)}
+.agent-loop-external-producer__receipts>li{display:grid;gap:var(--space-2)}
+.agent-loop-external-producer details{min-width:0}.agent-loop-external-producer summary{cursor:pointer;padding-block:var(--space-2)}
+@container workspace (max-width:640px){.agent-loop-external-producer__card{padding:var(--space-3)}}

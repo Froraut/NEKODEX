@@ -89,9 +89,14 @@ function createProfileFirstLogin({choose, runtime, session, dialog, window, lang
       signal?.throwIfAborted();
       // Existing-Chrome phases belong to a different progress protocol. Keep the
       // passkey operation active/cancellable while Chrome approves and captures it.
+      let chromePhase=null;
       capture=await captureProfileSession({ runtime, profileClaim, context, selectConnectionFile,
-        onProgress: patch=>onProgress({phase:'importing', chromePhase:patch.phase,
-          ...(patch.deadlineAt ? {deadlineAt:patch.deadlineAt} : {})}) });
+        onProgress: patch=>{
+          // A stalled import otherwise leaves no trace of which Chrome step it was waiting on.
+          if (patch.phase!==chromePhase) { chromePhase=patch.phase; runtime.logger?.info?.('runtime.chrome_login_phase',{phase:chromePhase}); }
+          onProgress({phase:'importing', chromePhase:patch.phase,
+            ...(patch.deadlineAt ? {deadlineAt:patch.deadlineAt} : {})});
+        } });
       signal?.throwIfAborted();
       const previous=choice.previousBinding;
       onProgress({ phase:'verifying', chromePhase:'verifying' });

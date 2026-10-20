@@ -1,10 +1,11 @@
 const { publishBrowserSnapshot } = require("./browser-state-publication.cjs");
+const { verifiedSessionPresentation, idleSessionPresentation } = require('./browser-session-presentation.cjs');
 const { BrowserArtifactTransfers } = require("./browser-artifact-transfers.cjs");
 const { BrowserManualTurns, manualPromptDigest, MANUAL_SUBMIT_TIMEOUT_MS, MANUAL_COMPACTION_SUBMIT_TIMEOUT_MS } = require("./browser-manual-turns.cjs");
 const { BrowserTurnLifecycle, TURN_HEARTBEAT_SWEEP_MS } = require("./browser-turn-lifecycle.cjs");
 const { BrowserWorkspaceWindows } = require("./browser-workspace-windows.cjs");
 const { OPENAI_API_TUNNELS_URL, openAiApiPanelUrl, allowedOpenAiApiPanelUrl,
-  openAiApiSessionMutation, isOpenAiApiSessionMutationRequest, googleRefusedEmbeddedSignIn } = require("./openai-api-panel.cjs");
+  openAiApiSessionMutation, isOpenAiApiSessionMutationRequest, googleRefusedEmbeddedSignIn, passkeyRequiredInEmbeddedSignIn } = require("./openai-api-panel.cjs");
 const { authenticationIssue } = require("./authentication-issue.cjs");
 const { validateAccountId } = require("./account-registry.cjs");
 const fs = require("node:fs");
@@ -17,6 +18,7 @@ const { BrowserTaskLedger } = require('./browser-task-ledger.cjs');
 const { createTaskArtifactDownloadGuard } = require('./task-artifact-download.cjs');
 const { awaitInspection, inspectionAbortError } = require("./inspection-control.cjs");
 const {
+  BROWSER_HELPER_OPERATION_TIMEOUT_MS,
   hasUnsettledBrowserHelpers,
   runBrowserHelperOperation,
   verifyConnectorWithBrowserHelper,
@@ -91,6 +93,12 @@ const { cancelSessionRecheck, syncSessionRecheck } = require("./session-recheck.
 const INTERACTION_MODE_CHANGE_OPERATION = "browser interaction mode change";
 const HIDDEN_TURN_VIEWPORT = Object.freeze({ width: 800, height: 600 });
 const BROWSER_NAVIGATION_TIMEOUT_MS = 60_000;
+const BROWSER_CHECK_TIMEOUT_MS = 90_000;
+// Connector verification is the helper's own operation plus the wait for the home page to show the
+// session again; a slow but successful proof must not be cut off by the generic check deadline.
+const CONNECTOR_SESSION_SETTLE_MS = 30_000;
+const CONNECTOR_VERIFICATION_TIMEOUT_MS = BROWSER_HELPER_OPERATION_TIMEOUT_MS + CONNECTOR_SESSION_SETTLE_MS;
+const RELEASED_HOME_OBSERVATION_MS = 30_000;
 // A crashed or hung primary ChatGPT page never heals on its own: Electron keeps the dead
 // WebContents (and its CDP target) until something reloads it, so every later turn and
 // readiness probe stalls on it. Reload it with backoff, bounded per window.
@@ -101,7 +109,20 @@ const PRIMARY_RENDERER_UNRESPONSIVE_GRACE_MS = 30_000;
 const PRIMARY_RENDERER_WATCHDOG_MS = 15_000;
 const PRIMARY_RENDERER_LIVE_WAIT_MS = 30_000;
 const AUTH_HANDOFF_TIMEOUT_MS = 15_000;
-const WINDOW_VISIBILITY_EVENTS = ["show", "hide", "minimize", "restore"];
+// Drawable background views are parked beyond the current content bounds. Repark
+// them when native geometry changes, including while no browser slot is mounted.
+const WINDOW_VISIBILITY_EVENTS = ["show", "hide", "minimize", "restore", "resize", "enter-full-screen", "leave-full-screen"];
+
+// A viewport registration belongs to one shell document, never to the WebContents lifetime.
+function bindRendererSurfaceInvalidation(window, getCurrentWindow, getBrowserHost) {
+  const invalidate = () => {
+    if (getCurrentWindow() === window) getBrowserHost()?.invalidateRendererSurface();
+  };
+  window.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
+    if (mainFrame === true && inPlace !== true) invalidate();
+  });
+  window.webContents.on('render-process-gone', invalidate);
+}
 const CHATGPT_BACKEND_REQUEST_FILTER = { urls: [
   `${CHATGPT_ORIGIN}/backend-api/*`,
   `${CHATGPT_ORIGIN}/api/auth/*`,
@@ -115,7 +136,12 @@ const SHELL_ZOOM_LEVEL_STEP = 0.5;
 const SHELL_ZOOM_LEVEL_LIMIT = 5;
 const CLOUDFLARE_CHALLENGE_RECOVERY_DELAY_MS = 500;
 const CLOUDFLARE_CHALLENGE_RECOVERY_SETTLE_MS = 1_000;
+const CLOUDFLARE_CHALLENGE_RECOVERY_PROOF_TIMEOUT_MS = 8_000;
+const CLOUDFLARE_CHALLENGE_DEFERRED_POLL_MS = 2_000;
+const DEFERRED_CHALLENGE_SIGN_IN_RELOAD_MS = 15_000;
 const SESSION_TOKEN_COOKIE = /^__Secure-next-auth\.session-token(?:\.\d+)?$/;
+const CLOUDFLARE_COOKIE = /^(?:cf_clearance|__cf_bm|_cfuvid|__cflb|__cfruid|cf_chl_.*)$/;
+const NON_COOKIE_STORAGES = ["filesystem", "indexdb", "localstorage", "shadercache", "websql", "serviceworkers", "cachestorage"];
 const SESSION_TOKEN_SETTLE_MS = 1_500;
 const NETWORK_EGRESS_CHECK_INTERVAL_MS = 10 * 60_000;
 const CHATGPT_VIEWPORT_CSS = `
@@ -181,6 +207,15 @@ function combinedError(primary, label, secondary) {
   const first = primary instanceof Error ? primary.message : String(primary);
   const second = secondary instanceof Error ? secondary.message : String(secondary);
   return new Error(`${first}; ${label}: ${second}`);
+}
+
+// Import failures surfaced only a stage, so a failed sign-in could not be diagnosed afterwards.
+// Log the launcher's own error sentence; drop anything that could carry an address, URL,
+// cookie value or other provider data.
+function sessionImportFailureReason(error) {
+  const message = (error instanceof Error ? error.message : "").split("\n")[0].trim();
+  if (!message || message.length > 160 || /@|:\/\/|[{}=\d]/.test(message)) return null;
+  return /^[A-Za-z][A-Za-z ,.;:'’()/-]*$/.test(message) ? message : null;
 }
 
 function normalizeBounds(bounds) {
@@ -259,6 +294,7 @@ function turnLifecycleFor(host) {
     logger: host.logger,
     context: {
       get ledger() { return host.taskLedger; },
+      get taskPlans() { return host.taskPlans; },
       get accountId() { return host.accountId; },
       get maxTabs() { return host.maxTabs; },
       get authIdentityEpoch() { return host.authIdentityEpoch; },
@@ -412,6 +448,7 @@ class BrowserHost {
     workspaceChanged = () => {},
     workspaceDisplays = () => [],
     taskLedger = null,
+    taskPlans = null,
     onTurnTabRemoved = () => {},
     onTurnTabOwned = () => {},
     coreHome = path.dirname(path.dirname(descriptorPath)),
@@ -426,6 +463,7 @@ class BrowserHost {
     this.window = window;
     this.descriptorPath = descriptorPath;
     this.coreHome = path.resolve(coreHome);
+    this.taskPlans = taskPlans;
     if (path.dirname(path.resolve(descriptorPath)) !== path.join(this.coreHome, 'runtime')) {
       throw new Error('Browser host descriptor does not belong to its configured core home');
     }
@@ -479,6 +517,9 @@ class BrowserHost {
     this.selectedTabId = "home";
     this.manualOperation = null;
     this.loginOperation = null;
+    this.primaryDocumentRevision = 0;
+    this.verifiedHomeDocument = null;
+    this.browserPresentationError = null;
     this.authGeneration = 0;
     this.authProbeRevision = 0;
     this.authProbeTail = Promise.resolve();
@@ -495,6 +536,8 @@ class BrowserHost {
     this.authenticationRemovalPending = false;
     this.cloudflareChallengeRecovery = null;
     this.cloudflareChallengeRecoveryArmed = true;
+    this.cloudflareChallengeDeferred = false;
+    this.cloudflareChallengeDeferredTimer = null;
     this.viewportCssKey = null;
     this.primaryRendererReady = false;
     this.primaryDeviceEmulationViewport = null;
@@ -651,6 +694,7 @@ class BrowserHost {
       this.shellZoomShortcutBindings.delete(previous.webContents);
     }
     this.window = window;
+    this.invalidateRendererSurface();
     for (const event of WINDOW_VISIBILITY_EVENTS) window.on(event, this.windowVisibilityListener);
     this.bindShellZoomShortcuts(window.webContents);
     this.syncViewVisibility();
@@ -681,10 +725,12 @@ class BrowserHost {
       || (hasUnsettledBrowserHelpers(this.descriptorPath) ? "browser helper cleanup" : null);
   }
 
-  withReadOnlyInspection(name, action, { preserveSelection = false } = {}) {
+  withReadOnlyInspection(name, action, { preserveSelection = false, timeoutMs = BROWSER_CHECK_TIMEOUT_MS } = {}) {
     if (this.activeTraceId || this.currentOperation()) {
       return Promise.reject(new Error("Finish the account's active task or operation before checking it"));
     }
+    // This check owns the page now; it observes the page itself when it releases it.
+    this.releasedHomeObservation?.abort();
     const controller = new AbortController();
     const contents = this.view?.webContents;
     const inspection = { name, controller, done: null };
@@ -699,13 +745,20 @@ class BrowserHost {
       }
     };
     controller.signal.addEventListener("abort", onAbort, { once: true });
-    const deadline = setTimeout(() => controller.abort(new Error("Browser check timed out")), 90_000);
+    const deadline = setTimeout(() => controller.abort(new Error("Browser check timed out")), timeoutMs);
     deadline.unref?.();
     const run = preserveSelection
       ? (async () => {
           await awaitInspection(this.ready(), controller.signal);
           controller.signal.throwIfAborted();
-          return await action(controller.signal);
+          // A throttled hidden page renders no frames, so ChatGPT's own browser check cannot
+          // finish during the reload a check may need. Selection is preserved either way.
+          this.setHomeThrottling(contents, false);
+          try {
+            return await action(controller.signal);
+          } finally {
+            this.setHomeThrottling(contents, true);
+          }
         })()
       : this.withManualOperation(name, () => action(controller.signal), controller.signal);
     inspection.done = run
@@ -715,9 +768,50 @@ class BrowserHost {
         if (this.readOnlyInspection === inspection) {
           this.readOnlyInspection = null;
           publishBrowserSnapshot(this);
+          // Page loads during the check were not observed, and a check that failed or was cut off
+          // can leave the page on its saved chat. Observe the released page once, so a real
+          // sign-out during the check is still published.
+          const deferred = this.authProbeDeferredForInspection;
+          this.authProbeDeferredForInspection = false;
+          if ((deferred || this.homeLeftOffTemporaryChat()) && !this.destroyed) {
+            void this.observeReleasedHome().catch(() => {});
+          }
         }
       });
     return inspection.done;
+  }
+
+  homeLeftOffTemporaryChat() {
+    const contents = this.view?.webContents;
+    if (!contents || contents.isDestroyed() || browserInteractionModeFor(this) !== "automatic") return false;
+    const url = contents.getURL();
+    return httpsOrigin(url) === CHATGPT_ORIGIN && !isTemporaryChatUrl(url);
+  }
+
+  // Bring the released home page back to Temporary Chat and wait for its composer before
+  // publishing, so a page that is merely loading is not reported as a lost sign-in. The next
+  // check cancels this and observes the page itself.
+  async observeReleasedHome() {
+    this.releasedHomeObservation?.abort();
+    const controller = new AbortController();
+    this.releasedHomeObservation = controller;
+    const timeout = setTimeout(() => controller.abort(), RELEASED_HOME_OBSERVATION_MS);
+    timeout.unref?.();
+    try {
+      if (this.homeLeftOffTemporaryChat()) {
+        this.logger.info("browser.session_surface_reloaded", { reason: "check-released" });
+        await awaitInspection(this.view.webContents.loadURL(TEMPORARY_CHAT_URL), controller.signal).catch(() => {});
+      }
+      await this.waitForAuthenticated(RELEASED_HOME_OBSERVATION_MS, controller.signal, { preserveVerified: true });
+    } catch {
+      // Not back in time: publish what the page shows now, unless a new check owns it.
+      if (this.releasedHomeObservation === controller && !this.readOnlyInspection && !this.destroyed) {
+        await this.probeAuthentication();
+      }
+    } finally {
+      clearTimeout(timeout);
+      if (this.releasedHomeObservation === controller) this.releasedHomeObservation = null;
+    }
   }
 
   async cancelReadOnlyInspection() {
@@ -830,6 +924,10 @@ class BrowserHost {
 
   taskProgress(traceId, helperPid, surfaceId, phase, sequence, observation) {
     return turnLifecycleFor(this).taskProgress(traceId, helperPid, surfaceId, phase, sequence, observation);
+  }
+
+  taskPlan(traceId, helperPid, surfaceId, taskRecordId, observation) {
+    return turnLifecycleFor(this).taskPlan(traceId, helperPid, surfaceId, taskRecordId, observation);
   }
 
   createAutomaticTurnView() {
@@ -1315,6 +1413,7 @@ class BrowserHost {
         this.setState({ url });
         return;
       }
+      this.primaryDocumentRevision = (this.primaryDocumentRevision ?? 0) + 1;
       this.primaryNavigationFailed = false;
       this.primaryRendererReady = false;
       this.primaryDeviceEmulationDirty = true;
@@ -1663,7 +1762,7 @@ class BrowserHost {
     } else {
       await awaitInspection(this.view.webContents.loadURL(TEMPORARY_CHAT_URL), signal);
     }
-    await this.waitForAuthenticated(60_000, signal);
+    await this.waitForAuthenticated(60_000, signal, { preserveVerified: true });
   }
 
   workspaceRequestOwner(details) {
@@ -1792,6 +1891,7 @@ class BrowserHost {
 
     if (details.statusCode >= 200 && details.statusCode < 400) {
       this.cloudflareChallengeRecoveryArmed = true;
+      this.cloudflareChallengeDeferred = false;
       return false;
     }
     if (!isChatGptCloudflareChallengeResponse(details)) return false;
@@ -1800,19 +1900,56 @@ class BrowserHost {
       this.cloudflareChallengeRecoveryArmed = false;
       return true;
     }
-    if (this.activeTraceId || this.manualOperation) {
-      this.logger.warn("browser.cloudflare_challenge_not_reloaded", {
-        reason: this.activeTraceId ? "turn-active" : "manual-operation-active",
-        origin: navigationOriginForLog(details.url),
-      });
+    if (this.activeTraceId || this.manualOperation || this.loginOperation || this.readOnlyInspection) {
+      // The work owns the page now; recover once it ends unless a later response proves recovery.
+      if (!this.cloudflareChallengeDeferred) {
+        this.logger.warn("browser.cloudflare_challenge_not_reloaded", {
+          reason: this.activeTraceId ? "turn-active" : "manual-operation-active",
+          origin: navigationOriginForLog(details.url),
+          deferred: true,
+        });
+      }
+      this.cloudflareChallengeDeferred = true;
+      this.watchDeferredCloudflareChallenge();
       return true;
     }
     if (!this.cloudflareChallengeRecoveryArmed) {
       this.logger.warn("browser.cloudflare_challenge_persisted", { origin: navigationOriginForLog(details.url) });
       return true;
     }
+    this.startCloudflareChallengeRecovery(navigationOriginForLog(details.url));
+    return true;
+  }
+
+  /** Poll until the work that owned the page ends; every owner releases it on its own path. */
+  watchDeferredCloudflareChallenge() {
+    if (this.cloudflareChallengeDeferredTimer || this.destroyed) return;
+    this.cloudflareChallengeDeferredTimer = setInterval(() => {
+      if (this.cloudflareChallengeDeferred && !this.destroyed && (this.cloudflareChallengeRecovery
+        || this.activeTraceId || this.manualOperation || this.loginOperation || this.readOnlyInspection)) return;
+      clearInterval(this.cloudflareChallengeDeferredTimer);
+      this.cloudflareChallengeDeferredTimer = null;
+      this.resumeDeferredCloudflareChallenge();
+    }, CLOUDFLARE_CHALLENGE_DEFERRED_POLL_MS);
+    this.cloudflareChallengeDeferredTimer.unref?.();
+  }
+
+  /** Recover a challenge that arrived while other work owned the page, once that work has ended. */
+  resumeDeferredCloudflareChallenge() {
+    if (!this.cloudflareChallengeDeferred || this.destroyed || this.cloudflareChallengeRecovery
+      || this.activeTraceId || this.manualOperation || this.loginOperation || this.readOnlyInspection) return;
+    const contents = this.view?.webContents;
+    if (!contents || contents.isDestroyed() || httpsOrigin(contents.getURL()) !== CHATGPT_ORIGIN) {
+      this.cloudflareChallengeDeferred = false;
+      return;
+    }
+    this.startCloudflareChallengeRecovery(CHATGPT_ORIGIN);
+  }
+
+  startCloudflareChallengeRecovery(origin) {
+    this.cloudflareChallengeDeferred = false;
     this.cloudflareChallengeRecoveryArmed = false;
-    this.logger.warn("browser.cloudflare_challenge_detected", { origin: navigationOriginForLog(details.url) });
+    this.logger.warn("browser.cloudflare_challenge_detected", { origin });
     const recovery = this.reloadHomeAfterCloudflareChallenge();
     const tracked = recovery
       .catch((error) => {
@@ -1827,7 +1964,6 @@ class BrowserHost {
         if (this.cloudflareChallengeRecovery === tracked) this.cloudflareChallengeRecovery = null;
       });
     this.cloudflareChallengeRecovery = tracked;
-    return true;
   }
 
   /**
@@ -1913,14 +2049,40 @@ class BrowserHost {
     // Only responses from this new document may prove that the challenge cleared.
     this.setState({ status: "loading", message: "Refreshing ChatGPT security check", loading: true });
     this.cloudflareChallengeRecoveryArmed = false;
-    await contents.loadURL(url);
-    await sleep(CLOUDFLARE_CHALLENGE_RECOVERY_SETTLE_MS);
-    assertCurrent();
-    if (!this.cloudflareChallengeRecoveryArmed) {
-      throw new Error("ChatGPT security check is still blocking backend requests. Reload ChatGPT and retry.");
+    // The challenge can only complete on a page that renders frames.
+    this.setHomeThrottling(contents, false);
+    try {
+      await contents.loadURL(url);
+      // A hidden, throttled home page can stay silent well past one second after the reload, so a
+      // fixed settle reported every recovery as failed while the challenge had already cleared.
+      // Wait for a successful backend response; failing that, ChatGPT's own session check decides.
+      const deadline = Date.now() + CLOUDFLARE_CHALLENGE_RECOVERY_PROOF_TIMEOUT_MS;
+      await sleep(CLOUDFLARE_CHALLENGE_RECOVERY_SETTLE_MS);
+      while (!this.cloudflareChallengeRecoveryArmed && Date.now() < deadline) {
+        assertCurrent();
+        await sleep(250);
+      }
+      assertCurrent();
+      const state = await this.probeAuthentication();
+      if (!this.cloudflareChallengeRecoveryArmed && state?.authenticationStatus !== "verified") {
+        throw new Error("ChatGPT security check is still blocking backend requests. Reload ChatGPT and retry.");
+      }
+      this.logger.info("browser.cloudflare_challenge_recovered", {
+        proof: this.cloudflareChallengeRecoveryArmed ? "backend-response" : "session-verified",
+      });
+    } finally {
+      this.setHomeThrottling(contents, true);
     }
-    await this.probeAuthentication();
-    this.logger.info("browser.cloudflare_challenge_recovered");
+  }
+
+  /**
+   * Throttle the hidden home page only while nothing else needs it to render. Work that owns
+   * the page (a task, a manual operation or a sign-in) manages throttling itself.
+   */
+  setHomeThrottling(contents, throttled) {
+    if (!contents || contents.isDestroyed() || this.view?.webContents !== contents) return;
+    if (throttled && (this.activeTraceId || this.manualOperation || this.loginOperation)) return;
+    try { contents.setBackgroundThrottling(throttled); } catch {}
   }
 
   turnTabSnapshots() {
@@ -1931,18 +2093,20 @@ class BrowserHost {
     const contents = this.activeView()?.webContents;
     const selected = this.selectedTurnTab();
     const manualInteraction = browserInteractionModeFor(this) === "manual";
+    const idlePresentation = manualInteraction ? null : idleSessionPresentation(this);
+    const homeState = idlePresentation ? { ...this.state, ...idlePresentation } : this.state;
     const homeTab = {
       id: "home",
       traceId: null,
-      title: manualInteraction ? "ChatGPT" : this.state.title || "ChatGPT",
-      status: this.state.status,
-      loading: this.state.loading === true,
+      title: manualInteraction ? "ChatGPT" : homeState.title || "ChatGPT",
+      status: homeState.status,
+      loading: homeState.loading === true,
       active: this.selectedTabId === "home",
       closable: false,
     };
     const state = selected
       ? {
-          ...this.state,
+          ...homeState,
           status: selected.status,
           message: selected.message,
           url: selected.url,
@@ -1950,8 +2114,8 @@ class BrowserHost {
           loading: selected.loading,
         }
       : manualInteraction
-        ? { ...this.state, title: "ChatGPT" }
-        : this.state;
+        ? { ...homeState, title: "ChatGPT" }
+        : homeState;
     return {
       ...readBrowserNavigationState(contents, {
         ...state,
@@ -1977,7 +2141,17 @@ class BrowserHost {
     };
   }
 
-  setState(patch) {
+  setState(patch, presentationOwner) {
+    if (patch.status) {
+      // A wrapping operation failure cannot downgrade a current document error.
+      const surfaceFailure = this.state?.status === 'error' && this.browserPresentationError?.owner === 'surface';
+      this.browserPresentationError = patch.status === 'error'
+        ? { owner: presentationOwner?.operation && !surfaceFailure ? 'operation'
+          : patch.authenticationStatus ? 'authentication' : 'surface',
+          operation: presentationOwner?.operation, message: patch.message,
+          contents: this.view?.webContents, documentRevision: this.primaryDocumentRevision ?? 0 }
+        : null;
+    }
     if (patch.authenticationStatus) {
       patch = { ...patch, authenticationIssue: patch.authenticationStatus === "unavailable"
         ? authenticationIssue(patch.message) : null };
@@ -2420,6 +2594,14 @@ class BrowserHost {
     return this.snapshot();
   }
 
+  invalidateRendererSurface() {
+    if (this.destroyed) return;
+    this.boundsReady = false;
+    this.surfaceActive = false;
+    this.syncViewVisibility();
+    this.setState({ surfaceActive: false });
+  }
+
   async waitForSurfaceReady(timeoutMs = 15_000, pollMs = 50) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -2714,9 +2896,12 @@ class BrowserHost {
           this.apiPanelContents.set(contents, window);
           this.workspaceMetadata.set(contents, metadata);
           this.permissionPolicy.register(contents, 'auth'); this.externalLinkBroker.register(contents);
-          contents.on("did-navigate", (_event, address) => {
-            if (googleRefusedEmbeddedSignIn(address)) this.handOffRefusedApiPanel(contents);
-          });
+          const handOff = (_event, address) => {
+            if (googleRefusedEmbeddedSignIn(address)) this.handOffRefusedApiPanel(contents, "google");
+            else if (passkeyRequiredInEmbeddedSignIn(address)) this.handOffRefusedApiPanel(contents, "passkey");
+          };
+          contents.on("did-navigate", handOff);
+          contents.on("did-navigate-in-page", handOff);
         },
         unregister: contents => {
           for (const [requestId, pending] of this.workspaceMutationRequests) {
@@ -2818,10 +3003,12 @@ class BrowserHost {
   }
 
   /** Google refused sign-in in the panel: continue the same fixed Platform page in the system browser. */
-  handOffRefusedApiPanel(contents) {
+  handOffRefusedApiPanel(contents, reason = "google") {
     const window = this.apiPanelContents.get(contents);
+    if (!window || window.isDestroyed() || this.apiPanelHandoffs?.has(window)) return;
+    (this.apiPanelHandoffs ??= new WeakSet()).add(window);
     const section = [...(this.apiPanelWindows ?? new Map())].find(([, candidate]) => candidate === window)?.[0] ?? "tunnels";
-    this.logger.info("browser.api_panel_google_handoff", { section });
+    this.logger.info(reason === "passkey" ? "browser.api_panel_passkey_handoff" : "browser.api_panel_google_handoff", { section });
     void shell.openExternal(openAiApiPanelUrl(section)).catch(error => this.logger.warn("browser.api_panel_handoff_failed", {
       message: error instanceof Error ? error.message : String(error) }));
     if (window && !window.isDestroyed()) window.close();
@@ -3107,7 +3294,7 @@ class BrowserHost {
     return this.snapshot();
   }
 
-  async clearOwnedSessionForPasskey() {
+  async clearOwnedSessionForPasskey({ keepCloudflareCookies = false } = {}) {
     if (!(this.turnTabs instanceof Map)) throw new Error("Owned ChatGPT tab registry is unavailable");
     this.authGeneration = (this.authGeneration ?? 0) + 1;
     if (this.authView) this.closeAuthView(this.authView, true, false);
@@ -3121,7 +3308,19 @@ class BrowserHost {
       throw new Error("Owned ChatGPT views do not share one browser session");
     }
     await Promise.all(contents.map(candidate => candidate.loadURL(IDLE_BROWSER_URL)));
-    await browserSession.clearStorageData();
+    if (keepCloudflareCookies) {
+      // Cloudflare's cookies here were issued to this view's own user agent and network. An
+      // import replaces the ChatGPT sign-in only; keeping them avoids a fresh challenge.
+      await browserSession.clearStorageData({ storages: NON_COOKIE_STORAGES });
+      for (const cookie of await browserSession.cookies.get({})) {
+        if (CLOUDFLARE_COOKIE.test(cookie.name)) continue;
+        const host = String(cookie.domain ?? "").replace(/^\./, "");
+        if (!host) continue;
+        await browserSession.cookies.remove(`${cookie.secure ? "https" : "http"}://${host}${cookie.path || "/"}`, cookie.name);
+      }
+    } else {
+      await browserSession.clearStorageData();
+    }
     browserSession.flushStorageData();
     await browserSession.cookies.flushStore();
     this.retireAuthenticatedIdentity();
@@ -3276,9 +3475,12 @@ class BrowserHost {
       signal?.throwIfAborted();
       sessionMutated = true;
       verificationStage = "install-session";
-      await this.clearOwnedSessionForPasskey();
+      await this.clearOwnedSessionForPasskey({ keepCloudflareCookies: true });
       for (const cookie of state.cookies) {
         signal?.throwIfAborted();
+        // Chrome's Cloudflare cookies are bound to Chrome's user agent; installing them here
+        // replaced this view's working ones and triggered a challenge after every import.
+        if (CLOUDFLARE_COOKIE.test(cookie.name)) continue;
         await contents.session.cookies.set(cookie);
       }
       contents.session.flushStorageData();
@@ -3332,6 +3534,7 @@ class BrowserHost {
       this.logger.warn("browser.session_import_verification_failed", {
         stage: verificationStage,
         code: typeof caught?.code === "string" && /^[a-z_-]{1,64}$/.test(caught.code) ? caught.code : null,
+        reason: sessionImportFailureReason(caught),
         authenticationStatus: this.state.authenticationStatus,
         observation: this.lastAuthenticationSurfaceObservation ?? null,
       });
@@ -3443,8 +3646,21 @@ class BrowserHost {
         if (contents.getURL() === IDLE_BROWSER_URL || this.primaryNavigationFailed) {
           await awaitInspection(contents.loadURL(TEMPORARY_CHAT_URL), signal);
         }
-        const state = await awaitInspection(this.probeAuthentication({ signal, observationOnly: true }), signal);
+        let state = await awaitInspection(this.probeAuthentication({ signal, observationOnly: true }), signal);
         signal.throwIfAborted();
+        // ChatGPT's own error pages ("We couldn't load your account", an unfinished security
+        // check) keep the Temporary Chat URL but render no composer, so no draft can be lost.
+        // Re-observing them never recovers; load the page again once and re-check.
+        const surface = this.lastAuthenticationSurfaceObservation;
+        if (state.authenticationStatus !== "verified" && state.authenticationStatus !== "signed-out"
+          && (this.authGeneration ?? 0) === generation
+          && surface?.composer === false && surface.readyState === "complete"
+          && !contents.isDestroyed() && contents.getURL().startsWith(CHATGPT_ORIGIN)) {
+          this.logger.info("browser.session_surface_reloaded", { reason: "composer-missing" });
+          await awaitInspection(contents.loadURL(TEMPORARY_CHAT_URL), signal);
+          state = await awaitInspection(this.probeAuthentication({ signal, observationOnly: true }), signal);
+          signal.throwIfAborted();
+        }
         if ((this.authGeneration ?? 0) !== generation) {
           throw new Error("ChatGPT session verification is unavailable: browser session changed");
         }
@@ -3479,6 +3695,13 @@ class BrowserHost {
     // only the ordinary probe: setup, observation-only and caller-cancelled probes keep
     // their own authority and cancellation semantics.
     const ordinary = !options.forSetup && !options.observationOnly && !options.signal;
+    // A check that owns the page also navigates it (connector verification visits a saved chat)
+    // and probes with its own signal. A page-load probe meanwhile would publish that visit as a
+    // lost sign-in; observe once the check has released the page instead.
+    if (ordinary && this.readOnlyInspection) {
+      this.authProbeDeferredForInspection = true;
+      return Promise.resolve(this.snapshot());
+    }
     if (ordinary && this.defaultAuthProbe) return this.defaultAuthProbe;
     const operation = (this.authProbeTail ?? Promise.resolve()).then(
       () => this.runAuthenticationProbe(options),
@@ -3495,7 +3718,7 @@ class BrowserHost {
     return tracked;
   }
 
-  async runAuthenticationProbe({ forSetup = false, observationOnly = false, signal } = {}) {
+  async runAuthenticationProbe({ forSetup = false, observationOnly = false, preserveVerified = false, signal } = {}) {
     signal?.throwIfAborted();
     requireAutomaticBrowserInspection(this, "ChatGPT authentication probe");
     if (!this.view || this.view.webContents.isDestroyed()) {
@@ -3506,6 +3729,7 @@ class BrowserHost {
     const probeRevision = ++this.authProbeRevision;
     const primaryView = this.view;
     const primaryContents = primaryView.webContents;
+    const documentRevision = this.primaryDocumentRevision ?? 0;
     let authView = this.authView;
     // Page-load event probes run independently of the tracked login operation.
     // A response from an old session or a replaced popup must not alter the new one.
@@ -3594,11 +3818,7 @@ class BrowserHost {
         this.closeAuthView(authView, true, false);
       }
       const wasAuthenticated = this.state.authenticated;
-      const availability = this.activeTraceId
-        ? { status: "running", message: "ChatGPT is working" }
-        : this.manualOperation
-          ? {}
-          : { status: "ready", message: "ChatGPT is ready" };
+      const availability = verifiedSessionPresentation(this);
       if (typeof result.principalFingerprint !== "string"
         || !/^[a-f0-9]{64}$/.test(result.principalFingerprint)
         || typeof result.sessionFingerprint !== "string"
@@ -3617,9 +3837,13 @@ class BrowserHost {
         this.authPrincipalFingerprint = result.principalFingerprint;
         this.authSessionFingerprint = result.sessionFingerprint;
         this.authIdentityEpoch += 1;
-        this.onAuthIdentityChanged(this.accountId, this.authIdentityEpoch);
+        this.onAuthIdentityChanged(this.accountId, this.authIdentityEpoch,
+          { principalChanged: previousPrincipal !== result.principalFingerprint });
       }
       const verifiedAt = new Date().toISOString();
+      this.verifiedHomeDocument = { contents: primaryContents, documentRevision,
+        identityEpoch: this.authIdentityEpoch, principalFingerprint: this.authPrincipalFingerprint,
+        sessionFingerprint: this.authSessionFingerprint, verifiedAt, url: result.url || url };
       this.setState({ ...availability, authenticated: true, authenticationStatus: "verified",
         authenticationCheckedAt: verifiedAt, lastVerifiedAt: verifiedAt,
         accountLabel: result.accountLabel ?? null, url: result.url });
@@ -3631,6 +3855,11 @@ class BrowserHost {
       const failure = result.sessionVerification === "unavailable" ? result.verificationFailure
         : authResult?.sessionVerification === "unavailable" ? authResult.verificationFailure
           : "Temporary Chat surface unavailable";
+      if (preserveVerified && !(rejected && loaded) && this.state.authenticationStatus === "verified") {
+        // The caller owns this page and is waiting through its own reload. A page that is still
+        // loading is not a lost session, so tell the caller without publishing a sign-in drop.
+        return { ...this.snapshot(), authenticated: false, authenticationStatus: "unknown" };
+      }
       if (rejected && loaded) this.retireAuthenticatedIdentity();
       const checkedAt = new Date().toISOString();
       this.setState({
@@ -3649,8 +3878,9 @@ class BrowserHost {
     return this.snapshot();
   }
 
-  async waitForAuthenticated(timeoutMs = 180_000, signal) {
+  async waitForAuthenticated(timeoutMs = 180_000, signal, { preserveVerified = false } = {}) {
     const deadline = Date.now() + timeoutMs;
+    let challengeReloadAt = 0;
     while (Date.now() < deadline) {
       signal?.throwIfAborted();
       if (this.authNavigationError) {
@@ -3658,9 +3888,23 @@ class BrowserHost {
         this.authNavigationError = null;
         throw error;
       }
-      const state = await awaitInspection(this.probeAuthentication({ signal }), signal);
+      const state = await awaitInspection(this.probeAuthentication({ signal, preserveVerified }), signal);
       signal?.throwIfAborted();
       if (state.authenticated) return state;
+      // A challenge during sign-in leaves ChatGPT on "We couldn't load your account" with no
+      // composer, and the user's own Reload is locked meanwhile. Reload that ChatGPT page (never
+      // an auth provider page) at a bounded rate.
+      const surface = this.lastAuthenticationSurfaceObservation;
+      const contents = this.view?.webContents;
+      if (this.cloudflareChallengeDeferred && surface?.composer === false && surface.readyState === "complete"
+        && contents && !contents.isDestroyed() && httpsOrigin(contents.getURL()) === CHATGPT_ORIGIN
+        && Date.now() - challengeReloadAt >= DEFERRED_CHALLENGE_SIGN_IN_RELOAD_MS) {
+        challengeReloadAt = Date.now();
+        this.cloudflareChallengeDeferred = false;
+        this.logger.info("browser.session_surface_reloaded", { reason: "deferred-challenge" });
+        await awaitInspection(contents.loadURL(TEMPORARY_CHAT_URL), signal);
+        continue;
+      }
       await delay(750, undefined, { signal });
     }
     throw new Error("ChatGPT login was not completed before the timeout");
@@ -3706,14 +3950,17 @@ class BrowserHost {
 
   async verifyConnector(appName) {
     requireAutomaticBrowserInspection(this, "ChatGPT connector verification");
-    return await this.withReadOnlyInspection("connector verification", signal => this.runConnectorVerification(appName, signal));
+    return await this.withReadOnlyInspection("connector verification", signal => this.runConnectorVerification(appName, signal),
+      { timeoutMs: CONNECTOR_VERIFICATION_TIMEOUT_MS });
   }
 
   async runConnectorVerification(appName, signal) {
     requireAutomaticBrowserInspection(this, "ChatGPT connector verification");
     const connectorName = validateConnectorName(appName);
     this.setState({ status: "testing", message: "Checking ChatGPT connector" });
-    await this.refreshChatGptHomeDocument(signal);
+    // The helper opens a new saved chat, a fresh document with the current plugin catalog, so
+    // refreshing the Temporary Chat page first would only spend the check's time budget.
+    signal?.throwIfAborted();
     try {
       const result = await verifyConnectorWithBrowserHelper({
         helper: this.helper,
@@ -3723,6 +3970,8 @@ class BrowserHost {
         signal,
       });
       signal?.throwIfAborted();
+      // The helper returns the page to Temporary Chat; publish ready only once it has loaded again.
+      await this.waitForAuthenticated(CONNECTOR_SESSION_SETTLE_MS, signal, { preserveVerified: true });
       this.logger.info("connector.verified", { appName: connectorName });
       this.setState({ status: "ready", message: "ChatGPT connector is available" });
       return result;
@@ -3807,7 +4056,7 @@ class BrowserHost {
       const message = error instanceof Error ? error.message : String(error);
       this.setState(signal?.aborted
         ? { status: this.state.authenticated ? "ready" : "idle", message, loading: false }
-        : { status: "error", message });
+        : { status: "error", message }, signal?.aborted ? undefined : { operation: name });
       throw error;
     } finally {
       // Native renderer bookkeeping must not retain the operation lease if it throws.
@@ -3963,6 +4212,10 @@ class BrowserHost {
 
   destroy() {
     this.destroyed = true;
+    this.releasedHomeObservation?.abort();
+    this.releasedHomeObservation = null;
+    clearInterval(this.cloudflareChallengeDeferredTimer);
+    this.cloudflareChallengeDeferredTimer = null;
     clearTimeout(this.authenticationRefreshTimer);
     clearTimeout(this.networkEgressRecheckTimer);
     cancelSessionRecheck(this);
@@ -4010,6 +4263,7 @@ class BrowserHost {
 }
 
 module.exports = {
+  bindRendererSurfaceInvalidation,
   allowedAuthUrl,
   allowedWorkspaceUrl,
   guardBrowserNavigation,
@@ -4026,5 +4280,6 @@ module.exports = {
   MANUAL_COMPACTION_SUBMIT_TIMEOUT_MS,
   navigationErrorForLog,
   navigationOriginForLog,
+  sessionImportFailureReason,
   TEMPORARY_CHAT_URL,
 };

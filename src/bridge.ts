@@ -584,8 +584,11 @@ export function bridgeToResponsesSSE(
   });
 }
 
-export function formatErrorResponse(status: number, type: string, message: string): Response {
-  return new Response(JSON.stringify({ error: classifyError(status, type, message) }), {
+export function formatErrorResponse(status: number, type: string, message: string, code?: string): Response {
+  // An explicit code keeps NEKODEX's own unavailability out of the generic 503 classification,
+  // which Codex shows as "Selected model is at capacity" instead of the real message.
+  const error = code ? { message, type, code } : classifyError(status, type, message);
+  return new Response(JSON.stringify({ error }), {
     status, headers: { "Content-Type": "application/json" },
   });
 }
