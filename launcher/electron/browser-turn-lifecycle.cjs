@@ -2,6 +2,7 @@ const { publishBrowserSnapshot } = require("./browser-state-publication.cjs");
 const { randomBytes } = require("node:crypto");
 const { processRunning } = require("./process-tree.cjs");
 const { refreshTurnLeasesAfterSuspension, sweepGapIndicatesSuspension } = require("./turn-suspension.cjs");
+const { assertTaskPlanObservation } = require("./task-plan-observation.cjs");
 
 const MAX_CANCELLED_TURN_TRACES = 256;
 // Lease guards reclaim lost helpers, never a live heartbeating ChatGPT turn.
@@ -51,6 +52,25 @@ class BrowserTurnLifecycle {
     }
     this.context.ledger.progress(tab.taskRecordId, phase, sequence, observation);
     publishBrowserSnapshot(this.presentation);
+  }
+
+  async taskPlan(traceId, helperPid, surfaceId, taskRecordId, observation) {
+    assertTaskPlanObservation(observation);
+    const tab = [...this.tabs.values()].find(candidate => candidate.traceId === traceId);
+    const record = this.context.ledger?.get(taskRecordId);
+    if (!tab || tab.helperPid !== helperPid || tab.surfaceId !== surfaceId || tab.status !== 'running'
+      || tab.taskRecordId !== taskRecordId || !record || record.terminal || record.traceId !== traceId || record.tabId !== tab.id) {
+      throw new Error('Task plan does not match a live browser owner');
+    }
+    const native = record.observation?.native;
+    if (!native || native.source !== 'codex-client' || !observation.native
+      || native.threadId !== observation.native.threadId || native.turnId !== observation.native.turnId) {
+      throw new Error('Task plan native owner does not match stored task metadata');
+    }
+    if (!this.context.taskPlans?.enabled()) return { captured: false };
+    const result = await this.context.taskPlans.capture({ accountId: this.context.accountId, taskId: taskRecordId, observation });
+    publishBrowserSnapshot(this.presentation);
+    return result;
   }
 
   async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, taskProgressVersion, taskModel, signal) {
@@ -469,6 +489,7 @@ class BrowserTurnLifecycle {
         surfaceId: existing.surfaceId,
         taskProgressVersion: 1,
         taskProgressSequence: this.context.ledger?.get(existing.taskRecordId)?.sequence ?? 0,
+        taskRecordId: existing.taskRecordId,
         tabId: existing.id,
         reused,
         connectorBound: existing.connectorBound === true,
@@ -488,6 +509,7 @@ class BrowserTurnLifecycle {
     this.logger.info("browser.tab_created", { tabId: tab.id, traceId, tabCount: this.tabs.size });
     this.presentation.writeDescriptor();
     return { surfaceId: tab.surfaceId, tabId: tab.id, reused: false, connectorBound: false,
+      taskRecordId: tab.taskRecordId,
       taskProgressVersion: 1, taskProgressSequence: 0 };
   }
 

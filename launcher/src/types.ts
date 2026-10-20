@@ -1,4 +1,18 @@
 import languages from "../electron/languages.json";
+import type { TaskPlanObservation, TaskPlanPolicy, TaskRequirementBook, TaskRequirementSaveInput, TaskRequirementCoverageInput } from './task-plan-types';
+import type { NativeThreadsApi } from './native-threads-types';
+import type { NativePersistentApi } from './native-persistent-types';
+import type { WorkspaceTerminalApi } from './workspace-terminal-types';
+import type { RemoteWorkspaceApi } from '../electron/remote-workspace.cjs';
+import type { WorkspaceGitControlsApi } from './WorktreeControls';
+import type { LocalGitReviewApi } from '../electron/local-git-review.cjs';
+import type { ExternalUsageRequest, ExternalUsageSelection, ExternalUsageSnapshot } from '../electron/external-usage.cjs';
+import type { AgentWorkspaceRoot, AgentWorkspaceGrantSummary } from './agent-mode-types';
+import type { AgentToolsApi } from './agent-tools-types';
+import type { BrowserCompanionApi } from './browser-companion-types';
+import type { LocalControlApiAdminApi } from './local-control-api-types';
+import type { LocalWorkspaceRoot, WorkspaceDraft, WorkspaceGitBases, WorkspaceGitDiff, WorkspaceGitStatus,
+  WorkspaceListing, WorkspacePreview, WorkspaceSaveResult } from "../electron/local-workspace.cjs";
 
 export type Language = keyof typeof languages;
 export type LauncherProfile = "production" | "development";
@@ -8,7 +22,7 @@ export type Appearance = "system" | "dark" | "light";
 export type ResolvedTheme = "dark" | "light";
 export type AuthenticationStatus = "unknown" | "verified" | "signed-out" | "unavailable";
 export type ProModelVersion = "5.6" | "5.5" | "6";
-export type Surface = "overview" | "accounts" | "browser" | "tasks" | "setup" | "mcp" | "activity" | "settings" | "updates";
+export type Surface = "overview" | "accounts" | "browser" | "tasks" | "workspace" | "remote-workspace" | "history" | "native-threads" | "agent-mode" | "agent-tools" | "browser-companion" | "local-control-api" | "external-usage" | "setup" | "mcp" | "activity" | "settings" | "updates";
 
 export interface LauncherState {
   version: 1;
@@ -418,6 +432,10 @@ export interface AccountQuotaSnapshot {
   freshness?: "fresh" | "stale";
   freshUntil?: string | null;
   refreshError?: string | null;
+  /** An unavailable read that can heal by itself (timeout, network, 5xx, session not ready, cancelled read). */
+  transient?: boolean;
+  /** For a transient read: how long after checkedAt another read may succeed. */
+  retryAfterMs?: number | null;
 }
 export interface AccountQuotaPortfolioRow {
   accountId: string;
@@ -458,7 +476,7 @@ export interface AccountPoolSnapshot {
     proxy: AccountProxy;
     safety: { policy: AccountSafetyPolicy; cooldownUntil: number; stopped: boolean;
       newSessionWindow: AccountNewSessionWindowStatus | null };
-    accountLabel: string | null; activeTurns: number; checked: boolean; connectorReady: boolean; evidenceEpoch?: number;
+    accountLabel: string | null; activeTurns: number; checked: boolean; connectorReady: boolean; evidenceEpoch?: number; evidenceChecking?: boolean;
     /** Last completed task on this account whose tool returned without an error. */
     toolProof?: { at: number; tool: string } | null }>;
 }
@@ -472,6 +490,18 @@ export interface AccountTunnelView {
   /** Machine-readable cause while not ready, e.g. "openai_unreachable". */
   reason?: string;
   detail?: string;
+  /** Saved storage form only; this does not probe vault unlock or runtime readiness. */
+  credentialStorage?: 'legacy' | 'protected' | 'unavailable';
+  credentialMigrationPending?: boolean;
+}
+
+export interface AccountTunnelCredentialMigrationResult {
+  ok: boolean;
+  saved: boolean;
+  ready: boolean;
+  migrated: boolean;
+  legacyRetired: boolean;
+  recoveryRequired?: boolean;
 }
 
 export interface BrowserCapacitySettings {
@@ -576,8 +606,54 @@ export interface RouteDiagnosticsReport {
   };
 }
 
-export interface LauncherApi {
+export interface LauncherApi extends NativeThreadsApi, NativePersistentApi, WorkspaceTerminalApi, RemoteWorkspaceApi, WorkspaceGitControlsApi, LocalGitReviewApi {
+  workspaceRoots(): Promise<LocalWorkspaceRoot[]>;
+  workspaceOpenWorktree(sourceRootId: string, worktreeId: string): Promise<LocalWorkspaceRoot>;
+  workspacePick(): Promise<LocalWorkspaceRoot | null>;
+  workspaceForget(id: string): Promise<boolean>;
+  workspaceList(id: string, path?: string): Promise<WorkspaceListing>;
+  workspacePreview(id: string, path: string): Promise<WorkspacePreview>;
+  workspaceSave(id: string, input: { path: string; expectedRevision: string | null; text: string; draftId?: string }): Promise<WorkspaceSaveResult>;
+  workspaceRetainDraft(id: string, input: { path: string; expectedRevision: string | null; text: string; draftId?: string }): Promise<WorkspaceDraft>;
+  workspaceDrafts(id: string): Promise<WorkspaceDraft[]>;
+  workspaceDiscardDraft(id: string, draftId: string): Promise<boolean>;
+  workspaceGitBases(id: string): Promise<WorkspaceGitBases>;
+  workspaceGitStatus(id: string, options?: { baseId: string }): Promise<WorkspaceGitStatus>;
+  workspaceGitDiff(id: string, snapshotId: string): Promise<WorkspaceGitDiff>;
   restartLauncher(): Promise<boolean>;
+  taskPlanPolicy(): Promise<TaskPlanPolicy>;
+  conversationHistoryRequest(body: { action: string; [key: string]: unknown }): Promise<unknown>;
+  copyConversationHistoryText(text: string): Promise<unknown>;
+  saveConversationHistoryMarkdown(markdown: string): Promise<{ saved: boolean; path?: string }>;
+  agentMode(body: Record<string, unknown>): Promise<unknown>;
+  loopFileWatcherRequest(body: import('./AgentLoopFileWatcher').LoopFileWatcherRequest): Promise<import('./AgentLoopFileWatcher').LoopFileWatcherResponse>;
+  loopProducerRequest(body: import('./AgentLoopExternalProducer').LoopExternalProducerRequest): Promise<import('./AgentLoopExternalProducer').LoopExternalProducerResponse>;
+  nativeAccountsRequest(body: import('./native-accounts-types').NativeAccountsRequest | import('./native-accounts-types').NativeInventoryRequest | import('./native-accounts-types').NativeExecutionCloseRequest): Promise<import('./native-accounts-types').NativeAccountsSnapshot>;
+  openNativeAccountVerification(url: string): Promise<unknown>;
+  copyNativeAccountCode(code: string): Promise<unknown>;
+  agentWorkspaceRoots(): Promise<AgentWorkspaceRoot[]>;
+  agentWorkspaceGrants(): Promise<AgentWorkspaceGrantSummary[]>;
+  revokeAgentWorkspaceGrant(grantId: string): Promise<unknown>;
+  agentTools: AgentToolsApi['request'];
+  oauthMcpRequest: import('./AgentOAuthMcpPanel').OAuthMcpTransport;
+  pickAgentSkillRoot: AgentToolsApi['pickSkillRoot'];
+  pickAgentToolsInstallRoot(): Promise<{ cancelled: boolean; root?: string }>;
+  pickAgentScriptWorkspace(): Promise<{ cancelled: boolean; root?: string }>;
+  pickAgentPythonWheels(): Promise<{ cancelled: boolean; wheelPaths?: string[] }>;
+  pickAgentOAuthProvider(): Promise<{ cancelled: boolean; review?: import('../../src/agent-tools/oauth-types').OAuthProviderRegistrationReview }>;
+  pickAgentPythonBuildSelection(scope: import('./agent-tools-types').ToolScope, config: import('./agent-tools-types').AgentPythonBuildConfig): Promise<{ cancelled: boolean; selection?: import('./agent-tools-types').AgentPythonBuildSelection }>;
+  browserCompanion: BrowserCompanionApi['request'];
+  copyBrowserPairing: NonNullable<BrowserCompanionApi['copyPairing']>;
+  localControlApiRequest: LocalControlApiAdminApi['request'];
+  externalUsageRequest(body: ExternalUsageRequest): Promise<ExternalUsageSnapshot>;
+  externalUsagePick(selection: ExternalUsageSelection): Promise<ExternalUsageSnapshot>;
+  setTaskPlanCapture(enabled: boolean, expectedRevision: number): Promise<TaskPlanPolicy>;
+  taskPlan(accountId: string, taskId: string): Promise<TaskPlanObservation | null>;
+  taskRequirements(accountId: string, taskId: string): Promise<TaskRequirementBook | null>;
+  saveTaskRequirements(input: TaskRequirementSaveInput): Promise<TaskRequirementBook>;
+  updateTaskRequirementCoverage(input: TaskRequirementCoverageInput): Promise<TaskRequirementBook>;
+  deleteTaskRequirements(accountId: string, taskId: string, expectedRevision: number): Promise<{ deleted: boolean }>;
+  deleteTaskPlan(accountId: string, taskId: string): Promise<{ deleted: boolean }>;
   cancelContextChange(): Promise<LauncherState>;
   confirmCodexModels(): Promise<LauncherState>;
   getClientConnections(): Promise<ClientConnectionsSnapshot>;
@@ -633,16 +709,22 @@ export interface LauncherApi {
   setupMcp(input: {
     tunnelId?: string;
     runtimeKey?: string;
+    credentialStorage?: 'os-vault' | 'legacy-file';
     replace?: boolean;
     interactionMode?: BrowserInteractionMode;
   }): Promise<{ ok: boolean; stdout: string }>;
   configureAccountTunnel(accountId: string, input: {
     tunnelId: string;
     runtimeKey?: string;
+    credentialStorage?: 'os-vault' | 'legacy-file';
     interactionMode?: BrowserInteractionMode;
     reuseSavedCredentials?: boolean;
   }): Promise<{ ok: boolean; saved?: boolean; ready?: boolean; recoveryRequired?: boolean }>;
   removeAccountTunnel(accountId: string, interactionMode?: BrowserInteractionMode): Promise<{ ok: boolean; saved?: boolean; recoveryRequired?: boolean }>;
+  migrateAccountTunnelCredential(accountId: string, input: {
+    interactionMode?: BrowserInteractionMode;
+    principalFingerprint?: string;
+  }): Promise<AccountTunnelCredentialMigrationResult>;
   setMcpStep(step: number): Promise<LauncherState>;
   setAutostart(enabled: boolean): Promise<{ state: LauncherState; supported: boolean; enabled: boolean }>;
   setBiggerContext(enabled: boolean): Promise<LauncherState>;

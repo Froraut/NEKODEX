@@ -25,13 +25,33 @@ export type BrowserHostMode = "managed-chrome" | "launcher";
 export type BrowserInteractionMode = "automatic" | "manual";
 export type SubagentProtocol = "compatibility-v1" | "native";
 
-export interface TunnelConfig {
+export interface TunnelCredentialReference {
+  version: 1;
+  provider: "os-vault";
+  id: string;
+  revision: string;
+}
+
+interface TunnelConfigBase {
   binaryPath: string;
   tunnelId: string;
-  runtimeKeyFile: string;
   profileDir: string;
   profileName: string;
   alias: string;
+  legacyCredentialRetirement?: { version: 1; path: string; sha256: string; dev: number; ino: number };
+}
+
+export type TunnelConfig = TunnelConfigBase & (
+  | { runtimeKeyFile: string; credential?: never }
+  | { credential: TunnelCredentialReference; runtimeKeyFile?: never }
+);
+
+export function isTunnelCredentialReference(value: unknown): value is TunnelCredentialReference {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const ref = value as Record<string, unknown>;
+  const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
+  return Object.keys(ref).length === 4 && ref.version === 1 && ref.provider === "os-vault"
+    && typeof ref.id === "string" && uuid.test(ref.id) && typeof ref.revision === "string" && uuid.test(ref.revision);
 }
 
 export interface AccountTunnelBinding {
@@ -494,7 +514,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (!/^[A-Za-z0-9_-]{40,}$/.test(parsed.controlToken!)) throw new Error(`Invalid controlToken in ${path}`);
   const validateTunnel = (tunnel: TunnelConfig | undefined, label: string): void => {
     if (!tunnel || typeof tunnel !== "object") throw new Error(`${label} is missing in ${path}`);
-    for (const key of ["binaryPath", "tunnelId", "runtimeKeyFile", "profileDir", "profileName", "alias"] as const) {
+    for (const key of ["binaryPath", "tunnelId", "profileDir", "profileName", "alias"] as const) {
       if (typeof tunnel[key] !== "string" || !tunnel[key].trim()) {
         throw new Error(`Missing ${label}.${key} in ${path}`);
       }
@@ -507,7 +527,25 @@ function parseConfig(value: unknown, path: string): AppConfig {
         throw new Error(`Invalid ${label}.${key} in ${path}`);
       }
     }
-    for (const key of ["binaryPath", "runtimeKeyFile", "profileDir"] as const) {
+    if (tunnel.credential !== undefined) {
+      if (tunnel.runtimeKeyFile !== undefined || !isTunnelCredentialReference(tunnel.credential)) {
+        throw new Error(`${label} must contain one valid credential reference without runtimeKeyFile in ${path}`);
+      }
+    } else if (typeof tunnel.runtimeKeyFile !== "string" || !tunnel.runtimeKeyFile.trim()
+      || !isAbsolute(expandUserPath(tunnel.runtimeKeyFile))) {
+      throw new Error(`${label}.runtimeKeyFile must be absolute or replaced by a valid credential reference in ${path}`);
+    }
+    if (tunnel.legacyCredentialRetirement !== undefined) {
+      const retirement = tunnel.legacyCredentialRetirement;
+      if (!tunnel.credential || !retirement || Object.keys(retirement).length !== 5 || retirement.version !== 1
+        || typeof retirement.path !== "string" || !isAbsolute(retirement.path)
+        || !/^[a-f0-9]{64}$/.test(retirement.sha256)
+        || !Number.isSafeInteger(retirement.dev) || retirement.dev < 0
+        || !Number.isSafeInteger(retirement.ino) || retirement.ino < 0) {
+        throw new Error(`Invalid ${label}.legacyCredentialRetirement in ${path}`);
+      }
+    }
+    for (const key of ["binaryPath", "profileDir"] as const) {
       if (!isAbsolute(expandUserPath(tunnel[key]))) {
         throw new Error(`${label}.${key} must be absolute in ${path}`);
       }

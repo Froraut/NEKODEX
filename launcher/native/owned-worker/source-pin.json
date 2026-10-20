@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "artifact": "nekodex-owned-native-worker",
+  "developmentOnly": true,
+  "codexVersion": "0.163.0",
+  "codexRepository": "https://github.com/openai/codex.git",
+  "codexRevision": "83086188ae0614bd882818ff1aa23f3194962012",
+  "rustToolchain": "1.95.0",
+  "sessionSource": "nekodex-owned-worker",
+  "transport": "stdio",
+  "ownerMaxLineBytes": 1048576,
+  "childInternalLineBound": false,
+  "strictConfig": true,
+  "pluginStartupTasks": "skip",
+  "remoteControl": "disabled-ephemeral",
+  "managedDaemon": false,
+  "managedPolicyBypass": false,
+  "authClassifier": true,
+  "authClassifierVersion": 1,
+  "runtimeVerified": false,
+  "realProviderVerified": false
+}

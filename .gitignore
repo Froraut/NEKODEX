@@ -17,3 +17,11 @@ launcher/artifacts/
 .playwright-cli/
 output/
 notes.md
+
+# Generated native helper; Swift source remains tracked under launcher/native/.
+launcher/electron/credential-helper/
+launcher/electron/oauth-vault-helper/
+launcher/electron/desktop-helper/
+launcher/electron/skill-pdf-helper/
+launcher/electron/execution-vm-helper/
+launcher/native/execution-guest/.build/

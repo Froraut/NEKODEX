@@ -1,6 +1,7 @@
 const {
   tunnelConnectCanContinue, tunnelControlDiagnostic, managedTunnelConnectArgs,
   recoveryBackoffDelay, tunnelObservationInconclusive,
+  TUNNEL_RUNTIME_KEY_ENV, tunnelCredentialScope, tunnelCredentialEnvironment,
 } = require("./runtime-tunnel-policy.cjs");
 const { TunnelPollHealth, parseTunnelPollMetrics } = require("./tunnel-poll-health.cjs");
 const { collectRuntimeLines: collectLines } = require("./runtime-output.cjs");
@@ -21,6 +22,8 @@ const {
 } = require("./process-tree.cjs");
 const { runtimeInvocation } = require("./runtime-command.cjs");
 const { ASYNC_CONNECTOR_NAME, ASYNC_DEV_CONNECTOR_NAME } = require("./connector-identity.cjs");
+const { createCredentialProvider, isCredentialReference } = require('./tunnel-credentials.cjs');
+const { processIdentity } = require('./update-recovery.cjs');
 
 const NATIVE_BACKGROUND_ROUTE_KEY = "CODEX_CHATGPT_WEB_NATIVE_BACKGROUND_ROUTE";
 const RESTART_WINDOW_MS = 60_000;
@@ -115,6 +118,7 @@ class RuntimeSupervisor {
     runtimeInvocationFactory = runtimeInvocation,
     nativeProxyEnvironmentProvider = async () => ({}),
     tunnelProxyEnvironmentProvider = async () => ({}),
+    credentialProvider,
   }) {
     this.app = app;
     this.logger = logger;
@@ -132,6 +136,8 @@ class RuntimeSupervisor {
     this.runtimeInvocationFactory = runtimeInvocationFactory;
     this.nativeProxyEnvironmentProvider = nativeProxyEnvironmentProvider;
     this.tunnelProxyEnvironmentProvider = tunnelProxyEnvironmentProvider;
+    this.credentialProvider = credentialProvider ?? null;
+    this.lastCredentialLaunch = null;
     this.configPath = path.join(coreHome, "config.json");
     this.statePath = path.join(coreHome, "runtime", "launcher-supervisor.json");
     this.daemon = null;
@@ -193,6 +199,7 @@ class RuntimeSupervisor {
         runtimeInvocationFactory: this.runtimeInvocationFactory,
         nativeProxyEnvironmentProvider: this.nativeProxyEnvironmentProvider,
         tunnelProxyEnvironmentProvider: this.tunnelProxyEnvironmentProvider,
+        credentialProvider: this.credentialProvider,
         readConfig: () => this.readConfig(),
       }, () => this.publishAccountTunnelCapabilities());
     }
@@ -218,6 +225,30 @@ class RuntimeSupervisor {
   getAccountTunnelStatus(accountId, mode) {
     return this.accountTunnelSupervisor?.getStatus(accountId, mode)
       || { accountId, interactionMode: mode, status: "unconfigured", ready: false, pid: null };
+  }
+
+  hasVerifiedAccountCredentialLaunch(accountId, mode, reference) {
+    const peer = this.accountTunnelSupervisor?.peers.get(`${accountId}\0${mode}`);
+    return peer?.hasVerifiedCredentialLaunch(reference) === true;
+  }
+
+  hasVerifiedCredentialLaunch(reference) {
+    const receipt = this.lastCredentialLaunch;
+    const config = this.readConfig();
+    if (!receipt || !config?.tunnel?.credential || !isDeepStrictEqual(reference, receipt.reference)
+      || !isDeepStrictEqual(reference, config.tunnel.credential) || !this.tunnel
+      || this.tunnel.pid !== receipt.pid || this.tunnel.exitCode !== null || this.tunnel.signalCode !== null
+      || !receipt.identity || processIdentity(receipt.pid) !== receipt.identity
+      || !isDeepStrictEqual(receipt.scope, tunnelCredentialScope(config, this.binding))) return false;
+    try {
+      const file = path.join(config.tunnel.profileDir, `${config.tunnel.profileName}.yaml`);
+      const stat = fs.lstatSync(file);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024) return false;
+      // SDK 0.0.16 writes JSON-compatible YAML; parse its exact fixed fields.
+      const profile = JSON.parse(fs.readFileSync(file, 'utf8'));
+      return profile.control_plane?.api_key === `env:${TUNNEL_RUNTIME_KEY_ENV}`
+        && profile.control_plane?.tunnel_id === config.tunnel.tunnelId;
+    } catch { return false; }
   }
 
   async prepareAccountTunnelChange(accountId, mode) {
@@ -498,6 +529,7 @@ class RuntimeSupervisor {
         ...process.env,
         ...invocation.env,
         CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR: this.browserDescriptorPath,
+        CODEX_CHATGPT_WEB_LAUNCHER_PROFILE: this.launcherProfile,
         ...(background ? { CODEX_CHATGPT_WEB_BACKGROUND_RUNTIME: "1" } : {}),
       },
       // A GUI-owned pipe can close underneath a surviving daemon after an app crash.
@@ -579,7 +611,9 @@ class RuntimeSupervisor {
     if (!tunnel || !fs.existsSync(tunnel.binaryPath)) {
       throw new Error(`Tunnel client is missing: ${tunnel?.binaryPath || "not configured"}`);
     }
-    if (!fs.existsSync(tunnel.runtimeKeyFile)) {
+    if (tunnel.credential !== undefined) {
+      if (!isCredentialReference(tunnel.credential) || tunnel.runtimeKeyFile !== undefined) throw new Error('Tunnel credential reference is invalid');
+    } else if (!fs.existsSync(tunnel.runtimeKeyFile)) {
       throw new Error(`Tunnel runtime key is missing: ${tunnel.runtimeKeyFile}`);
     }
   }
@@ -1452,6 +1486,10 @@ class RuntimeSupervisor {
       if (!this.tunnel) throw new Error("Tunnel runtime became ready without a managed process identity");
       await this.waitForTunnelMcpTransport(config, 10_000, recoverySignal);
       this.assertCanStart(recoverySignal);
+      if (this.lastCredentialLaunch && isDeepStrictEqual(this.lastCredentialLaunch.reference, config.tunnel.credential)) {
+        this.lastCredentialLaunch.pid = this.tunnel.pid;
+        this.lastCredentialLaunch.identity = processIdentity(this.tunnel.pid);
+      }
       if (startMonitor) this.startTunnelMonitor(config);
     } catch (error) {
       // Shutdown owns cleanup after cancellation. Recovery must not race its stop command.
@@ -1480,6 +1518,7 @@ class RuntimeSupervisor {
   }
 
   async runTunnelConnectCommand(config, recoverySignal) {
+    this.lastCredentialLaunch = null;
     const contract = config.browserInteractionMode === "manual" ? "safe" : "native";
     const asyncTools = config.experimentalAsyncToolOperations === true;
     const asyncIdentity = [ASYNC_CONNECTOR_NAME, ASYNC_DEV_CONNECTOR_NAME, "Codex Native5", "Codex Native5 DEV"].includes(config.appName);
@@ -1496,13 +1535,18 @@ class RuntimeSupervisor {
       "--broker-socket",
       config.brokerSocketPath,
     ], config.releaseVersion);
-    return await this.runTunnelCommand(
+    const result = await this.runTunnelCommand(
       config,
       managedTunnelConnectArgs(config, invocation),
       TUNNEL_START_TIMEOUT_MS,
       "Tunnel managed startup",
       recoverySignal,
     );
+    if (config.tunnel.credential && (result.code === 0 || tunnelConnectCanContinue(result))) {
+      this.lastCredentialLaunch = { reference: { ...config.tunnel.credential },
+        scope: tunnelCredentialScope(config, this.binding), pid: null, identity: null };
+    }
+    return result;
   }
 
   startTunnelMonitor(config) {
@@ -1665,9 +1709,12 @@ class RuntimeSupervisor {
       const env = await this.nativeProxyEnvironmentProvider();
       if (this.stopping) throw new Error("Responses startup was cancelled while resolving the system proxy");
       this.assertCanStart(recoverySignal);
+      const invocation = this.runtimeCommand(["serve"], config.releaseVersion);
       child = this.spawnChild("daemon", {
-        ...this.runtimeCommand(["serve"], config.releaseVersion),
-        env,
+        ...invocation,
+        // Fixed packaged-origin claims belong to the runtime command. Proxy
+        // discovery must not discard or replace that execution binding.
+        env: { ...env, ...invocation.env },
         nativeBackgroundRoute: config.nativeBackgroundRoute,
       }, recoverySignal);
       await this.waitForProxy(config, 20_000, recoverySignal);
@@ -2167,6 +2214,20 @@ class RuntimeSupervisor {
     return true;
   }
 
+  async ownedAgentRuntimeReady(config, { allowDraining = false } = {}) {
+    // Agent Native inference owns its own provider admission. Web tunnel health
+    // cannot authorize it, and a drain must still allow exact-owner cleanup.
+    const health = await this.proxyHealthPayload(config);
+    const daemon = this.daemon;
+    const owned = this.launcherProfile === "development"
+      ? health?.service === "codex-chatgpt-web" && health.status === "ok"
+        && health.version === config.releaseVersion && health.mode === config.mode
+        && Number.isInteger(health.pid) && processRunning(health.pid)
+      : this.ownedHealthMatches(config, health, daemon)
+        && processRunning(daemon.pid);
+    return Boolean(owned && (allowDraining || this.nativeHealthAccepting(health)));
+  }
+
   async control(config, action, options = {}) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 5_000);
@@ -2180,7 +2241,66 @@ class RuntimeSupervisor {
         ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
         signal: controller.signal,
       });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok) {
+        // Only these exact action-bound public diagnostics may reach the UI.
+        // Other tools errors, late failures and lost ACKs retain generic errors.
+        if (action === 'agent-tools' && ['grantVmNetwork', 'reviewPythonBuild'].includes(options.body?.action) && response.status === 409) {
+          const reader = response.body?.getReader();
+          if (reader) {
+            const chunks = []; let size = 0;
+            try {
+              while (true) {
+                const part = await reader.read(); if (part.done) break;
+                size += part.value.byteLength;
+                if (size > 8192) { await reader.cancel(); throw new Error('Grant error receipt exceeds limit'); }
+                chunks.push(Buffer.from(part.value));
+              }
+              const receipt = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+              const refusals = options.body.action === 'reviewPythonBuild'
+                ? new Set(['Python source build has no backend wheels. Set backendPath to the selected in-tree backend (for example ["."]) or select its backend wheels, then select and review again.'])
+                : new Set(['vm-network-destination-invalid', 'vm-network-origin-invalid', 'vm-network-limits-invalid', 'vm-network-address-mismatch', 'vm-network-url-invalid']);
+              if (receipt && Object.keys(receipt).sort().join(',') === 'error,message,ok' && receipt.ok === false
+                && receipt.error === 'agent_tools_conflict' && refusals.has(receipt.message)) return { ok: false, error: receipt.error, message: receipt.message };
+            } catch { /* Malformed, oversized or generic errors cannot prove pre-admission refusal. */ }
+            finally { reader.releaseLock(); }
+          }
+        }
+        // Agent mode opts into bounded, fixed error receipts. Other control
+        // callers keep their existing HTTP-error contract. Never forward an
+        // arbitrary daemon message, response body, path, or credential.
+        if (action === 'agent-mode' && options.returnErrorReceipt === true) {
+          const reader = response.body?.getReader();
+          if (reader) {
+            const chunks = []; let size = 0;
+            try {
+              while (true) {
+                const part = await reader.read();
+                if (part.done) break;
+                size += part.value.byteLength;
+                if (size > 8192) { await reader.cancel(); throw new Error('Agent error receipt exceeds limit'); }
+                chunks.push(Buffer.from(part.value));
+              }
+              const receipt = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+              const messages = {
+                unauthorized: 'Agent mode administrative authorization is unavailable.',
+                method_not_allowed: 'The Agent mode request method is unsupported.',
+                invalid_request: 'The Agent action does not match its bounded schema.',
+                explicit_action_required: 'An explicit user action is required.',
+                workspace_observer_unavailable: 'Trusted workspace artifact observation is unavailable.',
+                observed_evidence_unavailable: 'A trusted outcome observer is not configured.',
+                agent_action_conflict: 'The Agent action could not be completed; inspect its current durable state before retrying.',
+              };
+              if (receipt?.ok === false && typeof receipt.error === 'string' && Object.prototype.hasOwnProperty.call(messages, receipt.error)) {
+                const staleFile = 'The workspace file changed after observation. Inspect its current revision and observe it again before verification.';
+                const message = receipt.error === 'agent_action_conflict' && receipt.message === staleFile ? staleFile : messages[receipt.error];
+                return { ok: false, error: receipt.error, message };
+              }
+            } catch { /* Preserve the existing generic HTTP error for malformed or oversized bodies. */ }
+            finally { reader.releaseLock(); }
+          }
+        }
+        throw new Error(`HTTP ${response.status}`);
+      }
       return await response.json();
     } finally {
       clearTimeout(timeout);
@@ -2348,6 +2468,7 @@ class RuntimeSupervisor {
     });
     let removeControlWaitAbort;
     let proxyEnvironment;
+    let injectedSecret;
     let controlChild = null;
     const releaseControlOperation = () => {
       this.tunnelControlControllers.delete(controlToken);
@@ -2400,16 +2521,19 @@ class RuntimeSupervisor {
       return await new Promise((resolve, reject) => {
         let child;
         try {
+          const env = { ...process.env, ...proxyEnvironment };
+          // Never inherit an unrelated tunnel's key into control or MCP work.
+          delete env[TUNNEL_RUNTIME_KEY_ENV];
+          if (config.tunnel.credential && args[0] === 'runtimes' && ['connect', 'status'].includes(args[1])) {
+            this.credentialProvider ??= createCredentialProvider({ coreHome: this.coreHome });
+            Object.assign(env, tunnelCredentialEnvironment(config, args, this.credentialProvider, this.binding));
+            injectedSecret = env[TUNNEL_RUNTIME_KEY_ENV];
+          }
+          if (args[0] === 'runtimes' && args[1] === 'connect') env.MCP_STDIO_SEND_INITIALIZED_NOTIFICATION = 'true';
           child = spawn(tunnel.binaryPath, args, {
             cwd: tunnel.profileDir,
             detached: DETACH_OWNED_CHILD,
-            env: {
-              ...process.env, ...proxyEnvironment,
-              // Account peers inherit this same managed-startup path. Control
-              // commands keep their existing environment and cancellation owner.
-              ...(args[0] === "runtimes" && args[1] === "connect"
-                ? { MCP_STDIO_SEND_INITIALIZED_NOTIFICATION: "true" } : {}),
-            },
+            env,
             stdio: ["ignore", "pipe", "pipe"],
             windowsHide: true,
           });
@@ -2432,14 +2556,26 @@ class RuntimeSupervisor {
       const stderr = [];
       let stdoutBytes = 0;
       let stderrBytes = 0;
+      const truncated = { stdout: false, stderr: false };
       const capture = (chunks, chunk, stream) => {
         const used = stream === "stdout" ? stdoutBytes : stderrBytes;
         const remaining = MAX_CONTROL_OUTPUT_BYTES - used;
-        if (remaining <= 0) return;
+        if (remaining <= 0) { truncated[stream] = true; return; }
+        if (chunk.length > remaining) truncated[stream] = true;
         const captured = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
         chunks.push(captured);
         if (stream === "stdout") stdoutBytes += captured.length;
         else stderrBytes += captured.length;
+      };
+      const outputText = (chunks, stream) => {
+        let bytes = Buffer.concat(chunks);
+        // If the byte cap bisected a secret, discard enough tail to remove that
+        // fragment before decoding (including split UTF-8), then redact exact
+        // complete values across chunk boundaries. Nothing raw crosses here.
+        if (injectedSecret && truncated[stream]) bytes = bytes.subarray(0,
+          Math.max(0, bytes.length - Buffer.byteLength(injectedSecret)));
+        const value = bytes.toString('utf8').trim();
+        return injectedSecret ? value.split(injectedSecret).join('[redacted]') : value;
       };
       let settled = false;
       let timeoutError = null;
@@ -2525,8 +2661,8 @@ class RuntimeSupervisor {
           return;
         }
         const exitCode = code ?? 1;
-        const stdoutText = Buffer.concat(stdout).toString("utf8").trim();
-        const stderrText = Buffer.concat(stderr).toString("utf8").trim();
+        const stdoutText = outputText(stdout, 'stdout');
+        const stderrText = outputText(stderr, 'stderr');
         resolve({
           code: exitCode,
           stdout: stdoutText,

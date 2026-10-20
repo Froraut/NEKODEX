@@ -5,15 +5,17 @@ import type { AccountPoolSnapshot, BrowserInteractionMode, BrowserState, Languag
 import { accountToolsCopy, accountToolsHandoffAccount, accountToolsStep, accountTunnelFor } from './account-tools-onboarding';
 import { Button, Notice, TextField } from './design';
 import { ConnectorSetupHelp } from './ConnectorSetupHelp';
+import { AccountTunnelCredentialStatus } from './AccountTunnelCredentialStatus';
 
 type Account = AccountPoolSnapshot['accounts'][number];
 
 /** Account tools setup: a section of the card's setup disclosure. "Check connector" lives in the card's action row. */
 export function AccountToolsOnboarding({ account, copy, language, interactionMode, connectorName, urls,
-  disabled, manual, headingId, onSetup, onError }: {
+  disabled, manual, headingId, onSetup, onError, onTunnelCredentialChanged }: {
   account: Account; copy: Copy; language: Language; interactionMode: BrowserInteractionMode; connectorName: string;
   urls: LauncherSnapshot['urls']; disabled: boolean; manual: boolean; headingId: string;
   onSetup: () => void; onError: (message: string | null) => void;
+  onTunnelCredentialChanged: () => void;
 }) {
   const text = accountToolsCopy(language);
   const tunnel = accountTunnelFor(account, interactionMode);
@@ -49,6 +51,8 @@ export function AccountToolsOnboarding({ account, copy, language, interactionMod
     <p role="status">{status}</p>
     <p className="accounts-tools__tunnel" role="status">{text.tunnelStatus}: {tunnelStatus}
       {tunnel?.tunnelId ? ` · ${text.configuredTunnel}: ${tunnel.tunnelId}` : null}</p>
+    <AccountTunnelCredentialStatus accountId={account.id} interactionMode={interactionMode} language={language}
+      tunnel={tunnel} disabled={disabled || account.activeTurns > 0} onChanged={onTunnelCredentialChanged} />
     <div className="accounts-inline-actions">
       <Button size="sm" variant="ghost" iconEnd="browser" disabled={disabled}
         onClick={() => void openApiPanel()}>{copy.openAiApiPanel}</Button>

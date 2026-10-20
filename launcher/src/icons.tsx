@@ -3,6 +3,7 @@ import type { SVGProps } from "react";
 export type IconName =
   | "overview"
   | "accounts"
+  | "agent"
   | "activity"
   | "alert"
   | "back"
@@ -28,7 +29,7 @@ export type IconName =
 
 // Same order as the design system's Icon.names.
 export const iconNames: readonly IconName[] = [
-  "overview", "accounts", "activity", "alert", "back", "browser", "check", "chevron", "close", "stop", "external", "expand",
+  "overview", "accounts", "agent", "activity", "alert", "back", "browser", "check", "chevron", "close", "stop", "external", "expand",
   "forward", "globe", "info", "logs", "mcp", "minus", "plus", "reload", "settings", "setup", "sidebar", "update",
 ];
 
@@ -44,6 +45,7 @@ export function Icon({ name, size, title, ...props }: IconProps) {
       {title ? <title>{title}</title> : null}
       {name === "overview" ? <><rect {...common} x="3" y="3" width="7" height="7" rx="2" /><rect {...common} x="14" y="3" width="7" height="7" rx="2" /><rect {...common} x="3" y="14" width="7" height="7" rx="2" /><rect {...common} x="14" y="14" width="7" height="7" rx="2" /></> : null}
       {name === "accounts" ? <><circle {...common} cx="9" cy="8" r="3" /><path {...common} d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 4v2" /></> : null}
+      {name === "agent" ? <><rect {...common} x="5" y="7" width="14" height="13" rx="3" /><path {...common} d="M10 3h4M12 3v4M2 11v5M22 11v5M9 16h6" /><circle cx="9" cy="12" r="1" fill="currentColor" /><circle cx="15" cy="12" r="1" fill="currentColor" /></> : null}
       {name === "activity" ? <><path {...common} d="M3 12h4l2.2-6 4.1 12 2.3-6H21" /></> : null}
       {name === "alert" ? <><path {...common} d="M10.3 4.2 2.8 17.1A2 2 0 0 0 4.5 20h15a2 2 0 0 0 1.7-2.9L13.7 4.2a2 2 0 0 0-3.4 0Z" /><path {...common} d="M12 9v4M12 16.5h.01" /></> : null}
       {name === "back" ? <path {...common} d="m14.5 6-6 6 6 6" /> : null}
@@ -58,7 +60,7 @@ export function Icon({ name, size, title, ...props }: IconProps) {
       {name === "globe" ? <><circle {...common} cx="12" cy="12" r="9" /><path {...common} d="M3 12h18M12 3c2.4 2.4 3.6 5.4 3.6 9S14.4 18.6 12 21c-2.4-2.4-3.6-5.4-3.6-9S9.6 5.4 12 3Z" /></> : null}
       {name === "info" ? <><circle {...common} cx="12" cy="12" r="9" /><path {...common} d="M12 10.5V17M12 7h.01" /></> : null}
       {name === "logs" ? <><path {...common} d="M6 4h12v16H6zM9 8h6M9 12h6M9 16h4" /></> : null}
-      {name === "mcp" ? <><path {...common} d="M8 7.5 12 4l4 3.5v5L12 16l-4-3.5v-5Z" /><path {...common} d="m8 12.5-3 2.7v3.3L8 21l3-2.5V16M16 12.5l3 2.7v3.3L16 21l-3-2.5V16" /></> : null}
+      {name === "mcp" ? <><rect {...common} x="3" y="7" width="18" height="14" rx="2" /><path {...common} d="M8 7V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v3M3 12h7m4 0h7" /><rect {...common} x="10" y="11" width="4" height="4" rx="1" /></> : null}
       {name === "minus" ? <path {...common} d="M5 12h14" /> : null}
       {name === "plus" ? <path {...common} d="M5 12h14M12 5v14" /> : null}
       {name === "reload" ? <><path {...common} d="M19 8a8 8 0 1 0 .3 7" /><path {...common} d="M19 4v4h-4" /></> : null}

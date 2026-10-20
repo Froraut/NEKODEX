@@ -11,7 +11,7 @@ export function chatGptConnectorUnavailableError(message: string): ChatGptWebAda
   });
 }
 
-export type ChatGptPersonalizationPreflight = "already-personalized" | "enabled";
+export type ChatGptPersonalizationPreflight = "already-personalized" | "enabled" | "connector-proof-required";
 
 const CHATGPT_PERSONALIZATION_CONTROL_SELECTOR = [
   '[data-testid="thread-header-right-actions"] [aria-haspopup="menu"]',
@@ -351,6 +351,15 @@ async function ensureChatGptPersonalizedConnectorAccessWithinDeadline(
         return "already-personalized";
       }
       await capture("personalization-state-unverified");
+      // Some Temporary Chat surfaces expose neither personalization control.
+      // A failed early mention observation does not establish a disabled setting
+      // or authorize changing another control. Hand back to the caller's normal
+      // exact connector row/pill selection; this result is never readiness proof.
+      const structuralControls = page.locator(CHATGPT_PERSONALIZATION_CONTROL_SELECTOR).filter({ visible: true });
+      if (await runChatGptPersonalizationStep(() => structuralControls.count(), deadline, abortSignal) === 0) {
+        await capture("personalization-control-unavailable-requires-connector-proof");
+        return "connector-proof-required";
+      }
       const toggleReceipt = await toggleChatGptPersonalizationChoice(page, deadline, abortSignal);
       try {
         if (await proveConnectorAccess()) {

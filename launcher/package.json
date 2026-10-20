@@ -1,8 +1,8 @@
 {
   "name": "codex-web-gpt-launcher",
-  "version": "6.1.32-nekodex.7",
+  "version": "6.1.32-nekodex.15",
   "private": true,
-  "description": "NEKODEX — a desktop workspace for ChatGPT accounts, coding agents, and local tools.",
+  "description": "NEKODEX \u2014 a desktop workspace for ChatGPT accounts, coding agents, and local tools.",
   "author": "FroRaut",
   "updateRepository": "Froraut/NEKODEX",
   "type": "module",
@@ -12,21 +12,28 @@
     "audit": "bun audit",
     "typecheck": "tsc --noEmit",
     "build:renderer": "vite build",
-    "build": "bun run typecheck && bun run build:renderer",
+    "build": "bun run typecheck && bun run build:terminal && bun run build:renderer && bun run build:credential-helper && bun run build:oauth-vault-helper",
     "build:runtime": "bun run scripts/prepare-runtime.cjs",
     "package": "bun run build && bun run build:runtime && bun run scripts/package.cjs",
     "package:mac": "bun run build && bun run build:runtime && bun run scripts/package.cjs --mac",
     "package:win": "bun run build && bun run build:runtime && bun run scripts/package.cjs --win",
     "package:linux": "bun run build && bun run build:runtime && bun run scripts/package.cjs --linux",
     "smoke:package": "bun run scripts/smoke-package.cjs",
-    "start": "electron ."
+    "start": "electron .",
+    "build:credential-helper": "node ../scripts/build-credential-helper.cjs --development",
+    "build:oauth-vault-helper": "node ../scripts/build-oauth-vault-helper.cjs --development",
+    "build:terminal": "node scripts/build-workspace-terminal.cjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@xterm/xterm": "6.0.0",
     "motion": "^12.42.2",
+    "node-pty": "1.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@electron/rebuild": "4.2.0",
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
@@ -47,7 +54,10 @@
     "artifactName": "codex-web-gpt-${version}-${os}-${arch}.${ext}",
     "asar": true,
     "asarUnpack": [
-      "assets/linux-appimage-runner.sh"
+      "assets/linux-appimage-runner.sh",
+      "electron/credential-helper/**",
+      "electron/oauth-vault-helper/**",
+      "node_modules/node-pty/**"
     ],
     "directories": {
       "output": "release"
@@ -55,6 +65,9 @@
     "files": [
       "dist/**",
       "electron/**",
+      "!electron/desktop-helper/**",
+      "!electron/skill-pdf-helper/**",
+      "!electron/execution-vm-helper/**",
       "assets/icon.png",
       "assets/linux-appimage-runner.sh",
       "package.json",
@@ -76,7 +89,15 @@
       "hardenedRuntime": true,
       "signIgnore": [
         "[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]runtime[/\\\\]bun$",
-        "[/\\\\]Resources[/\\\\].*\\.(?:pak|ttf|woff2?|png|mp4|icns)$"
+        "[/\\\\]Contents[/\\\\]Resources[/\\\\]app\\.asar\\.unpacked[/\\\\]electron[/\\\\]credential-helper[/\\\\]darwin-(?:arm64|x64)[/\\\\]nekodex-credential-helper$",
+        "[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]app[/\\\\]credential-helper[/\\\\]darwin-(?:arm64|x64)[/\\\\]nekodex-credential-helper$",
+        "[/\\\\]Contents[/\\\\]Resources[/\\\\]app\\.asar\\.unpacked[/\\\\]electron[/\\\\]oauth-vault-helper[/\\\\]darwin-(?:arm64|x64)[/\\\\]nekodex-oauth-vault-helper$",
+        "[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]app[/\\\\]oauth-vault-helper[/\\\\]darwin-(?:arm64|x64)[/\\\\]nekodex-oauth-vault-helper$",
+        "[/\\\\]Resources[/\\\\].*\\.(?:pak|ttf|woff2?|png|mp4|icns)$",
+        "[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]app[/\\\\]desktop-helper[/\\\\]darwin-(?:arm64|x64)[/\\\\]nekodex-desktop-helper$",
+        "[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]app[/\\\\]skill-pdf-helper[/\\\\]darwin-(?:arm64|x64)[/\\\\]nekodex-skill-pdf-helper$",
+        "[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]app[/\\\\]execution-vm[/\\\\]darwin-arm64[/\\\\]nekodex-execution-vm-helper$",
+        "[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]app[/\\\\]owned-native[/\\\\]build[/\\\\](?:aarch64|x86_64)-apple-darwin[/\\\\]nekodex-owned-native-worker$"
       ],
       "target": [
         "dmg",
@@ -118,7 +139,7 @@
       "createStartMenuShortcut": true,
       "runAfterFinish": true
     },
-    "copyright": "Copyright © FroRaut and upstream contributors",
+    "copyright": "Copyright \u00a9 FroRaut and upstream contributors",
     "dmg": {
       "artifactName": "NEKODEX-${version}-mac-${arch}.${ext}",
       "title": "NEKODEX ${version}"

@@ -1,0 +1,57 @@
+:is(.nk-remote__panel, .nk-remote .nk-panel) { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+:is(.nk-remote__panel, .nk-remote .nk-panel) > * { min-width: 0; }
+:is(.nk-remote__panel, .nk-remote .nk-panel) > :where(p, h3, h4, ul), .nk-remote__latest > h3 { margin: 0; overflow-wrap: anywhere; }
+:is(.nk-remote__panel, .nk-remote .nk-panel) .nk-panel__header { margin-bottom: 0; }
+:is(.nk-remote__panel, .nk-remote .nk-panel) .nk-panel__header :is(h2, h3, h4) { min-width: 0; overflow-wrap: anywhere; }
+.nk-remote__host-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); align-items: end; }
+.nk-remote__wide-field { grid-column: 1 / -1; }
+.nk-remote__host-form > .nk-btn { justify-self: start; }
+.nk-remote__labelled-select { display: grid; gap: var(--space-1); min-width: 0; }
+.nk-remote__labelled-select > :is(label, span):first-child { font-size: 14px; line-height: 20px; font-weight: 500; }
+.nk-remote__labelled-select .nk-select, .nk-remote__labelled-select select { width: 100%; min-width: 0; max-width: 100%; }
+.nk-remote__host-selection { padding-top: var(--space-5); border-top: 1px solid var(--border); }
+.nk-remote__security { color: var(--text-secondary); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.nk-remote__security summary { cursor: pointer; color: var(--text-primary); }
+.nk-remote__security p { margin: var(--space-3) 0 0; }
+.nk-remote__host-status, .nk-remote__latest { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-3); min-width: 0; }
+.nk-remote__host-status > p { margin: 0; overflow-wrap: anywhere; }
+.nk-remote__identity { display: grid; gap: var(--space-1); }
+.nk-remote__identity code { overflow-wrap: anywhere; }
+.nk-remote__status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+.nk-remote__status > span { color: var(--text-secondary); font-size: 14px; }
+.nk-remote__actions { display: flex; align-items: end; flex-wrap: wrap; gap: var(--space-2); margin-block: var(--space-3); min-width: 0; }
+.nk-remote__actions > * { min-width: 0; max-width: 100%; }
+.nk-remote__actions > .nk-field { flex: 1 1 200px; }
+:is(.nk-remote__panel, .nk-remote .nk-panel, .nk-remote__receipt) .nk-remote__actions, .nk-remote .nk-remote-git__details { margin-block: 0; }
+.nk-remote__host-actions { padding-top: var(--space-4); border-top: 1px solid var(--border); }
+.nk-remote__columns { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr); align-items: start; gap: var(--space-6); min-width: 0; }
+.nk-remote__columns > * { min-width: 0; }
+.nk-remote__files { display: flex; flex-direction: column; gap: var(--space-1); max-height: 360px; min-width: 0; overflow: auto; }
+.nk-remote__files:empty, .nk-remote .nk-remote-git__files:empty, .nk-remote .nk-remote-git__review > ul:empty { display: none; }
+.nk-remote__files button { text-align: start; color: inherit; background: transparent; border: 0; border-radius: var(--radius-sm); padding: var(--space-2); cursor: pointer; overflow-wrap: anywhere; flex-shrink: 0; }
+.nk-remote__files button:hover { background: var(--bg-control-hover); }
+.nk-remote__files button:disabled { opacity: .5; cursor: default; }
+.nk-remote__files button:focus-visible, .nk-remote__security summary:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.nk-remote__editor, .nk-remote__command { display: block; box-sizing: border-box; width: 100%; min-width: 0; min-height: 220px; padding: var(--space-3); border: 1px solid var(--border-control); border-radius: var(--radius-md); background: var(--bg-control); color: var(--text-primary); font: 13px/1.6 var(--font-mono); tab-size: 2; resize: vertical; }
+.nk-remote__editor:focus-visible, .nk-remote__command:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.nk-remote__command { min-height: 92px; }
+.nk-remote__output { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; max-height: 400px; overflow: auto; font: 12px/1.6 var(--font-mono); }
+.nk-remote__draft { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); min-width: 0; }
+.nk-remote__draft > code { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
+.nk-remote__receipt { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-3); border-bottom: 1px solid var(--border); padding-block: var(--space-4); min-width: 0; overflow-wrap: anywhere; }
+.nk-remote__receipt > p { margin: 0; }
+:is(.nk-remote__panel, .nk-remote .nk-panel, .nk-remote__latest, .nk-remote__receipt, .nk-remote .nk-remote-git__review) > :where(.nk-btn, .nk-select) { align-self: start; max-width: 100%; }
+.nk-remote__receipt:last-child { border-bottom: 0; padding-bottom: 0; }
+.nk-remote .nk-remote-git__file > .nk-check { flex: 1 1 240px; min-width: 0; align-items: flex-start; overflow-wrap: anywhere; }
+.nk-remote .nk-check > span { min-width: 0; overflow-wrap: anywhere; }
+.nk-remote .nk-remote-git__file > div, .nk-remote .nk-remote-git__details > div { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
+.nk-remote .nk-remote-git__details > div > p { flex: 1 1 220px; margin: 0; overflow-wrap: anywhere; }
+.nk-remote .nk-remote-git__review { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-3); min-width: 0; overflow-wrap: anywhere; }
+.nk-remote .nk-remote-git__review > :where(h3, p, ul, pre), .nk-remote details > :where(p, pre) { margin-block: 0; }
+.nk-remote details[open] > summary { margin-bottom: var(--space-3); }
+.nk-remote__dialog .nk-dialog__body { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; overflow-wrap: anywhere; }
+.nk-remote__dialog .nk-dialog__body > p { margin: 0; }
+@container workspace (max-width: 850px) { .nk-remote__columns { grid-template-columns: minmax(0, 1fr); } }
+@container workspace (max-width: 560px) { .nk-remote__host-form { grid-template-columns: minmax(0, 1fr); } .nk-remote__path-actions > .nk-field { flex-basis: 100%; } }
+@media (max-width: 850px) { .nk-remote__columns { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 560px) { .nk-remote__host-form { grid-template-columns: minmax(0, 1fr); } .nk-remote__path-actions > .nk-field { flex-basis: 100%; } }

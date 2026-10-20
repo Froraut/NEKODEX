@@ -1,0 +1,866 @@
+{
+  "version": 1,
+  "go": {
+    "version": "1.26.3",
+    "url": "https://go.dev/dl/go1.26.3.darwin-arm64.tar.gz",
+    "sha256": "875cf54a15311eee2c99b9dd67c68c4a49351d489ab622bf2cfd28c8f2078d3c",
+    "license": "BSD-3-Clause",
+    "source": "https://go.dev/dl/go1.26.3.src.tar.gz"
+  },
+  "rootfs": {
+    "version": "3.24.2",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/aarch64/alpine-minirootfs-3.24.2-aarch64.tar.gz",
+    "sha256": "9bf70a7f18ea44094cbb5f70c58f9af129c8214745743db0e68e5502cc2ce773",
+    "checksumSource": "https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/aarch64/alpine-minirootfs-3.24.2-aarch64.tar.gz.sha256",
+    "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/3.24-stable",
+    "licenses": "per-package installed APK database; BusyBox GPL-2.0-only; musl MIT"
+  },
+  "kernel": {
+    "version": "6.18.57-r0",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/linux-virt-6.18.57-r0.apk",
+    "sha256": "b3820fee22e0366a15f7c139e5bc00348e333f3e7f77802271df7ded795aee4f",
+    "officialIndexSha256AtCapture": "cbc5b3eb240f5bc5c14fa8187295478fa507057b8494bc380e743b2b6683c53a",
+    "officialIndexPackageChecksum": "Q1rW+5Md55aD7Tz0rKiU+7gCLoC7o=",
+    "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/0c40eb4fea009af7de457fa20e186f43a88e0954/main/linux-lts",
+    "license": "GPL-2.0-only",
+    "pinOrigin": "Exact official HTTPS APK bytes SHA256 captured for this lock; not an independent APK signature verification claim"
+  },
+  "developmentProfile": {
+    "name": "alpine-3.24-aarch64-native-build-v1",
+    "roots": [
+      "gcc",
+      "musl-dev",
+      "python3",
+      "python3-dev",
+      "make"
+    ],
+    "index": {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/APKINDEX.tar.gz",
+      "sha256": "9ee5c0674b9b8288f052692423aaba4d06b62a3012a7908b45ad64c221bb3f7b",
+      "capturedAt": "2026-10-19"
+    },
+    "pinOrigin": "Exact official HTTPS APK bytes SHA256 captured for this lock; not an independent APK signature verification claim",
+    "providerChoice": {
+      "so:libisl.so.23": "isl26"
+    },
+    "replacements": {
+      "usr/bin/strings": {
+        "package": "binutils",
+        "previousSymlink": "/bin/busybox"
+      }
+    },
+    "packages": [
+      {
+        "name": "binutils",
+        "version": "2.45.1-r1",
+        "architecture": "aarch64",
+        "license": "GPL-2.0-or-later AND LGPL-2.1-or-later AND BSD-3-Clause",
+        "origin": "binutils",
+        "sourceCommit": "673df4f3ce2e71e9bcfbf64939332917a35795fc",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/673df4f3ce2e71e9bcfbf64939332917a35795fc/main/binutils",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1",
+          "so:libgcc_s.so.1",
+          "so:libjansson.so.4",
+          "so:libstdc++.so.6",
+          "so:libz.so.1",
+          "so:libzstd.so.1"
+        ],
+        "provides": [
+          "cmd:addr2line=2.45.1-r1",
+          "cmd:ar=2.45.1-r1",
+          "cmd:as=2.45.1-r1",
+          "cmd:c++filt=2.45.1-r1",
+          "cmd:dwp=2.45.1-r1",
+          "cmd:elfedit=2.45.1-r1",
+          "cmd:gprof=2.45.1-r1",
+          "cmd:ld.bfd=2.45.1-r1",
+          "cmd:ld=2.45.1-r1",
+          "cmd:nm=2.45.1-r1",
+          "cmd:objcopy=2.45.1-r1",
+          "cmd:objdump=2.45.1-r1",
+          "cmd:ranlib=2.45.1-r1",
+          "cmd:readelf=2.45.1-r1",
+          "cmd:size=2.45.1-r1",
+          "cmd:strings=2.45.1-r1",
+          "cmd:strip=2.45.1-r1",
+          "so:libbfd-2.45.1.so=0",
+          "so:libctf-nobfd.so.0=0.0.0",
+          "so:libctf.so.0=0.0.0",
+          "so:libopcodes-2.45.1.so=0",
+          "so:libsframe.so.2=2.0.0"
+        ],
+        "officialIndexPackageChecksum": "Q1saErNb6eIGJ5HnEc5t/KvcfvCDk=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/binutils-2.45.1-r1.apk",
+        "sha256": "bac4a00e73296dfebf5f587c2b304b7d110e7de658cd2b05491f87c2b228420c",
+        "size": 3321769,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "gcc",
+        "version": "15.2.0-r5",
+        "architecture": "aarch64",
+        "license": "GPL-2.0-or-later AND LGPL-2.1-or-later",
+        "origin": "gcc",
+        "sourceCommit": "423a8ad043d07f2c7546c8ec3e2b0384cda360ae",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/423a8ad043d07f2c7546c8ec3e2b0384cda360ae/main/gcc",
+        "dependencies": [
+          "binutils",
+          "libgcc-static",
+          "libgomp=15.2.0-r5",
+          "libatomic=15.2.0-r5",
+          "libgomp=15.2.0-r5",
+          "so:libc.musl-aarch64.so.1",
+          "so:libgcc_s.so.1",
+          "so:libgmp.so.10",
+          "so:libisl.so.23",
+          "so:libmpc.so.3",
+          "so:libmpfr.so.6",
+          "so:libstdc++.so.6",
+          "so:libz.so.1"
+        ],
+        "provides": [
+          "cmd:aarch64-alpine-linux-musl-cc=15.2.0-r5",
+          "cmd:aarch64-alpine-linux-musl-gcc-15.2.0=15.2.0-r5",
+          "cmd:aarch64-alpine-linux-musl-gcc-ar=15.2.0-r5",
+          "cmd:aarch64-alpine-linux-musl-gcc-nm=15.2.0-r5",
+          "cmd:aarch64-alpine-linux-musl-gcc-ranlib=15.2.0-r5",
+          "cmd:aarch64-alpine-linux-musl-gcc=15.2.0-r5",
+          "cmd:c89=15.2.0-r5",
+          "cmd:c99=15.2.0-r5",
+          "cmd:cc=15.2.0-r5",
+          "cmd:cpp=15.2.0-r5",
+          "cmd:gcc-ar=15.2.0-r5",
+          "cmd:gcc-nm=15.2.0-r5",
+          "cmd:gcc-ranlib=15.2.0-r5",
+          "cmd:gcc=15.2.0-r5",
+          "cmd:gcov-dump=15.2.0-r5",
+          "cmd:gcov-tool=15.2.0-r5",
+          "cmd:gcov=15.2.0-r5",
+          "cmd:lto-dump=15.2.0-r5",
+          "so:libcc1.so.0=0.0.0",
+          "so:libitm.so.1=1.0.0"
+        ],
+        "officialIndexPackageChecksum": "Q159IW0ZsfYdBhbhXo2LGhBkOKnlg=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/gcc-15.2.0-r5.apk",
+        "sha256": "ff3fecfc32c9a1bed4a47a32ccfee6f6f575708258f912c218dce8ed0d892221",
+        "size": 52501295,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "gdbm",
+        "version": "1.26-r0",
+        "architecture": "aarch64",
+        "license": "GPL-3.0-or-later",
+        "origin": "gdbm",
+        "sourceCommit": "1ea03990396db618edfcc8a9a0bc6b72662bac8f",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/1ea03990396db618edfcc8a9a0bc6b72662bac8f/main/gdbm",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1"
+        ],
+        "provides": [
+          "so:libgdbm.so.6=6.0.0",
+          "so:libgdbm_compat.so.4=4.0.0"
+        ],
+        "officialIndexPackageChecksum": "Q1XYNjSqO84cdMMgnYAJDAxy7Owuk=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/gdbm-1.26-r0.apk",
+        "sha256": "bad50eb26533e2f58e014fbcd3c1744f2fdb79954af6e3c188ccd059251c7790",
+        "size": 33830,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "gmp",
+        "version": "6.3.0-r4",
+        "architecture": "aarch64",
+        "license": "LGPL-3.0-or-later OR GPL-2.0-or-later",
+        "origin": "gmp",
+        "sourceCommit": "206e7b39f7884d62a174aba4d33a42454518c1c2",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/206e7b39f7884d62a174aba4d33a42454518c1c2/main/gmp",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1"
+        ],
+        "provides": [
+          "so:libgmp.so.10=10.5.0"
+        ],
+        "officialIndexPackageChecksum": "Q1DJzr9ZbIpl8s1zSomENWF6MQREM=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/gmp-6.3.0-r4.apk",
+        "sha256": "4dab6e86b850fe1b5bc0cf2fac17efa4d7f648bea44f3d9019694cc1e1cb12b7",
+        "size": 221014,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "isl26",
+        "version": "0.26-r2",
+        "architecture": "aarch64",
+        "license": "MIT",
+        "origin": "isl26",
+        "sourceCommit": "4f94ecd650b5ea9d18882e45048ad78536fd3149",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/4f94ecd650b5ea9d18882e45048ad78536fd3149/main/isl26",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1",
+          "so:libgmp.so.10"
+        ],
+        "provides": [
+          "so:libisl.so.23=23.3.0"
+        ],
+        "officialIndexPackageChecksum": "Q1MTgBAk78IopvzkRedHLFYW2Ei0U=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/isl26-0.26-r2.apk",
+        "sha256": "c195ea26929ada2bb9e66b7bc6d64b340123591b8f4c8ed158693e4dac0923d8",
+        "size": 870482,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "jansson",
+        "version": "2.15.0-r0",
+        "architecture": "aarch64",
+        "license": "MIT",
+        "origin": "jansson",
+        "sourceCommit": "88919740865a31680e7f1c4cb568dfd7a87e9f08",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/88919740865a31680e7f1c4cb568dfd7a87e9f08/main/jansson",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1"
+        ],
+        "provides": [
+          "so:libjansson.so.4=4.15.0"
+        ],
+        "officialIndexPackageChecksum": "Q185lBVZZFfo04G/qflaBhcPayHJs=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/jansson-2.15.0-r0.apk",
+        "sha256": "a13822f5ca1772cced4bb7d3d178ec5dee770d8accba5b4816b2ddc413e6f055",
+        "size": 49825,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "libatomic",
+        "version": "15.2.0-r5",
+        "architecture": "aarch64",
+        "license": "GPL-2.0-or-later AND LGPL-2.1-or-later",
+        "origin": "gcc",
+        "sourceCommit": "423a8ad043d07f2c7546c8ec3e2b0384cda360ae",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/423a8ad043d07f2c7546c8ec3e2b0384cda360ae/main/gcc",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1"
+        ],
+        "provides": [
+          "so:libatomic.so.1=1.2.0"
+        ],
+        "officialIndexPackageChecksum": "Q1+C05PC+bIc2dudfNkojDZ1Zi8zo=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libatomic-15.2.0-r5.apk",
+        "sha256": "31a45fec053c43a006370f83238f16f959838a9a703fbf26bfd1a36da4f538b2",
+        "size": 10362,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "libbz2",
+        "version": "1.0.8-r6",
+        "architecture": "aarch64",
+        "license": "bzip2-1.0.6",
+        "origin": "bzip2",
+        "sourceCommit": "33283848034c9885d984c8e8697c645c57324938",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/33283848034c9885d984c8e8697c645c57324938/main/bzip2",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1"
+        ],
+        "provides": [
+          "so:libbz2.so.1=1.0.8"
+        ],
+        "officialIndexPackageChecksum": "Q1ZK5fja6KZjk14isO1bkD0fdooe4=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libbz2-1.0.8-r6.apk",
+        "sha256": "28cb76bb6d11d2a55c3061b5fcb2ab84996412a248b2c9fe52bb710d0a2a84e7",
+        "size": 34259,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "libcrypto3",
+        "version": "3.5.8-r0",
+        "architecture": "aarch64",
+        "license": "Apache-2.0",
+        "origin": "openssl",
+        "sourceCommit": "013edf8b29199933e8ea34dde460b5584b979042",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/013edf8b29199933e8ea34dde460b5584b979042/main/openssl",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1"
+        ],
+        "provides": [
+          "so:libcrypto.so.3=3"
+        ],
+        "officialIndexPackageChecksum": "Q1yBbnEKxht37PmWjI99NQMTTPTe0=",
+        "provenance": "Exact pinned minirootfs installed APK database; retained without replacement",
+        "extractPayload": false,
+        "payloadState": "already installed in pinned minirootfs; retained unchanged"
+      },
+      {
+        "name": "libexpat",
+        "version": "2.9.0-r0",
+        "architecture": "aarch64",
+        "license": "MIT",
+        "origin": "expat",
+        "sourceCommit": "c10df79ce35862cf273f98f6eb78d52e4f064ac7",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/c10df79ce35862cf273f98f6eb78d52e4f064ac7/main/expat",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1"
+        ],
+        "provides": [
+          "so:libexpat.so.1=1.13.0"
+        ],
+        "officialIndexPackageChecksum": "Q12D73VTVX4ME2g7EgWWb93byIAW4=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libexpat-2.9.0-r0.apk",
+        "sha256": "7128bfe18b8a315b9cf90ddf0beffeee454648ae72ff7898ff7d7b09803a559d",
+        "size": 61864,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "libffi",
+        "version": "3.5.2-r1",
+        "architecture": "aarch64",
+        "license": "MIT",
+        "origin": "libffi",
+        "sourceCommit": "2c2a7bb4a8b16066834e90402567b2c19403a790",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/2c2a7bb4a8b16066834e90402567b2c19403a790/main/libffi",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1"
+        ],
+        "provides": [
+          "so:libffi.so.8=8.2.0"
+        ],
+        "officialIndexPackageChecksum": "Q1uqo6H3qMZYL1m9s+pdzqCQl4r0A=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libffi-3.5.2-r1.apk",
+        "sha256": "9a67280b0c7c62db658c2d4d32ed1199903bef859c32dd4245e1a7e35c89ab4b",
+        "size": 17799,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "libgcc",
+        "version": "15.2.0-r5",
+        "architecture": "aarch64",
+        "license": "GPL-2.0-or-later AND LGPL-2.1-or-later",
+        "origin": "gcc",
+        "sourceCommit": "423a8ad043d07f2c7546c8ec3e2b0384cda360ae",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/423a8ad043d07f2c7546c8ec3e2b0384cda360ae/main/gcc",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1"
+        ],
+        "provides": [
+          "so:libgcc_s.so.1=1"
+        ],
+        "officialIndexPackageChecksum": "Q1JLUL+2dMZ+EpWBoaIsHD7VI7bUg=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libgcc-15.2.0-r5.apk",
+        "sha256": "369aaa6e9d099a737bad6dd3e6c2fe7bb1547ca26d22b94ee0411228f709b403",
+        "size": 66323,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "libgcc-static",
+        "version": "15.2.0-r5",
+        "architecture": "aarch64",
+        "license": "GPL-2.0-or-later AND LGPL-2.1-or-later",
+        "origin": "gcc",
+        "sourceCommit": "423a8ad043d07f2c7546c8ec3e2b0384cda360ae",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/423a8ad043d07f2c7546c8ec3e2b0384cda360ae/main/gcc",
+        "dependencies": [],
+        "provides": [],
+        "officialIndexPackageChecksum": "Q1cc9PA5tSON9VdVdHTaiJarrYRT4=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libgcc-static-15.2.0-r5.apk",
+        "sha256": "2ec3dc4be953d842cc51193248367d86829ed699a1ed094fb5149b1b3fc62919",
+        "size": 2187958,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "libgomp",
+        "version": "15.2.0-r5",
+        "architecture": "aarch64",
+        "license": "GPL-2.0-or-later AND LGPL-2.1-or-later",
+        "origin": "gcc",
+        "sourceCommit": "423a8ad043d07f2c7546c8ec3e2b0384cda360ae",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/423a8ad043d07f2c7546c8ec3e2b0384cda360ae/main/gcc",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1"
+        ],
+        "provides": [
+          "so:libgomp.so.1=1.0.0"
+        ],
+        "officialIndexPackageChecksum": "Q1yTo+otIMEV9HfHaQfLvq60J1/a8=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libgomp-15.2.0-r5.apk",
+        "sha256": "90576a8899c560d3983b8ac8442b5b75957a917bc1c4e950e005945080f8682f",
+        "size": 146527,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "libncursesw",
+        "version": "6.6_p20260516-r0",
+        "architecture": "aarch64",
+        "license": "X11",
+        "origin": "ncurses",
+        "sourceCommit": "2cee8a7328d061418336ad327b512d96bcd7bc5e",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/2cee8a7328d061418336ad327b512d96bcd7bc5e/main/ncurses",
+        "dependencies": [
+          "ncurses-terminfo-base=6.6_p20260516-r0",
+          "so:libc.musl-aarch64.so.1"
+        ],
+        "provides": [
+          "so:libncursesw.so.6=6.6"
+        ],
+        "officialIndexPackageChecksum": "Q1wNl5+kek1M3VEWlcXl8M4+jPHqI=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libncursesw-6.6_p20260516-r0.apk",
+        "sha256": "51a7aa4b3ec40b144d0801c0544e0a9f62e2a41d04b6067bb5e95786040741c6",
+        "size": 161906,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "libpanelw",
+        "version": "6.6_p20260516-r0",
+        "architecture": "aarch64",
+        "license": "X11",
+        "origin": "ncurses",
+        "sourceCommit": "2cee8a7328d061418336ad327b512d96bcd7bc5e",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/2cee8a7328d061418336ad327b512d96bcd7bc5e/main/ncurses",
+        "dependencies": [
+          "ncurses-terminfo-base=6.6_p20260516-r0",
+          "so:libc.musl-aarch64.so.1",
+          "so:libncursesw.so.6"
+        ],
+        "provides": [
+          "so:libpanelw.so.6=6.6"
+        ],
+        "officialIndexPackageChecksum": "Q16C1TT7gQUT+eauK8JD6rRnJIsIQ=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libpanelw-6.6_p20260516-r0.apk",
+        "sha256": "a6912c654c821db4f8a801321709205bd482b0e515b862f2d02045e21b73d97d",
+        "size": 5903,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "libssl3",
+        "version": "3.5.8-r0",
+        "architecture": "aarch64",
+        "license": "Apache-2.0",
+        "origin": "openssl",
+        "sourceCommit": "013edf8b29199933e8ea34dde460b5584b979042",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/013edf8b29199933e8ea34dde460b5584b979042/main/openssl",
+        "dependencies": [
+          "libcrypto3=3.5.8-r0",
+          "so:libc.musl-aarch64.so.1",
+          "so:libcrypto.so.3"
+        ],
+        "provides": [
+          "so:libssl.so.3=3"
+        ],
+        "officialIndexPackageChecksum": "Q1PH/y0GXoooWZHJVNhDry3HE8zVk=",
+        "provenance": "Exact pinned minirootfs installed APK database; retained without replacement",
+        "extractPayload": false,
+        "payloadState": "already installed in pinned minirootfs; retained unchanged"
+      },
+      {
+        "name": "libstdc++",
+        "version": "15.2.0-r5",
+        "architecture": "aarch64",
+        "license": "GPL-2.0-or-later AND LGPL-2.1-or-later",
+        "origin": "gcc",
+        "sourceCommit": "423a8ad043d07f2c7546c8ec3e2b0384cda360ae",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/423a8ad043d07f2c7546c8ec3e2b0384cda360ae/main/gcc",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1",
+          "so:libgcc_s.so.1"
+        ],
+        "provides": [
+          "so:libstdc++.so.6=6.0.34"
+        ],
+        "officialIndexPackageChecksum": "Q16WWaNCGe8kVn4lkwb/3DGo6OyqY=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libstdc++-15.2.0-r5.apk",
+        "sha256": "2302e766d4e4926038ec166ecb85837ee884576115236ddb565e3a5fca4a11d7",
+        "size": 908984,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "make",
+        "version": "4.4.1-r4",
+        "architecture": "aarch64",
+        "license": "GPL-3.0-or-later",
+        "origin": "make",
+        "sourceCommit": "9368161bd37f74fb11747ba79197f8480aaca7dc",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/9368161bd37f74fb11747ba79197f8480aaca7dc/main/make",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1"
+        ],
+        "provides": [
+          "cmd:gmake=4.4.1-r4",
+          "cmd:make=4.4.1-r4"
+        ],
+        "officialIndexPackageChecksum": "Q1OIxsJSFfsqQBcZyBEm8+ePSCRYI=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/make-4.4.1-r4.apk",
+        "sha256": "0a2c6c3fa0d90b652bbaeac362d1bfe54b75aae57631a6b448826f8b51c85170",
+        "size": 117543,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "mpc1",
+        "version": "1.3.1-r1",
+        "architecture": "aarch64",
+        "license": "LGPL-3.0-or-later",
+        "origin": "mpc1",
+        "sourceCommit": "84a227baf001b6e0208e3352b294e4d7a40e93de",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/84a227baf001b6e0208e3352b294e4d7a40e93de/main/mpc1",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1",
+          "so:libgmp.so.10",
+          "so:libmpfr.so.6"
+        ],
+        "provides": [
+          "so:libmpc.so.3=3.3.1"
+        ],
+        "officialIndexPackageChecksum": "Q1KcM+czq2KrMeUP+HZ4cM4IpFVDQ=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/mpc1-1.3.1-r1.apk",
+        "sha256": "c4e03923cf1b958ba0d3665196f521a00fb091132e79c39493298019fb59ae60",
+        "size": 53688,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "mpdecimal",
+        "version": "4.0.1-r0",
+        "architecture": "aarch64",
+        "license": "BSD-2-Clause",
+        "origin": "mpdecimal",
+        "sourceCommit": "c0519b85456e9b838e3142e1d233aab0b433b476",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/c0519b85456e9b838e3142e1d233aab0b433b476/main/mpdecimal",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1",
+          "so:libgcc_s.so.1",
+          "so:libstdc++.so.6"
+        ],
+        "provides": [
+          "so:libmpdec++.so.4=4.0.1",
+          "so:libmpdec.so.4=4.0.1"
+        ],
+        "officialIndexPackageChecksum": "Q1EBAm/IsRrsQaPnHsNnlng2lDdl4=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/mpdecimal-4.0.1-r0.apk",
+        "sha256": "358959600f99f58deee30ca9089c7f6f0f1bd73cc0021e321a7dbf6f735935c6",
+        "size": 81031,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "mpfr4",
+        "version": "4.2.2-r0",
+        "architecture": "aarch64",
+        "license": "LGPL-3.0-or-later",
+        "origin": "mpfr4",
+        "sourceCommit": "011955c827a3e7545ea82225e1f20c6a06617c7a",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/011955c827a3e7545ea82225e1f20c6a06617c7a/main/mpfr4",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1",
+          "so:libgmp.so.10"
+        ],
+        "provides": [
+          "mpfr=4.2.2-r0",
+          "so:libmpfr.so.6=6.2.2"
+        ],
+        "officialIndexPackageChecksum": "Q15Pae/zmzR2i3ki+1o1j8tHsv0KI=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/mpfr4-4.2.2-r0.apk",
+        "sha256": "81cb276c1e050138fed90c8f1ef584cf5bfce26739733753fce138fc0a092b35",
+        "size": 294772,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "musl",
+        "version": "1.2.6-r2",
+        "architecture": "aarch64",
+        "license": "MIT",
+        "origin": "musl",
+        "sourceCommit": "f5640d3a10f664c9119720c60515265d3d6f6d01",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/f5640d3a10f664c9119720c60515265d3d6f6d01/main/musl",
+        "dependencies": [],
+        "provides": [
+          "so:libc.musl-aarch64.so.1=1"
+        ],
+        "officialIndexPackageChecksum": "Q1JNQts+O/Z+jaJ4QHLMXQ5svftIU=",
+        "provenance": "Exact pinned minirootfs installed APK database; retained without replacement",
+        "extractPayload": false,
+        "payloadState": "already installed in pinned minirootfs; retained unchanged"
+      },
+      {
+        "name": "musl-dev",
+        "version": "1.2.6-r2",
+        "architecture": "aarch64",
+        "license": "MIT",
+        "origin": "musl",
+        "sourceCommit": "f5640d3a10f664c9119720c60515265d3d6f6d01",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/f5640d3a10f664c9119720c60515265d3d6f6d01/main/musl",
+        "dependencies": [
+          "musl=1.2.6-r2"
+        ],
+        "provides": [
+          "libc-dev=1.2.6-r2"
+        ],
+        "officialIndexPackageChecksum": "Q1fd1f//8oIPvl7Tx7qmQcaJh84FQ=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/musl-dev-1.2.6-r2.apk",
+        "sha256": "ca72b84f4eb3c36bbbec04d919eb10159d414c7a43413cc2253841d301fa9486",
+        "size": 2539434,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "ncurses-terminfo-base",
+        "version": "6.6_p20260516-r0",
+        "architecture": "aarch64",
+        "license": "X11",
+        "origin": "ncurses",
+        "sourceCommit": "2cee8a7328d061418336ad327b512d96bcd7bc5e",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/2cee8a7328d061418336ad327b512d96bcd7bc5e/main/ncurses",
+        "dependencies": [],
+        "provides": [],
+        "officialIndexPackageChecksum": "Q1/MzFElM7Tf9vRK02sG+bQ+iEjR8=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/ncurses-terminfo-base-6.6_p20260516-r0.apk",
+        "sha256": "e0c546b9461bdce206a90bc720cb69aa4628b5a5b8d908c3e5084e00f28f6a9d",
+        "size": 22150,
+        "payloadArchitecture": "noarch",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "pkgconf",
+        "version": "2.5.1-r0",
+        "architecture": "aarch64",
+        "license": "ISC",
+        "origin": "pkgconf",
+        "sourceCommit": "c6f80aa8e59c70d19e2d556c526f151656058536",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/c6f80aa8e59c70d19e2d556c526f151656058536/main/pkgconf",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1"
+        ],
+        "provides": [
+          "pkgconfig=1",
+          "cmd:bomtool=2.5.1-r0",
+          "cmd:pkg-config=2.5.1-r0",
+          "cmd:pkgconf=2.5.1-r0",
+          "so:libpkgconf.so.7=7.0.0"
+        ],
+        "officialIndexPackageChecksum": "Q1PMQRkQTC7cl4aHi2R5185JoJqto=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/pkgconf-2.5.1-r0.apk",
+        "sha256": "6b716719ac9457bd35c8ea5373da1dc33ae86863bbb0f411aed0cb5e71b9cf2d",
+        "size": 56279,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "python3",
+        "version": "3.14.8-r0",
+        "architecture": "aarch64",
+        "license": "PSF-2.0",
+        "origin": "python3",
+        "sourceCommit": "bc27f38b89f034547fd7da4dba62eeb6a0daeb3b",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/bc27f38b89f034547fd7da4dba62eeb6a0daeb3b/main/python3",
+        "dependencies": [
+          "libssl3>=3.3.0",
+          "libexpat>=2.8.0",
+          "so:libbz2.so.1",
+          "so:libc.musl-aarch64.so.1",
+          "so:libcrypto.so.3",
+          "so:libexpat.so.1",
+          "so:libffi.so.8",
+          "so:libgdbm_compat.so.4",
+          "so:liblzma.so.5",
+          "so:libmpdec.so.4",
+          "so:libncursesw.so.6",
+          "so:libpanelw.so.6",
+          "so:libreadline.so.8",
+          "so:libsqlite3.so.0",
+          "so:libssl.so.3",
+          "so:libz.so.1"
+        ],
+        "provides": [
+          "pythonispython3=3.14.8-r0",
+          "cmd:pydoc3.14=3.14.8-r0",
+          "cmd:pydoc3=3.14.8-r0",
+          "cmd:python3.14=3.14.8-r0",
+          "cmd:python3=3.14.8-r0",
+          "cmd:python=3.14.8-r0",
+          "so:libpython3.14.so.1.0=1.0",
+          "so:libpython3.so=0"
+        ],
+        "officialIndexPackageChecksum": "Q1sBBYjBwVUo+KXpG+Ah9r4bhJMHA=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/python3-3.14.8-r0.apk",
+        "sha256": "fb5cc51e45afd7cc78b3189d8019a554e48c6751f0ccbe1aa551d6d94453db5c",
+        "size": 8302633,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "python3-dev",
+        "version": "3.14.8-r0",
+        "architecture": "aarch64",
+        "license": "PSF-2.0",
+        "origin": "python3",
+        "sourceCommit": "bc27f38b89f034547fd7da4dba62eeb6a0daeb3b",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/bc27f38b89f034547fd7da4dba62eeb6a0daeb3b/main/python3",
+        "dependencies": [
+          "python3=3.14.8-r0",
+          "pkgconfig"
+        ],
+        "provides": [
+          "cmd:python-config=3.14.8-r0",
+          "cmd:python3-config=3.14.8-r0",
+          "cmd:python3.14-config=3.14.8-r0",
+          "pc:python-3.14-embed=3.14",
+          "pc:python-3.14=3.14",
+          "pc:python3-embed=3.14",
+          "pc:python3=3.14"
+        ],
+        "officialIndexPackageChecksum": "Q16ypqTlSTtgiLbj4vzThPN3giqoI=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/python3-dev-3.14.8-r0.apk",
+        "sha256": "0d537a8255fcc172c7689df156c1687d461348f6f6f9bd62519a00545e87a30c",
+        "size": 58289381,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "readline",
+        "version": "8.3.3-r1",
+        "architecture": "aarch64",
+        "license": "GPL-3.0-or-later",
+        "origin": "readline",
+        "sourceCommit": "a854c03acdac188901fb012f7acbee70a36e8041",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/a854c03acdac188901fb012f7acbee70a36e8041/main/readline",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1",
+          "so:libncursesw.so.6"
+        ],
+        "provides": [
+          "so:libreadline.so.8=8.3"
+        ],
+        "officialIndexPackageChecksum": "Q1GPvWxvOSv5J0EQfi4YdIeWwjGK8=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/readline-8.3.3-r1.apk",
+        "sha256": "9f0ae0923c02b0d6aba62e9173542b65396ba3f0efefcbf087ea32f1120e7b34",
+        "size": 129706,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "sqlite-libs",
+        "version": "3.53.4-r0",
+        "architecture": "aarch64",
+        "license": "blessing",
+        "origin": "sqlite",
+        "sourceCommit": "a9c3ba8b9129ec0f294d0a9bf538c2f1632bb016",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/a9c3ba8b9129ec0f294d0a9bf538c2f1632bb016/main/sqlite",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1"
+        ],
+        "provides": [
+          "so:libsqlite3.so.0=3.53.4"
+        ],
+        "officialIndexPackageChecksum": "Q1OWsp/zpMxhhT4AEyP8P+zIs8g+U=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/sqlite-libs-3.53.4-r0.apk",
+        "sha256": "b39d8d73c1208838a436f2d481ba605b52a095f8d6ff781556eafc81cd1a13e9",
+        "size": 852532,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "xz-libs",
+        "version": "5.8.4-r0",
+        "architecture": "aarch64",
+        "license": "GPL-2.0-or-later AND 0BSD AND Public-Domain AND LGPL-2.1-or-later",
+        "origin": "xz",
+        "sourceCommit": "0c088d609f9fe69eedd6b4c7f4b99cdad847c20a",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/0c088d609f9fe69eedd6b4c7f4b99cdad847c20a/main/xz",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1"
+        ],
+        "provides": [
+          "so:liblzma.so.5=5.8.4"
+        ],
+        "officialIndexPackageChecksum": "Q1Fees+uhwysD9zTWYVVONXWbxQCA=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/xz-libs-5.8.4-r0.apk",
+        "sha256": "9be375832e747afe14f98e400e8b55d8f6fde25e41663090c81600628daab093",
+        "size": 119423,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      },
+      {
+        "name": "zlib",
+        "version": "1.3.2-r0",
+        "architecture": "aarch64",
+        "license": "Zlib",
+        "origin": "zlib",
+        "sourceCommit": "f248b33b5943c7dc69bf691031d7612ab2e8ed93",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/f248b33b5943c7dc69bf691031d7612ab2e8ed93/main/zlib",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1"
+        ],
+        "provides": [
+          "so:libz.so.1=1.3.2"
+        ],
+        "officialIndexPackageChecksum": "Q1qeG8MrsxW/2sYiT5J4Xk2aM0vyk=",
+        "provenance": "Exact pinned minirootfs installed APK database; retained without replacement",
+        "extractPayload": false,
+        "payloadState": "already installed in pinned minirootfs; retained unchanged"
+      },
+      {
+        "name": "zstd-libs",
+        "version": "1.5.7-r2",
+        "architecture": "aarch64",
+        "license": "BSD-3-Clause OR GPL-2.0-or-later",
+        "origin": "zstd",
+        "sourceCommit": "3c6e2ee2b16f403d53eab39c4426eb61f003c322",
+        "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/3c6e2ee2b16f403d53eab39c4426eb61f003c322/main/zstd",
+        "dependencies": [
+          "so:libc.musl-aarch64.so.1"
+        ],
+        "provides": [
+          "so:libzstd.so.1=1.5.7"
+        ],
+        "officialIndexPackageChecksum": "Q1UrGFE6B78rsNBjRohoH37c42uco=",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/zstd-libs-1.5.7-r2.apk",
+        "sha256": "2bb5136c89f5b0bbe1554c8915a3b520d5aa63ae2a51d4d821eb81698db5a818",
+        "size": 365383,
+        "payloadArchitecture": "aarch64",
+        "extractPayload": true,
+        "payloadState": "locked APK payload extraction; package hooks not executed; absent from base installed database"
+      }
+    ]
+  }
+}

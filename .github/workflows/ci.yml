@@ -41,6 +41,15 @@ jobs:
       - name: Install runtime dependencies for the connector ABI check
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun install --frozen-lockfile
+      - name: Install renderer dependencies for focused source checks
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun install --frozen-lockfile
+        working-directory: launcher
+      - name: Check both source targets including new contract modules
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: |
+          bun run typecheck
+          bun run launcher:typecheck
       - name: Check published ChatGPT connector ABIs
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun run connector-abi:check
@@ -56,6 +65,48 @@ jobs:
       - name: Run selective workflow feature regressions
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun run test:selective-adoption
+      - name: Run focused tunnel credential regressions
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun run test:tunnel-credentials
+      - name: Run Native readiness and passive Python environment regressions
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun test tests/native-account-execution.test.ts tests/skill-python-environment.test.ts --timeout 10000
+      - name: Run persistent Native ownership regressions
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun test tests/persistent-native-conversations.test.ts tests/native-persistent-ipc.test.ts tests/native-account-ipc.test.ts --timeout 10000
+      - name: Run focused Native schema, selected input and consent contracts
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun test tests/agent-native-wait-context.test.ts tests/native-selected-attachments.test.ts tests/agent-mode-multistage.test.ts tests/conversation-history-events.test.ts --timeout 10000
+      - name: Run successful browser session presentation regression
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun test tests/browser-session-presentation.test.ts tests/browser-personalization-readiness.test.ts tests/agent-provider-failed-terminal.test.ts --timeout 10000
+      - name: Run bounded Loop ingress and owner recovery contracts
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun test tests/agent-loop-external-producer.test.ts tests/loop-file-watcher-recovery.test.ts tests/loop-file-watcher-integration.test.ts --timeout 10000
+      - name: Run owned text history and exact OAuth callback contracts
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun test tests/owned-conversation-text.test.ts tests/conversation-history-owned-conversation.test.ts tests/conversation-history-owned-bridge.test.ts tests/agent-oauth-exact-redirect.test.ts tests/oauth-mcp-task-availability.test.ts --timeout 10000
+      - name: Run isolated VM protocol regressions without booting a VM
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun test tests/execution-vm-contract.test.ts tests/python-build-scope-status.test.ts tests/python-build-http-diagnostic.test.ts tests/execution-vm-network-grant-http.test.ts --timeout 10000
+      - name: Run passive VM admission, export and delivery integrity contracts
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun test tests/execution-vm-production-runtime.test.ts tests/execution-vm-export-contract.test.ts tests/execution-vm-network.test.ts tests/python-build.test.ts tests/delivery-integrity.test.ts --timeout 10000
+      - name: Run passive dependency, OAuth and selected-page contracts
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun test tests/skill-python-requirements.test.ts tests/agent-oauth.test.ts tests/browser-companion-dispatch.test.ts tests/browser-companion-firefox.test.ts --timeout 10000
+      - name: Run scoped local API consumer regressions
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun test tests/local-control-api-client.test.ts --timeout 10000
+      - name: Run selected Python resource and approval flow regressions
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun test tests/agent-skill-python-flow.test.ts tests/agent-skill-script-resources.test.ts tests/agent-skill-script-tools.test.ts --timeout 10000
+      - name: Run remote Git review ownership regressions
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun test tests/remote-git-review.test.ts tests/remote-git-review-facade.test.ts tests/remote-workspace-lifecycle.test.ts --timeout 30000
+      - name: Run passive usage provenance and estimate contracts
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun test tests/usage-pricing.test.ts tests/external-usage-formats.test.ts --timeout 10000
       - name: Validate launcher installer with Windows PowerShell 5.1
         if: github.event_name == 'workflow_dispatch' && runner.os == 'Windows'
         shell: powershell

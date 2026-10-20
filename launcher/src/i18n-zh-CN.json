@@ -125,7 +125,7 @@
   "freshConversation": "每回合新建聊天（实验性）",
   "freshConversationBody": "每回合在新聊天中发送完整任务上下文。增加输入量，避免复用旧聊天。保留本地工具连接。",
   "savedChats": "在 ChatGPT 中保存聊天",
-  "savedChatsBody": "开启后，聊天会保存在 ChatGPT 历史记录中。ChatGPT 可能会应用已保存的记忆和自定义指令。",
+  "savedChatsBody": "开启后，聊天会保存在 ChatGPT 历史记录中。ChatGPT 可能会应用已保存的记忆和自定义指令。由于 ChatGPT 临时聊天不再提供插件，工具任务始终使用会保存的聊天。",
   "manualSubmitTime": "手动提交时间",
   "manualSubmitTimeBody": "确认已发送前粘贴提示并上传附件的时间。更改适用于新回合。",
   "skillAttachments": "技能作为文件（实验性）",

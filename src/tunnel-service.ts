@@ -1,8 +1,12 @@
-import { snapshotFile, writeFileSnapshot, type FileSnapshot } from "./file-transactions";
+import { assertProtectedTunnelProfile, connectTunnel, stopTunnel, waitForTunnelReady } from "./tunnel";
+import { retireGlobalLegacyCredential, tunnelCredentialProvider, tunnelCredentialScope, type TunnelCredentialProvider } from "./tunnel-credential";
+import { assertServiceIdle } from "./service";
+import { runtimeStatusReportsStopped } from "./tunnel-status";
+import { fileSnapshotsMatch, snapshotFile, writeFileSnapshot, type FileSnapshot } from "./file-transactions";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AppConfig } from "./config";
-import { getConfigDir } from "./config";
+import { assertDurableRuntimeCommand, getConfigDir, readConfigForSetup } from "./config";
 import {
   assertLaunchdPrintResult,
   launchAgentPlistPath,
@@ -53,7 +57,7 @@ function assertMacOs(): void {
 export function tunnelServiceDefinition(config: AppConfig): string {
   const tunnel = settings(config);
   const logDir = join(getConfigDir(), "logs");
-  const args = [tunnel.binaryPath, "run", "--profile-dir", tunnel.profileDir, "--profile", tunnel.profileName];
+  const args = [...config.runtimeCommand, "tunnel", "credential-run"];
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -125,6 +129,7 @@ export function installTunnelService(
   throwIfAborted(signal);
   assertMacOs();
   const tunnel = settings(config);
+  assertDurableRuntimeCommand(config.runtimeCommand);
   const profile = join(tunnel.profileDir, `${tunnel.profileName}.yaml`);
   if (!existsSync(tunnel.binaryPath)) throw new Error(`Tunnel client is missing: ${tunnel.binaryPath}`);
   if (!existsSync(profile)) throw new Error(`Tunnel profile is missing: ${profile}`);
@@ -217,4 +222,46 @@ export async function uninstallTunnelService(signal?: AbortSignal): Promise<Tunn
   throwIfAborted(signal);
   rmSync(plistPath(), { force: true });
   return getTunnelServiceStatus(LAUNCHCTL_PRINT_TIMEOUT_MS, signal);
+}
+
+
+/** Explicit global legacy retirement. Account migration remains with its existing peer owner. */
+export async function finalizeTunnelCredentialMigration(options: {
+  credentialProvider?: Pick<TunnelCredentialProvider, "resolve">;
+  service?: { status(): TunnelServiceStatus; stop(): Promise<unknown>; install(config: AppConfig): unknown };
+  idle?: (config: AppConfig) => Promise<unknown>;
+} = {}): Promise<{ retired: boolean; ready: boolean }> {
+  const read = readConfigForSetup(); const config = read.config;
+  if (!config || config.mode !== "full" || !config.tunnel?.credential) throw new Error("No protected Full-mode tunnel credential is saved");
+  if (config.accountTunnelMode) throw new Error("Finalize this credential through its selected account runtime owner");
+  if (!config.tunnel.legacyCredentialRetirement) return { retired: true, ready: false };
+  // A locked or unavailable vault is discovered before disturbing the existing runtime owner.
+  (options.credentialProvider ?? tunnelCredentialProvider()).resolve(config.tunnel.credential, tunnelCredentialScope(config));
+  const service = options.service ?? { status: getTunnelServiceStatus, stop: stopTunnelService, install: installTunnelService };
+  const assertCurrent = () => {
+    if (!fileSnapshotsMatch(snapshotFile(read.snapshot.path), read.snapshot)) throw new Error("Tunnel config changed during credential migration; preserving the concurrent generation");
+  };
+  const assertStopped = () => {
+    const observed = runCommand(config.tunnel!.binaryPath, ["runtimes", "status", config.tunnel!.alias, "--json"], { timeout: 10_000 });
+    if (!runtimeStatusReportsStopped(observed)) throw new Error("Previous tunnel process is not confirmed stopped; legacy key retirement remains pending");
+  };
+  await (options.idle ?? assertServiceIdle)(config);
+  assertCurrent();
+  const before = service.status();
+  if (before.loaded) await service.stop();
+  stopTunnel(config);
+  assertStopped(); assertCurrent();
+  connectTunnel(config, undefined, options.credentialProvider);
+  assertProtectedTunnelProfile(config);
+  const ready = await waitForTunnelReady(config);
+  if (!ready.ok) throw new Error("New protected tunnel is not ready; legacy key retirement remains pending");
+  if (before.loaded) {
+    // The validation SDK process is owned by this command; the service resolves anew on start.
+    assertCurrent();
+    stopTunnel(config); assertStopped();
+    service.install(config);
+    const serviceReady = await waitForTunnelReady(config);
+    if (!serviceReady.ok) throw new Error("Protected tunnel service is not ready; legacy key retirement remains pending");
+  }
+  return { retired: retireGlobalLegacyCredential(config, read.snapshot), ready: true };
 }
