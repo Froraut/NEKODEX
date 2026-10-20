@@ -1,3 +1,4 @@
+import { readRuntimeKeyInput } from "../tunnel-credential";
 import { createInterface } from "node:readline/promises";
 import { existsSync } from "node:fs";
 import { stdin, stdout } from "node:process";
@@ -470,6 +471,13 @@ export async function runDevCommand(args: string[]): Promise<void> {
     if (browserOnly === full) throw new Error("Choose exactly one DEV setup mode: --browser-only or --full");
     const tunnelId = takeOption(args, "--tunnel-id");
     const runtimeKeyFile = takeOption(args, "--runtime-key-file");
+    const runtimeKeyStdin = takeFlag(args, "--runtime-key-stdin");
+    if (runtimeKeyFile && runtimeKeyStdin) throw new Error("Choose --runtime-key-file or --runtime-key-stdin");
+    const credentialStorage = takeOption(args, "--credential-storage");
+    if (credentialStorage !== undefined && credentialStorage !== "os-vault" && credentialStorage !== "legacy-file") {
+      throw new Error("--credential-storage must be os-vault or legacy-file");
+    }
+    const runtimeKeyValue = runtimeKeyStdin ? await readRuntimeKeyInput(process.stdin) : undefined;
     const descriptorPath = takeOption(args, "--browser-host-descriptor") ?? paths.descriptorPath;
     const acknowledgedUnofficial = takeFlag(args, "--acknowledge-unofficial");
     const refreshAccountCapabilities = takeFlag(args, "--refresh-account-capabilities");
@@ -507,6 +515,8 @@ export async function runDevCommand(args: string[]): Promise<void> {
       ...(savedChats || temporaryChats ? { useSavedChats: savedChats } : {}),
       ...(tunnelId ? { tunnelId } : {}),
       ...(runtimeKeyFile ? { runtimeKeyFile } : {}),
+      ...(runtimeKeyValue ? { runtimeKeyValue } : {}),
+      ...(credentialStorage ? { credentialStorage } : {}),
     });
     stdout.write(
       `Isolated DEV profile configured (${result.mode}) at ${result.configPath}.\n`

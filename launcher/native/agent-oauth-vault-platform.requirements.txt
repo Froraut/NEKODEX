@@ -1,0 +1,2 @@
+# Linux only. Package a private runtime; never install/select arbitrary keyring backends.
+SecretStorage==3.5.0; sys_platform == 'linux'

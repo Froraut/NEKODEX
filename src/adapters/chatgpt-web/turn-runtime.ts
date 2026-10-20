@@ -1,3 +1,6 @@
+import { verifiedTaskObservationForRequest } from "./task-observation-native";
+import { taskPlanObservationForRequest } from "./task-plan-observation";
+import { taskPlanCaptureEnabled } from "./task-plan-policy";
 import { randomBytes } from "node:crypto";
 import { type ChatGptWebCompactionExecution } from "../../chatgpt-web-compaction-policy";
 import { isChatGptWebZeroRiskBackendModel } from "../../chatgpt-web-models";
@@ -305,6 +308,11 @@ export function createChatGptTurnRuntimeFactory(context: ChatGptTurnRuntimeConte
     const automaticLifecycle = () => ({
       accountRoutingKey: chatGptAccountRoutingKey(checkpointInput.parsed),
       traceId,
+      ...(taskPlanCaptureEnabled() ? { planObservation: taskPlanObservationForRequest(parsed, { captureEnabled: true }) } : {}),
+      observation: { ...verifiedTaskObservationForRequest(parsed),
+        ...(checkpointInput.applied ? { lineage: [{ kind: "checkpoint" as const, observedAt: Date.now(),
+          ...(checkpointInput.sourceTurnId ? { fromId: checkpointInput.sourceTurnId } : {}),
+          ...(identity.turnId ? { toId: identity.turnId } : {}) }] } : {}) },
       modelId: parsed.modelId,
       requestedModel: parsed.requestedModel,
       reasoning: parsed.options.reasoning,
@@ -395,7 +403,8 @@ export function createChatGptTurnRuntimeFactory(context: ChatGptTurnRuntimeConte
             });
           }
           const manualLease = await zeroRiskManualControl.start(retainedLauncherDescriptor, {
-            useSavedChats: provider.chatgptWeb?.useSavedChats === true,
+            // Manual mode always selects the plugin, and Temporary Chat no longer lists plugins.
+            useSavedChats: true,
             ...owner,
             prompt: compiled.text,
             ...(resumeCompiled ? { resumePrompt: resumeCompiled.text } : {}),

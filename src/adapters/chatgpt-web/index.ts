@@ -698,7 +698,7 @@ export function createChatGptWebAdapter(
                 for (const message of results) {
                   await broker.completeTool(turnToken, message.toolCallId, brokerToolResult(message));
                   session.runtime.externalProgress.recordToolResult(message.toolCallId, Date.now(),
-                    message.isError ? undefined : wireNames.get(message.toolCallId));
+                    message.isError ? undefined : wireNames.get(message.toolCallId), message.isError ? "error" : "succeeded");
                   session.markResultDelivered(message.toolCallId);
                 }
               }

@@ -1,0 +1,32 @@
+.agent-mode-surface { min-width: 0; }
+.agent-mode-form, .agent-mode-detail { display: grid; gap: var(--space-4); min-width: 0; }
+.agent-mode-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
+.agent-mode-dependencies { display: grid; gap: var(--space-3); max-height: 360px; overflow: auto; }
+.agent-mode-dependencies fieldset { display: grid; gap: var(--space-2); min-width: 0; border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3); }
+.agent-mode-dependencies legend { max-width: 100%; overflow-wrap: anywhere; }
+.agent-mode-dependencies ol { margin: 0; padding-inline-start: var(--space-5); color: var(--text-secondary); overflow-wrap: anywhere; }
+.agent-mode-field textarea { width: 100%; min-height: 96px; resize: vertical; line-height: 1.5; padding: var(--space-3); }
+.agent-mode-workspace { display: grid; grid-template-columns: minmax(220px, 0.7fr) minmax(0, 2fr); align-items: start; gap: var(--space-5); }
+.agent-mode-task-list > ul { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--space-2); }
+.agent-mode-task { display: grid; gap: var(--space-2); width: 100%; padding: var(--space-3); border: 1px solid var(--border-control); border-radius: var(--radius-md); background: var(--bg-control); color: var(--text-primary); text-align: start; cursor: pointer; overflow-wrap: anywhere; }
+.agent-mode-task:hover { background: var(--bg-control-hover); }
+.agent-mode-task[aria-current="true"] { border-color: var(--accent); background: var(--bg-accent-subtle); }
+.agent-mode-task:focus-visible, .agent-mode-field textarea:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
+.agent-mode-task:disabled { opacity: 0.6; cursor: default; }
+.agent-mode-task strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.agent-mode-task span, .agent-mode-muted, .agent-mode-meta dt, .agent-mode-records small { color: var(--text-secondary); }
+.agent-mode-task code { font-size: 12px; }
+.agent-mode-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+.agent-mode-form > p, .agent-mode-detail > p { margin-block: 0; }
+.agent-mode-capabilities .nk-badge { padding-inline: var(--space-3); }
+.agent-mode-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
+.agent-mode-meta dd { margin: var(--space-1) 0 0; overflow-wrap: anywhere; }
+.agent-mode-prose { white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-mode-records { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--space-3); }
+.agent-mode-records > li { min-width: 0; padding-block: var(--space-2); border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.agent-mode-records > li:last-child { border-bottom: 0; }
+.agent-mode-records p { margin-block: var(--space-2); }
+.agent-mode-records pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; font-size: 12px; }
+.agent-mode-detail h2:focus { outline: none; }
+@media (max-width: 860px) { .agent-mode-workspace { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .agent-mode-columns, .agent-mode-meta { grid-template-columns: 1fr; } }

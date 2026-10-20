@@ -72,7 +72,7 @@ export class ChatGptLunaCheckpointStore {
     this.backend = backend;
   }
 
-  apply(parsed: CodexParsedRequest): { parsed: CodexParsedRequest; applied: boolean; reason?: string } {
+  apply(parsed: CodexParsedRequest): { parsed: CodexParsedRequest; applied: boolean; reason?: string; sourceTurnId?: string } {
     const identity = extractChatGptTurnIdentity(parsed);
     if (!identity.threadId || !identity.turnId) return { parsed, applied: false, reason: "missing native thread identity" };
     const projection = analyzeLunaCheckpointProjection(parsed, identity.turnId);
@@ -89,7 +89,7 @@ export class ChatGptLunaCheckpointStore {
     if (!projection.currentInput.length) {
       return { parsed, applied: false, reason: "current native turn boundary is unavailable" };
     }
-    return { parsed: projectLunaCheckpoint(parsed, identity.turnId, stored.checkpoint, projection), applied: true };
+    return { parsed: projectLunaCheckpoint(parsed, identity.turnId, stored.checkpoint, projection), applied: true, sourceTurnId: stored.sourceTurnId };
   }
 
   commit(parsed: CodexParsedRequest, captured: CapturedChatGptLunaCheckpoint, answer: string): void {

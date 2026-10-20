@@ -1,5 +1,5 @@
 const path = require("node:path");
-const { validateAccountTunnelBindings } = require('./account-tunnels.cjs');
+const { validateAccountTunnelBindings, validateTunnelCredential } = require('./account-tunnels.cjs');
 
 function absolutePath(value, platform = process.platform) {
   return platform === "win32" ? path.win32.isAbsolute(value) : path.isAbsolute(value);
@@ -131,7 +131,7 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
     if (!tunnel || typeof tunnel !== "object") {
       throw new Error(`Full mode is missing ${label}`);
     }
-    for (const key of ["binaryPath", "tunnelId", "runtimeKeyFile", "profileDir", "profileName", "alias"]) {
+    for (const key of ["binaryPath", "tunnelId", "profileDir", "profileName", "alias"]) {
       if (typeof tunnel[key] !== "string" || !tunnel[key].trim()) {
         throw new Error(`Full mode is missing ${label}.${key}`);
       }
@@ -144,7 +144,8 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
         throw new Error(`Full mode has an invalid ${label}.${key}`);
       }
     }
-    for (const key of ["binaryPath", "runtimeKeyFile", "profileDir"]) {
+    validateTunnelCredential(tunnel, platform);
+    for (const key of ["binaryPath", "profileDir"]) {
       if (!absolutePath(tunnel[key], platform)) {
         throw new Error(`Full mode requires an absolute ${label}.${key}`);
       }

@@ -24,6 +24,8 @@ export interface SetupOptions {
   restartService?: boolean;
   acknowledgedUnofficial?: boolean;
   tunnelId?: string;
+  /** Plaintext legacy storage is an explicit compatibility opt-in, never a vault fallback. */
+  credentialStorage?: "os-vault" | "legacy-file";
   runtimeKeyFile?: string;
   runtimeKeyValue?: string;
 }

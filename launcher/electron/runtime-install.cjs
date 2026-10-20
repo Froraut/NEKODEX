@@ -200,6 +200,10 @@ function validateRuntimeBundle(runtimeRoot, identity) {
   return inspectRuntimeBundle(runtimeRoot, identity).runtimeRoot;
 }
 
+function runtimeManifestBytes(runtimeRoot) {
+  return fs.readFileSync(path.join(runtimeRoot, "manifest.json"));
+}
+
 async function waitForPackagedRuntimeSource({
   app,
   resourcesPath,
@@ -251,7 +255,11 @@ function ensurePackagedRuntime({ app, coreHome, resourcesPath }) {
   );
   if (fs.existsSync(destination)) {
     try {
-      return validateRuntimeBundle(destination, expectedIdentity);
+      const installed = validateRuntimeBundle(destination, expectedIdentity);
+      // The daemon admits the durable copy only when its manifest is byte-identical to the
+      // signed one, build metadata included. A same-version rebuild with unchanged files keeps
+      // its bundleId, so a differing manifest still reinstalls the copy.
+      if (runtimeManifestBytes(destination).equals(runtimeManifestBytes(source))) return installed;
     } catch {
       // A terminated installer or external cleanup can leave a version directory present but
       // incomplete. Rebuild the launcher-owned bundle transactionally from the signed package.

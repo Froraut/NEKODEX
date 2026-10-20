@@ -1,9 +1,12 @@
+import { createHash } from "node:crypto";
+import { boundTaskObservation, taskObservationWithProgress, type TaskObservation } from "./task-observation";
+import type { TaskPlanObservation } from "./task-plan-observation";
 import { assertChatGptWebInputWithinLimits, assertChatGptWebMultipartInputWithinLimits, resolveChatGptWebMultipartStagingMode } from "./browser-input-policy";
 import { CHATGPT_DOM_REVISION_ATTRIBUTES } from "./browser-dom-revision";
 import { CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS, CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS, ChatGptBrowserObservationTimeoutError, CHATGPT_SEND_ENABLE_GRACE_MS, settleChatGptUi, withChatGptBrowserObservationTimeout } from "./browser-operation-support";
 import { chatGptConnectorUnavailableError, ChatGptPersistentBrowserStateError, ensureChatGptPersonalizedConnectorAccess, clearChatGptPersonalizationComposer } from "./browser-personalization";
 import { ChatGptVisibleTraceTracker } from "./browser-visible-trace";
-import { ChatGptBrowserDiagnostics, stalledTurnDiagnostic, redactChatGptUiDiagnostic } from "./browser-diagnostics";
+import { ChatGptBrowserDiagnostics, chatGptFailureMessageWithCause, stalledTurnDiagnostic, redactChatGptUiDiagnostic } from "./browser-diagnostics";
 import { submissionDomState, type ChatGptSubmissionDomCache, type ChatGptSubmissionDomState } from "./browser-submission-dom";
 import { absentResponseDomSnapshot, resetChatGptResponseDomCache, responseDomSnapshot, type ChatGptResponseDomCache, type ChatGptResponseDomSnapshot } from "./browser-response-dom";
 import { assertChatGptPromptAttachments, chatGptPromptFilePayloads } from "./attachment-payloads";
@@ -181,7 +184,8 @@ class ChatGptPromptAttachmentIntegrityError extends ChatGptWebAdapterError {
 
 const browserStageTimeouts = {
   browserPage: 60_000,
-  temporaryChatPreparation: 150_000,
+  // Includes up to CHATGPT_NETWORK_RETRY_BUDGET_MS of retries while ChatGPT is unreachable.
+  temporaryChatPreparation: 360_000,
   effortSelection: 120_000,
   promptAttachment: 60_000,
   fileAttachment: 120_000,
@@ -239,6 +243,8 @@ async function waitForOperationalChatGptViewport(page: Page, signal?: AbortSigna
 }
 
 export interface BrowserTurn {
+  observation?: TaskObservation;
+  planObservation?: TaskPlanObservation;
   requestedModel?: string;
   accountRoutingKey?: string;
   traceId: string;
@@ -262,7 +268,7 @@ export interface BrowserTurn {
   /** Observed current-submission receipt/activity; not proof of model understanding or completion. */
   onSubmitted?: () => void | Promise<void>;
   /** Private to the launcher worker. Durable UI evidence; never a provider completion signal. */
-  onTaskProgress?: (phase: 'sending-context' | 'context-accepted' | 'sending' | 'accepted' | 'responding' | 'waiting-tools') => Promise<void>;
+  onTaskProgress?: (phase: 'preparing' | 'sending-context' | 'context-accepted' | 'sending' | 'accepted' | 'responding' | 'waiting-tools') => Promise<void>;
   /** One inert Bigger Context stage completed its exact acknowledgement boundary. */
   onMultipartStageAcknowledged?: (stageIndex: number) => void | Promise<void>;
   /** Visible ChatGPT reasoning-summary step titles only; never hidden chain-of-thought. */
@@ -292,6 +298,33 @@ export interface BrowserTurn {
 export type ChatGptCompletionFenceStart =
   | { revision: number }
   | { blockedReason: "active_work" | "unacknowledged_async_result"; blockedCount: number };
+
+const CHATGPT_NETWORK_RETRY_BUDGET_MS = 300_000;
+const CHATGPT_NETWORK_ATTEMPT_TIMEOUT_MS = 30_000;
+const CHATGPT_NETWORK_RETRY_DELAYS_MS = [3_000, 6_000, 12_000, 20_000, 30_000];
+const RETRYABLE_CHATGPT_NETWORK_ERROR = /net::ERR_(?:TIMED_OUT|CONNECTION_(?:CLOSED|RESET|REFUSED|ABORTED|FAILED|TIMED_OUT)|NETWORK_(?:CHANGED|IO_SUSPENDED)|INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|NAME_RESOLUTION_FAILED|ADDRESS_UNREACHABLE|PROXY_CONNECTION_FAILED|TUNNEL_CONNECTION_FAILED|EMPTY_RESPONSE|HTTP2_PROTOCOL_ERROR|QUIC_PROTOCOL_ERROR|SSL_PROTOCOL_ERROR|SOCKET_NOT_CONNECTED)\b/;
+
+/** A failed new-chat navigation sent nothing; a dropped or timed-out connection is worth retrying. */
+export function chatGptNavigationRetryReason(error: unknown): string | null {
+  if (!(error instanceof Error)) return null;
+  const network = RETRYABLE_CHATGPT_NETWORK_ERROR.exec(error.message);
+  if (network) return network[0];
+  return error.name === "TimeoutError" ? "page load timed out" : null;
+}
+
+/** The pause before retry number `attempt` (1-based), or null when the budget cannot fit another try. */
+export function chatGptNavigationRetryDelayMs(attempt: number, elapsedMs: number): number | null {
+  const delayMs = CHATGPT_NETWORK_RETRY_DELAYS_MS[Math.min(attempt - 1, CHATGPT_NETWORK_RETRY_DELAYS_MS.length - 1)]!;
+  return elapsedMs + delayMs + CHATGPT_NETWORK_ATTEMPT_TIMEOUT_MS > CHATGPT_NETWORK_RETRY_BUDGET_MS ? null : delayMs;
+}
+
+/** Temporary Chat no longer lists plugins, so a turn that needs the connector runs on a saved chat. */
+export function chatGptTurnUsesSavedChat(
+  useSavedChats: boolean | undefined,
+  capabilities: Pick<ChatGptWebCapabilities, "localToolsEnabled">,
+): boolean {
+  return useSavedChats === true || capabilities.localToolsEnabled === true;
+}
 
 /** Runs in the page. Read the submitted text, excluding only observed renderer chrome. */
 export function readChatGptUserMessage(
@@ -748,24 +781,64 @@ export class ChatGptBrowserWorker {
     );
   }
 
+  /**
+   * Opening a new chat sends nothing, so a dropped or timed-out connection (a VPN reconnecting,
+   * Wi-Fi changing) is retried with growing pauses for up to five minutes. Each retry is reported
+   * to the caller, which shows it in Codex, instead of failing the whole task on the first error.
+   * Only a caller that can cancel retries. Launcher checks pass no signal: they make one attempt
+   * and the launcher retries the check, so a cancelled check never keeps navigating its page.
+   */
+  private async openChatGptWithNetworkRetry(
+    page: Page,
+    url: string,
+    abortSignal?: AbortSignal,
+    onNetworkRetry?: (note: string) => void,
+    captureDiagnostic?: (checkpoint: string) => Promise<void>,
+  ): Promise<void> {
+    const startedAt = Date.now();
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await withBrowserTurnAbort(page.goto(url, {
+          waitUntil: "domcontentloaded",
+          timeout: CHATGPT_NETWORK_ATTEMPT_TIMEOUT_MS,
+        }), abortSignal);
+        if (attempt > 1) onNetworkRetry?.("ChatGPT is reachable again; continuing the task.");
+        return;
+      } catch (error) {
+        if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+        const reason = abortSignal ? chatGptNavigationRetryReason(error) : null;
+        const delayMs = reason ? chatGptNavigationRetryDelayMs(attempt, Date.now() - startedAt) : null;
+        if (!reason || delayMs === null) throw error;
+        const note = `ChatGPT is unreachable (${reason}); nothing was sent. Retrying in ${Math.round(delayMs / 1_000)} s`
+          + ` (attempt ${attempt + 1}).`;
+        console.warn(`[chatgpt-web] ${note}`);
+        onNetworkRetry?.(note);
+        await captureDiagnostic?.(`network-retry-${attempt}`);
+        await this.waitBeforeNetworkRetry(delayMs, abortSignal);
+      }
+    }
+  }
+
+  private waitBeforeNetworkRetry(delayMs: number, abortSignal?: AbortSignal): Promise<void> {
+    return withBrowserTurnAbort(new Promise<void>(resolve => setTimeout(resolve, delayMs)), abortSignal);
+  }
+
   /** Put each operation on a new owned chat document. Maintenance remains temporary. */
   private async prepareTemporaryChatSurface(
     page: Page,
     captureDiagnostic?: (checkpoint: string) => Promise<void>,
     abortSignal?: AbortSignal,
     useSavedChats = false,
+    onNetworkRetry?: (note: string) => void,
   ): Promise<Locator> {
     if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
-    // Launcher verification refreshes its owned page before attaching Playwright so a newly added
-    // connector is present in the catalog. Navigating again here destroys that freshly hydrated
-    // document and made the first verification race a second SPA bootstrap. A leased turn starts on
-    // about:blank and therefore still performs exactly one navigation through this same method.
+    // Session inspection can refresh its owned Temporary Chat page before attaching Playwright.
+    // Navigating again here would destroy that freshly hydrated document and race a second SPA
+    // bootstrap. Connector verification (a saved chat) and a leased turn (about:blank) still
+    // perform exactly one navigation through this same method.
     const chatUrl = chatGptNewChatUrl(useSavedChats);
     if (page.url() !== chatUrl) {
-      await withBrowserTurnAbort(page.goto(chatUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: 60_000,
-      }), abortSignal);
+      await this.openChatGptWithNetworkRetry(page, chatUrl, abortSignal, onNetworkRetry, captureDiagnostic);
       await captureDiagnostic?.(useSavedChats ? "saved-chat-navigation-complete" : "temporary-chat-navigation-complete");
     }
     let composer: Locator;
@@ -2058,10 +2131,9 @@ export class ChatGptBrowserWorker {
     const captureDiagnostic = (checkpoint: string): Promise<void> => diagnostics.capture(page, checkpoint);
     try {
       await captureDiagnostic("connector-verification-started");
-      await this.prepareTemporaryChatSurface(page, captureDiagnostic);
-      // The launcher refreshes its owned ChatGPT document before starting this helper. A second
-      // reload here can discard the first catalog's exact mismatch evidence and report a generic
-      // menu failure instead of identifying the connector the account actually exposes.
+      // Temporary Chat no longer lists plugins, so the connector is proven on a new saved chat.
+      // Verification never submits, so ChatGPT history gains no conversation.
+      await this.prepareTemporaryChatSurface(page, captureDiagnostic, undefined, true);
       await this.selectConnector(page, captureDiagnostic);
       // Verification proves selection but does not submit a turn. Leaving the selected plugin in
       // ChatGPT's persisted composer draft makes the next hard refresh restore half-hydrated plugin
@@ -2075,6 +2147,22 @@ export class ChatGptBrowserWorker {
       throw error;
     } finally {
       diagnostics.dispose();
+      // The launcher's session checks observe Temporary Chat on this same home page.
+      await this.returnToTemporaryChat(page);
+    }
+  }
+
+  private async returnToTemporaryChat(page: Page): Promise<void> {
+    const temporaryUrl = chatGptNewChatUrl(false);
+    if (page.isClosed() || page.url() === temporaryUrl) return;
+    try {
+      // Bounded well inside the launcher's check deadline: the launcher waits for the session on
+      // this page next, and brings it back itself if this step fails.
+      await page.goto(temporaryUrl, { waitUntil: "domcontentloaded", timeout: CHATGPT_NETWORK_ATTEMPT_TIMEOUT_MS });
+      // The launcher observes this page next; hand it back with its composer, not mid-load.
+      await this.activeComposer(page, 15_000);
+    } catch (error) {
+      console.warn(`[chatgpt-web] could not return the home page to Temporary Chat: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -2254,15 +2342,35 @@ export class ChatGptBrowserWorker {
       heartbeatTimer.unref?.();
       let sequence = lease.taskProgressSequence ?? 0;
       let lastPhase = '';
+      let lastObservation = '';
       const onTaskProgress: BrowserTurn['onTaskProgress'] = async phase => {
-        if (phase === lastPhase) return;
+        const observation = taskObservationWithProgress(turn.observation, turn.externalProgress?.snapshot());
+        if (observation && turn.observation) Object.assign(turn.observation, observation);
+        const bounded = observation ? boundTaskObservation(observation) : undefined;
+        const signature = bounded ? JSON.stringify(bounded) : '';
+        if (phase === lastPhase && signature === lastObservation) return;
         await notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
           phase: 'progress', traceId: turn.traceId, helperPid: process.pid, surfaceId,
-          taskPhase: phase, sequence: ++sequence,
+          taskPhase: phase, sequence: ++sequence, ...(bounded ? { observation: bounded } : {}),
         }, LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS);
-        lastPhase = phase;
+        lastPhase = phase; lastObservation = signature;
       };
-      return await this.runBrowserTurn({ ...turn, onTaskProgress }, surfaceId, undefined, reused);
+      await onTaskProgress('preparing');
+      if (turn.planObservation?.native && lease.taskRecordId) {
+        // Plan capture is optional observation; a storage/policy failure cannot decide the turn outcome.
+        await notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
+          phase: 'plan', traceId: turn.traceId, helperPid: process.pid, surfaceId,
+          taskRecordId: lease.taskRecordId, planObservation: turn.planObservation,
+        }, LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS).catch(() => {
+          console.warn('[chatgpt-web] optional native plan observation unavailable');
+        });
+      }
+      try {
+        return await this.runBrowserTurn({ ...turn, onTaskProgress }, surfaceId, undefined, reused);
+      } finally {
+        // Capture a last returned tool result even when no further DOM polling occurs.
+        await onTaskProgress((lastPhase || 'preparing') as Parameters<NonNullable<BrowserTurn['onTaskProgress']>>[0]).catch(() => {});
+      }
     } catch (error) {
       originalError = error;
       terminal = error instanceof ChatGptCompactionHandoffAccepted
@@ -2272,7 +2380,12 @@ export class ChatGptBrowserWorker {
         || (error instanceof ChatGptWebAdapterError && error.code === "client_cancelled")
         ? "aborted"
         : "failed";
-      terminalMessage = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
+      // The launcher logs this as browser.turn_ended: keep the primary sentence, then the cause
+      // a wrapper such as the pinned-model error would otherwise hide.
+      terminalMessage = chatGptFailureMessageWithCause(
+        error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+        error,
+      );
       throw error;
     } finally {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
@@ -2364,6 +2477,7 @@ export class ChatGptBrowserWorker {
     const browserCapabilities = turn.nativeConnector
       ? { ...turn.capabilities, localToolsEnabled: true }
       : turn.capabilities;
+    const useSavedChat = chatGptTurnUsesSavedChat(this.config.useSavedChats, browserCapabilities);
     if (turn.compactionExecution !== undefined) {
       let execution: ChatGptWebCompactionExecution;
       try {
@@ -2570,6 +2684,10 @@ export class ChatGptBrowserWorker {
             turnConnection = connection.browser;
             page = connection.page;
             diagnosticPage = page;
+            if (turn.observation) {
+              turn.observation.lineage = [...turn.observation.lineage,
+                { kind: "browser-rebind" as const, observedAt: Date.now(), fromId: launcherSurfaceId, toId: launcherSurfaceId }].slice(-16);
+            }
             break;
           } catch (error) {
             if (!turnConnection || !canRetryOwnedPageRebind(error, {
@@ -2650,7 +2768,8 @@ export class ChatGptBrowserWorker {
             page,
             checkpoint => diagnostics.capture(page, checkpoint),
             browserStageAbortSignal(stageSignal, turn.abortSignal),
-            this.config.useSavedChats,
+            useSavedChat,
+            note => turn.onReasoningSummary?.(note),
           ),
         );
       }
@@ -2799,7 +2918,7 @@ export class ChatGptBrowserWorker {
         }
         // Saved chats move from / to /c/<id> after the first staged Send. Re-prove
         // the picker on that conversation even if final effort equals staging effort.
-        if (mode.effort !== requestedMode.effort || this.config.useSavedChats) {
+        if (mode.effort !== requestedMode.effort || useSavedChat) {
           mode = await runBrowserStage(
             turn.traceId,
             "final_part_effort_selection",
@@ -2869,7 +2988,7 @@ export class ChatGptBrowserWorker {
                 page,
                 checkpoint => diagnostics.capture(page, checkpoint),
                 refreshSignal,
-                this.config.useSavedChats,
+                useSavedChat,
               );
               mode = await this.selectModelAndEffort(
                 page,
@@ -3072,6 +3191,11 @@ export class ChatGptBrowserWorker {
               ),
             );
             const reboundIdentityChanged = rebound.identity !== responseTurn.identity;
+            if (reboundIdentityChanged && turn.observation) {
+              turn.observation.lineage = [...turn.observation.lineage, { kind: "assistant-replacement" as const, observedAt: Date.now(),
+                fromId: createHash("sha256").update(responseTurn.identity).digest("hex"),
+                toId: createHash("sha256").update(rebound.identity).digest("hex") }].slice(-16);
+            }
             responseTurn = rebound;
             if (reboundIdentityChanged) {
               resetChatGptResponseDomCache(responseDomCache);
@@ -3409,8 +3533,10 @@ export class ChatGptBrowserWorker {
       }
       const reportedError = chatGptSubmittedProviderFailure(error, providerSubmissionStage);
       console.error(
-        `[chatgpt-web] browser turn ${turn.traceId} failed:`
-        + ` ${redactChatGptUiDiagnostic(reportedError instanceof Error ? reportedError.message : String(reportedError))}`,
+        `[chatgpt-web] browser turn ${turn.traceId} failed: ${chatGptFailureMessageWithCause(
+          redactChatGptUiDiagnostic(reportedError instanceof Error ? reportedError.message : String(reportedError)),
+          reportedError,
+        )}`,
       );
       if (diagnosticPage && !diagnosticPage.isClosed()) {
         await diagnostics.capture(diagnosticPage, "turn-failed", reportedError);

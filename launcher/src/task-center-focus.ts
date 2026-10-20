@@ -12,7 +12,7 @@ import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 export interface RowFocusMemory { element: HTMLElement; row: string; action: string | null; index: number }
 
 const ROW = "[data-focus-row]";
-const CONTROL = "button, select, input, textarea, a[href]";
+const CONTROL = "button, select, input, textarea, a[href], summary";
 
 const blocked = (element: Element) => (element as HTMLButtonElement).disabled === true || element.getAttribute("aria-disabled") === "true";
 const usable = (element: HTMLElement) => element.isConnected && !blocked(element) && !element.closest("[inert]") && element.getClientRects().length > 0;

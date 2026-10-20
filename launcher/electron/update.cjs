@@ -445,10 +445,9 @@ function createUpdateController({
         if (!assetName) return transition({ status: "disabled" });
         const assets = Array.isArray(release?.assets) ? release.assets : [];
         const asset = assets.find((item) => item?.name === assetName);
-        const checksums = assets.find((item) => item?.name === "checksums.txt");
         const metadata = assets.find((item) => item?.name === "release-metadata.json");
-        if (!asset?.browser_download_url || !checksums?.browser_download_url || !metadata?.browser_download_url) {
-          throw new Error(`Release v${version} is missing ${assetName}, checksums.txt or signed release-metadata.json`);
+        if (!asset?.browser_download_url || !metadata?.browser_download_url) {
+          throw new Error(`Release v${version} is missing ${assetName} or signed release-metadata.json`);
         }
         if (!Number.isSafeInteger(asset.size) || asset.size <= 0 || asset.size > MAX_ASSET_BYTES) {
           throw new Error(`Release v${version} has an invalid or excessive download size`);
@@ -458,7 +457,6 @@ function createUpdateController({
           assetName,
           assetBytes: asset.size,
           assetUrl: validateReleaseAssetUrl(asset.browser_download_url, version, assetName, repository),
-          checksumsUrl: validateReleaseAssetUrl(checksums.browser_download_url, version, "checksums.txt", repository),
           metadataUrl: validateReleaseAssetUrl(metadata.browser_download_url, version, "release-metadata.json", repository),
         };
         logger?.info("launcher.update_available", { currentVersion, version, platform, arch });
@@ -536,7 +534,7 @@ function createUpdateController({
         const staged = await stageAuthenticatedUpdate({
           available, repository, platform, arch, executablePath, runtimeExecutable,
           logsDirectory, deps, signal: active.controller.signal, onProgress: transition,
-          expectedChecksum, buildJob, logger,
+          buildJob, logger,
         });
         // Successful return transfers ownership from staging to this controller.
         tempRoot = staged.tempRoot;

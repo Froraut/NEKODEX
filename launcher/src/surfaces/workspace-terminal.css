@@ -1,0 +1,13 @@
+.nk-workspace-terminal { min-width: 0; }
+.nk-workspace-terminal__toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2, 8px); }
+.nk-workspace-terminal__ownership { color: var(--text-secondary); font-size: var(--font-size-sm, 13px); }
+.nk-workspace-terminal__cwd { font-family: var(--font-mono, monospace); overflow-wrap: anywhere; }
+.nk-workspace-terminal__emulator {
+  --terminal-background: var(--bg-under);
+  --terminal-foreground: var(--text-primary, #edf0f5);
+  background: var(--terminal-background); color: var(--terminal-foreground);
+  height: clamp(220px, 38vh, 480px); min-width: 0; padding: 8px; overflow: hidden;
+  border: 1px solid var(--border-heavy); border-radius: var(--radius-md, 8px);
+}
+.nk-workspace-terminal__emulator .xterm { height: 100%; }
+.nk-workspace-terminal__emulator:focus-within { outline: 2px solid var(--focus-ring); outline-offset: 2px; }

@@ -8,7 +8,7 @@ export function existingChromeFailureText(code: string | null, copy: Copy, langu
   switch (code) {
     case "chrome-profile-access-denied": return copy.existingChromeAccessDenied;
     case "chrome-file-selection-invalid": return copy.existingChromeWrongFile;
-    case "chrome-unavailable": return copy.existingChromeMissingConnection;
+    case "chrome-unavailable": case "chrome-discovery-timeout": return copy.existingChromeMissingConnection;
     case "invalid-endpoint": return copy.existingChromeInvalidConnection;
     case "chrome-permission-denied": return copy.existingChromeDenied;
     case "chrome-permission-timeout": case "existing-chrome-timeout": return copy.existingChromeTimeout;

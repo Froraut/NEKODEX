@@ -20,6 +20,21 @@ const { AccountOperationLeases, validateRead, validateExclusive } = require('./a
 
 // Under the runtime's 30 s session-inspection deadline, leaving time for its own short read.
 const READ_ONLY_INSPECTION_WAIT_MS = 20_000;
+const EVIDENCE_RESTORE_RETRY_DELAYS_MS = [10_000, 30_000, 60_000, 120_000];
+
+/** Hosts share one launcher log; stamp each event with its account unless it already names one. */
+function accountScopedLogger(logger, accountId) {
+  if (!logger) return logger;
+  const scoped = Object.create(logger);
+  for (const level of ['debug', 'info', 'warn', 'error']) {
+    if (typeof logger[level] !== 'function') continue;
+    scoped[level] = (event, detail, ...rest) => logger[level](event,
+      detail === undefined ? { accountId }
+        : detail && typeof detail === 'object' && !Array.isArray(detail) ? { accountId, ...detail } : detail,
+      ...rest);
+  }
+  return scoped;
+}
 
 function validateWorkspaceId(value) {
   if (typeof value !== 'string' || value.length < 1 || value.length > 128
@@ -240,6 +255,7 @@ class AccountBrowserPool {
     if (!this.taskLedgers.has(id)) this.taskLedgers.set(id,
       new BrowserTaskLedger(path.join(this.options.coreHome, 'runtime', `tasks-${id}.json`)));
     try { host = new BrowserHost({ ...this.options,
+      logger: accountScopedLogger(this.options.logger, id),
       taskLedger: this.taskLedgers.get(id),
       accountId: id,
       onTurnTabOwned: receipt => this.bindUnsentAdmissionOwner(receipt),
@@ -252,8 +268,15 @@ class AccountBrowserPool {
       workspaceSessionMutation: this.workspaceCoordinator(id),
       workspaceManifestPath: path.join(this.options.coreHome, 'runtime', `browser-workspaces-${id}.json`),
       workspaceChanged: () => this.publish(),
-      onAuthIdentityChanged: (accountId) => {
+      onAuthIdentityChanged: (accountId, _identityEpoch, { principalChanged = true } = {}) => {
         if (accountId !== id) throw new Error('Browser host reported an unexpected account identity');
+        // A renewed session for the same ChatGPT user keeps its models and connector; only a
+        // different user, a sign-out or a rejected session invalidates the account's evidence.
+        if (principalChanged === false) {
+          this.logger?.info?.('browser.account_session_renewed', { accountId: id });
+          return;
+        }
+        this.logger?.info?.('browser.account_evidence_invalidated', { accountId: id, reason: 'identity-changed' });
         this.invalidateEvidence(id);
       },
       publishState: () => this.publish(),
@@ -291,6 +314,7 @@ class AccountBrowserPool {
   }
   replaceShellWindow(window) {
     const previous = this.options.window;
+    this.invalidateRendererSurface();
     const moved = [];
     try {
       for (const host of this.hosts.values()) { host.replaceShellWindow(window); moved.push(host); }
@@ -397,8 +421,14 @@ class AccountBrowserPool {
       const capabilities = this.capabilities.get(account.id);
       const activeTurns = host ? [...host.turnTabs.values()].filter(tab => tab.status === 'running').length : 0;
       const reserved = reservedByAccount.get(account.id) ?? 0;
+      // Evidence is rebuilt after every launch and sign-in; say so instead of "Needs setup".
+      const restore = this.evidenceRestores?.get(account.id);
+      const evidenceChecking = Boolean(this.evidenceRefreshing?.has(account.id)
+        || (restore && !restore.cancelled && !restore.waitForTunnel)
+        || this.authenticationRefreshOperations.has(account.id) || host?.readOnlyInspection);
       return { ...account, proxy: this.network.get(account.id), safety: this.safety.snapshot(account.id), authenticated: host?.state.authenticated === true,
-        authenticationStatus: host?.state.authenticationStatus,
+        authenticationStatus: host?.state.authenticationStatus ?? (evidenceChecking ? 'unknown' : undefined),
+        evidenceChecking,
         authenticationIssue: host?.state.authenticationIssue ?? null,
         authenticationCheckedAt: host?.state.authenticationCheckedAt ?? null,
         lastVerifiedAt: host?.state.lastVerifiedAt ?? null,
@@ -674,6 +704,12 @@ class AccountBrowserPool {
     for (const host of this.hosts.values()) host.setSurfaceActive(this.surfaceActive);
     return this.snapshot();
   }
+  invalidateRendererSurface() {
+    if (this.destroyed) return;
+    this.bounds = null;
+    this.surfaceActive = false;
+    for (const host of this.hosts.values()) host.invalidateRendererSurface();
+  }
   hide() { for (const host of this.hosts.values()) host.hide(); return this.snapshot(); }
   accountTunnel(accountId, mode = this.options.getBrowserInteractionMode?.() ?? 'automatic') {
     return this.options.getAccountTunnel?.(accountId, mode)
@@ -739,9 +775,26 @@ class AccountBrowserPool {
       if (changed) this.scheduleEvidenceRestore(id, { waitForTunnel: true });
     }
   }
+  /**
+   * A Check or Retry pressed while this account's own read-only check (a background session
+   * re-check, a connector or session inspection) runs waits for it instead of failing with
+   * "busy". Tasks, logins and other mutations still refuse as before.
+   */
+  async waitForAccountInspection(id) {
+    const host = this.getHost(id);
+    for (let rounds = 0; rounds < 3; rounds++) {
+      const running = host.readOnlyInspection?.done ?? this.authenticationRefreshOperations.get(id);
+      if (!running || host.activeTraceId || this.accountMutationOperationLabel(id)) return;
+      await Promise.resolve(running).catch(() => {});
+    }
+  }
   async checkAccount(id, connector = false) {
     if (this.inspectionsPaused) throw new Error('Browser checks are paused for launcher restart');
     const host = this.getHost(id);
+    await this.waitForAccountInspection(id);
+    // A launcher restart or shutdown can pause checks while this one waited.
+    if (this.inspectionsPaused) throw new Error('Browser checks are paused for launcher restart');
+    if (this.destroyed) throw new Error('ChatGPT account pool is closed');
     this.assertAccountOperationAvailable(id);
     const epoch = this.invalidateEvidence(id);
     try {
@@ -769,13 +822,27 @@ class AccountBrowserPool {
       throw error;
     } finally { this.publish(); }
   }
-  refreshAccountAuthentication(id) {
+  refreshAccountAuthentication(id, joinedChecks = 0) {
     validateAccountId(id);
     if (this.destroyed) return Promise.reject(new Error('ChatGPT account pool is closed'));
     const existing = this.authenticationRefreshOperations.get(id);
     if (existing) return existing;
     if (this.inspectionsPaused) return Promise.reject(new Error('Browser checks are paused for launcher restart'));
     const host = this.getHost(id);
+    const inspection = host.readOnlyInspection?.done;
+    if (inspection && !host.activeTraceId && !this.accountMutationOperationLabel(id)) {
+      // Join the running check, then retry once it has released the browser. Startup and Check
+      // chain a session inspection into connector verification, so join up to three checks.
+      let joined;
+      joined = Promise.resolve(inspection).catch(() => {}).then(() => {
+        if (this.authenticationRefreshOperations.get(id) === joined) this.authenticationRefreshOperations.delete(id);
+        return host.readOnlyInspection && joinedChecks >= 2 ? Promise.reject(this.accountOperationError(id)
+          ?? new Error('This ChatGPT account is still being checked; retry after it finishes'))
+          : this.refreshAccountAuthentication(id, joinedChecks + 1);
+      });
+      this.authenticationRefreshOperations.set(id, joined);
+      return joined;
+    }
     const conflict = this.accountOperationError(id);
     if (conflict) return Promise.reject(conflict);
     if (host.activeTraceId || [...this.reservations.values()].includes(id)) {
@@ -862,45 +929,79 @@ class AccountBrowserPool {
     // Authenticate enabled saved sessions, without treating persisted metadata as proof.
     this.evidenceRefreshing ??= new Set();
     const registry = this.registry.snapshot();
-    // These checks are intentionally serial. Make the selected account usable first rather
-    // than holding its first request behind another account's sign-in and connector probes.
-    const accounts = registry.accounts.filter(account => account.enabled)
-      .sort((left, right) => Number(right.id === registry.selectedId) - Number(left.id === registry.selectedId));
+    // These checks are intentionally serial. The selected account goes first, session through
+    // connector, so its first request never waits behind another account. The other accounts
+    // then check every saved session before any model or connector probe, so a slow probe never
+    // leaves another account on "Checking sign-in" long enough to invite a needless new sign-in.
+    const accounts = registry.accounts.filter(account => account.enabled);
     const pending = accounts.map(account => account.id).filter(id => !this.evidenceRefreshing.has(id));
     for (const id of pending) this.evidenceRefreshing.add(id);
-    try {
-    for (const account of accounts) {
-      if (this.inspectionsPaused || this.destroyed) break;
-      const reserved = this.leases().exclusiveLabel(account.id);
-      if (reserved) {
-        this.logger.info('browser.account_refresh_deferred', { accountId: account.id, operation: reserved });
-        if (pending.includes(account.id)) this.evidenceRefreshing.delete(account.id);
-        continue;
+    const release = id => { if (pending.includes(id)) this.evidenceRefreshing.delete(id); };
+    const sessions = new Map();
+    const deferredRestores = new Set();
+    const reserved = account => {
+      const label = this.leases().exclusiveLabel(account.id);
+      if (!label) return false;
+      this.logger.info('browser.account_refresh_deferred', { accountId: account.id, operation: label });
+      release(account.id);
+      return true;
+    };
+    const checkSessions = async group => {
+      for (const account of group) {
+        if (this.inspectionsPaused || this.destroyed) return;
+        if (reserved(account)) continue;
+        const epoch = this.invalidateEvidence(account.id);
+        try {
+          await this.getHost(account.id).refreshAuthentication();
+          sessions.set(account.id, epoch);
+        } catch (error) {
+          this.logger.warn('browser.account_refresh_failed', { accountId: account.id, message: error.message });
+          release(account.id);
+        }
       }
-      const host = this.getHost(account.id);
-      const epoch = this.invalidateEvidence(account.id);
-      try {
-        await host.refreshAuthentication();
-        if (!this.inspectionsPaused && host.state.authenticated && this.evidenceIsCurrent(account.id, epoch)) {
-          const evidence = await host.inspectSession(true);
-          if (this.evidenceIsCurrent(account.id, epoch)) {
-            this.recordCapabilityEvidence(account.id, evidence);
-            // Connector readiness lives only in memory; restore it for every enabled account, not just
-            // the primary one, so a restart does not strand the other accounts' tool turns.
-            if (!this.inspectionsPaused && this.options.bootstrapAccountConnectors?.() === true) {
-              await host.verifyConnector(host.connectorName());
-              if (!this.evidenceIsCurrent(account.id, epoch)) {
-                throw new Error('ChatGPT account readiness changed while bootstrapping its connector');
+    };
+    const checkEvidence = async group => {
+      for (const account of group) {
+        if (this.inspectionsPaused || this.destroyed) return;
+        if (!sessions.has(account.id) || reserved(account)) continue;
+        const host = this.getHost(account.id);
+        const epoch = sessions.get(account.id);
+        try {
+          if (!this.inspectionsPaused && host.state.authenticated && this.evidenceIsCurrent(account.id, epoch)) {
+            const evidence = await host.inspectSession(true);
+            if (this.evidenceIsCurrent(account.id, epoch)) {
+              this.recordCapabilityEvidence(account.id, evidence);
+              // Connector readiness lives only in memory; restore it for every enabled account, not just
+              // the primary one, so a restart does not strand the other accounts' tool turns.
+              if (!this.inspectionsPaused && this.options.bootstrapAccountConnectors?.() === true) {
+                await host.verifyConnector(host.connectorName());
+                if (!this.evidenceIsCurrent(account.id, epoch)) {
+                  throw new Error('ChatGPT account readiness changed while bootstrapping its connector');
+                }
+                this.connectors.set(account.id, host.connectorName());
               }
-              this.connectors.set(account.id, host.connectorName());
             }
           }
         }
+        catch (error) {
+          this.logger.warn('browser.account_refresh_failed', { accountId: account.id, message: error.message });
+          // A startup probe that timed out retries through the evidence restore once startup finishes.
+          if (host.state.authenticated === true && !this.inspectionsPaused && !this.destroyed) {
+            deferredRestores.add(account.id);
+          }
+        }
+        finally { release(account.id); }
       }
-      catch (error) { this.logger.warn('browser.account_refresh_failed', { accountId: account.id, message: error.message }); }
-      finally { if (pending.includes(account.id)) this.evidenceRefreshing.delete(account.id); }
-    }
+    };
+    try {
+      const selected = accounts.filter(account => account.id === registry.selectedId);
+      const others = accounts.filter(account => account.id !== registry.selectedId);
+      await checkSessions(selected);
+      await checkEvidence(selected);
+      await checkSessions(others);
+      await checkEvidence(others);
     } finally { for (const id of pending) this.evidenceRefreshing.delete(id); }
+    for (const id of deferredRestores) this.scheduleEvidenceRestore(id);
     this.publish();
     return this.snapshot();
   }
@@ -925,7 +1026,8 @@ class AccountBrowserPool {
     }
     const host = this.hosts.get(id);
     if (!host) return;
-    const restore = { waitForTunnel, revision: 0, timer: null, wake: null, ownsRefreshing: false, cancelled: false, authRetryQueued: false };
+    const restore = { waitForTunnel, revision: 0, timer: null, wake: null, ownsRefreshing: false, cancelled: false, authRetryQueued: false,
+      failures: 0 };
     const sleep = ms => new Promise(resolve => {
       restore.wake = resolve;
       restore.timer = setTimeout(() => { restore.timer = null; restore.wake = null; resolve(); }, ms);
@@ -948,11 +1050,24 @@ class AccountBrowserPool {
         if (this.capabilities.has(id) && (!connector || this.connectors.has(id))) return;
         const revision = restore.revision;
         this.evidenceRefreshing.add(id); restore.ownsRefreshing = true;
+        let failure = null;
         try { await this.checkAccount(id, connector); }
         catch (error) {
           // A new sign-in/tunnel receipt during the check supersedes its old evidence.
-          if (!restore.cancelled && restore.revision === revision) throw error;
+          if (!restore.cancelled && restore.revision === revision) failure = error;
         } finally { this.evidenceRefreshing.delete(id); restore.ownsRefreshing = false; }
+        if (failure) {
+          // Right after a launch or a wake ChatGPT is often still loading and the model picker
+          // times out. Retry with growing pauses instead of leaving the card on "Needs setup".
+          const delays = this.options?.evidenceRestoreRetryDelaysMs ?? EVIDENCE_RESTORE_RETRY_DELAYS_MS;
+          if (restore.failures >= delays.length) throw failure;
+          const delayMs = delays[restore.failures++];
+          this.logger?.info('browser.account_evidence_restore_retry', { accountId: id, attempt: restore.failures, delayMs,
+            message: (failure instanceof Error ? failure.message : String(failure)).split('\n')[0].slice(0, 200) });
+          this.publish();
+          await sleep(delayMs);
+          continue;
+        }
         if (restore.revision === revision && !tunnelWait) return;
       }
     })().catch(error => {
@@ -1808,6 +1923,7 @@ class AccountBrowserPool {
     }
     return result;
   }
+  taskPlan(traceId, ...args) { return this.ownerForTrace(traceId).taskPlan(traceId, ...args); }
   dismissTask(accountId, id) {
     const host = this.getHost(accountId);
     const record = host.taskLedger.get(id);
@@ -1833,9 +1949,13 @@ class AccountBrowserPool {
     const settledFailureCode = settledStatus === 'failed' && result?.authenticationRequired
       ? 'chatgpt_sign_in_required' : failureCode;
     // A failed turn may retain its inspection surface; host end must succeed before refund.
-    const unsent = Boolean(tab && (owner.turnTabs.get(tab.id) === tab || result?.releasedUnsent === true)
-      && owner.taskLedger?.get(tab.taskRecordId)?.terminal
-      && owner.taskLedger.get(tab.taskRecordId).submission === 'not-sent');
+    // A failed navigation can tear the tab down before endTurn runs. This execution's own ledger
+    // record still proves that nothing reached ChatGPT, so Codex may retry it.
+    const record = tab ? owner.taskLedger?.get(tab.taskRecordId)
+      : owner.taskLedger?.snapshot?.().filter(row => row.traceId === traceId)
+        .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+    const unsent = Boolean((tab ? owner.turnTabs.get(tab.id) === tab || result?.releasedUnsent === true : record)
+      && record?.terminal && record.submission === 'not-sent');
     if (unsent) this.rollbackUnsentAdmission(traceId, helperPid);
     const pendingRemoval = this.unsentAdmissions?.get(traceId)?.removedOwner;
     if (pendingRemoval) this.settleRemovedUnsentAdmission(pendingRemoval);
@@ -1948,4 +2068,4 @@ class AccountBrowserPool {
     try { if (JSON.parse(fs.readFileSync(this.options.descriptorPath, 'utf8')).pid === process.pid) fs.rmSync(this.options.descriptorPath); } catch {}
   }
 }
-module.exports = { AccountBrowserPool, newWebSessionReservationId };
+module.exports = { AccountBrowserPool, accountScopedLogger, newWebSessionReservationId };

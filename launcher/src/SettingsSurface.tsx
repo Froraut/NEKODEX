@@ -6,13 +6,15 @@ import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type R
 import { flushSync } from "react-dom";
 import { type Copy } from "./i18n";
 import { LocaleNotice } from "./LocaleNotice";
-import { RouteDiagnostics } from "./RouteDiagnostics";
+import { SettingsDiagnostics } from "./SettingsDiagnostics";
 import { workflowCopy } from "./workflow-copy";
 import { APPEARANCE_OPTIONS, appearanceCopy } from "./appearance-copy";
 import { settingsCopy } from "./settings-copy";
+import { SettingsSearch } from "./SettingsSearch";
+import { workflowHelpCopy, type WorkflowHelpTopic } from "./workflow-help-copy";
 import type { Appearance, BrowserCapacitySettings, BrowserInteractionMode, BrowserState, DoctorReport, Language, LauncherSnapshot, LauncherState, OperationState, ProModelVersion } from "./types";
-import { Button, Disclosure, Mark, Notice, Page, Select, SettingRow, SettingsGroup, SurfaceHeader, Switch, TextField, cx } from "./design";
-import { messageOf, DoctorSummary, InteractionModePicker, ContextBudgetTable, LanguageMenu, ProModelVersionMenu, platformLabel } from './launcher-ui';
+import { Button, Disclosure, Mark, Notice, Page, Select, SettingRow, SettingsGroup, SurfaceHeader, Switch, TextField } from "./design";
+import { messageOf, InteractionModePicker, ContextBudgetTable, LanguageMenu, ProModelVersionMenu, platformLabel } from './launcher-ui';
 import "./surfaces/settings.css";
 const api = window.codexWebLauncher;
 
@@ -135,6 +137,7 @@ export function SettingsSurface({
   catalogFailure,
   showModelSetup,
   showActivity,
+  showWorkflow,
   configureInteractionMode,
   copy,
   devProfile,
@@ -153,6 +156,8 @@ export function SettingsSurface({
   showModelSetup: () => void;
   /** Opens Activity (the routing check's failure advice points there). */
   showActivity?: () => void;
+  /** Navigation only; the destination owns refresh, permissions and task attachment. */
+  showWorkflow?: (workflow: WorkflowHelpTopic) => void;
   configureInteractionMode: (mode: BrowserInteractionMode) => void;
   copy: Copy;
   devProfile: boolean;
@@ -184,6 +189,7 @@ export function SettingsSurface({
   const [turnsCancelled, setTurnsCancelled] = useState<string | null>(null);
   const taskCopy = taskControlCopy[language] ?? taskControlCopy.en;
   const settings = settingsCopy(language);
+  const workflowHelp = workflowHelpCopy(language);
   const appearance = appearanceCopy(language);
   const network = workflowCopy(language).network;
   const [integrationRemoved, setIntegrationRemoved] = useState(false);
@@ -329,9 +335,12 @@ export function SettingsSurface({
     <div className="settings-layout" ref={layoutRef}>
       <Page className="settings-page" width="narrow">
         <SurfaceHeader title={devProfile ? copy.devSettingsTitle : copy.settingsTitle} subtitle={copy.settingsSubtitle} />
+        <SettingsSearch surface={layoutRef} language={language} reveal={row => {
+          if (row.closest("#settings-advanced")) flushSync(() => setAdvancedOpen(true));
+        }} />
 
         <SettingsGroup id="settings-agent" title={settings.agent}>
-          <div aria-busy={saving("mode") || undefined} className="settings-block">
+          <div aria-busy={saving("mode") || undefined} className="settings-block" data-settings-search>
             <strong className="nk-type-body-strong">{copy.interactionMode}</strong>
             <InteractionModePicker
               copy={copy}
@@ -340,7 +349,7 @@ export function SettingsSurface({
               onChange={(mode) => void setInteractionMode(mode)}
             />
           </div>
-          <SettingRow
+          <SettingRow data-settings-search
             title={copy.browserCapacity}
             description={<>
               {copy.browserCapacityBody}
@@ -370,7 +379,7 @@ export function SettingsSurface({
               </div>
             )}
           />
-          <SettingRow
+          <SettingRow data-settings-search
             title={copy.manualSubmitTime}
             description={copy.manualSubmitTimeBody}
             control={(
@@ -380,7 +389,7 @@ export function SettingsSurface({
                 options={[30, 60, 120, 180, 300, 600].map(value => ({ value: String(value), label: seconds.format(value) }))} />
             )}
           />
-          <SettingRow
+          <SettingRow data-settings-search
             title={copy.proModelVersion}
             description={copy.proModelVersionBody}
             control={(
@@ -392,14 +401,14 @@ export function SettingsSurface({
               />
             )}
           />
-          <SettingRow
+          <SettingRow data-settings-search
             title={copy.webSubagents}
             description={copy.webSubagentsBody}
             control={<Switch label={copy.webSubagents} checked={snapshot.state.allowWebSubagents}
               busy={saving("webSubagents")} disabled={locked || tasksRunning || !snapshot.state.coreSetupComplete}
               onChange={enabled => void savePreference("webSubagents", () => api!.setWebSubagents(enabled))} />}
           />
-          <SettingRow
+          <SettingRow data-settings-search
             title={copy.savedChats}
             description={copy.savedChatsBody}
             control={<Switch label={copy.savedChats} checked={snapshot.state.useSavedChats}
@@ -409,7 +418,7 @@ export function SettingsSurface({
         </SettingsGroup>
 
         <SettingsGroup id="settings-workspace" title={settings.workspace}>
-          <SettingRow
+          <SettingRow data-settings-search
             title={appearance.title}
             description={appearance.body}
             control={(
@@ -419,7 +428,7 @@ export function SettingsSurface({
                 options={APPEARANCE_OPTIONS.map(option => ({ value: option, label: appearance.options[option] }))} />
             )}
           />
-          <SettingRow
+          <SettingRow data-settings-search
             title={copy.language}
             description={settings.languageBody}
             control={(
@@ -430,34 +439,34 @@ export function SettingsSurface({
             )}
           />
           {!devProfile ? (
-            <SettingRow
+            <SettingRow data-settings-search
               title={copy.launchAtLogin}
               description={copy.launchAtLoginBody}
               control={<Switch label={copy.launchAtLogin} checked={snapshot.state.autoStart} busy={saving("autoStart")} disabled={locked}
                 onChange={(checked) => void savePreference("autoStart", async () => (await api!.setAutostart(checked)).state)} />}
             />
           ) : null}
-          <SettingRow
+          <SettingRow data-settings-search
             title={copy.keepRunningOnClose}
             description={devProfile ? copy.devKeepRunningBody : copy.keepRunningOnCloseBody}
             control={<Switch label={copy.keepRunningOnClose} checked={snapshot.state.keepRunningOnClose} busy={saving("keepRunning")} disabled={locked}
               onChange={(checked) => void savePreference("keepRunning", () => api!.setPreference("keepRunningOnClose", checked))} />}
           />
-          <SettingRow
+          <SettingRow data-settings-search
             title={copy.showDuringTurns}
             description={copy.showDuringTurnsBody}
             control={<Switch label={copy.showDuringTurns} checked={snapshot.state.showBrowserDuringTurns}
               busy={saving("showDuringTurns")} disabled={locked || manual}
               onChange={(checked) => void savePreference("showDuringTurns", () => api!.setPreference("showBrowserDuringTurns", checked))} />}
           />
-          <SettingRow
+          <SettingRow data-settings-search
             title={network.settingTitle}
             description={network.settingBody}
             control={<Switch label={network.settingTitle} checked={snapshot.state.showNetworkIssueNotice !== false}
               busy={saving("networkNotice")} disabled={locked}
               onChange={(checked) => void savePreference("networkNotice", () => api!.setPreference("showNetworkIssueNotice", checked))} />}
           />
-          <SettingRow
+          <SettingRow data-settings-search
             title={copy.passkeyBrowser}
             description={copy.passkeyBrowserBody}
             control={(
@@ -467,7 +476,7 @@ export function SettingsSurface({
                 options={[{ value: "chrome", label: "Google Chrome" }, { value: "firefox", label: "Firefox" }]} />
             )}
           />
-          <SettingRow
+          <SettingRow data-settings-search
             title={copy.toolsConnectionTab}
             description={copy.mcpBody}
             control={(
@@ -477,7 +486,7 @@ export function SettingsSurface({
             )}
           />
           {showChatGpt && browser ? (
-            <SettingRow
+            <SettingRow data-settings-search
               title="ChatGPT"
               description={browser.accountName || browser.accountLabel
                 ? [browser.accountName, browser.accountLabel].filter(Boolean).join(" · ") : undefined}
@@ -524,7 +533,7 @@ export function SettingsSurface({
             title={copy.advancedContext}
           >
             <div className="settings-rows">
-              <SettingRow
+              <SettingRow data-settings-search
                 title={copy.compactionModel}
                 description={copy.compactionModelBody}
                 control={(
@@ -540,7 +549,7 @@ export function SettingsSurface({
                     ]} />
                 )}
               />
-              <SettingRow
+              <SettingRow data-settings-search
                 title={copy.biggerContext}
                 description={manual ? copy.manualBiggerContextUnavailable : copy.biggerContextBody}
                 control={(
@@ -557,14 +566,14 @@ export function SettingsSurface({
                   </div>
                 )}
               />
-              <SettingRow
+              <SettingRow data-settings-search
                 title={copy.skillAttachments}
                 description={manual ? copy.manualSkillAttachmentsUnavailable : copy.skillAttachmentsBody}
                 control={<Switch label={copy.skillAttachments} checked={snapshot.state.experimentalSkillAttachments}
                   busy={saving("skills")} disabled={locked || manual || !snapshot.state.coreSetupComplete}
                   onChange={(checked) => void savePreference("skills", () => api!.setSkillAttachments(checked))} />}
               />
-              <SettingRow
+              <SettingRow data-settings-search
                 title={copy.freshConversation}
                 description={copy.freshConversationBody}
                 control={<Switch label={copy.freshConversation} checked={snapshot.state.experimentalFreshConversationPerTurn}
@@ -601,73 +610,21 @@ export function SettingsSurface({
           </Disclosure>
         </section>
 
-        <section className="nk-settings-group" id="settings-diagnostics">
-          <header><h2>{copy.diagnostics}</h2></header>
-          {codexStatus ? (
-            <section className="settings-codex-status" aria-label={copy.modelsConnectionTab}>
-              <Notice
-                tone={codexStatus === "catalog-error" ? "warning" : "info"}
-                title={codexStatus === "picker" ? copy.setupConfirmTitle
-                  : codexStatus === "catalog-error" ? copy.catalogUnavailable
-                  : codexStatus === "catalog" ? copy.setupCatalogTitle
-                  : codexStatus === "removed" ? copy.integrationRemoved : copy.codexSettingsSaved}
-                action={<Button size="sm" onClick={showModelSetup}>{copy.openModelSettings}</Button>}
-              >
-                {codexStatus === "picker"
-                  ? snapshot.state.codexRestartRequired === true ? copy.setupConfirmRestartBody : copy.setupConfirmBody
-                  : codexStatus === "catalog-error" ? copy.catalogFailureKeptInstall
-                  : codexStatus === "removed" ? copy.codexIntegrationRemovedBody
-                  : codexStatus === "manual-refresh" ? copy.codexManualRefreshBody : copy.setupCatalogBody}
-              </Notice>
-            </section>
-          ) : null}
-          <div className="nk-panel">
-            {!devProfile ? (
-              <RouteDiagnostics
-                key={routeDiagnosticsGeneration}
-                disabled={locked || saving("mode") || saving("uninstall") || operation?.status === "running" || browser?.navigationLocked === true}
-                language={language}
-                onActionError={cause => setError(messageOf(cause))}
-                onExport={() => api!.exportLogs()}
-                onViewActivity={showActivity}
-                readReport={() => api!.routeDiagnostics()}
-              />
-            ) : null}
-            <SettingRow
-              className={cx(doctor && "settings-row--with-result")}
-              title={copy.runDoctor}
-              description={settings.doctorBody}
-              control={(
-                <Button icon="activity" busy={saving("doctor")} disabled={locked} onClick={() => void runDoctor()}>{copy.runDoctor}</Button>
-              )}
-            />
-            {doctor ? (
-              <div className="settings-row-result">
-                <DoctorSummary copy={copy} language={language} report={doctor} />
-              </div>
-            ) : null}
-            {/* Both destructive rows open the launcher's own confirmation dialog, whose Cancel all / Remove is the
-                confirming (danger) step; the row button is only the first, secondary click. */}
-            {!devProfile ? (
-              <SettingRow
-                title={taskCopy.all}
-                description={turnsCancelled ?? taskCopy.detail}
-                control={<Button busy={saving("cancelTurns")} disabled={locked} onClick={() => void cancelTurns()}>{taskCopy.confirm}</Button>}
-              />
-            ) : null}
-            {!devProfile ? (
-              <SettingRow
-                title={copy.uninstallIntegration}
-                description={integrationGone ? copy.integrationRemoved : copy.uninstallIntegrationBody}
-                control={(
-                  <Button busy={saving("uninstall")} disabled={locked || integrationGone} onClick={() => void uninstallIntegration()}>
-                    {settings.remove}
-                  </Button>
-                )}
-              />
-            ) : null}
-          </div>
-        </section>
+        <SettingsDiagnostics
+          copy={copy} language={language} devProfile={devProfile} locked={locked}
+          codexStatus={codexStatus} codexRestartRequired={snapshot.state.codexRestartRequired === true}
+          showModelSetup={showModelSetup} showWorkflow={showWorkflow} onError={setError}
+          route={{
+            generation: routeDiagnosticsGeneration,
+            disabled: locked || saving("mode") || saving("uninstall") || operation?.status === "running" || browser?.navigationLocked === true,
+            onActionError: cause => setError(messageOf(cause)),
+            onExport: () => api!.exportLogs(), onViewActivity: showActivity,
+            readReport: () => api!.routeDiagnostics(),
+          }}
+          doctor={{ report: doctor, busy: saving("doctor"), onRun: () => void runDoctor() }}
+          cancelTurns={{ message: turnsCancelled, busy: saving("cancelTurns"), onCancel: () => void cancelTurns() }}
+          integration={{ removed: integrationGone, busy: saving("uninstall"), onRemove: () => void uninstallIntegration() }}
+        />
 
         <SettingsGroup id="settings-about" title={settings.about}>
           <div className="settings-about">
@@ -676,8 +633,9 @@ export function SettingsSurface({
               <strong className="nk-type-body-strong">{copy.product}</strong>
               <p className="nk-type-small">
                 {devProfile ? `${copy.devBadge} · ${snapshot.profilePaths.coreHome} · ` : ""}
-                FroRaut · {platformLabel(snapshot.platform)} · v{snapshot.version}
+                FroRaut · {platformLabel(snapshot.platform)} · {snapshot.packaged ? workflowHelp.packaged : workflowHelp.development} · v{snapshot.version}
               </p>
+              <p className="nk-type-small">{workflowHelp.versionBoundary}</p>
             </div>
           </div>
         </SettingsGroup>

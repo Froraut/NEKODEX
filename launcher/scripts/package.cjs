@@ -2,7 +2,7 @@ const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { signingConfiguration, verifyMacPublisher, verifyWindowsTree } = require("./release-signing.cjs");
+const { signingConfiguration, verifyMacPublisher, verifyWindowsTree, validatePackagedRuntimeAssets, validateOwnedNativePackagedAssets } = require("./release-signing.cjs");
 const { validateRuntimeBundle } = require("../electron/runtime-install.cjs");
 
 const root = path.resolve(__dirname, "..");
@@ -28,6 +28,14 @@ if (target !== nativeTarget) {
   );
 }
 
+// Refuse incomplete input before electron-builder starts a signing/archive
+// transaction. Verify the extracted final app again because packaging must
+// preserve the pre-signed bytes recorded by the runtime's file manifest.
+const preparedRuntime = path.join(root, "build", "runtime");
+validateRuntimeBundle(preparedRuntime, { version: launcherManifest.version, platform: process.platform, arch: process.arch });
+validatePackagedRuntimeAssets(preparedRuntime, { platform: process.platform, arch: process.arch });
+validateOwnedNativePackagedAssets(preparedRuntime, { platform: process.platform, arch: process.arch });
+
 const env = { ...process.env };
 const signing = signingConfiguration(process.platform, env);
 if (signing.release && process.platform === "darwin") {
@@ -36,6 +44,14 @@ if (signing.release && process.platform === "darwin") {
     // Select existing notarytool credentials without exporting their secrets.
     for (const name of ["APPLE_ID", "APPLE_APP_SPECIFIC_PASSWORD", "APPLE_API_KEY", "APPLE_API_KEY_ID", "APPLE_API_ISSUER"]) delete env[name];
   }
+} else if (process.platform === "darwin" && env.NEKODEX_LOCAL_APP_SIGNING_IDENTITY) {
+  // Use the same publisher as the pre-signed runtime helpers. An ad-hoc app
+  // enclosing publisher-signed helpers cannot authorize installed Native/VM.
+  env.CSC_NAME = env.NEKODEX_LOCAL_APP_SIGNING_IDENTITY;
+  if (env.NEKODEX_LOCAL_APP_SIGNING_KEYCHAIN) env.CSC_KEYCHAIN = env.NEKODEX_LOCAL_APP_SIGNING_KEYCHAIN;
+}
+if (target === "--mac" && process.arch === "arm64" && !/^Developer ID Application: .+ \(CNMWGJF2CG\)$/.test(env.CSC_NAME || "")) {
+  throw new Error("The packaged macOS Native/VM runtime requires the NEKODEX Developer ID application identity");
 }
 if (!env.CSC_LINK && !env.CSC_NAME) env.CSC_IDENTITY_AUTO_DISCOVERY = "false";
 const builderArgs = [
@@ -62,11 +78,14 @@ if (signing.release && process.platform !== "linux") {
   if (target === "--mac") builderArgs.push("--config.mac.notarize=true", `--config.mac.identity=${env.CSC_NAME.replace(/^Developer ID Application:\s*/, "")}`);
   if (target === "--win") builderArgs.push(`--config.win.signtoolOptions.certificateSha1=${env.CODEX_WEB_GPT_WINDOWS_CERT_SHA1}`);
 }
+if (target === "--mac" && !signing.release && env.CSC_NAME) {
+  builderArgs.push("--config.forceCodeSigning=true", "--config.mac.notarize=false", `--config.mac.identity=${env.CSC_NAME.replace(/^Developer ID Application:\s*/, "")}`);
+}
 if (target === "--mac" && !signing.release && !env.CSC_LINK && !env.CSC_NAME) {
   builderArgs.push("--config.mac.identity=-");
 }
 
-const staging = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-package-"));
+const staging = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-package-")));
 const artifactsDirectory = path.join(root, "artifacts");
 const artifactExtension = /\.(?:AppImage|dmg|exe|zip|blockmap)$/i;
 const requiredExtensions = {
@@ -106,20 +125,33 @@ function verifySignedMacArchive() {
   if (archives.length !== 1) {
     throw new Error(`Expected exactly one macOS ZIP for verification; found ${archives.join(", ") || "none"}`);
   }
-  const verificationRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-mac-verify-"));
+  const verificationRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-mac-verify-")));
   try {
     runChecked("ditto", ["-x", "-k", path.join(staging, archives[0]), verificationRoot]);
     const appBundle = path.join(verificationRoot, `${launcherManifest.build.productName}.app`);
     runChecked("codesign", ["--verify", "--deep", "--strict", appBundle]);
-    if (signing.release) {
-      verifyMacPublisher(appBundle, env, { notarized: true });
-      verifyMacPublisher(path.join(appBundle, "Contents", "Resources", "runtime", "runtime", "bun"), env);
+    const publisherEnv = { ...env, APPLE_TEAM_ID: "CNMWGJF2CG" };
+    const publisherRequired = signing.release || process.arch === "arm64";
+    if (publisherRequired) {
+      verifyMacPublisher(appBundle, publisherEnv, { notarized: signing.release });
+      verifyMacPublisher(path.join(appBundle, "Contents", "Resources", "runtime", "runtime", "bun"), publisherEnv);
     }
     validateRuntimeBundle(path.join(appBundle, "Contents", "Resources", "runtime"), {
       version: launcherManifest.version,
       platform: "darwin",
       arch: process.arch,
     });
+    const runtime = path.join(appBundle, "Contents", "Resources", "runtime");
+    validatePackagedRuntimeAssets(runtime, { platform: "darwin", arch: process.arch });
+    validateOwnedNativePackagedAssets(runtime, { platform: "darwin", arch: process.arch });
+    if (publisherRequired) {
+      if (process.arch === "arm64") verifyMacPublisher(path.join(runtime, "app", "owned-native", "build", "aarch64-apple-darwin", "nekodex-owned-native-worker"), publisherEnv);
+      for (const [directory, executable] of [["credential-helper", "nekodex-credential-helper"], ["oauth-vault-helper", "nekodex-oauth-vault-helper"],
+        ["desktop-helper", "nekodex-desktop-helper"], ["skill-pdf-helper", "nekodex-skill-pdf-helper"],
+        ...(process.arch === "arm64" ? [["execution-vm", "nekodex-execution-vm-helper"]] : [])]) {
+        verifyMacPublisher(path.join(runtime, "app", directory, `darwin-${process.arch}`, executable), publisherEnv);
+      }
+    }
   } finally {
     fs.rmSync(verificationRoot, { recursive: true, force: true });
   }

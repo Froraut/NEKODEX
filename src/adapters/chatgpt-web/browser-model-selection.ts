@@ -59,6 +59,65 @@ export function chatGptProUnavailableAdapterError(
   });
 }
 
+export const CHATGPT_TURN_SURFACE_LAYOUT_TIMEOUT_MS = 12_000;
+const CHATGPT_TURN_SURFACE_LAYOUT_POLL_MS = 150;
+const CHATGPT_TURN_SURFACE_LAYOUT_PROBE_TIMEOUT_MS = 1_000;
+
+export type ChatGptTurnSurfaceLayout = "laid-out" | "surface-bound" | "timeout";
+
+const CHATGPT_TURN_SURFACE_LAYOUT_CHECKPOINTS: Readonly<Record<ChatGptTurnSurfaceLayout, string>> = Object.freeze({
+  "laid-out": "turn-surface-laid-out",
+  "surface-bound": "turn-surface-bound",
+  timeout: "turn-surface-layout-timeout",
+});
+
+/**
+ * A new hidden launcher tab can render ChatGPT's composer and effort control at DOMContentLoaded,
+ * before the launcher restores its background viewport and marks the surface at load end. Until
+ * then the page reports a 0x0 viewport and the control lies outside it, so a picker opened in
+ * that window can fail family selection. Wait, bounded and abortable, until the page is laid out
+ * or carries the launcher's surface marker. After the bound continue as before: the picker keeps
+ * its click and pointerdown fallbacks, and any failure stays the picker's own.
+ */
+export async function awaitChatGptTurnSurfaceLayout(
+  control: Locator,
+  options: { timeoutMs?: number; pollMs?: number; signal?: AbortSignal } = {},
+): Promise<ChatGptTurnSurfaceLayout> {
+  const {
+    timeoutMs = CHATGPT_TURN_SURFACE_LAYOUT_TIMEOUT_MS,
+    pollMs = CHATGPT_TURN_SURFACE_LAYOUT_POLL_MS,
+    signal,
+  } = options;
+  const deadline = Date.now() + timeoutMs;
+  const throwIfAborted = () => {
+    if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+  };
+  for (;;) {
+    throwIfAborted();
+    const probeTimeout = Math.max(1, Math.min(CHATGPT_TURN_SURFACE_LAYOUT_PROBE_TIMEOUT_MS, deadline - Date.now()));
+    const state = await control.evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      return {
+        readyState: document.readyState,
+        viewport: { width: innerWidth, height: innerHeight },
+        control: { width: rect.width, height: rect.height },
+        surfaceBound: typeof (globalThis as typeof globalThis & { __CODEX_WEB_GPT_SURFACE_ID__?: unknown })
+          .__CODEX_WEB_GPT_SURFACE_ID__ === "string",
+      };
+    }, undefined, { timeout: probeTimeout, ...(signal ? { signal } : {}) })
+      // A re-rendering control or a busy page is "not yet"; the picker reports real failures.
+      .catch(() => undefined);
+    throwIfAborted();
+    if (state && state.readyState !== "loading"
+      && state.viewport.width > 0 && state.viewport.height > 0
+      && state.control.width > 0 && state.control.height > 0) return "laid-out";
+    if (state?.surfaceBound) return "surface-bound";
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return "timeout";
+    await withBrowserTurnAbort(new Promise(resolveSleep => setTimeout(resolveSleep, Math.min(pollMs, remaining))), signal);
+  }
+}
+
 function chatGptPinnedModelError(version: ChatGptWebModelFamily, cause?: unknown): ChatGptWebAdapterError {
   return new ChatGptWebAdapterError(
     `ChatGPT model version ${version} could not be selected and verified. The pending prompt was not sent; check that this version is available in ChatGPT.`,
@@ -297,6 +356,8 @@ export class ChatGptModelSelectionController {
       await captureDiagnostic?.("effort-retained");
       return mode;
     }
+    const layout = await awaitChatGptTurnSurfaceLayout(currentEffort, { signal: abortSignal });
+    await captureDiagnostic?.(CHATGPT_TURN_SURFACE_LAYOUT_CHECKPOINTS[layout]);
     let activation = await activateChatGptEffortMenu(page, currentEffort);
     if (modelVersion) {
       try {

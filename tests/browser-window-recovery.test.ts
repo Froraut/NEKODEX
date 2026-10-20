@@ -261,3 +261,34 @@ test("API sign-in verifies the same account's existing ChatGPT page without requ
   host.view = null;
   await expect(host.observeWorkspaceSessionMutation({ context: { contents: apiContents } })).rejects.toThrow("this account's ChatGPT page");
 }, 5_000);
+
+function challengedHost(probeStatus: string, armOnReload: boolean) {
+  const loads: string[] = [];
+  const logs: any[] = [];
+  const contents = { getURL: () => "https://chatgpt.com/?temporary-chat=true", isDestroyed: () => false,
+    executeJavaScript: async () => ({ draft: false, running: false }),
+    loadURL: async (url: string) => { loads.push(url); if (armOnReload) host.cloudflareChallengeRecoveryArmed = true; } };
+  const host: any = Object.assign(Object.create(BrowserHost.prototype), { view: { webContents: contents },
+    turnTabs: new Map(), authGeneration: 1, setState() {},
+    logger: { info: (event: string, detail: unknown) => logs.push([event, detail]) },
+    probeAuthentication: async () => ({ authenticationStatus: probeStatus }) });
+  return { host, loads, logs };
+}
+
+test("security recovery succeeds when a silent hidden page proves the session after the reload", async () => {
+  const { host, loads, logs } = challengedHost("verified", false);
+  await host.reloadHomeAfterCloudflareChallenge();
+  expect(loads).toEqual(["https://chatgpt.com/?temporary-chat=true"]);
+  expect(logs).toContainEqual(["browser.cloudflare_challenge_recovered", { proof: "session-verified" }]);
+}, 15_000);
+
+test("security recovery accepts a backend response after the reload", async () => {
+  const { host, logs } = challengedHost("unavailable", true);
+  await host.reloadHomeAfterCloudflareChallenge();
+  expect(logs).toContainEqual(["browser.cloudflare_challenge_recovered", { proof: "backend-response" }]);
+}, 15_000);
+
+test("security recovery still fails when neither a backend response nor the session proves it", async () => {
+  const { host } = challengedHost("unavailable", false);
+  await expect(host.reloadHomeAfterCloudflareChallenge()).rejects.toThrow("still blocking backend requests");
+}, 15_000);

@@ -1,6 +1,7 @@
 import { useLocaleCopy } from './useLocaleCopy';
 import { LocaleNotice } from './LocaleNotice';
 import { newerBrowserState } from './snapshot-observation';
+import { enqueueBrowserSurfaceCommand } from './browser-surface-queue';
 import { createLauncherLogStore, type LauncherLogStore } from './launcher-log-store';
 import { deferredSurface } from './deferred-surface';
 import { Onboarding } from "./Onboarding";
@@ -8,7 +9,7 @@ import { BrowserSurface } from "./BrowserSurface";
 import { SetupSurface } from './SetupSurface';
 import { McpSurface } from './McpSurface';
 import { IconButton, ContentSurface, messageOf } from './launcher-ui';
-import { currentToolProof } from './launcher-readiness';
+import { currentToolProof, runtimeCapabilities } from './launcher-readiness';
 
 import { taskCenterSubtitle, taskCenterTitle } from './task-center-copy';
 import { QueueControls } from './QueueControls';
@@ -37,8 +38,46 @@ const ActivitySurface = deferredSurface(async () => ({ default: (await import('.
 const AccountSettings = deferredSurface(async () => ({ default: (await import('./AccountSettings')).AccountSettings }));
 const SettingsSurface = deferredSurface(async () => ({ default: (await import('./SettingsSurface')).SettingsSurface }));
 const TaskCenter = deferredSurface(async () => ({ default: (await import('./TaskCenter')).TaskCenter }));
+const WorkspaceSurface = deferredSurface(async () => ({ default: (await import('./WorkspaceSurface')).WorkspaceSurface }));
+const RemoteWorkspaceSurface = deferredSurface(async () => ({ default: (await import('./RemoteWorkspaceSurface')).default }));
+const ConversationHistorySurface = deferredSurface(async () => ({ default: (await import('./ConversationHistorySurface')).ConversationHistorySurface }));
+const NativeThreadsSurface = deferredSurface(async () => ({ default: (await import('./NativeThreadsSurface')).NativeThreadsSurface }));
+const AgentModeSurface = deferredSurface(async () => ({ default: (await import('./AgentModeSurface')).AgentModeSurface }));
+const ExternalUsageSurface = deferredSurface(async () => ({ default: (await import('./ExternalUsageSurface')).ExternalUsageSurface }));
+const AgentToolsSurface = deferredSurface(async () => ({ default: (await import('./AgentToolsSurface')).AgentToolsSurface }));
+const BrowserCompanionSurface = deferredSurface(async () => ({ default: (await import('./BrowserCompanionSurface')).BrowserCompanionSurface }));
+const LocalControlApiSurface = deferredSurface(async () => ({ default: (await import('./LocalControlApiSurface')).LocalControlApiSurface }));
 const Updates = deferredSurface(async () => ({ default: (await import('./Updates')).Updates }));
 const api = window.codexWebLauncher;
+const historyApi = {
+  request: (body: { action: string; [key: string]: unknown }) => api!.conversationHistoryRequest(body),
+  copyText: (text: string) => api!.copyConversationHistoryText(text),
+  saveMarkdown: (markdown: string) => api!.saveConversationHistoryMarkdown(markdown),
+};
+const agentModeApi = { request: (body: Record<string, unknown>) => api!.agentMode(body),
+  ...(typeof api?.loopFileWatcherRequest === 'function' ? { loopFileWatcherRequest: (body: import('./AgentLoopFileWatcher').LoopFileWatcherRequest) => api!.loopFileWatcherRequest(body) } : {}),
+  ...(typeof api?.loopProducerRequest === 'function' ? { loopProducerRequest: (body: import('./AgentLoopExternalProducer').LoopExternalProducerRequest) => api!.loopProducerRequest(body) } : {}),
+  nativeHistory: { request: historyApi.request },
+  nativeAccounts: { request: (body: import('./native-accounts-types').NativeAccountsRequest | import('./native-accounts-types').NativeInventoryRequest | import('./native-accounts-types').NativeExecutionCloseRequest) => api!.nativeAccountsRequest(body),
+    openVerificationUrl: (url: string) => api!.openNativeAccountVerification(url), copyCode: (code: string) => api!.copyNativeAccountCode(code) },
+  workspaceRoots: () => api!.agentWorkspaceRoots(), workspaceGrants: () => api!.agentWorkspaceGrants(),
+  revokeWorkspaceGrant: (grantId: string) => api!.revokeAgentWorkspaceGrant(grantId) };
+const agentToolsApi: import('./agent-tools-types').AgentToolsApi = {
+  request: body => api!.agentTools(body), pickSkillRoot: () => api!.pickAgentSkillRoot(),
+  pickInstallRoot: () => api!.pickAgentToolsInstallRoot(),
+  pickScriptWorkspace: () => api!.pickAgentScriptWorkspace(),
+  pickPythonWheels: () => api!.pickAgentPythonWheels(),
+  ...(typeof api?.pickAgentOAuthProvider === 'function' ? { pickOAuthProvider: () => api!.pickAgentOAuthProvider() } : {}),
+  ...(typeof api?.pickAgentPythonBuildSelection === 'function' ? {
+    pickPythonBuild: (scope: import('./agent-tools-types').ToolScope, config: import('./agent-tools-types').AgentPythonBuildConfig) => api!.pickAgentPythonBuildSelection(scope, config),
+  } : {}),
+  attachEvidence: (taskId, evidence) => api!.agentMode({ action: 'evidence', taskId, actionId: crypto.randomUUID(), evidence }),
+  listTasks: () => api!.agentMode({ action: 'list' }) as ReturnType<import('./agent-tools-types').AgentToolsApi['listTasks']>,
+  getTask: taskId => api!.agentMode({ action: 'get', taskId }) as ReturnType<import('./agent-tools-types').AgentToolsApi['getTask']>,
+};
+const browserCompanionApi = { request: api!.browserCompanion, copyPairing: api!.copyBrowserPairing };
+const localControlApi = { request: api!.localControlApiRequest };
+const externalUsageApi = { request: api!.externalUsageRequest, selectRoot: api!.externalUsagePick };
 
 function smokePassedForState(state: LauncherState, version: string): boolean {
   return state.browserSmokePassed === true && state.browserSmokeVersion === version;
@@ -554,6 +593,11 @@ function LauncherShell({
     && browserAuthenticationStatus === "signed-out";
   const needsSetup = !needsBrowser && !interactionSetupComplete;
   const transitionBusy = Boolean(snapshot.lifecycle?.transition);
+  const activeRuntimeVersion = runtimeCapabilities(snapshot)?.releaseVersion;
+  const agentRuntimeUpdatePending = snapshot.profile === 'production'
+    && snapshot.state.runtimeMigrationPending === true
+    && typeof activeRuntimeVersion === 'string' && activeRuntimeVersion.length > 0
+    && activeRuntimeVersion !== snapshot.version;
   const updateCopy = updateCopyFor(language);
   const {
     updateError, setUpdateError, updateCheckBusy, updateInstallPending, updateCancelPending,
@@ -577,15 +621,11 @@ function LauncherShell({
   const selectedManualTab = browser?.tabs.find(tab => tab.active && tab.interactionMode === "manual");
 
   const enqueueBrowserSurface = useCallback((active: boolean, intent: number, show = false) => {
-    const command = browserSurfaceCommand.current
-      .catch(() => {})
-      .then(async () => {
-        const result = await api!.setBrowserSurfaceActive(active);
-        if (show && intent === browserSurfaceIntent.current) await api!.showBrowser();
-        return result;
-      });
-    browserSurfaceCommand.current = command.then(() => undefined, () => undefined);
-    return command.then(result => ({ intent, result }));
+    const command = enqueueBrowserSurfaceCommand(browserSurfaceCommand.current,
+      () => intent === browserSurfaceIntent.current,
+      () => api!.setBrowserSurfaceActive(active), show ? () => api!.showBrowser() : undefined);
+    browserSurfaceCommand.current = command.queueTail.then(() => undefined, () => undefined);
+    return command.result.then(result => ({ intent, result }));
   }, []);
 
   useEffect(() => {
@@ -637,6 +677,7 @@ function LauncherShell({
 
     return () => {
       cancelled = true;
+      if (browserSurfaceIntent.current === intent) browserSurfaceIntent.current += 1;
       cancelAnimationFrame(animationFrame);
       observer?.disconnect();
       window.removeEventListener("resize", measure);
@@ -882,8 +923,17 @@ function LauncherShell({
             />
             <SidebarItem active={surface === "activity"} icon="activity" label={copy.activity} onClick={() => navigateSurface("activity")} />
             <SidebarItem active={surface === 'tasks'} icon="logs" label={taskCenterTitle(language)} onClick={() => navigateSurface('tasks')} />
+            <SidebarItem active={surface === 'workspace'} icon="setup" label={language === 'ru' ? 'Проекты и файлы' : 'Projects and files'} onClick={() => navigateSurface('workspace')} />
+            <SidebarItem active={surface === 'remote-workspace'} icon="globe" label={language === 'ru' ? 'Удалённые проекты' : 'Remote projects'} onClick={() => navigateSurface('remote-workspace')} />
+            <SidebarItem active={surface === 'history'} icon="logs" label={language === 'ru' ? 'История текста' : 'Text history'} onClick={() => navigateSurface('history')} />
+            <SidebarItem active={surface === 'native-threads'} icon="accounts" label={language === 'ru' ? 'Чаты Codex' : 'Codex threads'} onClick={() => navigateSurface('native-threads')} />
+            <SidebarItem active={surface === 'agent-mode'} icon="agent" label="Agent mode" onClick={() => navigateSurface('agent-mode')} />
+            <SidebarItem active={surface === 'external-usage'} icon="activity" label={language === 'ru' ? 'Расход клиентов' : 'Client usage'} onClick={() => navigateSurface('external-usage')} />
           </SidebarGroup>
           <SidebarGroup label={copy.configuration}>
+            <SidebarItem active={surface === 'agent-tools'} icon="mcp" label={language === 'ru' ? 'Инструменты агентов' : 'Agent tools'} onClick={() => navigateSurface('agent-tools')} />
+            <SidebarItem active={surface === 'browser-companion'} icon="browser" label={language === 'ru' ? 'Расширение Chrome' : 'Chrome companion'} onClick={() => navigateSurface('browser-companion')} />
+            <SidebarItem active={surface === 'local-control-api'} icon="setup" label={language === 'ru' ? 'Локальный API' : 'Local API'} onClick={() => navigateSurface('local-control-api')} />
             <SidebarItem
               active={surface === "setup" || surface === "mcp"}
               badge={connectionsAttention === "required"
@@ -966,9 +1016,25 @@ function LauncherShell({
             className="nk-shell__scroll"
             key={surface}
           >
+            {agentRuntimeUpdatePending && (surface === 'agent-mode' || surface === 'agent-tools') ? (
+              <Notice tone="warning" role="status">
+                {language === 'ru'
+                  ? `Приложение ${snapshot.version} установлено. Сейчас работает среда ${activeRuntimeVersion}. Новые функции станут доступны после автоматического безопасного переключения среды. Текущая работа продолжается.`
+                  : `Application ${snapshot.version} is installed. Runtime ${activeRuntimeVersion} is currently active. New features will be available after the automatic safe runtime switch. Existing work continues.`}
+              </Notice>
+            ) : null}
             {surface === "overview" ? <Overview copy={copy} browser={browser} catalogFailure={catalogFailure}
               snapshot={snapshot} toolsReady={toolProof} logStore={logStore} navigate={navigateSurface}
               openTab={(tabId) => void openBrowserTab(tabId)} onMuteNetworkNotice={muteNetworkNotice} /> : null}
+            {surface === 'workspace' ? <WorkspaceSurface loadCopy={copy} language={language} /> : null}
+            {surface === 'remote-workspace' ? <RemoteWorkspaceSurface loadCopy={copy} language={language} api={api!} /> : null}
+            {surface === 'history' ? <ConversationHistorySurface loadCopy={copy} language={language} api={historyApi} /> : null}
+            {surface === 'native-threads' ? <NativeThreadsSurface loadCopy={copy} language={language} api={api!} historyApi={historyApi} disabled={transitionBusy} /> : null}
+            {surface === 'agent-mode' ? <AgentModeSurface loadCopy={copy} language={language} api={agentModeApi} disabled={transitionBusy} /> : null}
+            {surface === 'external-usage' ? <ExternalUsageSurface loadCopy={copy} language={language} api={externalUsageApi} /> : null}
+            {surface === 'agent-tools' ? <AgentToolsSurface loadCopy={copy} language={language} api={agentToolsApi} oauthMcpRequest={api?.oauthMcpRequest} disabled={transitionBusy} /> : null}
+            {surface === 'browser-companion' ? <BrowserCompanionSurface loadCopy={copy} language={language} api={browserCompanionApi} disabled={transitionBusy} /> : null}
+            {surface === 'local-control-api' ? <LocalControlApiSurface loadCopy={copy} language={language} api={localControlApi} /> : null}
             {surface === "accounts" ? <AccountSettings loadCopy={copy} copy={copy} language={language} openBrowser={() => navigateSurface("browser")}
               setError={setError} manual={snapshot.state.browserInteractionMode === "manual"} transitionBusy={transitionBusy}
               focusAccountId={accountToolsTargetId}
@@ -981,14 +1047,14 @@ function LauncherShell({
                 navigateSurface("mcp");
               }} /> : null}
             {surface === 'tasks' ? <ContentSurface title={taskCenterTitle(language)} subtitle={taskCenterSubtitle(language)}>
-              <QueueControls queue={browser?.queue} language={language} disabled={transitionBusy}
-                action={(id, action) => api!.queueAction(id, action)} pause={(accountId, paused) => api!.pauseQueue(accountId, paused)}
-                onError={cause => setError(messageOf(cause))} />
-              <TaskCenter loadCopy={copy} tasks={browser?.tasks ?? []} language={language} disabled={transitionBusy}
+              <TaskCenter loadCopy={copy} tasks={browser?.tasks ?? []} queue={browser?.queue} language={language} disabled={transitionBusy}
                 historyHealth={browser?.taskHistoryHealth}
                 open={async tabId => { await api!.selectBrowserTab(tabId); await activateBrowser(true); }}
                 cancel={(tabId, traceId) => api!.closeBrowserTab(tabId, traceId)}
                 dismiss={(accountId, id) => api!.dismissTask(accountId, id)}
+                onError={cause => setError(messageOf(cause))} />
+              <QueueControls queue={browser?.queue} language={language} disabled={transitionBusy}
+                action={(id, action) => api!.queueAction(id, action)} pause={(accountId, paused) => api!.pauseQueue(accountId, paused)}
                 onError={cause => setError(messageOf(cause))} />
             </ContentSurface> : null}
             {surface === "browser" ? (
@@ -1082,6 +1148,7 @@ function LauncherShell({
                 browser={browser}
                 catalogFailure={catalogFailure}
                 showModelSetup={() => navigateSurface("setup")}
+                showWorkflow={workflow => navigateSurface(workflow === 'native' ? 'agent-mode' : workflow === 'vm' ? 'agent-tools' : 'browser-companion')}
                 configureInteractionMode={(mode) => {
                   setMcpTargetMode(mode);
                   setMcpReturnAccountId(null);

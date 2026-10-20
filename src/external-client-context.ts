@@ -1,6 +1,6 @@
 /** Only authenticated in-process producers can assign this context. Never parse it from a body. */
 export interface ExternalClientContext {
-  producer: "hermes" | "claude" | "api";
+  producer: "hermes" | "claude" | "api" | "agent";
   threadId: string;
   turnId: string;
   root: string;
@@ -14,5 +14,5 @@ export function externalClientContext(parsed: {
 }
 
 export function externalClientLabel(context: ExternalClientContext): string {
-  return context.producer === "hermes" ? "Hermes" : context.producer === "claude" ? "Claude Code" : "the API client";
+  return context.producer === "hermes" ? "Hermes" : context.producer === "claude" ? "Claude Code" : context.producer === "agent" ? "NEKODEX Agent mode" : "the API client";
 }

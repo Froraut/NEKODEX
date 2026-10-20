@@ -14,6 +14,11 @@ export function Page({ width, children, className }: { width?: "narrow" | "wide"
   return <div className={cx("nk-page", width && `nk-page--${width}`, className)}>{children}</div>;
 }
 
+/** Explicit vertical layout for peer panels and status blocks. Page itself only supplies the frame. */
+export function PanelStack({ children, className, ...rest }: HTMLAttributes<HTMLDivElement>) {
+  return <div {...rest} className={cx("nk-panel-stack", className)}>{children}</div>;
+}
+
 export interface SurfaceHeaderProps { title: ReactNode; subtitle?: ReactNode; eyebrow?: ReactNode; actions?: ReactNode; className?: string }
 
 /** The one h1 of a surface, with an optional subtitle and right-aligned actions. */

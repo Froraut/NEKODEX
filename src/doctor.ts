@@ -254,7 +254,12 @@ export async function runDoctor(): Promise<DoctorReport> {
       checks.push({ id: "tunnel-binary", status: "ok", message: "Pinned openai/tunnel-client binary is installed" });
     }
     try {
-      if (!existsSync(settings.runtimeKeyFile)) {
+      if (settings.credential) {
+        const retirementPending = Boolean(settings.legacyCredentialRetirement && existsSync(settings.legacyCredentialRetirement.path));
+        checks.push({ id: "tunnel-key", status: retirementPending ? "warning" : "ok", message: retirementPending
+          ? "Protected credential reference is saved; legacy plaintext retirement is pending a fresh verified runtime"
+          : "Protected tunnel credential reference is saved; vault access is checked only when starting the runtime" });
+      } else if (!settings.runtimeKeyFile || !existsSync(settings.runtimeKeyFile)) {
         checks.push({ id: "tunnel-key", status: "error", message: "Tunnel runtime key file is missing" });
       } else if (!secureFile(settings.runtimeKeyFile)) {
         checks.push({ id: "tunnel-key", status: "error", message: "Tunnel runtime key file has unsafe permissions" });

@@ -1,16 +1,18 @@
+import { tunnelCredentialProvider, prepareProtectedTunnelCredential, discardUncommittedTunnelCredential, type PreparedTunnelCredential, type TunnelCredentialProvider } from "./tunnel-credential";
 import { transitionSetupConfig, meaningfulRuntimeChange, type SetupOptions } from "./setup-policy";
 export type { SetupOptions } from "./setup-policy";
 import { fileSnapshotsMatch as sameSnapshot, restoreFileSnapshot, snapshotFile, type FileSnapshot } from "./file-transactions";
-import { existsSync } from "node:fs";
-import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:net";
-import { join } from "node:path";
-import type { AppConfig, BrowserInteractionMode, RuntimeMode } from "./config";
+import { dirname, join, resolve } from "node:path";
+import type { AppConfig, BrowserInteractionMode, RuntimeMode, TunnelConfig } from "./config";
 import {
   currentRuntimeCommand,
   defaultBrokerEndpoint,
   defaultConfig,
   getConfigPath,
+  getConfigDir,
   readConfigForSetup,
   type ConfigRead,
   saveConfig,
@@ -111,7 +113,7 @@ export function existingFullSetupCredentials(
     : undefined;
   return {
     tunnelId: Boolean(tunnel?.tunnelId),
-    runtimeKey: Boolean(tunnel?.runtimeKeyFile && existsSync(tunnel.runtimeKeyFile)),
+    runtimeKey: Boolean(tunnel?.credential || (tunnel?.runtimeKeyFile && existsSync(tunnel.runtimeKeyFile))),
   };
 }
 
@@ -228,6 +230,62 @@ function failedConnectIsStopped(config: AppConfig): boolean {
   } catch { return false; }
 }
 
+/** Prepare only the selected legacy/global scope. Config publication stays with setup's file transaction. */
+export function prepareSetupTunnelCredential(existing: TunnelConfig | undefined, tunnelId: string,
+  interactionMode: BrowserInteractionMode, options: Pick<SetupOptions, "runtimeKeyFile" | "runtimeKeyValue" | "credentialStorage">,
+  expectedRuntimeKey?: FileSnapshot, provider?: TunnelCredentialProvider,
+  onKeyWritten?: (receipt: FileSnapshot) => void) {
+  if (options.runtimeKeyFile && options.runtimeKeyValue) throw new Error("Supply one runtime key source");
+  if (options.credentialStorage !== undefined && !["os-vault", "legacy-file"].includes(options.credentialStorage)) {
+    throw new Error("Credential storage must be os-vault or legacy-file");
+  }
+  if (options.credentialStorage === "legacy-file") {
+    const wrote = (_bytes: Uint8Array, receipt: FileSnapshot) => onKeyWritten?.(receipt);
+    const runtimeKeyFile = options.runtimeKeyValue
+      ? installRuntimeKeyBytes(options.runtimeKeyValue, interactionMode, wrote, expectedRuntimeKey)
+      : options.runtimeKeyFile ? installRuntimeKey(options.runtimeKeyFile, interactionMode, wrote, expectedRuntimeKey)
+        : existing?.runtimeKeyFile;
+    if (!runtimeKeyFile || !existsSync(runtimeKeyFile)) throw new Error("Explicit legacy-file storage requires a supplied or existing legacy runtime key file");
+    return { runtimeKeyFile };
+  }
+  if (!options.runtimeKeyFile && !options.runtimeKeyValue && !options.credentialStorage
+    && existing?.runtimeKeyFile && process.platform !== "darwin") {
+    return { runtimeKeyFile: existing.runtimeKeyFile };
+  }
+  if (!options.runtimeKeyFile && !options.runtimeKeyValue && existing?.credential) {
+    if (existing.tunnelId !== tunnelId) throw new Error("A changed Tunnel ID requires its own runtime key");
+    return { reference: existing.credential, legacyCredentialRetirement: existing.legacyCredentialRetirement };
+  }
+  let key = options.runtimeKeyValue;
+  let legacyCredentialRetirement = existing?.legacyCredentialRetirement;
+  if (!legacyCredentialRetirement && existing?.runtimeKeyFile && existsSync(existing.runtimeKeyFile)
+    && dirname(resolve(existing.runtimeKeyFile)) === join(getConfigDir(), "secrets")) {
+    const old = snapshotFile(existing.runtimeKeyFile);
+    if (!old.symlink && old.identity && old.data) legacyCredentialRetirement = { version: 1, path: resolve(existing.runtimeKeyFile),
+      sha256: createHash("sha256").update(old.data).digest("hex"), dev: old.identity.dev, ino: old.identity.ino };
+  }
+  if (!key) {
+    const source = options.runtimeKeyFile ?? existing?.runtimeKeyFile ?? managedRuntimeKeyPath(interactionMode);
+    if (!existsSync(source)) throw new Error("This interaction mode requires its own runtime key");
+    const before = snapshotFile(source);
+    if (expectedRuntimeKey?.path === source && !sameSnapshot(before, expectedRuntimeKey)) {
+      throw new Error("Tunnel runtime key changed after setup took its snapshot; preserving the concurrent edit");
+    }
+    const bytes = readFileSync(source);
+    if (!sameSnapshot(snapshotFile(source), before)) throw new Error("Tunnel runtime key changed while being read");
+    if (!bytes.length || bytes.length > 64 * 1024) throw new Error("Tunnel runtime key is empty or unexpectedly large");
+    key = bytes.toString("utf8");
+    if (!options.runtimeKeyFile && !before.symlink && before.identity
+      && dirname(resolve(source)) === join(getConfigDir(), "secrets")) {
+      legacyCredentialRetirement = { version: 1, path: resolve(source), sha256: createHash("sha256").update(bytes).digest("hex"),
+        dev: before.identity.dev, ino: before.identity.ino };
+    }
+  }
+  if (!key.trim() || Buffer.byteLength(key, "utf8") > 64 * 1024) throw new Error("Tunnel runtime key is empty or unexpectedly large");
+  const prepared = prepareProtectedTunnelCredential({ accountId: "legacy", interactionMode, tunnelId }, key.trim(), provider);
+  return { reference: prepared.reference, prepared, legacyCredentialRetirement };
+}
+
 async function configureTunnel(
   config: AppConfig,
   existing: AppConfig | undefined,
@@ -236,6 +294,7 @@ async function configureTunnel(
   onInstalled?: (owned: TunnelClientInstallSnapshot) => void,
   onKeyWritten?: (receipt: FileSnapshot) => void,
   expectedRuntimeKey?: FileSnapshot,
+  onCredentialPrepared?: (receipt: PreparedTunnelCredential) => void,
 ): Promise<void> {
   if (config.mode === "browser-only") {
     delete config.tunnel;
@@ -274,28 +333,15 @@ async function configureTunnel(
   if (otherTunnel?.tunnelId === tunnelId) {
     throw new Error("Automatic and Manual mode require different Tunnel IDs and separate ChatGPT connectors");
   }
-  let expectedKey = expectedRuntimeKey;
-  const keyWritten = (_bytes: Uint8Array, receipt: FileSnapshot): void => {
-    expectedKey = receipt;
-    onKeyWritten?.(receipt);
-  };
-  let runtimeKeyFile = existingTunnel?.runtimeKeyFile;
-  const managedKeyFile = managedRuntimeKeyPath(interactionMode);
-  if ((!runtimeKeyFile || !existsSync(runtimeKeyFile)) && existsSync(managedKeyFile)) {
-    runtimeKeyFile = managedKeyFile;
+  let protectedKey: ReturnType<typeof prepareSetupTunnelCredential>;
+  try {
+    protectedKey = prepareSetupTunnelCredential(existingTunnel, tunnelId, interactionMode, options, expectedRuntimeKey, undefined, onKeyWritten);
+  } catch (error) {
+    const uncertain = (error as { preparedReceipt?: PreparedTunnelCredential }).preparedReceipt;
+    if (uncertain) onCredentialPrepared?.(uncertain);
+    throw error;
   }
-  if (options.runtimeKeyFile) {
-    runtimeKeyFile = installRuntimeKey(options.runtimeKeyFile, interactionMode, keyWritten, expectedKey);
-  }
-  if (options.runtimeKeyValue) {
-    runtimeKeyFile = installRuntimeKeyBytes(options.runtimeKeyValue, interactionMode, keyWritten, expectedKey);
-  }
-  if (runtimeKeyFile && runtimeKeyFile !== managedKeyFile && existsSync(runtimeKeyFile)) {
-    runtimeKeyFile = installRuntimeKey(runtimeKeyFile, interactionMode, keyWritten, expectedKey);
-  }
-  if (!runtimeKeyFile || !existsSync(runtimeKeyFile)) {
-    throw new Error(`${interactionMode === "manual" ? "Manual mode" : "Automatic"} mode requires its own runtime key`);
-  }
+  if (protectedKey.prepared) onCredentialPrepared?.(protectedKey.prepared);
   const installedBinary = await installTunnelClient(expectedTunnelClient, onInstalled);
   const productionProfileName = interactionMode === "manual"
     ? "codex-chatgpt-web-zero-risk"
@@ -306,10 +352,13 @@ async function configureTunnel(
   const configuredTunnel = createTunnelConfig({
     binaryPath: installedBinary,
     tunnelId,
-    runtimeKeyFile,
+    ...(protectedKey.reference ? { credential: protectedKey.reference } : { runtimeKeyFile: protectedKey.runtimeKeyFile! }),
     profileName,
     alias: profileName,
   });
+  if (protectedKey.reference && protectedKey.legacyCredentialRetirement) {
+    configuredTunnel.legacyCredentialRetirement = protectedKey.legacyCredentialRetirement;
+  }
   if (interactionMode === "manual") manualTunnel = configuredTunnel;
   else automaticTunnel = configuredTunnel;
   config.tunnel = configuredTunnel;
@@ -402,6 +451,7 @@ export function preflightSetup(options: SetupOptions): void {
     const managedKey = managedRuntimeKeyPath(config.browserInteractionMode);
     const hasRuntimeKey = Boolean(
       options.runtimeKeyValue
+      || saved?.credential
       || (options.runtimeKeyFile && existsSync(options.runtimeKeyFile))
       || (savedKey && existsSync(savedKey))
       || existsSync(managedKey),
@@ -518,7 +568,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   config.extraHighAvailable = config.solAvailable && extraHighAvailable === true;
   config.proAvailable = config.solAvailable && proAvailable === true;
   config.modelCapabilities = config.browserInteractionMode === "manual" ? undefined : modelCapabilities;
-  const explicitTunnelChange = Boolean(options.tunnelId || options.runtimeKeyFile || options.runtimeKeyValue);
+  const explicitTunnelChange = Boolean(options.tunnelId || options.runtimeKeyFile || options.runtimeKeyValue || options.credentialStorage);
   const preliminaryChange = Boolean(existing && (meaningfulRuntimeChange(existing, config)
     || connectorIdentityMigrating || explicitTunnelChange || options.forceLogin));
   if (beforeService.loaded && preliminaryChange && !options.restartService) {
@@ -615,6 +665,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   let previousTunnelStopped = false;
   let failedConnectMayHaveWrittenProfile = false;
   let savedConfigReceipt: FileSnapshot | undefined;
+  let credentialPrepared: PreparedTunnelCredential | undefined;
   const configUnchanged = (): boolean => {
     const current = snapshotFile(getConfigPath());
     return sameSnapshot(current, configBeforeRoute);
@@ -632,7 +683,8 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
       tunnelClientBeforeRoute,
       owned => { tunnelClientAfterRoute = owned; },
       receipt => { runtimeKeyAfterRoute = receipt; },
-      runtimeKeyBeforeRoute);
+      runtimeKeyBeforeRoute,
+      receipt => { credentialPrepared = receipt; });
     changedWhileLoaded = Boolean(existing && beforeService.loaded
       && (meaningfulRuntimeChange(existing, config) || connectorIdentityMigrating));
     tunnelProfilePath = config.mode === "full" && config.tunnel
@@ -684,7 +736,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
           try { await uninstallTunnelService(); checkpointTunnelRemoval(); } finally { observeTunnelState(); }
           assertKnownTunnelState();
         }
-        if (needsProfile || refreshTunnelWorker || explicitTunnelChange) {
+        if (needsProfile || refreshTunnelWorker || explicitTunnelChange || credentialPrepared) {
           tunnelRuntimeTouched = true;
           await bootstrapTunnelProfile(config,
             () => { validationTunnelStarted = validationTunnelRunning = true; checkpointOwnedTunnelProfile(); },
@@ -883,12 +935,19 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
         }
       }
     }
+    if (credentialPrepared && configRestored && !failedConnectUnresolved && !validationTunnelRunning && !tunnelStatusUnknown) {
+      try { discardUncommittedTunnelCredential(credentialPrepared); }
+      catch { rollbackFailures.push("prepared credential could not be safely discarded; retained for recovery"); }
+    }
     const primary = error instanceof Error ? error.message : String(error);
     throw new Error(rollbackFailures.length
       ? `${primary}; setup rollback also failed: ${rollbackFailures.join("; ")}`
       : primary);
   }
   const warnings: string[] = [];
+  if (config.tunnel?.legacyCredentialRetirement && existsSync(config.tunnel.legacyCredentialRetirement.path)) {
+    warnings.push("Protected credential saved; legacy key retirement is pending. Run tunnel credential-finalize to verify a fresh runtime and retire the exact old file.");
+  }
   if (!migratingTerminalRuntime) {
     try { removeLegacyRuntimeArtifacts(config); } catch (error) {
       warnings.push(`Legacy runtime cleanup needs a retry: ${error instanceof Error ? error.message : String(error)}`);
@@ -946,7 +1005,7 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
   }
 
   assertConfigReadCurrent(read);
-  const explicitTunnelChange = Boolean(options.tunnelId || options.runtimeKeyFile || options.runtimeKeyValue);
+  const explicitTunnelChange = Boolean(options.tunnelId || options.runtimeKeyFile || options.runtimeKeyValue || options.credentialStorage);
   // Direct DEV setup has no verified launcher owner/idle-drain handshake. Require an
   // explicitly stopped old alias before any key, client, profile, or config mutation.
   // Even a nominally unchanged Full setup can reinstall the tunnel client or
@@ -979,6 +1038,7 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
   let clientOwned = clientBefore;
   const configBefore = read.snapshot;
   let configReceipt: FileSnapshot | undefined;
+  let credentialPrepared: PreparedTunnelCredential | undefined;
   let profileBefore: FileSnapshot | undefined;
   let profileOwned: FileSnapshot | undefined;
   let failedConnectMayHaveWrittenProfile = false;
@@ -988,13 +1048,14 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
     await configureTunnel(config, existing, options, clientBefore,
       owned => { clientOwned = owned; },
       receipt => { keyOwned = receipt; },
-      keyBefore);
+      keyBefore,
+      receipt => { credentialPrepared = receipt; });
     if (config.mode === "full") {
       const profilePath = join(config.tunnel!.profileDir, `${config.tunnel!.profileName}.yaml`);
       profileBefore = snapshotFile(profilePath);
       profileOwned = profileBefore;
       if (!profileBefore.exists || tunnelWorkerRuntimeChanged(existing, config)
-        || activeConnectorIdentityMigrationRequired(config, read) || explicitTunnelChange) {
+        || activeConnectorIdentityMigrationRequired(config, read) || explicitTunnelChange || credentialPrepared) {
         await bootstrapTunnelProfile(config,
           () => { validationTunnelRunning = true; profileOwned = snapshotFile(profilePath); },
           () => { validationTunnelRunning = false; },
@@ -1056,6 +1117,10 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
       });
     } else {
       rollbackFailures.push("DEV config or validation tunnel remains active; preserving tunnel client and runtime key for manual recovery");
+    }
+    if (credentialPrepared && configRestored && !failedConnectUnresolved && !validationTunnelRunning) {
+      try { discardUncommittedTunnelCredential(credentialPrepared); }
+      catch { rollbackFailures.push("prepared credential could not be safely discarded; retained for recovery"); }
     }
     const primary = error instanceof Error ? error.message : String(error);
     throw new Error(rollbackFailures.length

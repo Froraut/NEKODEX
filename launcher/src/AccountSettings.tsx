@@ -7,6 +7,7 @@ import { AccountCodexAllowance, AccountCodexLogin, AccountCodexLoginProgress } f
 import { AccountReadiness, accountPacingStatus } from "./AccountReadiness";
 import { AccountToolsOnboarding } from "./AccountToolsOnboarding";
 import { quotaPortfolioSummary } from "./QuotaPortfolioSummary";
+import { quotaAutoRetries, quotaAutoRetryDelay } from "./quota-auto-retry";
 import { accountToolsCopy, accountToolsStep, accountTunnelFor } from "./account-tools-onboarding";
 import { accountsCopy } from "./accounts-copy";
 import { AccountCard, Button, Checkbox, Disclosure, Notice, Page, Panel, Select, SurfaceHeader, TextField, cx, type Status, type Tone } from "./design";
@@ -218,27 +219,65 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
     // on every card whenever one account changes. An account with no value yet reads as loading (undefined).
     setQuotas(current => new Map([...current].filter(([id]) => activeIds.has(id))));
     setQuotaFailures(current => new Set([...current].filter(id => activeIds.has(id))));
+    // The allowance is held only in memory, so every launch starts unread. Read it once for each
+    // verified account instead of leaving "not checked yet"; a cached result stops this unless it failed transiently.
+    const autoRead = new Set(manual || transitionBusy ? [] : state.accounts
+      .filter(account => account.authenticated && account.authenticationStatus === "verified")
+      .map(account => account.id));
+    // A read that failed transiently (timeout, network, session not ready yet) is read again a few times per launch,
+    // and the card keeps reading meanwhile instead of saying the allowance is not available. A manual refresh, an
+    // evidence or identity change, Manual mode, a transition and leaving the page cancel the waiting re-read.
+    const retryTimers = new Set<number>();
+    const failed = (id: string, revision: number) => {
+      // The card says the allowance could not be read; a toast would repeat it without more detail.
+      if (!disposed && quotaRevisions.current.get(id) === revision) setQuotaFailures(current => new Set(current).add(id));
+    };
+    const show = (id: string, revision: number, value: AccountQuotaSnapshot | null) => {
+      const delay = autoRead.has(id) ? quotaAutoRetryDelay(value, quotaAutoRetries.spent(id), Date.now()) : null;
+      if (delay === null || value === null) setQuotas(current => new Map(current).set(id, value));
+      else {
+        setQuotas(current => { const next = new Map(current); next.delete(id); return next; });
+        const timer = window.setTimeout(() => { retryTimers.delete(timer); void reread(id, revision, value); }, delay);
+        retryTimers.add(timer);
+      }
+      setQuotaFailures(current => {
+        if (!current.has(id)) return current;
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+    };
+    const reread = async (id: string, revision: number, previous: AccountQuotaSnapshot) => {
+      if (disposed || quotaRevisions.current.get(id) !== revision) return;
+      // A Codex sign-in owns this account's session now: show the failed read instead of reading.
+      if (loginLockedIdRef.current === id) { setQuotas(current => new Map(current).set(id, previous)); return; }
+      quotaAutoRetries.spend(id);
+      try {
+        const value = await api.refreshAccountCodexQuota(id);
+        if (disposed || quotaRevisions.current.get(id) !== revision) return;
+        show(id, revision, value);
+      } catch { failed(id, revision); }
+    };
     void (async () => {
       for (const id of hydrationAccounts) {
         const revision = revisions.get(id)!;
         try {
-          const value = await api.accountCodexQuotaSnapshot(id);
+          let value = await api.accountCodexQuotaSnapshot(id);
           if (disposed || quotaRevisions.current.get(id) !== revision) continue;
-          setQuotas(current => new Map(current).set(id, value));
-          setQuotaFailures(current => {
-            if (!current.has(id)) return current;
-            const next = new Set(current);
-            next.delete(id);
-            return next;
-          });
-        } catch {
-          // The card says the allowance could not be read; a toast would repeat it without more detail.
-          if (!disposed && quotaRevisions.current.get(id) === revision) setQuotaFailures(current => new Set(current).add(id));
-        }
+          if (value === null && autoRead.has(id) && loginLockedIdRef.current !== id) {
+            setQuotas(current => { const next = new Map(current); next.delete(id); return next; });
+            value = await api.refreshAccountCodexQuota(id);
+            if (disposed || quotaRevisions.current.get(id) !== revision) continue;
+          }
+          show(id, revision, value);
+        } catch { failed(id, revision); }
       }
     })();
-    return () => { disposed = true; };
-  }, [api, quotaEvidenceKey]);
+    return () => {
+      disposed = true;
+      for (const timer of retryTimers) window.clearTimeout(timer);
+    };
+  }, [api, quotaEvidenceKey, manual, transitionBusy]);
 
   useEffect(() => {
     const nextChange = nextQuotaClockAt(quotas.values(), quotaClock);
@@ -601,10 +640,14 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
             : authChecking ? text.waitForSessionCheck
             : !account.authenticated ? codexCopy.quotaSignedOut : undefined;
           const selectReason = blockedReason ?? readinessReason
-            ?? (!manual && !account.checked ? text.selectNeedsCheck : undefined);
+            ?? (!manual && !account.checked ? account.evidenceChecking ? text.waitForSessionCheck : text.selectNeedsCheck : undefined);
           const checkReason = blockedReason ?? (manual ? copy.accountsManual : readinessReason);
+          // Signing in again while the saved session is still being checked replaces a session that may be fine.
+          const sessionCheckPending = authChecking && !account.authenticated;
           const credentialReason = blockedReason ?? (quotaReadBusy ? codexCopy.quotaChecking : undefined)
-            ?? (account.authenticated && !selected && !manual && !account.checked ? text.selectNeedsCheck : undefined);
+            ?? (sessionCheckPending ? text.waitForSessionCheck : undefined)
+            ?? (account.authenticated && !selected && !manual && !account.checked
+              ? account.evidenceChecking ? text.waitForSessionCheck : text.selectNeedsCheck : undefined);
           const anotherLoginReason = (startingAccountId !== null && startingAccountId !== account.id)
             || Boolean(login && (login.active || login.settling) && login.accountId !== account.id)
             ? (login?.settling ? codexCopy.loginSettlingCurrent : codexCopy.loginCurrent)
@@ -648,7 +691,8 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
           const enabledDisabled = mutationsDisabled || loginBoundActive;
           // Opening a signed-in account selects it, so it needs the same check as Select.
           const opensUncheckedAccount = account.authenticated && !selected && !manual && !account.checked;
-          const credentialDisabled = mutationsDisabled || active || loginBoundActive || quotaReadBusy || opensUncheckedAccount;
+          const credentialDisabled = mutationsDisabled || active || loginBoundActive || quotaReadBusy || opensUncheckedAccount
+            || sessionCheckPending;
           const authRetryDisabled = Boolean(credentialReason);
           const selectDisabled = mutationsDisabled || loginBoundActive || !account.authenticated || (!manual && !account.checked);
           const checkDisabled = mutationsDisabled || manual || active || loginBoundActive || !account.authenticated;
@@ -666,13 +710,18 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
           else if (authChecking) facts.push({ label: copy.checkingSignIn, dot: "busy" });
           else if (!account.authenticated) facts.push({ label: copy.accountsSignInNeeded, tone: "warning", dot: "optional" });
           facts.push({ label: `${copy.accountsActive}: ${account.activeTurns}`, dot: active ? "busy" : undefined });
+          // Evidence is rebuilt after every launch and sign-in: a pending check reads as checking, not as missing setup.
+          const evidenceChecking = account.evidenceChecking === true || authChecking;
+          const checkingFact = (label: string) => ({ label: `${label}: ${workflow.session.checkingVerification}`, dot: "busy" as Status });
           facts.push(account.checked
             ? { label: `${copy.accountsChecked}: ${copy.connectionVerified}`, tone: "success", dot: "ready" }
+            : evidenceChecking ? checkingFact(copy.accountsChecked)
             : { label: `${copy.accountsChecked}: ${copy.connectionPending}`, dot: "idle" });
           // The same derived step as the tools setup section: a verified connector without this account's tunnel
           // still needs setup (the page notice names that step), so the badge never says Verified next to it.
           facts.push(toolsStep === "verified"
             ? { label: `${copy.toolConnection}: ${copy.connectionVerified}`, tone: "success", dot: "ready" }
+            : evidenceChecking ? checkingFact(copy.toolConnection)
             : { label: `${copy.toolConnection}: ${copy.connectionPending}`, dot: "idle" });
           if (pacing && (pacing.held || !account.safety)) {
             facts.push({ label: `${pacing.label}: ${pacing.value}`, tone: pacing.held ? "warning" : undefined, dot: pacing.held ? "busy" : "ready" });
@@ -767,6 +816,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
                   <AccountToolsOnboarding account={account} copy={copy} language={language} headingId={`${ids.details}-tools`}
                     interactionMode={interactionMode} connectorName={toolsSetup.connectorName} urls={toolsSetup.urls}
                     manual={manual} disabled={toolsDisabled} onError={setError}
+                    onTunnelCredentialChanged={retryPool}
                     onSetup={() => onSetupTools(account.id, account.accountLabel ? `${account.label} · ${account.accountLabel}` : account.label)} />
                   <AccountCodexLogin copy={codexCopy} headingId={`${ids.details}-login`} idPrefix={ids.codex}
                     transitionBusy={transitionBusy}

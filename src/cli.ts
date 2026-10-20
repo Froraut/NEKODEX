@@ -1,7 +1,11 @@
 #!/usr/bin/env bun
+import { clearTunnelRuntimeKeyEnvironment, importSavedTunnelCredential, readRuntimeKeyInput } from "./tunnel-credential";
 import { clientConnectionsCommand } from "./client-connections";
 import { claudeIntegrationCommand } from "./claude-integration";
 import { localApiCommand } from "./local-api-access";
+import { localControlApiCommand } from "./local-control-api/client";
+import { loopEventProducerCommand } from './agent-mode/external-producer-cli';
+import { localControlTaskMonitorCommand } from "./local-control-api/task-monitor-command";
 import { codexProviderCommand } from "./codex-provider-command";
 import { createInterface } from "node:readline/promises";
 import { Writable } from "node:stream";
@@ -12,7 +16,7 @@ import { captureSystemBrowserLoginToFile, checkBrowserEngine, loginToChatGpt } f
 import { createPasskeyLoginControl } from "./passkey-login-control";
 import { createExistingChromeLoginControl } from "./existing-chrome-login-control";
 import { captureExistingChromeLoginToFile, ExistingChromeLoginError } from "./existing-chrome-login";
-import { defaultConfig, getConfigDir, getConfigPath, loadConfig, loadConfigForSetup, readAccountCapabilityFields } from "./config";
+import { defaultConfig, getConfigDir, getConfigPath, loadConfig, loadConfigForSetup, readConfigForSetup, readAccountCapabilityFields } from "./config";
 import {
   inspectLauncherBrowserHost,
   inspectLauncherBrowserHostLiveness,
@@ -30,10 +34,14 @@ import { runChatGptMcpMain } from "./adapters/chatgpt-web/mcp-main";
 import { setChatGptMcpCliTunnelId } from "./adapters/chatgpt-web/mcp-server";
 import { runCommand } from "./process";
 import { startServer } from "./server";
+import { resolveDevelopmentDesktopHelper } from "./browser-companion/desktop-helper-path";
+import { resolveDevelopmentSkillPdfHelper } from "./agent-tools/skill-pdf-helper-path";
+import { resolveDevelopmentVmRuntimeSelection } from './execution-environments/development-runtime';
+import { resolveProductionVmRuntimeSelection } from './execution-environments/production-runtime';
 import { assertServiceIdle, cancelActiveTurns, getServiceStatus, installService, interruptActiveTurn, restartService, startService, stopService, uninstallService } from "./service";
 import { existingFullSetupCredentials, preflightSetup, setup, type SetupOptions } from "./setup";
-import { installRuntimeKeyBytes, installTunnelClient, managedRuntimeKeyPath, stopTunnel, tunnelStatus, waitForTunnelReady } from "./tunnel";
-import { getTunnelServiceStatus, restartTunnelService, startTunnelService, stopTunnelService, uninstallTunnelService } from "./tunnel-service";
+import { runTunnelCredentialProcess, installTunnelClient, managedRuntimeKeyPath, stopTunnel, tunnelStatus, waitForTunnelReady } from "./tunnel";
+import { finalizeTunnelCredentialMigration, getTunnelServiceStatus, restartTunnelService, startTunnelService, stopTunnelService, uninstallTunnelService } from "./tunnel-service";
 import { VERSION } from "./version";
 import { inspectCodexIntegrationWithChain } from "./codex-chained-route";
 import { runDevCommand } from "./dev-chat/cli";
@@ -57,6 +65,10 @@ Usage:
   codex-chatgpt-web subagents <status|compatibility-v1|native>
   codex-chatgpt-web provider <status|mixed|web-only> [--catalog PATH]
   codex-chatgpt-web api <status|enable|disable|rotate|key>
+  codex-chatgpt-web local-api <status|tasks|agent-tasks|history-coverage|action|action-receipt> --origin http://127.0.0.1:PORT --token-stdin
+  codex-chatgpt-web loop-events <publish|receipt> --origin http://127.0.0.1:PORT --journal-dir PATH --token-stdin; publish --event-file PATH; receipt --producer-id ID --event-id ID
+  codex-chatgpt-web task-monitor <snapshot|pause|reconcile> --origin http://127.0.0.1:PORT --journal-dir PATH --token-stdin
+  codex-chatgpt-web local-api action --operation pause|resume|stop|step|review --task-id ID --action-id ID --family-id ID --generation N --revision N --origin http://127.0.0.1:PORT --token-stdin
   codex-chatgpt-web claude <status|connect|disconnect>
   codex-chatgpt-web config pro-model-version <follow|5.6|5.5|6> --launcher-control
   codex-chatgpt-web config compaction-model <follow|extra-high|5.6-pro|5.5-pro> --launcher-control
@@ -69,7 +81,7 @@ Usage:
   codex-chatgpt-web serve
   codex-chatgpt-web mcp [--broker-socket PATH] [--tunnel-id ID]
   codex-chatgpt-web service <status|install|start|restart|stop|cancel-turns>
-  codex-chatgpt-web tunnel <status|start|restart|stop|key-import>
+  codex-chatgpt-web tunnel <status|start|restart|stop|key-import|credential-run|credential-finalize>
   codex-chatgpt-web open <tunnels|runtime-keys|connectors>
   codex-chatgpt-web uninstall --yes
 
@@ -88,6 +100,8 @@ Setup options:
                                Use the embedded launcher browser described by this owner-only file
   --refresh-account-capabilities
                                Re-read the authenticated account's available Web models
+  --runtime-key-stdin          Read at most 64KiB UTF-8 runtime key directly from stdin, without a staging file
+  --credential-storage MODE    os-vault (default); explicit legacy-file stores plaintext for compatibility
   --tunnel-id ID               Existing OpenAI tunnel id (full mode)
   --runtime-key-file PATH      File containing a Tunnels Read+Use runtime key
   --replace-codex-route        Reversibly replace existing Responses or Voice route settings
@@ -271,6 +285,12 @@ async function setupCommand(args: string[]): Promise<void> {
   }
   const tunnelId = takeOption(args, "--tunnel-id");
   const runtimeKeyFile = takeOption(args, "--runtime-key-file");
+  const runtimeKeyStdin = takeFlag(args, "--runtime-key-stdin");
+  if (runtimeKeyFile && runtimeKeyStdin) throw new Error("Choose --runtime-key-file or --runtime-key-stdin");
+  const credentialStorage = takeOption(args, "--credential-storage");
+  if (credentialStorage !== undefined && credentialStorage !== "os-vault" && credentialStorage !== "legacy-file") {
+    throw new Error("--credential-storage must be os-vault or legacy-file");
+  }
   const chrome = takeOption(args, "--chrome");
   const browserHostDescriptorPath = takeOption(args, "--browser-host-descriptor");
   if (chrome) options.chromeExecutablePath = chrome;
@@ -278,6 +298,8 @@ async function setupCommand(args: string[]): Promise<void> {
   options.refreshAccountCapabilities = takeFlag(args, "--refresh-account-capabilities");
   if (tunnelId) options.tunnelId = tunnelId;
   if (runtimeKeyFile) options.runtimeKeyFile = runtimeKeyFile;
+  if (runtimeKeyStdin) options.runtimeKeyValue = await readRuntimeKeyInput(stdin);
+  if (credentialStorage) options.credentialStorage = credentialStorage;
   options.forceLogin = takeFlag(args, "--login");
   options.autoApproveToolCalls = takeFlag(args, "--auto-approve-tool-calls");
   const freshConversation = takeFlag(args, "--fresh-conversation");
@@ -339,7 +361,7 @@ async function setupCommand(args: string[]): Promise<void> {
   const interactionMode = options.browserInteractionMode ?? existing?.browserInteractionMode ?? "automatic";
   const reusableCredentials = existingFullSetupCredentials(existing, interactionMode);
   const needsTunnelId = !options.tunnelId && !reusableCredentials.tunnelId;
-  const needsRuntimeKey = !options.runtimeKeyFile
+  const needsRuntimeKey = !options.runtimeKeyValue && !options.runtimeKeyFile
     && !reusableCredentials.runtimeKey
     && !existsSync(managedRuntimeKeyPath(interactionMode));
 
@@ -527,14 +549,25 @@ async function tunnelCommand(args: string[]): Promise<void> {
     return;
   }
   if (action === "key-import") {
-    const key = await secretPrompt("Runtime key (hidden): ");
+    const read = readConfigForSetup();
+    if (!read.config?.tunnel?.credential || read.config.accountTunnelMode) throw new Error("Use Full setup to migrate a legacy key, or selected account setup for an account-owned key");
+    const key = await secretPrompt(`Runtime key for ${read.config.browserInteractionMode} mode (hidden): `);
     if (!key) throw new Error("A non-empty runtime key is required");
-    const config = loadConfig();
-    installRuntimeKeyBytes(key, config.browserInteractionMode);
-    stdout.write(`Runtime key stored privately at ${managedRuntimeKeyPath(config.browserInteractionMode)}\n`);
+    importSavedTunnelCredential(key, undefined, read.snapshot);
+    stdout.write("Protected runtime credential reference saved. Restart the configured tunnel runtime to apply it; the existing process has not been rotated.\n");
     return;
   }
+  if (action === "credential-finalize") {
+    const result = await finalizeTunnelCredentialMigration();
+    stdout.write(`${JSON.stringify(result)}\n`); return;
+  }
   const config = loadConfig();
+  if (action === "credential-run") {
+    const outcome = await runTunnelCredentialProcess(config);
+    if (outcome.signal && process.platform !== "win32") process.kill(process.pid, outcome.signal);
+    else process.exitCode = outcome.code ?? (outcome.signal === "SIGINT" ? 130 : 143);
+    return;
+  }
   if (action === "start") startTunnelService();
   else if (action === "restart") {
     await assertServiceIdle(config);
@@ -634,6 +667,8 @@ async function uninstallCommand(args: string[]): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // The SDK inherits its launch secret into MCP. No NEKODEX command forwards that ambient key.
+  clearTunnelRuntimeKeyEnvironment();
   const args = process.argv.slice(2);
   const home = takeOption(args, "--home");
   if (home) process.env.CODEX_CHATGPT_WEB_HOME = home;
@@ -658,6 +693,9 @@ async function main(): Promise<void> {
   else if (command === "connections") clientConnectionsCommand(args);
   else if (command === "claude") claudeIntegrationCommand(args);
   else if (command === "api") localApiCommand(args);
+  else if (command === "local-api") { if (!await localControlApiCommand(args)) process.exitCode = 1; }
+  else if (command === "loop-events") { if (!await loopEventProducerCommand(args)) process.exitCode = 1; }
+  else if (command === "task-monitor") { if (!await localControlTaskMonitorCommand(args)) process.exitCode = 1; }
   else if (command === "provider") codexProviderCommand(args);
   else if (command === "subagents") await subagentsCommand(args);
   else if (command === "config") {
@@ -686,6 +724,9 @@ async function main(): Promise<void> {
     assertNoArgs(args);
     const config = loadConfig();
     const server = startServer(config, {
+      desktopHelper: resolveDevelopmentDesktopHelper(import.meta.url),
+      pdfHelper: resolveDevelopmentSkillPdfHelper(import.meta.url),
+      vmRuntimeSelection: process.env.CODEX_CHATGPT_WEB_LAUNCHER_PROFILE === 'development' ? resolveDevelopmentVmRuntimeSelection(import.meta.url) : resolveProductionVmRuntimeSelection(import.meta.url, process.env.NEKODEX_PACKAGED_VM_ORIGIN),
       readProModelVersion: () => loadConfig().proModelVersion,
       readCompactionModel: () => loadConfig().compactionModel,
       readAccountCapabilities: readAccountCapabilityFields,

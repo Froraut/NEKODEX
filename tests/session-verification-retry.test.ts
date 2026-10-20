@@ -13,11 +13,19 @@ function deferred<T>() {
 
 function fixture(url = TEMPORARY_CHAT_URL) {
   const loads: string[] = [];
+  const reloads: string[] = [];
   const publications: any[] = [];
   const contents: any = Object.assign(new EventEmitter(), {
     getURL: () => url, isDestroyed: () => false, isLoadingMainFrame: () => false,
     setWindowOpenHandler: () => {}, stop: () => {}, setBackgroundThrottling: () => {},
     loadURL: async (next: string) => { loads.push(next); url = next; },
+    reloadIgnoringCache() {
+      reloads.push(url);
+      queueMicrotask(() => {
+        contents.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
+        contents.emit("did-finish-load");
+      });
+    },
   });
   const host: any = Object.assign(Object.create(BrowserHost.prototype), {
     view: { webContents: contents }, getBrowserInteractionMode: () => "automatic",
@@ -33,7 +41,7 @@ function fixture(url = TEMPORARY_CHAT_URL) {
     host.setState({ authenticated: true, authenticationStatus: "verified", status: "ready", message: "ChatGPT is ready" });
     return host.snapshot();
   };
-  return { host, contents, loads, publications };
+  return { host, contents, loads, reloads, publications };
 }
 
 test("retry reloads a failed ChatGPT navigation even when Electron retains its requested URL", async () => {
@@ -174,4 +182,36 @@ test("cancelling a chooser after it stopped an embedded page keeps that page rec
   host.embeddedLoginController = null;
   await host.retryAuthenticationCheck();
   expect(loads).toEqual([TEMPORARY_CHAT_URL]);
+});
+
+test("retry reloads a ChatGPT error page that rendered no composer, then verifies", async () => {
+  const { host, loads, reloads } = fixture();
+  const verified = host.probeAuthentication;
+  let probes = 0;
+  host.probeAuthentication = async (options: any) => {
+    probes += 1;
+    if (probes > 1) return verified(options);
+    // "We couldn't load your account": Temporary Chat URL, loaded document, no composer.
+    host.lastAuthenticationSurfaceObservation = { composer: false, temporary: true, readyState: "complete" };
+    host.setState({ authenticated: false, authenticationStatus: "unavailable", status: "error",
+      message: "ChatGPT session verification unavailable: Temporary Chat surface unavailable" });
+    return host.snapshot();
+  };
+  await expect(host.retryAuthenticationCheck()).resolves.toMatchObject({ authenticationStatus: "verified" });
+  // The page already shows Temporary Chat, so it is reloaded past the cache, not loaded again.
+  expect(loads).toEqual([]);
+  expect(reloads).toEqual([TEMPORARY_CHAT_URL]);
+  expect(probes).toBe(2);
+});
+
+test("retry does not reload a page whose composer is present", async () => {
+  const { host, loads } = fixture();
+  host.probeAuthentication = async () => {
+    host.lastAuthenticationSurfaceObservation = { composer: true, temporary: true, readyState: "complete" };
+    host.setState({ authenticated: false, authenticationStatus: "unavailable", status: "error",
+      message: "ChatGPT session verification unavailable: session HTTP 403" });
+    return host.snapshot();
+  };
+  await expect(host.retryAuthenticationCheck()).rejects.toThrow("session HTTP 403");
+  expect(loads).toEqual([]);
 });

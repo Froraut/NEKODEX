@@ -1,3 +1,40 @@
+import { createAgentOAuthMcpControlRoutes } from './agent-tools/oauth-mcp-control';
+import { createAgentOAuthMcpToolsProvider } from './agent-tools/oauth-mcp-provider';
+import { createLauncherOAuthMcpBridge } from './agent-tools/oauth-mcp-bridge';
+import { ConversationHistoryStore } from "./conversation-history";
+import { conversationHistoryRequest } from "./conversation-history/http";
+import { createOwnedConversationHistoryBridge } from './conversation-history/owned-conversation-bridge';
+import { createOwnedConversationHistoryControlRoutes } from './conversation-history/owned-conversation-control';
+import { AgentModeStore, AgentModeRuntime, activeTaskEvidence, createAgentModeRoutes, createLocalResponsesExecutionPort, createOwnedNativeExecutionPort, createAgentExecutionRouter } from "./agent-mode";
+import { createLauncherNativeBridge } from "./agent-mode/launcher-native-bridge";
+import { createAgentNativeControlRoutes } from "./agent-mode/native-control";
+import { createAgentLoopProducerRoutes } from "./agent-mode/external-producer-http";
+import { createAgentRemoteControlRoutes } from "./agent-tools/remote-control";
+import { createLauncherRemoteBridge } from "./remote-workspace/launcher-bridge";
+import { createAgentRemoteToolsProvider, type AgentRemoteToolsProvider } from "./remote-workspace/agent-tools";
+import { AGENT_REMOTE_DESCRIPTOR_FILE } from "../launcher/electron/agent-remote-descriptor.cjs";
+import { AGENT_NATIVE_DESCRIPTOR_FILE } from "../launcher/electron/agent-native-descriptor.cjs";
+import { createAgentToolsComposition, type AgentToolsComposition } from "./agent-tools/composition";
+import { browserCompanionRequest, createAgentBrowserToolsProvider, createBrowserCompanionRuntime, type AgentBrowserToolsProvider, type BrowserCompanionRuntime } from "./browser-companion";
+import type { ToolScope } from "./agent-tools/types";
+import type { AgentTask } from "./agent-mode/types";
+import { createAgentDesktopToolsProvider, type AgentDesktopToolsProvider } from "./browser-companion/agent-desktop-tools";
+import { resolveDesktopPropertyEvidence } from "./browser-companion/desktop-outcome";
+import { resolveBrowserTextTransitionEvidence } from "./browser-companion/outcome-observer";
+import { createMacosDesktopProvider } from "./browser-companion/macos-desktop";
+import { resolveDesktopHelper, type PinnedDesktopHelper } from "./browser-companion/desktop-helper-path";
+import { resolveSkillPdfHelper, type PinnedSkillPdfHelper } from "./agent-tools/skill-pdf-helper-path";
+import { createLauncherPythonBuildSelectionBridge } from "./execution-environments/launcher-python-build-selection";
+import type { PythonBuildSelection } from "./execution-environments/python-build";
+import type { VmRuntimeSelection } from './execution-environments/executor';
+import { createVmExportControlRoutes } from './execution-environments/control';
+import { createLauncherVmExportBridge } from './execution-environments/launcher-export';
+import { createVmExportTools } from './execution-environments/export-tools';
+import { AGENT_VM_EXPORT_DESCRIPTOR_FILE } from '../launcher/electron/agent-vm-descriptor.cjs';
+import { release as osRelease } from "node:os";
+import { createLocalControlApiRoutes } from "./local-control-api";
+import { createAgentWorkspaceSnapshots } from "./agent-workspace/store";
+import { createAgentWorkspaceEvidence } from "./agent-workspace/evidence";
 import { externalClientContext, type ExternalClientContext } from "./external-client-context";
 import { localApiKey } from "./local-api-access";
 import { chatCompletionApiKey, chatCompletionRequestGuard, chatCompletionErrorResponse, chatCompletionModels, chatCompletionRequest } from "./chat-completions/http";
@@ -14,7 +51,7 @@ import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worke
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
 import { configureTurnBrokerEventLog } from "./adapters/chatgpt-web/turn-broker-diagnostics";
 import { rejectUnparseableChatGptToolResults } from "./adapters/chatgpt-web/rejected-tool-results";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { chatGptTurnSessions, chatGptTurnExecutionKey } from "./adapters/chatgpt-web/turn-execution";
 import {
   activeStructuredCompactionCount,
@@ -40,7 +77,6 @@ import { parseChatGptWebProModelVersion, type ChatGptWebProModelVersion } from "
 import { AsyncEventQueue } from "./event-queue";
 import { createInternalJsonRequest, readJsonRequestBody } from "./http-body";
 import { httpStatusFromTerminalError } from "./lib/errors";
-import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { augmentNativeModelCatalog } from "./model-catalog";
 import { pickerCatalogAgeMs, refreshPickerCatalog } from "./codex-picker-catalog";
@@ -56,6 +92,7 @@ import {
   CHATGPT_WEB_LUNA_BACKEND_MODEL,
   isChatGptWebModelSlug,
   newestChatGptWebProFamily,
+  availableChatGptWebModelRoutes,
   requireChatGptWebModelRoute,
   type ChatGptWebModelRoute,
 } from "./chatgpt-web-models";
@@ -83,14 +120,18 @@ import { VERSION } from "./version";
 import { HermesIntegration, type HermesContext } from "./hermes-integration";
 
 import { HttpTurnCounter, type NativeCodexTurnIdentity } from "./http-turn-lifecycle";
-import { ServerAdmission, TUNNEL_UNAVAILABLE_REASON_PATTERN, webAdmissionFailureMessage } from "./server-admission";
+import { ServerAdmission, TUNNEL_UNAVAILABLE_REASON_PATTERN, waitForWebAdmission, webAdmissionFailureMessage } from "./server-admission";
 import { inferenceRoutePolicy, type InferenceRoutePolicy } from "./server-route-policy";
 
 type ChatGptWebAdapterFactory = (provider: CodexProviderConfig) => ProviderAdapter;
 
+/** How long a Web request waits for the tool tunnel before NEKODEX answers with the reason. */
+export const WEB_TUNNEL_HOLD_MS = 60_000;
+const WEB_TUNNEL_HOLD_POLL_MS = 1_000;
+
 export interface ResponseRequestOptions {
   /** Native passthrough remains available independently of the browser/tool broker. */
-  webAdmission?: () => Response | undefined;
+  webAdmission?: (signal?: AbortSignal) => Response | undefined | Promise<Response | undefined>;
   fetchUpstream?: NativeFetch;
   hermesContext?: HermesContext;
   clientContext?: ExternalClientContext;
@@ -350,7 +391,7 @@ export async function responseRequest(
   // The native byte-for-byte replay branch is unused for a Web request. Release its tee buffer
   // before the browser turn, which may stay active for minutes.
   void nativeRequest.body?.cancel().catch(() => {});
-  const webRejection = options.webAdmission?.();
+  const webRejection = await options.webAdmission?.(req.signal);
   if (webRejection) return webRejection;
   const requestedPreviousResponseId = raw && typeof raw === "object" && !Array.isArray(raw)
     ? (raw as { previous_response_id?: unknown }).previous_response_id
@@ -724,7 +765,7 @@ export async function compactRequest(
     return forwardNativeOr502(nativeRequest, "responses/compact", options.fetchUpstream, raw);
   }
   void nativeRequest.body?.cancel().catch(() => {});
-  const webRejection = options.webAdmission?.();
+  const webRejection = await options.webAdmission?.(req.signal);
   if (webRejection) return webRejection;
   let route: ChatGptWebModelRoute;
   try {
@@ -827,11 +868,78 @@ export function startServer(
     readCompactionModel?: () => ChatGptWebCompactionModel | undefined;
     /** The account's current ChatGPT capability evidence, which the launcher refreshes while running. */
     readAccountCapabilities?: () => AccountCapabilityFields;
+    /** Trusted DEV harness pin. Packaged CLI resolves its own sibling native helper. */
+    desktopHelper?: PinnedDesktopHelper;
+    pdfHelper?: PinnedSkillPdfHelper;
+    /** Trusted fixed development or publisher-signed production VM artifact selection. */
+    vmRuntimeSelection?: VmRuntimeSelection;
+    /** Trusted main-selected immutable source/build snapshots, never renderer filesystem paths. */
+    resolvePythonBuildSelection?: (selectionId: string, scope: ToolScope) => PythonBuildSelection | Promise<PythonBuildSelection>;
+    /** Trusted launcher/fixture profile identity, independent of browser readiness. */
+    nativeLauncherProfile?: "production" | "development";
   } = {},
 ): Bun.Server<undefined> & { disposeSignalHandlers(): void } {
   if (config.purpose === "dev-harness") {
     throw new Error("DEV harness configuration cannot start a Responses listener");
   }
+  const historyHome = getConfigDir();
+  let historyStore: ConversationHistoryStore | undefined;
+  const getHistoryStore = () => historyStore ??= new ConversationHistoryStore({ coreHome: historyHome,
+    trustedCurrentScope: taskId => nativeHistoryScope(taskId),
+    trustedCurrentConversationScope: conversationId => ownedConversationHistoryBridge.currentScope(conversationId) });
+  // Standalone Agent mode has its own task owner and private store. Typical inference never opens it.
+  let agentRuntime: AgentModeRuntime | undefined;
+  let agentRoutes: ReturnType<typeof createAgentModeRoutes> | undefined;
+  const nativeBridge = createLauncherNativeBridge({ descriptorPath: join(historyHome, "runtime", AGENT_NATIVE_DESCRIPTOR_FILE),
+    expectedProfile: dependencies.nativeLauncherProfile ?? (process.env.CODEX_CHATGPT_WEB_LAUNCHER_PROFILE === "development" ? "development" : "production") });
+  const ownedConversationHistoryBridge = createOwnedConversationHistoryBridge({
+    descriptorPath: join(historyHome, 'runtime', 'launcher-owned-conversation-history.json'),
+    expectedProfile: dependencies.nativeLauncherProfile ?? (process.env.CODEX_CHATGPT_WEB_LAUNCHER_PROFILE === 'development' ? 'development' : 'production') });
+  const nativeHistoryScope = (taskId: string) => {
+    try {
+      const task = agentRuntime?.store.getTask(taskId), execution = task?.execution;
+      if (!task || execution?.provider !== "owned-native") return null;
+      const source = nativeBridge.models().find(row => row.provider === "owned-native" && row.id === execution.model && row.admissionId === execution.admissionId)?.historySource;
+      return source ? { ...source, taskId: task.id, generation: task.generation } : null;
+    } catch { return null; }
+  };
+  type NativeInvalidation = { task: Parameters<typeof nativeBridge.invalidateTask>[0]; pending?: Promise<void>; failed: boolean };
+  const nativeInvalidations = new Map<string, NativeInvalidation>();
+  const invalidateNativeTask = (task: NativeInvalidation["task"], retry = false): void => {
+    const key = JSON.stringify([task.id, task.familyId, task.generation]);
+    let entry = nativeInvalidations.get(key);
+    if (entry && (!retry || entry.pending)) return;
+    if (!entry) { entry = { task: structuredClone(task), failed: false }; nativeInvalidations.set(key, entry); }
+    const current = entry;
+    current.failed = false;
+    // Observe failures without discarding the exact cleanup scope or creating an unhandled
+    // rejection. Shutdown retries this cleanup only; it never repeats an inference offer.
+    current.pending = nativeBridge.invalidateTask(current.task).then(() => { nativeInvalidations.delete(key); }, () => { current.failed = true; })
+      .finally(() => { current.pending = undefined; });
+  };
+  const nativeControlRoutes = createAgentNativeControlRoutes({ runtime: () => { getAgentRoutes(); return agentRuntime!; }, authorize: request => controlAuthorized(request) });
+  const ownedConversationHistoryControl = createOwnedConversationHistoryControlRoutes({ history: getHistoryStore,
+    bridge: ownedConversationHistoryBridge, authorize: request => controlAuthorized(request),
+    canStart: () => !stopPrepared && !admission.draining });
+  const remoteControlRoutes = createAgentRemoteControlRoutes({ runtime: () => { getAgentRoutes(); return agentRuntime!; }, tools: () => getAgentTools(),
+    authorize: request => controlAuthorized(request), canStart: () => !stopPrepared && acceptingAgentTools() });
+  const oauthMcpControlRoutes = createAgentOAuthMcpControlRoutes({ runtime: () => { getAgentRoutes(); return agentRuntime!; }, tools: () => getAgentTools(),
+    authorize: request => controlAuthorized(request), canStart: () => !stopPrepared && acceptingAgentTools() });
+  const vmExportControlRoutes = createVmExportControlRoutes({ runtime: () => { getAgentRoutes(); return agentRuntime!; }, tools: () => getAgentTools(),
+    authorize: request => controlAuthorized(request), canStart: () => !stopPrepared && acceptingAgentTools() });
+  const pythonBuildSelections = config.browserHost === "launcher" ? createLauncherPythonBuildSelectionBridge({
+    descriptorPath: join(historyHome, "runtime", "launcher-agent-python-build.json"),
+    expectedProfile: dependencies.nativeLauncherProfile ?? (process.env.CODEX_CHATGPT_WEB_LAUNCHER_PROFILE === "development" ? "development" : "production"),
+  }) : undefined;
+  let agentTools: AgentToolsComposition | undefined;
+  let browserCompanion: BrowserCompanionRuntime | undefined;
+  let agentBrowserTools: AgentBrowserToolsProvider | undefined;
+  let agentDesktopTools: AgentDesktopToolsProvider | undefined;
+  let agentRemoteTools: AgentRemoteToolsProvider | undefined;
+  let localControlRoutes: ReturnType<typeof createLocalControlApiRoutes> | undefined;
+  let loopProducerRoutes: ReturnType<typeof createAgentLoopProducerRoutes> | undefined;
+  let agentSnapshots: ReturnType<typeof createAgentWorkspaceSnapshots> | undefined;
+  let agentEvidence: ReturnType<typeof createAgentWorkspaceEvidence> | undefined;
   startNativeUsageDelivery();
   const startedAt = Date.now();
   // Model discovery runs in the launcher while this daemon serves Codex. Each catalog build and
@@ -870,13 +978,25 @@ export function startServer(
   let tunnelStatusRevision = 0;
   const brokerReady = () => !turnBroker || brokerState === "ready";
   const acceptingNative = () => admission.accepting;
+  // Local task setup and already approved tools do not depend on Web transport.
+  // Detach/drain still prevent new local work; model offers keep the Web gate.
+  const acceptingAgentTools = () => admission.accepting && !launcherDetached;
   const acceptingTurns = () => admission.accepting && !launcherDetached && brokerReady() && tunnelReady;
   const admissionFailure = () => formatErrorResponse(
     503,
     "server_error",
     webAdmissionFailureMessage({ draining: admission.draining, launcherDetached,
       brokerReady: brokerReady(), tunnelUnavailableReason: tunnelReady ? null : tunnelUnavailableReason }),
+    "nekodex_unavailable",
   );
+  // Only the tool tunnel is missing (a VPN reconnecting, the Mac just woke): wait for it briefly
+  // instead of failing the request. A restart, a detached launcher or a broken broker still answer
+  // at once. A request still refused after the hold gets the real reason, and Codex retries it.
+  const webAdmissionRecoverable = () => admission.accepting && !launcherDetached && brokerReady() && !tunnelReady;
+  const awaitWebAdmission = (signal?: AbortSignal): Promise<boolean> => waitForWebAdmission({
+    accepting: acceptingTurns, recoverable: webAdmissionRecoverable,
+    holdMs: WEB_TUNNEL_HOLD_MS, pollMs: WEB_TUNNEL_HOLD_POLL_MS, signal,
+  });
   if (config.mode === "full") {
     turnBroker!.setExternalOwnersAccepted(false);
     void turnBroker!.listen().then(() => {
@@ -892,6 +1012,8 @@ export function startServer(
     });
   }
   let shutdownPromise: Promise<void> | undefined;
+  let shutdownStage: "idle" | "cancelling" | "native_cleanup" | "listener_close" | "resource_cleanup" | "failed" | "closed" = "idle";
+  let shutdownErrorCode: "shutdown_cleanup_failed" | null = null;
   let successfulModelCatalogRequests = 0;
   let lastSuccessfulModelCatalogRequestAt: string | null = null;
   let modelCatalogRequests = 0;
@@ -944,6 +1066,8 @@ export function startServer(
     active_web_http_turns: httpTurns.webCount(),
     active_browser_turns: chatGptTurnSessions.activeCount() + activeChatCompletionTurns() + (turnBroker?.externalOwnerActiveCount() ?? 0),
     active_compaction_runs: activeStructuredCompactionCount(),
+    active_agent_turns: agentRuntime?.activeCount ?? 0,
+    active_agent_tools: agentTools?.activeCount ?? 0,
   });
   const controlAuthorized = (req: Request): boolean => {
     const header = req.headers.get("authorization") ?? "";
@@ -951,6 +1075,174 @@ export function startServer(
     const actual = Buffer.from(header);
     return actual.length === expected.length && timingSafeEqual(actual, expected);
   };
+  // Resolve through both the task's retained reference and the private tool journal.
+  // A caller-supplied receipt key cannot select another task's canonical output.
+  const canonicalTaskToolOutcome = (task: AgentTask, receiptKey: string) => {
+    const retained = agentRuntime?.store.effectiveToolOutcomes(task.id).find(outcome => outcome.idempotencyKey === receiptKey
+      && outcome.scope.taskId === task.id && outcome.scope.generation === task.generation);
+    if (!retained) return undefined;
+    const sourcePrefix = retained.tool.split("/")[0];
+    if (sourcePrefix !== "browser" && sourcePrefix !== "desktop") return undefined;
+    const canonical = getAgentTools().getEvidenceOutcomeBySourceEvent(`${sourcePrefix}:${createHash("sha256").update(receiptKey).digest("hex")}`);
+    return canonical && canonical.idempotencyKey === receiptKey && canonical.tool === retained.tool
+      && canonical.scope.taskId === task.id && canonical.scope.generation === task.generation
+      && canonical.scope.toolCallId === retained.scope.toolCallId ? canonical : undefined;
+  };
+  const getAgentRoutes = () => {
+    if (agentRoutes) return agentRoutes;
+    const models = () => [...availableChatGptWebModelRoutes(liveConfig())
+      .filter(route => route.interactionMode === "automatic")
+      .map(route => ({ id: route.slug, label: route.displayName, accepting: acceptingTurns() })),
+      ...(config.browserHost === "launcher" ? nativeBridge.models() : [])];
+    const store = new AgentModeStore(join(historyHome, "agent-mode", "state.sqlite"));
+    // A PID proven absent is a stopped-owner receipt. A live/reused/inaccessible PID remains
+    // unresolved; neither elapsed time nor opening this page authorizes taking its task.
+    for (const task of store.listTasks()) if (task.ownerId) {
+      const match = /^agent:([1-9]\d*):[a-f0-9-]+$/.exec(task.ownerId);
+      if (!match) continue;
+      const pid = Number(match[1]);
+      if (!Number.isSafeInteger(pid) || pid === process.pid) continue;
+      try { process.kill(pid, 0); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") store.recoverOwner(task.id, { ownerId: task.ownerId, stopped: true, receiptId: `recovery:${randomUUID()}` });
+      }
+    }
+    const webExecution = createLocalResponsesExecutionPort({ models,
+      endpoint: () => `http://127.0.0.1:${server.port}/v1/responses`,
+      requestHeaders: request => ({ authorization: `Bearer ${config.controlToken}`, "x-nekodex-agent-dispatch": request.dispatch.id }),
+      tools: { discover: (scope, options) => getAgentTools().toolsPort.discover(scope, options) },
+      selectedSkills: request => getAgentTools().selectedSkillContent({ taskId: request.task.id, generation: request.task.generation, toolCallId: request.dispatch.id }),
+      // This route offers configured Web models only. A control bearer is never native OAuth.
+    });
+    const nativeExecution = createOwnedNativeExecutionPort({ models, bridge: nativeBridge,
+      claimTransport: (request, digest) => agentRuntime!.claimNativeTransport(request, digest),
+      tools: { discover: (scope, options) => getAgentTools().toolsPort.discover(scope, options) },
+      history: { lease: (scope, offer) => getHistoryStore().ownedNative.lease(scope, offer),
+        recordFinal: input => getHistoryStore().ownedNative.recordFinal(input), release: lease => historyStore?.ownedNative.release(lease),
+        transcript: { subscribe: (scope, offer) => getHistoryStore().transcript.subscribe(scope, offer),
+          recordEvent: input => getHistoryStore().transcript.recordEvent(input), release: lease => historyStore?.transcript.release(lease) } },
+      selectedSkills: request => getAgentTools().selectedSkillContent({ taskId: request.task.id, generation: request.task.generation, toolCallId: request.dispatch.id }) });
+    const executionPort = createAgentExecutionRouter({ localResponses: webExecution, ownedNative: nativeExecution });
+    agentRuntime = new AgentModeRuntime({ store, models, executionPort,
+      ownerId: `agent:${process.pid}:${instanceId}`,
+      canStart: () => acceptingAgentTools() && (acceptingTurns() || nativeBridge.models().some(row => row.available === true && row.accepting !== false)),
+      canExecute: task => acceptingAgentTools() && (task.execution?.provider === "owned-native"
+        ? nativeBridge.models().some(row => row.id === task.execution?.model && task.execution?.provider === "owned-native" && row.admissionId === task.execution.admissionId && row.available === true && row.accepting !== false)
+        : acceptingTurns()),
+      beforeOffer: async ({ task, dispatch }) => {
+        if (task.workspaceSnapshotGrant === undefined || task.workspaceSnapshotGrant === null) return;
+        await getAgentSnapshots().beforeTurn({ task, generation: dispatch.generation, dispatchId: dispatch.id });
+      }, snapshotReceipts: task => task.workspaceSnapshotGrant === undefined ? [] : getAgentSnapshots().listTask(task.id),
+      lookupToolOutcome: key => getAgentTools().receipt(key),
+      reconcileToolReceipt: request => getAgentTools().reconcileReceipt(request),
+      onTaskScopeInvalidated: taskId => {
+        agentTools?.invalidateTaskTools(taskId);
+        const task = store.getTask(taskId);
+        if (task.execution?.provider === "owned-native") invalidateNativeTask(task);
+      },
+      beforeVerify: task => {
+        for (const evidence of activeTaskEvidence(task)) {
+          if (evidence.observer === "workspace-file-observer-v1") getAgentEvidence().assertCurrent(task, evidence);
+          if (evidence.observer === "selected-macos-application-property-v1") getAgentDesktopTools().assertPropertyEvidenceCurrent(task, evidence);
+        }
+      }, workspaceEvidenceReferences: task => task.evidence.some(evidence => evidence.observer === "workspace-file-observer-v1") ? getAgentEvidence().listTask(task.id) : [],
+      toolsAvailable: () => getAgentTools().status().config.enabled || Boolean(agentBrowserTools?.status().bindings.some(binding => {
+        const scope = { taskId: binding.taskId, generation: binding.generation, toolCallId: 'capability-status' };
+        const status = agentBrowserTools!.status(scope);
+        return isAgentScopeActive(scope) && status.available && status.bound;
+      })) || Boolean(agentDesktopTools?.status().available && agentDesktopTools.status().bindings.some(binding =>
+        isAgentScopeActive({ taskId: binding.taskId, generation: binding.generation, toolCallId: 'capability-status' })))
+        || Boolean(agentRemoteTools?.status().available && agentRemoteTools.status().bindings.some(binding =>
+          isAgentScopeActive({ taskId: binding.taskId, generation: binding.generation, toolCallId: 'capability-status' })))
+        || getAgentTools().vmNetworkStatus().grants.some(row => !row.revoked && isAgentScopeActive({ taskId: row.grant.scope.taskId, generation: row.grant.scope.generation, toolCallId: 'network-capability-status' }))
+        || getAgentTools().hasSkillResourceTools() || getAgentTools().hasSkillScriptTools() || getAgentTools().hasVmShellTools(agentRuntime?.store.listTasks().map(task => ({ taskId: task.id, generation: task.generation, toolCallId: 'vm-export-discovery' })) ?? []) });
+    agentRoutes = createAgentModeRoutes({ runtime: agentRuntime, authorize: controlAuthorized,
+      observeWorkspaceEvidence: (task, proof) => getAgentEvidence().observe(task, proof),
+      resolveEvidence: (task, reference) => {
+        if (reference.sourceEventId.startsWith("workspace-file:")) return getAgentEvidence().resolve(task, reference);
+        if (reference.sourceEventId.startsWith("desktop-property:")) return resolveDesktopPropertyEvidence(task, reference, sourceEventId => {
+          const retained = agentRuntime!.store.effectiveToolOutcomes(task.id).find(outcome => outcome.scope.generation === task.generation
+            && sourceEventId === `desktop-property:${createHash("sha256").update(outcome.idempotencyKey).digest("hex")}`);
+          return retained ? canonicalTaskToolOutcome(task, retained.idempotencyKey) : undefined;
+        });
+        if (reference.sourceEventId.startsWith("browser-transition:")) return resolveBrowserTextTransitionEvidence(task, reference,
+          receiptKey => canonicalTaskToolOutcome(task, receiptKey));
+        if (["mcp:", "browser:", "desktop:"].some(prefix => reference.sourceEventId.startsWith(prefix))) return getAgentTools().resolveEvidence(task, reference);
+        throw new Error("Unsupported observed evidence source");
+      } });
+    return agentRoutes;
+  };
+  const isAgentScopeActive = (scope: ToolScope) => {
+    if (!agentRuntime) return false;
+    try { const task = agentRuntime.store.getTask(scope.taskId); return task.generation === scope.generation && ["ready", "running", "awaiting_input"].includes(task.status); }
+    catch { return false; }
+  };
+  const getAgentBrowserTools = () => agentBrowserTools ??= createAgentBrowserToolsProvider({
+    provider: () => browserCompanion?.browserProvider(), isScopeActive: isAgentScopeActive,
+  });
+  const getAgentDesktopTools = () => agentDesktopTools ??= createAgentDesktopToolsProvider({
+    isScopeActive: isAgentScopeActive,
+    createProvider: () => {
+      if (process.platform !== 'darwin' || Number(osRelease().split('.')[0]) < 23) throw new Error('Native desktop tools require macOS 14 or newer');
+      const helper = resolveDesktopHelper({ explicit: dependencies.desktopHelper });
+      if (!helper) throw new Error('The native desktop helper is unavailable in this runtime layout');
+      return createMacosDesktopProvider({ helperExecutable: helper.executable, helperSha256: helper.sha256,
+        isScopeActive: isAgentScopeActive });
+    },
+  });
+  const getAgentRemoteTools = () => agentRemoteTools ??= createAgentRemoteToolsProvider({
+    bridge: createLauncherRemoteBridge({ descriptorPath: join(historyHome, 'runtime', AGENT_REMOTE_DESCRIPTOR_FILE),
+      expectedProfile: dependencies.nativeLauncherProfile ?? (process.env.CODEX_CHATGPT_WEB_LAUNCHER_PROFILE === 'development' ? 'development' : 'production') }),
+    isScopeActive: isAgentScopeActive,
+    resolveTaskScope: taskId => { try { const task = agentRuntime?.store.getTask(taskId); return task ? { taskId: task.id, familyId: task.familyId, generation: task.generation, revision: task.revision } : undefined; } catch { return undefined; } },
+  });
+  const getAgentTools = () => agentTools ??= createAgentToolsComposition({ home: historyHome, authorize: controlAuthorized, canStart: acceptingAgentTools,
+    browserTools: getAgentBrowserTools(),
+    oauthMcpTools: config.browserHost === 'launcher' ? createAgentOAuthMcpToolsProvider({
+      bridge: createLauncherOAuthMcpBridge({ descriptorPath: join(historyHome, 'runtime', 'launcher-agent-oauth-mcp.json'),
+        expectedProfile: dependencies.nativeLauncherProfile ?? (process.env.CODEX_CHATGPT_WEB_LAUNCHER_PROFILE === 'development' ? 'development' : 'production') }),
+      isScopeActive: isAgentScopeActive,
+    }) : undefined,
+    desktopTools: getAgentDesktopTools(),
+    remoteTools: config.browserHost === 'launcher' ? getAgentRemoteTools() : undefined,
+    pdfHelper: resolveSkillPdfHelper({ explicit: dependencies.pdfHelper }),
+    resolvePythonBuildSelection: dependencies.resolvePythonBuildSelection ?? pythonBuildSelections?.resolvePythonBuildSelection,
+    vmRuntimeSelection: dependencies.vmRuntimeSelection?.production || dependencies.nativeLauncherProfile === 'development' || process.env.CODEX_CHATGPT_WEB_LAUNCHER_PROFILE === 'development' ? dependencies.vmRuntimeSelection : undefined,
+    vmExport: config.browserHost === 'launcher' ? createVmExportTools(createLauncherVmExportBridge({ descriptorPath: join(historyHome, 'runtime', AGENT_VM_EXPORT_DESCRIPTOR_FILE),
+      expectedProfile: dependencies.nativeLauncherProfile ?? (process.env.CODEX_CHATGPT_WEB_LAUNCHER_PROFILE === 'development' ? 'development' : 'production') })) : undefined,
+    isScopeActive: isAgentScopeActive, resolveToolCall: scope => agentRuntime?.resolveToolCall(scope),
+    resolveSavedVmCalls: scope => {
+      if (!agentRuntime) return [];
+      const result: Omit<import('./agent-tools/types').ToolInvocation, 'grantId'>[] = [];
+      for (const row of agentRuntime.store.listDispatches(scope.taskId)) {
+        if (row.generation > scope.generation || row.state !== 'settled') continue;
+        for (const call of row.result?.continuation?.pending ?? []) {
+          if (call.tool !== 'vm-shell/run') continue;
+          const originalScope = { taskId: scope.taskId, generation: row.generation, toolCallId: call.toolCallId }, resolved = agentRuntime.store.resolveSavedToolCall(originalScope);
+          if (resolved?.tool === 'vm-shell/run') result.push({ scope: originalScope, ...resolved });
+        }
+      }
+      return result;
+    },
+    onOutcome: outcome => { if (!agentRuntime) throw new Error("Agent task owner unavailable"); agentRuntime.recordToolOutcome(outcome); },
+  });
+  const getAgentSnapshots = () => agentSnapshots ??= createAgentWorkspaceSnapshots({ storagePath: join(historyHome, "agent-workspace", "task-snapshots.sqlite"), keyPath: join(historyHome, "agent-workspace", "grant-key") });
+  const getAgentEvidence = () => agentEvidence ??= createAgentWorkspaceEvidence({ storagePath: join(historyHome, "agent-workspace", "evidence.sqlite"), keyPath: join(historyHome, "agent-workspace", "grant-key") });
+  const getLocalControlRoutes = (): ReturnType<typeof createLocalControlApiRoutes> => localControlRoutes ??= createLocalControlApiRoutes({ coreHome: historyHome,
+    authorizeAdmin: controlAuthorized, localGuard: localHttpRequestRejection, port: (): number => server.port!, peerAddress: request => server.requestIP(request)?.address,
+    sources: {
+      status: () => ({ version: VERSION, ready: admission.accepting, activeHttpTurns: httpTurns.count(), activeAgentTasks: agentRuntime?.activeCount ?? 0 }),
+      agentTasks: () => agentRuntime?.store.listTasks().map(task => ({ id: task.id, state: task.status, kind: "agent", mode: task.mode, familyId: task.familyId, generation: task.generation, revision: task.revision, createdAt: task.createdAt, updatedAt: task.updatedAt })),
+      history: () => historyStore,
+    }, agentAction: input => {
+      if (stopPrepared) throw new Error("Agent runtime is draining");
+      getAgentRoutes(); return agentRuntime!.executeScopedAction(input);
+    }, agentActionReceipt: input => {
+      // Observation must not initialize execution or perform stopped-owner recovery.
+      if (!agentRuntime) throw new Error("Agent action receipt source is unavailable");
+      return agentRuntime.store.readCommandResult(input.taskId, input.actionId, "scoped_action", input)?.result;
+    },
+  });
   const trackInference = (
     req: Request,
     policy: InferenceRoutePolicy,
@@ -968,8 +1260,8 @@ export function startServer(
     bindWeb: () => void,
   ): ResponseRequestOptions => ({
     onTurnIdentity: bindIdentity,
-    webAdmission: () => {
-      if (!acceptingTurns()) return admissionFailure();
+    webAdmission: async (signal?: AbortSignal) => {
+      if (!acceptingTurns() && !await awaitWebAdmission(signal)) return admissionFailure();
       bindWeb();
       return undefined;
     },
@@ -986,11 +1278,47 @@ export function startServer(
       console.error("[server] unhandled request error", error instanceof Error ? error.message : String(error));
       return formatErrorResponse(500, "server_error", "Internal bridge error");
     },
-    async fetch(req) {
+    async fetch(req): Promise<Response> {
       const url = new URL(req.url);
       const policy = inferenceRoutePolicy(req.method, url.pathname);
       const rejection = localHttpRequestRejection(req, url, server.port!);
       if (rejection) return rejection;
+      if (url.pathname === "/admin/agent-loop-producers" || url.pathname.startsWith("/api/loop-events/v1/")
+          || /^Bearer nk-loop-/i.test(req.headers.get("authorization") ?? "")) {
+        // External observations use a separate scoped credential. Neither
+        // publication nor receipt lookup opens a stopped Agent owner.
+        loopProducerRoutes ??= createAgentLoopProducerRoutes({ runtime: () => agentRuntime,
+          authorizeAdmin: controlAuthorized, localGuard: localHttpRequestRejection,
+          port: () => server.port!, peerAddress: request => server.requestIP(request)?.address,
+          canStart: () => !stopPrepared && !admission.draining });
+        const response = await loopProducerRoutes(req); if (response) return response;
+      }
+      if (url.pathname.startsWith("/api/v1/") || url.pathname.startsWith("/admin/local-control-api") || /^Bearer nk-read-/i.test(req.headers.get("authorization") ?? "")) {
+        const response = await getLocalControlRoutes()(req); if (response) return response;
+      }
+      if (url.pathname === "/admin/browser-companion") {
+        if (!controlAuthorized(req)) return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
+        return browserCompanionRequest(req, () => browserCompanion ??= createBrowserCompanionRuntime());
+      }
+      if (url.pathname === "/admin/agent-tools") {
+        if (!controlAuthorized(req)) return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
+        return (await getAgentTools().handle(req))!;
+      }
+      if (url.pathname === "/admin/agent-mode") {
+        if (!controlAuthorized(req)) return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
+        if (stopPrepared) {
+          try {
+            const body = await readJsonRequestBody(req.clone(), 768 * 1024, 768 * 1024) as { action?: unknown };
+            if (!["status", "list", "get", "reconcile-tool"].includes(String(body.action))) return Response.json({ ok: false, error: "runtime_draining" }, { status: 409 });
+          } catch { return Response.json({ ok: false, error: "invalid_request" }, { status: 400 }); }
+        }
+        return (await getAgentRoutes()(req))!;
+      }
+      if (url.pathname === "/admin/agent-native") return nativeControlRoutes(req);
+      if (url.pathname === '/admin/owned-conversation-history') return ownedConversationHistoryControl(req);
+      if (url.pathname === "/admin/agent-oauth-mcp") return oauthMcpControlRoutes(req);
+      if (url.pathname === "/admin/agent-remote") return remoteControlRoutes(req);
+      if (url.pathname === '/admin/agent-vm-export') return vmExportControlRoutes(req);
       const localApiRequest = url.pathname === "/v1/chat/completions" || url.pathname.startsWith("/v1/messages")
         || url.pathname.startsWith("/claude/") || req.headers.has("x-api-key")
         || /^Bearer sk-local-/i.test(req.headers.get("authorization") ?? "");
@@ -1036,12 +1364,14 @@ export function startServer(
           instance_id: instanceId,
           background_runtime: backgroundRuntime,
           launcher_detached: launcherDetached,
-          port: config.port,
+          port: server.port,
           uptime: (Date.now() - startedAt) / 1_000,
           accepting_turns: acceptingTurns(),
           native_accepting_turns: acceptingNative(),
           web_accepting_turns: acceptingTurns(),
           draining: admission.draining,
+          shutdown_stage: shutdownStage,
+          shutdown_error_code: shutdownErrorCode,
           broker_ready: brokerReady(),
           broker_state: brokerState,
           tunnel_ready: tunnelReady,
@@ -1057,6 +1387,20 @@ export function startServer(
           ...activity(),
         });
       }
+      if (req.method === "POST" && url.pathname === "/admin/conversation-history") {
+        if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
+        return conversationHistoryRequest(req, getHistoryStore, { resolveOwnedNativeScope: input => {
+          getAgentRoutes();
+          const task = agentRuntime!.store.getTask(input.taskId);
+          if (task.familyId !== input.scope.familyId || task.generation !== input.scope.generation || task.revision !== input.scope.revision) throw new Error("History task generation changed");
+          if (stopPrepared && ["owned-native-consent", "transcript-native-consent"].includes(input.action) && input.enabled !== false) throw new Error("Native history admission is draining");
+          return nativeHistoryScope(task.id);
+        }, resolveOwnedConversationScope: input => {
+          if (stopPrepared && input.action === 'owned-conversation-consent' && input.enabled !== false) throw new Error('Owned conversation recording admission is draining');
+          return ownedConversationHistoryBridge.resolveScope({ conversationId: input.conversationId,
+            revision: input.revision, expectedContext: input.expectedContext });
+        } });
+      }
       if (req.method === "POST" && url.pathname === "/admin/runtime-session") {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
         let body: { action?: unknown; instanceId?: unknown };
@@ -1065,14 +1409,15 @@ export function startServer(
         if (!body || typeof body.action !== "string" || !["status", "attach", "detach"].includes(body.action)
           || body.instanceId !== instanceId) return new Response("Runtime identity changed", { status: 409 });
         if (body.action === "detach") {
-          // Close Web admission before inspecting owners. Native HTTP streams do not depend
+          // Close Web/local-tool admission before inspecting owners. Native HTTP streams do not depend
           // on Electron and must neither be drained nor cancelled by an interface exit.
           const previous = launcherDetached;
           launcherDetached = true;
           turnBroker?.setExternalOwnersAccepted(false);
           const current = activity();
           if (!backgroundRuntime || !nativeNetworkBackgroundReady() || admission.draining
-            || current.active_web_http_turns || current.active_browser_turns || current.active_compaction_runs) {
+            || current.active_web_http_turns || current.active_browser_turns || current.active_compaction_runs
+            || current.active_agent_turns || current.active_agent_tools) {
             launcherDetached = previous;
             turnBroker?.setExternalOwnersAccepted(acceptingTurns());
             return Response.json({ status: "refused", ...current }, { status: 409 });
@@ -1294,7 +1639,7 @@ export function startServer(
       if (req.method === "POST" && url.pathname === "/admin/shutdown") {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
         const current = activity();
-        if (!admission.draining || current.active_http_turns > 0 || current.active_browser_turns > 0
+        if (!admission.draining || current.active_http_turns > 0 || current.active_browser_turns > 0 || current.active_agent_turns > 0 || current.active_agent_tools > 0
           || current.active_compaction_runs > 0) {
           return Response.json(
             {
@@ -1354,11 +1699,26 @@ export function startServer(
         });
       }
       if (policy?.endpoint === "responses" || policy?.endpoint === "compact") {
-        refreshPickerCatalogFromTraffic(req);
+        let agentContext: ExternalClientContext | undefined;
+        const agentDispatchId = req.headers.get("x-nekodex-agent-dispatch");
+        if (agentDispatchId) {
+          if (policy.endpoint !== "responses" || !controlAuthorized(req) || !agentRuntime) return formatErrorResponse(403, "permission_error", "Agent Responses authority is unavailable");
+          try {
+            const dispatch = agentRuntime.store.getDispatch(agentDispatchId);
+            const task = agentRuntime.store.getTask(dispatch.taskId);
+            const body = await readJsonRequestBody(req.clone(), 768 * 1024, 768 * 1024) as { model?: unknown };
+            if (dispatch.ownerId !== agentRuntime.runner.ownerId || dispatch.generation !== task.generation || dispatch.state !== "offered" || task.status !== "running"
+              || task.execution?.provider !== "local-responses" || typeof body.model !== "string" || body.model !== task.execution.model || !isChatGptWebModelSlug(body.model)) throw new Error("Agent dispatch scope changed");
+            agentRuntime.store.claimTransport(dispatch.id, agentRuntime.runner.ownerId, createHash("sha256").update(JSON.stringify(body)).digest("hex"));
+            const source = dispatch.continuationOf ? agentRuntime.store.getDispatch(dispatch.continuationOf).result?.continuation : undefined;
+            agentContext = { producer: "agent", threadId: `agent_thread_${createHash("sha256").update(task.id).digest("hex")}`,
+              turnId: `agent_turn_${source?.rootDispatchId ?? dispatch.id}`, root: join(historyHome, "agent-mode", "virtual") };
+          } catch { return formatErrorResponse(403, "permission_error", "Agent Responses dispatch does not match its live owner"); }
+        } else refreshPickerCatalogFromTraffic(req);
         const handler = policy.endpoint === "responses" ? responseRequest : compactRequest;
         return trackInference(req, policy, (signal, bindIdentity, bindWeb) => handler(
           new Request(req, { signal }), liveConfig(), dependencies.adapterFactory,
-          responseOptions(bindIdentity, bindWeb),
+          { ...responseOptions(bindIdentity, bindWeb), ...(agentContext ? { clientContext: agentContext, rememberState: false } : {}) },
         ));
       }
       if (policy?.endpoint === "search") {
@@ -1376,17 +1736,20 @@ export function startServer(
   function shutdown(): void {
     admission.beginShutdown();
     if (shutdownPromise) return;
-    disposeSignalHandlers();
-    turnBroker?.setExternalOwnersAccepted(false);
-    const reason = new Error("Runtime shutting down");
-    // Signal-driven shutdown can arrive without an idle drain. Revoke detached compaction
-    // owners before retiring their source sessions, otherwise a fallback can start fresh work.
-    const compactionCancellation = cancelAllStructuredCompactions(reason);
-    chatGptTurnSessions.clear();
-    turnBroker?.revokeExternalOwners();
-    const httpCancellation = httpTurns.cancelAll(reason);
-    flushResponseState();
-    shutdownPromise = (async () => {
+    shutdownStage = "cancelling";
+    shutdownErrorCode = null;
+    // Publish the attempt owner before invoking cancellation callbacks. Repeated signals
+    // coalesce while it runs; failed cleanup remains draining and permits an explicit retry.
+    shutdownPromise = Promise.resolve().then(async () => {
+      turnBroker?.setExternalOwnersAccepted(false);
+      const reason = new Error("Runtime shutting down");
+      agentRuntime?.beginShutdown();
+      // Revoke detached compaction owners before retiring their source sessions.
+      const compactionCancellation = cancelAllStructuredCompactions(reason);
+      chatGptTurnSessions.clear();
+      turnBroker?.revokeExternalOwners();
+      const httpCancellation = httpTurns.cancelAll(reason);
+      flushResponseState();
       const results = await Promise.allSettled([
         compactionCancellation,
         httpCancellation,
@@ -1403,9 +1766,14 @@ export function startServer(
         }
       }
       await server.stop(true);
-    })().catch(error => {
+    }).catch(error => {
+      shutdownStage = "failed";
+      shutdownErrorCode = "shutdown_cleanup_failed";
       process.exitCode = 1;
       console.error(`[codex-chatgpt-web] server shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
+      // Only a terminal failed attempt releases ownership. Native receipts and the
+      // authority listener remain intact until recovery makes a later cleanup succeed.
+      shutdownPromise = undefined;
     });
   }
   function disposeSignalHandlers(): void {
@@ -1415,11 +1783,66 @@ export function startServer(
   // Embedders stop the returned Bun server directly. Releasing this listener must also
   // release its process hooks, otherwise later signals act on already-stopped instances.
   const stop = server.stop.bind(server);
+  let stopPrepared = false;
+  let nativeShutdownPreparation: Promise<void> | undefined;
+  let nativeShutdown = false;
+  const prepareNativeShutdown = (): Promise<void> => nativeShutdownPreparation ??= (async () => {
+    const runtime = agentRuntime!;
+    // This bounds local observation, not Native inference or physical cleanup. A still-live
+    // local operation leaves the authority listener and SQLite open for reconciliation.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const idle = await Promise.race([runtime.waitForIdle().then(() => true), new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), 1_000); })]);
+    if (timer) clearTimeout(timer);
+    if (!idle) throw new Error("Agent operations have not settled; Native shutdown remains draining");
+    for (const entry of nativeInvalidations.values()) if (entry.failed) invalidateNativeTask(entry.task, true);
+    // Owner recovery publishes generation fences. Main validates them through this Bun
+    // listener, which must remain alive until every exact physical owner has closed.
+    runtime.finishShutdown();
+    while (nativeInvalidations.size) {
+      await Promise.all([...nativeInvalidations.values()].map(entry => entry.pending));
+      if ([...nativeInvalidations.values()].some(entry => entry.failed)) throw new Error("Owned Native cleanup failed; shutdown remains draining");
+    }
+  })().catch(error => { nativeShutdownPreparation = undefined; throw error; });
+  let ownedResourcesFinalizer: Promise<void> | undefined;
+  const finalizeOwnedResources = (): Promise<void> => ownedResourcesFinalizer ??= (async () => {
+      shutdownStage = "resource_cleanup";
+      historyStore?.close();
+      await browserCompanion?.close();
+      await agentTools?.close();
+      if (!agentRuntime) { agentSnapshots?.close(); agentEvidence?.close(); return; }
+      // Abort-aware transports normally settle at once. A misbehaving injected port must not
+      // hang listener shutdown or lose a late receipt by closing SQLite underneath its owner.
+      const runtime = agentRuntime;
+      const settled = runtime.waitForIdle();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const idle = await Promise.race([settled.then(() => true), new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), 1_000); })]);
+      if (timer) clearTimeout(timer);
+      if (idle) { runtime.finishShutdown(); runtime.store.close(); agentSnapshots?.close(); agentEvidence?.close(); }
+      else void settled.then(() => { runtime.finishShutdown(); runtime.store.close(); agentSnapshots?.close(); agentEvidence?.close(); });
+  })();
   server.stop = (...args: Parameters<typeof stop>) => {
-    disposeSignalHandlers();
-    return stop(...args);
+    if (!stopPrepared) {
+      stopPrepared = true;
+      admission.beginShutdown();
+      agentRuntime?.beginShutdown();
+      nativeShutdown = Boolean(agentRuntime && (nativeInvalidations.size || agentRuntime.store.listTasks().some(task => task.execution?.provider === "owned-native")));
+    }
+    // Every request still reaches Bun: stop(true) can escalate an earlier stop(false)
+    // while that listener drains. Only the owned-resource finalizer is shared.
+    shutdownErrorCode = null;
+    const stopListener = () => { shutdownStage = "listener_close"; return stop(...args).finally(finalizeOwnedResources); };
+    if (nativeShutdown) shutdownStage = "native_cleanup";
+    const stopped = nativeShutdown ? prepareNativeShutdown().then(stopListener) : stopListener();
+    return stopped.then(() => {
+      shutdownStage = "closed";
+      disposeSignalHandlers();
+    }, error => {
+      shutdownStage = "failed";
+      shutdownErrorCode = "shutdown_cleanup_failed";
+      throw error;
+    });
   };
-  process.once("SIGINT", shutdown);
-  process.once("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
   return Object.assign(server, { disposeSignalHandlers });
 }

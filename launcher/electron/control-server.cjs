@@ -2,11 +2,17 @@ const { createServer } = require("node:http");
 const { createHash, randomBytes, timingSafeEqual } = require("node:crypto");
 const { validateNativeUsageSample } = require("./usage-store.cjs");
 
+const { assertTaskObservation } = require("./task-observation.cjs");
+const { assertTaskPlanObservation } = require("./task-plan-observation.cjs");
 const { isTaskModel } = require("./browser-task-ledger.cjs");
 const { READINESS_CODES } = require("./admission-failure-copy.cjs");
+const { VM_EXPORT_LIMITS, parseVmExportTaskScope, parseVmExportRequest } = require('./vm-export-contract.cjs');
+
+const { PYTHON_BUILD_SELECTION_LIMITS, parsePythonBuildSelectionRequest } = require('./python-build-selection-contract.cjs');
 
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_MANUAL_START_BODY_BYTES = 3 * 1024 * 1024;
+const MAX_AGENT_NATIVE_BODY_BYTES = 512 * 1024;
 const MANUAL_SENT_OBSERVER_TIMEOUT_MS = 35_000;
 const MAX_AUTOMATIC_MUTATION_RECEIPTS = 4096;
 const SETTLED_MUTATION_RECEIPT_TTL_MS = 5 * 60 * 1000;
@@ -43,11 +49,30 @@ function writeJson(response, status, body) {
 }
 
 class BrowserControlServer {
-  constructor({ logger, getBrowserHost, getPreferences, resolveNativeProxy }) {
+  constructor({ logger, getBrowserHost, getPreferences, resolveNativeProxy,
+    getAgentNativeBridge, getAgentNativeInstance, validateNativeInvalidation,
+    getAgentRemoteService, getAgentRemoteInstance, validateRemoteInvalidation,
+    getVmExportService, getVmExportInstance, getPythonBuildSelectionService, getPythonBuildSelectionInstance,
+    getAgentOAuthMcpController, getAgentOAuthMcpInstance,
+    getOwnedConversationHistoryService, getOwnedConversationHistoryInstance }) {
     this.logger = logger;
     this.getBrowserHost = getBrowserHost;
     this.getPreferences = getPreferences;
     this.resolveNativeProxy = resolveNativeProxy;
+    this.getAgentNativeBridge = getAgentNativeBridge;
+    this.getAgentNativeInstance = getAgentNativeInstance;
+    this.validateNativeInvalidation = validateNativeInvalidation;
+    this.getAgentRemoteService = getAgentRemoteService;
+    this.getAgentRemoteInstance = getAgentRemoteInstance;
+    this.validateRemoteInvalidation = validateRemoteInvalidation;
+    this.getVmExportService = getVmExportService;
+    this.getVmExportInstance = getVmExportInstance;
+    this.getPythonBuildSelectionService = getPythonBuildSelectionService;
+    this.getPythonBuildSelectionInstance = getPythonBuildSelectionInstance;
+    this.getAgentOAuthMcpController = getAgentOAuthMcpController;
+    this.getAgentOAuthMcpInstance = getAgentOAuthMcpInstance;
+    this.getOwnedConversationHistoryService = getOwnedConversationHistoryService;
+    this.getOwnedConversationHistoryInstance = getOwnedConversationHistoryInstance;
     this.token = randomBytes(32).toString("base64url");
     this.automaticMutationReceipts = new Map();
     this.port = 0;
@@ -139,12 +164,63 @@ class BrowserControlServer {
       writeJson(response, 401, { error: "unauthorized" });
       return;
     }
+    const nativeAction = new Map([
+      ['/v1/agent-native/offer', 'offer'], ['/v1/agent-native/receipt', 'receipt'],
+      ['/v1/agent-native/wait', 'wait'], ['/v1/agent-native/invalidate', 'invalidate'],
+    ]).get(request.url);
+    if (nativeAction) {
+      await this.handleAgentNative(request, response, nativeAction);
+      return;
+    }
+    if (request.url === '/v1/owned-conversation/resolve-scope') {
+      if (request.method !== 'POST') { writeJson(response,405,{error:'method_not_allowed'});return; }
+      try {
+        const instanceId = this.getOwnedConversationHistoryInstance?.();
+        if (!instanceId || request.headers['x-nekodex-owned-conversation-instance'] !== instanceId) throw new Error('stale');
+        const body = await readJson(request,4096);
+        if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).sort().join(',') !== 'conversationId,expectedContext,revision'
+          || typeof body.conversationId !== 'string' || !Number.isSafeInteger(body.revision) || body.revision < 0
+          || !body.expectedContext || Object.keys(body.expectedContext).sort().join(',') !== 'epoch,profileId,serverGeneration'
+          || !['profileId','epoch','serverGeneration'].every(key=>typeof body.expectedContext[key] === 'string' && body.expectedContext[key].length<=128)) throw new Error('invalid');
+        const service = this.getOwnedConversationHistoryService?.();
+        if (!service || typeof service.resolveHistoryScope !== 'function') throw new Error('unavailable');
+        const value = await service.resolveHistoryScope(body);
+        if (value !== null && value !== undefined) {
+          const {validateOwnedConversationScope} = require('./owned-conversation-transcript.cjs');
+          validateOwnedConversationScope(value);
+          if (value.conversationId !== body.conversationId || value.profileId !== body.expectedContext.profileId || value.authEpoch !== body.expectedContext.epoch || value.serverGeneration !== body.expectedContext.serverGeneration) throw new Error('changed');
+        }
+        if (instanceId !== this.getOwnedConversationHistoryInstance?.()) throw new Error('changed');
+        writeJson(response,200,{ok:true,instanceId,value:value ?? null});
+      } catch { writeJson(response,409,{error:'owned_conversation_scope_unavailable'}); }
+      return;
+    }
+    const oauthMcpAction = new Map(['discover', 'execute', 'receipt', 'invalidate'].map(action => [`/v1/agent-oauth-mcp/${action}`, action])).get(request.url);
+    if (oauthMcpAction) {
+      if (request.method !== 'POST') { writeJson(response, 405, { error: 'method_not_allowed' }); return; }
+      try {
+        const instanceId = this.getAgentOAuthMcpInstance?.();
+        if (!instanceId || request.headers['x-nekodex-oauth-mcp-instance'] !== instanceId) throw new Error('stale');
+        const controller = this.getAgentOAuthMcpController?.(); if (!controller) throw new Error('unavailable');
+        const body = await readJson(request, 112 * 1024);
+        const value = await controller.dispatch(oauthMcpAction, body);
+        if (Buffer.byteLength(JSON.stringify(value)) > 240 * 1024) throw new Error('oversize');
+        writeJson(response, 200, { ok: true, instanceId, value });
+      } catch { writeJson(response, 409, { error: 'oauth_mcp_observation_unavailable' }); }
+      return;
+    }
+    const remoteAction = new Map(['status', 'attach', 'revoke', 'execute', 'receipt', 'invalidate'].map(action => [`/v1/agent-remote/${action}`, action])).get(request.url);
+    if (remoteAction) { await this.handleAgentRemote(request, response, remoteAction); return; }
+    const vmExportAction = new Map(['list', 'execute', 'receipt', 'reconcile'].map(action => [`/v1/agent-vm-export/${action}`, action])).get(request.url);
+    if (vmExportAction) { await this.handleVmExport(request, response, vmExportAction); return; }
+    if (request.url === '/v1/agent-python-build/selection') { await this.handlePythonBuildSelection(request, response); return; }
     const isNativeProxy = request.url === "/v1/network/resolve-proxy";
     const isNativeUsage = request.url === "/v1/usage/native";
     const isTurn = request.url === "/v1/turn/start"
       || request.url === "/v1/turn/start-cancel"
       || request.url === "/v1/turn/start-ack"
       || request.url === "/v1/turn/progress"
+      || request.url === "/v1/turn/plan"
       || request.url === "/v1/turn/usage"
       || request.url === "/v1/turn/heartbeat"
       || request.url === "/v1/turn/end";
@@ -250,6 +326,14 @@ class BrowserControlServer {
       if (body.connectorBound !== undefined && typeof body.connectorBound !== "boolean") {
         throw new Error("connectorBound is invalid");
       }
+      if (body.observation !== undefined) {
+        if (request.url !== '/v1/turn/progress') throw new Error('Task observation requires exact progress owner');
+        assertTaskObservation(body.observation);
+      }
+      if (body.planObservation !== undefined) {
+        if (request.url !== '/v1/turn/plan') throw new Error('Task plan requires exact plan owner');
+        assertTaskPlanObservation(body.planObservation);
+      }
       if (body.toolProof !== undefined && (request.url !== "/v1/turn/end" || !body.toolProof
         || typeof body.toolProof !== "object" || Array.isArray(body.toolProof)
         || Object.keys(body.toolProof).length !== 1 || typeof body.toolProof.tool !== "string"
@@ -263,7 +347,7 @@ class BrowserControlServer {
         throw new Error("refreshViewport is only valid for a turn heartbeat");
       }
       if (body.surfaceId !== undefined
-        && (!["/v1/turn/heartbeat", "/v1/turn/progress", "/v1/turn/start-ack",
+        && (!["/v1/turn/heartbeat", "/v1/turn/progress", "/v1/turn/plan", "/v1/turn/start-ack",
           "/v1/turn/artifact-register", "/v1/turn/artifact-wait", "/v1/turn/artifact-cancel"].includes(request.url)
           || typeof body.surfaceId !== "string"
           || !/^[A-Za-z0-9_-]{32}$/.test(body.surfaceId))) {
@@ -490,9 +574,18 @@ class BrowserControlServer {
       } else if (request.url === '/v1/turn/start-ack') {
         const result = host.acknowledgeQueuedOwner(body.traceId, body.helperPid, body.surfaceId);
         writeJson(response, 200, { ok: true, ...result }); return;
+      } else if (request.url === '/v1/turn/plan') {
+        if (typeof body.surfaceId !== 'string' || typeof body.taskRecordId !== 'string'
+          || !/^[a-f0-9]{32}$/.test(body.taskRecordId) || body.planObservation === undefined
+          || Object.keys(body).some(key => !['phase', 'traceId', 'helperPid', 'surfaceId', 'taskRecordId', 'planObservation', 'mutationId'].includes(key))) {
+          throw new Error('Invalid exact task plan owner');
+        }
+        const result = await this.reconcileAutomaticMutation('plan', body, async () => ({ ok: true,
+          ...await host.taskPlan(body.traceId, body.helperPid, body.surfaceId, body.taskRecordId, body.planObservation) }));
+        writeJson(response, 200, result); return;
       } else if (request.url === '/v1/turn/progress') {
         const result = await this.reconcileAutomaticMutation('progress', body, () => {
-          host.taskProgress(body.traceId, body.helperPid, body.surfaceId, body.taskPhase, body.sequence);
+          host.taskProgress(body.traceId, body.helperPid, body.surfaceId, body.taskPhase, body.sequence, body.observation);
           return { ok: true };
         });
         writeJson(response, 200, result); return;
@@ -522,9 +615,10 @@ class BrowserControlServer {
             body.failureCode,
             body.status === "completed" && body.toolProof ? { tool: body.toolProof.tool } : undefined,
           );
+          // The helper sends a primary sentence of at most 500 characters plus a cause of at most 300.
           this.logger.info("browser.turn_ended", { traceId: body.traceId, status: body.status,
             ...(body.status === "failed" && typeof body.failureCode === "string" ? { failureCode: body.failureCode } : {}),
-            ...(body.status === "failed" && typeof body.message === "string" ? { message: body.message.slice(0, 400) } : {}) });
+            ...(body.status === "failed" && typeof body.message === "string" ? { message: body.message.slice(0, 900) } : {}) });
           return { ok: true, ...release };
         });
         writeJson(response, 200, result);
@@ -560,6 +654,126 @@ class BrowserControlServer {
           reason: READINESS_CODES.has(error.blocker) ? error.blocker : error.code, workStarted: false } : {}),
         },
       );
+    }
+  }
+
+  /** The existing private listener transports Native work independently of browser readiness.
+   * Disconnect cancels only an observation; the bridge retains the physical inference owner. */
+  async handleAgentNative(request, response, action) {
+    if (request.method !== 'POST') { writeJson(response, 405, { error: 'method_not_allowed' }); return; }
+    const instanceId = this.getAgentNativeInstance?.();
+    if (typeof instanceId !== 'string' || request.headers['x-nekodex-native-instance'] !== instanceId) {
+      writeJson(response, 403, { error: 'native_scope_unavailable' }); return;
+    }
+    const bridge = this.getAgentNativeBridge?.();
+    if (!bridge) { writeJson(response, 503, { error: 'native_unavailable', instanceId }); return; }
+    const observer = new AbortController();
+    const closed = () => { if (!response.writableEnded) observer.abort(); };
+    response.once('close', closed);
+    try {
+      const chunks = []; let bytes = 0;
+      for await (const chunk of request) {
+        bytes += chunk.length;
+        if (bytes > MAX_AGENT_NATIVE_BODY_BYTES) throw new Error('Native body exceeds its bound');
+        chunks.push(chunk);
+      }
+      const raw = Buffer.concat(chunks);
+      const body = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(raw));
+      let value;
+      if (action === 'offer') {
+        // Main validates this exact raw digest against a pre-existing Bun transport claim.
+        // Reply on the first durable projection; the same owned operation and observer
+        // continue until settlement. HTTP completion/disconnect is never cancellation.
+        value = await bridge.offer(body, { payloadDigest: createHash('sha256').update(raw).digest('hex'),
+          onReceipt: receipt => {
+            if (!response.destroyed && !response.writableEnded) writeJson(response, 200, { ok: true, value: receipt, instanceId });
+          } });
+      } else if (action === 'receipt') value = await bridge.readReceipt(body);
+      else if (action === 'wait') value = await bridge.waitReceipt(body, { signal: observer.signal });
+      else {
+        if (typeof this.validateNativeInvalidation !== 'function') throw new Error('Native scope validation is unavailable');
+        const scope = await this.validateNativeInvalidation(body);
+        value = await bridge.invalidateTask(scope.taskId, { familyId: scope.familyId, beforeGeneration: scope.beforeGeneration });
+      }
+      if (!response.destroyed && !response.writableEnded) writeJson(response, 200, { ok: true, value: value ?? null, instanceId });
+    } catch {
+      // RPC/config/provider messages may contain private context. Never log or return them.
+      if (!response.destroyed && !response.writableEnded) writeJson(response, 409, { ok: false, error: 'native_conflict', instanceId });
+    } finally { response.off('close', closed); }
+  }
+
+  /** Remote execution uses the existing SSH owner. Client disconnect ends only observation. */
+  async handleAgentRemote(request, response, action) {
+    if (request.method !== 'POST') { writeJson(response, 405, { error: 'method_not_allowed' }); return; }
+    const instanceId = this.getAgentRemoteInstance?.();
+    if (typeof instanceId !== 'string' || request.headers['x-nekodex-remote-instance'] !== instanceId) {
+      writeJson(response, 403, { error: 'remote_scope_unavailable' }); return;
+    }
+    const service = this.getAgentRemoteService?.();
+    if (!service) { writeJson(response, 503, { error: 'remote_unavailable', instanceId }); return; }
+    try {
+      const body = await readJson(request, 64 * 1024);
+      let value;
+      if (action === 'status') value = service.agentStatus(Object.keys(body).length ? body : undefined);
+      else if (action === 'attach') value = await service.attachAgent(body);
+      else if (action === 'revoke') value = service.revokeAgent(body);
+      else if (action === 'execute') value = await service.executeAgentTool(body);
+      else if (action === 'receipt') value = service.agentReceipt(body);
+      else {
+        if (typeof this.validateRemoteInvalidation !== 'function') throw new Error('Remote cleanup validation is unavailable');
+        const fence = await this.validateRemoteInvalidation(body);
+        value = service.invalidateAgentTask(fence);
+      }
+      if (!response.destroyed && !response.writableEnded) writeJson(response, 200, { ok: true, value: value ?? null, instanceId });
+    } catch {
+      // Remote content, commands and SSH diagnostics never enter control error logs.
+      if (!response.destroyed && !response.writableEnded) writeJson(response, 409, { ok: false, error: 'remote_conflict', instanceId });
+    }
+  }
+
+  async handleVmExport(request, response, action) {
+    if (request.method !== 'POST') { writeJson(response, 405, { error: 'method_not_allowed' }); return; }
+    const instanceId = this.getVmExportInstance?.(), service = this.getVmExportService?.();
+    if (!instanceId || request.headers['x-nekodex-vm-export-instance'] !== instanceId) { writeJson(response, 403, { error: 'vm_export_scope_unavailable' }); return; }
+    if (!service) { writeJson(response, 503, { error: 'vm_export_unavailable', instanceId }); return; }
+    try {
+      const rawBody = await readJson(request, VM_EXPORT_LIMITS.requestBytes);
+      const body = action === 'list' ? parseVmExportTaskScope(rawBody) : parseVmExportRequest(rawBody);
+      const value = action === 'list' ? service.list(body) : action === 'execute' ? await service.execute(body)
+        : action === 'receipt' ? service.inspect(body) : await service.reconcile(body);
+      if (Buffer.byteLength(JSON.stringify(value)) > 224 * 1024) throw new Error('VM export response exceeds limit');
+      if (!response.destroyed && !response.writableEnded) writeJson(response, 200, { ok: true, instanceId, value: value ?? null });
+    } catch {
+      if (!response.destroyed && !response.writableEnded) writeJson(response, 409, { ok: false, error: 'vm_export_conflict', instanceId });
+    }
+  }
+
+  async handlePythonBuildSelection(request, response) {
+    if (request.method !== 'POST') { writeJson(response, 405, {error:'method_not_allowed'}); return; }
+    const instanceId = this.getPythonBuildSelectionInstance?.(), service = this.getPythonBuildSelectionService?.();
+    if (!instanceId || request.headers['x-nekodex-python-build-instance'] !== instanceId) { writeJson(response,403,{error:'python_build_scope_unavailable'}); return; }
+    if (!service) { writeJson(response,503,{error:'python_build_selection_unavailable'}); return; }
+    try {
+      const body = parsePythonBuildSelectionRequest(await readJson(request, PYTHON_BUILD_SELECTION_LIMITS.requestBytes));
+      const selected = await service.open(body); await selected.assertCurrent();
+      const header = Buffer.from(JSON.stringify({...selected.header,instanceId}));
+      if (header.length > PYTHON_BUILD_SELECTION_LIMITS.headerBytes) throw new Error('selection limit');
+      const prefix = Buffer.alloc(4); prefix.writeUInt32BE(header.length);
+      response.writeHead(200,{'content-type':'application/vnd.nekodex.python-build-selection','cache-control':'no-store','x-nekodex-python-build-instance':instanceId});
+      const write = chunk => new Promise((resolve,reject) => {
+        if (response.destroyed) { reject(new Error('closed')); return; }
+        response.write(chunk,error => error ? reject(error) : resolve());
+      });
+      await write(prefix); await write(header);
+      let sinceCheck = 0;
+      for (const bytes of selected.chunks) for (let offset=0;offset<bytes.length;offset+=65536) {
+        const chunk=bytes.subarray(offset,offset+65536); await write(chunk); sinceCheck+=chunk.length;
+        if (sinceCheck >= 2*1024*1024) { await selected.assertCurrent(); sinceCheck=0; }
+      }
+      await selected.assertCurrent(); response.end();
+    } catch {
+      if (response.headersSent) response.destroy();
+      else if (!response.destroyed && !response.writableEnded) writeJson(response,409,{error:'python_build_selection_conflict'});
     }
   }
 

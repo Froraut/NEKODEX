@@ -4,6 +4,19 @@ const path = require("node:path");
 const root = path.resolve(__dirname, "..");
 const electronBin = require("electron");
 const bun = process.env.CODEX_WEB_GPT_BUN || process.execPath;
+// Settle the exact Electron native binding before Vite or the GUI owns startup.
+const terminalBuild = spawnSync(process.env.CODEX_WEB_GPT_NODE || "node", [path.join(__dirname, "build-workspace-terminal.cjs")], {
+  cwd: root, env: process.env, stdio: "inherit", windowsHide: true,
+});
+if (terminalBuild.error) throw terminalBuild.error;
+if (terminalBuild.status !== 0) process.exit(terminalBuild.status ?? 1);
+const { compileCredentialHelper } = require("../../scripts/build-credential-helper.cjs");
+// Native compilation/development signing must settle before either UI process starts.
+compileCredentialHelper({ repositoryRoot: path.resolve(root, ".."), development: true });
+const { compileDesktopHelper } = require("../../scripts/build-desktop-helper.cjs");
+compileDesktopHelper({ repositoryRoot: path.resolve(root, ".."), development: true });
+const { compileSkillPdfHelper } = require("../../scripts/build-skill-pdf-helper.cjs");
+compileSkillPdfHelper({ repositoryRoot: path.resolve(root, ".."), development: true });
 
 const helperBuild = spawnSync(bun, ["run", "scripts/build-browser-helper.ts"], {
   cwd: path.resolve(root, ".."),

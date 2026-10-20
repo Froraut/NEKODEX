@@ -7,6 +7,8 @@ const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_SUCCESS_TTL_MS = 60_000;
 const DEFAULT_FAILURE_TTL_MS = 15_000;
 const DEFAULT_MIN_REFRESH_MS = 10_000;
+// A failure that can heal by itself is worth reading again after about this long.
+const DEFAULT_TRANSIENT_RETRY_MS = 30_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 256 * 1024;
 const MAX_RETRY_AFTER_MS = 5 * 60 * 1_000;
 const MAX_ACCESS_TOKEN_BYTES = 64 * 1024;
@@ -17,11 +19,17 @@ const MAX_BUCKET_LABEL_LENGTH = 160;
 const MAX_JS_DATE_MILLISECONDS = 8_640_000_000_000_000;
 
 class QuotaReadError extends Error {
-  constructor(code) {
+  constructor(code, { transient = false } = {}) {
     super(code);
     this.name = "QuotaReadError";
     this.code = code;
+    this.transient = transient;
   }
+}
+
+// Server errors and request timeouts can heal by themselves; any other 4xx is the provider's answer.
+function transientStatus(status) {
+  return status >= 500 || status === 408;
 }
 
 function requirePositiveInteger(value, name) {
@@ -144,7 +152,13 @@ function normalizeUsage(payload, localAccountId, tokenAccountId, fetchedAt) {
   };
 }
 
-function unavailable(accountId, reason, checkedAt, retryAt = null) {
+/**
+ * A read that produced no allowance. `transient` failures (timeout, network error, 5xx, a session that is not
+ * ready or did not load, a cancelled read) can heal by themselves: `retryAfterMs` after `checkedAt` another read
+ * may succeed. Every other reason is a verdict until the next refresh: signed out, no Codex for this plan or
+ * account, a 4xx auth or permission answer, a rate limit (with its `retryAt`), or a response this reader rejects.
+ */
+function unavailable(accountId, reason, checkedAt, { retryAt = null, transient = false, retryAfterMs = null } = {}) {
   return {
     availability: "unavailable",
     coverage: "none",
@@ -155,6 +169,8 @@ function unavailable(accountId, reason, checkedAt, retryAt = null) {
     checkedAt,
     reason,
     retryAt,
+    transient,
+    retryAfterMs: transient ? retryAfterMs : null,
     planType: null,
     accountBucket: cleanBucket(null, "codex"),
     additionalBuckets: [],
@@ -265,10 +281,11 @@ function retryAfterTimestamp(response, now) {
     ? Math.min(timestamp, now + MAX_RETRY_AFTER_MS) : null;
 }
 
-function operationalReason(error) {
-  if (error instanceof QuotaReadError) return error.code;
-  if (error && typeof error === "object" && error.name === "AbortError") return "timeout";
-  return "request_failed";
+function operationalFailure(error) {
+  if (error instanceof QuotaReadError) return { reason: error.code, transient: error.transient };
+  // An abort is this reader's timeout or a cancelled read; anything else thrown is the network layer.
+  if (error && typeof error === "object" && error.name === "AbortError") return { reason: "timeout", transient: true };
+  return { reason: "request_failed", transient: true };
 }
 
 class AccountQuotaReader {
@@ -290,6 +307,8 @@ class AccountQuotaReader {
     }
     if (typeof now !== "function") throw new TypeError("now must be a function");
     this.now = now;
+    // A re-read sooner than minRefreshMs would only return the cached failure.
+    this.transientRetryMs = Math.max(DEFAULT_TRANSIENT_RETRY_MS, this.minRefreshMs);
     this.accounts = new Map();
   }
 
@@ -347,7 +366,9 @@ class AccountQuotaReader {
     state.inflight = this.#readLive(electronSession, accountId, state.controller).then(({ result, retryAt }) => {
       if (this.accounts.get(accountId) !== state
         || state.session !== electronSession || state.evidenceEpoch !== evidenceEpoch) {
-        return unavailable(accountId, "stale_read", new Date(this.now()).toISOString());
+        // Cancelled or replaced while reading: nothing was learned about the account.
+        return unavailable(accountId, "stale_read", new Date(this.now()).toISOString(),
+          { transient: true, retryAfterMs: this.transientRetryMs });
       }
       const completedAt = this.now();
       if (result.availability === "available") {
@@ -402,7 +423,9 @@ class AccountQuotaReader {
       if (!exactResponse(sessionResponse, SESSION_URL)) throw new QuotaReadError("redirected");
       if (sessionResponse.status === 401) throw new QuotaReadError("signed_out");
       if (!sessionResponse.ok || !isJsonResponse(sessionResponse)) {
-        throw new QuotaReadError("session_unavailable");
+        // A 5xx or a non-JSON page (an interstitial while ChatGPT loads) is a session that is not ready yet.
+        throw new QuotaReadError("session_unavailable",
+          { transient: sessionResponse.ok || transientStatus(sessionResponse.status) });
       }
       const sessionPayload = await readBoundedJson(sessionResponse, this.maxResponseBytes);
       if (!isPlainObject(sessionPayload)) throw new QuotaReadError("unsupported_session");
@@ -432,7 +455,9 @@ class AccountQuotaReader {
         throw new QuotaReadError("rate_limited");
       }
       if (!usageResponse.ok || !isJsonResponse(usageResponse)) {
-        throw new QuotaReadError("usage_unavailable");
+        // Another 4xx (such as no Codex usage for this plan or account) is final; a 5xx or non-JSON page is not.
+        throw new QuotaReadError("usage_unavailable",
+          { transient: usageResponse.ok || transientStatus(usageResponse.status) });
       }
       const payload = await readBoundedJson(usageResponse, this.maxResponseBytes);
       return {
@@ -441,9 +466,13 @@ class AccountQuotaReader {
       };
     } catch (error) {
       const checkedAt = new Date(this.now()).toISOString();
+      const { reason, transient } = operationalFailure(error);
       return {
-        result: unavailable(accountId, operationalReason(error), checkedAt,
-          retryAt === null ? null : new Date(retryAt).toISOString()),
+        result: unavailable(accountId, reason, checkedAt, {
+          retryAt: retryAt === null ? null : new Date(retryAt).toISOString(),
+          transient,
+          retryAfterMs: this.transientRetryMs,
+        }),
         retryAt,
       };
     } finally {

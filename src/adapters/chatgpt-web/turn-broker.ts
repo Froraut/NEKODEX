@@ -203,7 +203,7 @@ function ownerEnvironment(value: unknown): ChatGptTurnEnvironment {
       return nested === "" || (!nested.startsWith("..") && !isAbsolute(nested));
     })
     || !environment.sandboxPolicy || !["dangerFullAccess", "workspaceWrite", "readOnly"].includes(environment.sandboxPolicy.type)
-    || (environment.producer !== undefined && !["codex", "hermes", "claude", "api"].includes(environment.producer))
+    || (environment.producer !== undefined && !["codex", "hermes", "claude", "api", "agent"].includes(environment.producer))
     || !Array.isArray(environment.tools)
     || environment.tools.some(tool => !tool || typeof tool.name !== "string" || typeof tool.description !== "string"
       || !tool.parameters || typeof tool.parameters !== "object" || Array.isArray(tool.parameters))) {

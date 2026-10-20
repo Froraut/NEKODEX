@@ -46,13 +46,13 @@ test("new patch launcher restores saved peer and adds another without stopping c
   const f = fixture();
   try {
     const seed = store.prepareAccountTunnel({ coreHome: f.root, configPath: f.configPath,
-      accountId: "default", tunnelId: firstId, runtimeKey: "synthetic-private-runtime-key" });
+      accountId: "default", tunnelId: firstId, runtimeKey: "synthetic-private-runtime-key", credentialStorage: "legacy-file" });
     store.commitAccountTunnel(seed);
     const keyPath = f.read().accountTunnels[0].tunnel.runtimeKeyFile;
     const core = { pid: 54321 }; f.supervisor.daemon = core;
     expect(await f.host.configureAccountTunnel("default", { tunnelId: firstId, reuseSavedCredentials: true })).toEqual({ ok: true, saved: true, ready: true });
     const peer = [...f.supervisor.accountTunnelSupervisor.peers.values()][0];
-    expect(await f.host.configureAccountTunnel(other, { tunnelId: `tunnel_${"b".repeat(32)}`, runtimeKey: "second-synthetic-runtime-key" })).toEqual({ ok: true, saved: true, ready: true });
+    expect(await f.host.configureAccountTunnel(other, { tunnelId: `tunnel_${"b".repeat(32)}`, runtimeKey: "second-synthetic-runtime-key", credentialStorage: "legacy-file" })).toEqual({ ok: true, saved: true, ready: true });
     expect(f.supervisor.daemon).toBe(core);
     expect([...f.supervisor.accountTunnelSupervisor.peers.values()][0]).toBe(peer);
     expect(f.starts).toEqual(["default", other]);

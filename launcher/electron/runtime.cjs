@@ -202,6 +202,7 @@ class RuntimeHost {
     platform = process.platform,
     publishOperation,
     supervisor,
+    credentialProvider,
     getBrowserInteractionMode = () => "automatic",
   }) {
     this.app = app;
@@ -229,6 +230,7 @@ class RuntimeHost {
       : path.join(os.homedir(), "Library", "LaunchAgents");
     this.publishOperation = publishOperation;
     this.supervisor = supervisor;
+    this.credentialProvider = credentialProvider ?? supervisor?.credentialProvider ?? null;
     this.runtimeGeneration = new RuntimeGenerationStore({
       configPath: this.supervisor.configPath,
       journalPath: path.join(this.coreHome || path.dirname(this.supervisor.configPath), "runtime", "pending-runtime-generation.json"),
@@ -578,7 +580,7 @@ class RuntimeHost {
     if (config?.accountTunnelMode === true) {
       if (!accountId) return false;
       const own = require('./account-tunnels.cjs').accountTunnelFor(config, accountId, interactionMode);
-      return Boolean(own && fs.existsSync(own.tunnel.runtimeKeyFile));
+      return Boolean(own && (own.tunnel.credential || fs.existsSync(own.tunnel.runtimeKeyFile)));
     }
     if (interactionMode !== "automatic" && interactionMode !== "manual") {
       throw new Error("Browser interaction mode must be automatic or manual");
@@ -593,9 +595,8 @@ class RuntimeHost {
     return Boolean(
       tunnel
       && /^tunnel_[a-f0-9]{32}$/.test(tunnel.tunnelId)
-      && typeof tunnel.runtimeKeyFile === "string"
-      && path.isAbsolute(tunnel.runtimeKeyFile)
-      && fs.existsSync(tunnel.runtimeKeyFile),
+      && (tunnel.credential || typeof tunnel.runtimeKeyFile === "string"
+        && path.isAbsolute(tunnel.runtimeKeyFile) && fs.existsSync(tunnel.runtimeKeyFile)),
     );
   }
 
@@ -603,7 +604,8 @@ class RuntimeHost {
     const mode = input?.interactionMode ?? this.getBrowserInteractionMode();
     const operation = async () => {
       if (this.currentOperation()) throw new Error('Finish the current runtime operation before configuring an account tunnel');
-      assertTunnelCredentials(input?.reuseSavedCredentials === true, input?.tunnelId, input?.runtimeKey);
+      const migrate = input?.migrateSavedCredentials === true;
+      assertTunnelCredentials(migrate || input?.reuseSavedCredentials === true, input?.tunnelId, input?.runtimeKey);
       const current = this.runtimeConfigSnapshot();
       if (!current.configured || current.owner !== 'launcher') throw new Error('Set up the local model runtime first');
       if (this.launcherProfile === 'production' && current.config.releaseVersion !== this.app.getVersion()
@@ -616,9 +618,16 @@ class RuntimeHost {
           message: 'Installing the OpenAI tunnel client', successMessage: 'Tunnel client installed', timeoutMs: 60_000 });
       }
       const store = require('./account-tunnels.cjs');
+      const prior = store.accountTunnelFor(current.config, accountId, mode);
+      if (migrate && !prior) throw new Error('This account has no saved tunnel to migrate');
+      if (migrate && prior.principalFingerprint && input?.principalFingerprint
+        && prior.principalFingerprint !== input.principalFingerprint) throw new Error('The saved tunnel belongs to a different sign-in');
+      this.credentialProvider ??= require('./tunnel-credentials.cjs').createCredentialProvider({ coreHome: this.coreHome });
       const change = store.prepareAccountTunnel({ coreHome: this.coreHome, configPath: this.supervisor.configPath, accountId,
-        mode, tunnelId: input?.tunnelId, runtimeKey: input?.runtimeKey,
-        reuseSavedCredentials: input?.reuseSavedCredentials === true, principalFingerprint: input?.principalFingerprint });
+        mode, tunnelId: migrate ? prior.tunnel.tunnelId : input?.tunnelId, runtimeKey: input?.runtimeKey,
+        reuseSavedCredentials: input?.reuseSavedCredentials === true, migrateSavedCredentials: migrate,
+        credentialStorage: input?.credentialStorage, credentialProvider: this.credentialProvider,
+        principalFingerprint: input?.principalFingerprint ?? prior?.principalFingerprint });
       const restartCore = this.launcherProfile === 'production' && change.before.config.mode !== change.config.mode;
       let coreStopped = false;
       let committed = false;
@@ -641,7 +650,18 @@ class RuntimeHost {
         committed = true;
         if (restartCore) await this.supervisor.startIfConfigured();
         else await this.supervisor.syncAccountTunnels();
-        return { ok: true, saved: true, ready: this.supervisor.getAccountTunnelStatus(accountId, mode).ready === true };
+        const ready = this.supervisor.getAccountTunnelStatus(accountId, mode).ready === true;
+        if (migrate) {
+          let legacyRetired = false;
+          try {
+            legacyRetired = store.retireMigratedAccountTunnel({ configPath: this.supervisor.configPath, accountId, mode,
+              reference: change.binding.tunnel.credential,
+              verified: ready && this.supervisor.hasVerifiedAccountCredentialLaunch?.(accountId, mode, change.binding.tunnel.credential) === true });
+          } catch { /* Saved vault binding and retirement metadata remain retryable. */ }
+          return { ok: true, saved: true, ready, migrated: true, legacyRetired,
+            ...(!legacyRetired ? { recoveryRequired: true } : {}) };
+        }
+        return { ok: true, saved: true, ready };
       } catch (error) {
         store.discardAccountTunnel(change);
         if (coreStopped) await this.supervisor.startIfConfigured().catch(() => {});
@@ -649,7 +669,8 @@ class RuntimeHost {
         if (committed) {
           this.logger.warn('runtime.account_tunnel_saved_not_ready', { accountId, interactionMode: mode,
             message: error instanceof Error ? error.message : String(error) });
-          return { ok: true, saved: true, ready: false, recoveryRequired: true };
+          return { ok: true, saved: true, ready: false, recoveryRequired: true,
+            ...(migrate ? { migrated: true, legacyRetired: false } : {}) };
         }
         throw error;
       } finally { this.lifecycleOperation = null; }
@@ -657,6 +678,11 @@ class RuntimeHost {
     const result = (this.accountTunnelQueue ?? Promise.resolve()).then(operation);
     this.accountTunnelQueue = result.catch(() => {});
     return result;
+  }
+
+  migrateAccountTunnelCredential(accountId, input = {}) {
+    return this.configureAccountTunnel(accountId, { interactionMode: input.interactionMode,
+      principalFingerprint: input.principalFingerprint, migrateSavedCredentials: true });
   }
 
   removeAccountTunnel(accountId, requestedMode) {
@@ -735,6 +761,7 @@ class RuntimeHost {
 
   restoreSetupCheckpoint(checkpoint) {
     if (!checkpoint) return;
+    this.preserveSetupCredentialCandidates(checkpoint);
     const failures = [];
     for (const snapshot of [...checkpoint].reverse()) {
       try {
@@ -745,6 +772,42 @@ class RuntimeHost {
     }
     if (failures.length > 0) {
       throw new Error(`Setup checkpoint restoration failed: ${failures.join("; ")}`);
+    }
+  }
+
+  preserveSetupCredentialCandidates(checkpoint) {
+    const configPath = this.supervisor.configPath;
+    const original = checkpoint.find(snapshot => snapshot.path === configPath);
+    if (!original || !fs.existsSync(configPath)) return;
+    const { isCredentialReference, isCredentialScope } = require('./tunnel-credentials.cjs');
+    const current = JSON.parse(fs.readFileSync(configPath, 'utf8').replace(/^\uFEFF/, ''));
+    const previous = original.exists ? JSON.parse(original.data.toString('utf8').replace(/^\uFEFF/, '')) : {};
+    const referenceKey = reference => `${reference.id.toLowerCase()}:${reference.revision.toLowerCase()}`;
+    const retained = new Set(require('./account-tunnels.cjs').tunnelCredentialReferences(previous).map(referenceKey));
+    const candidates = current.accountTunnelMode === true
+      ? (current.accountTunnels ?? []).map(binding => ({ accountId: binding.accountId,
+        interactionMode: binding.interactionMode, tunnel: binding.tunnel }))
+      : [
+        { accountId: 'legacy', interactionMode: 'automatic', tunnel: current.automaticTunnel
+          ?? (current.browserInteractionMode !== 'manual' ? current.tunnel : undefined) },
+        { accountId: 'legacy', interactionMode: 'manual', tunnel: current.manualTunnel
+          ?? (current.browserInteractionMode === 'manual' ? current.tunnel : undefined) },
+      ];
+    for (const { accountId, interactionMode, tunnel } of candidates) {
+      const reference = tunnel?.credential;
+      if (!isCredentialReference(reference) || retained.has(referenceKey(reference))) continue;
+      const scope = { accountId, interactionMode, tunnelId: tunnel.tunnelId };
+      if (!isCredentialScope(scope)) throw new Error('Candidate protected credential scope cannot be preserved for setup rollback');
+      const recovery = path.join(this.coreHome || path.dirname(configPath), 'runtime', 'credential-recovery',
+        `rollback-${reference.id}.json`);
+      // Bun may have committed and returned successfully before outer runtime or
+      // UI verification failed. Its prepare receipt is no longer available here.
+      // Preserve this exact published reference before removing its config owner;
+      // it is not an authorization to delete a potentially live runtime's key.
+      writePrivateFileAtomic(recovery, JSON.stringify({ version: 1, operation: 'outer-setup-rollback',
+        reference, scope, configPath, settlement: 'unverified',
+        profile: { alias: tunnel.alias, profileDir: tunnel.profileDir, profileName: tunnel.profileName },
+      }) + '\n', { durable: true });
     }
   }
 
@@ -823,6 +886,10 @@ class RuntimeHost {
       || typeof options.privateControlMessage !== "string" || Buffer.byteLength(options.privateControlMessage) > 4096)) {
       throw new Error("Private runtime control message is invalid");
     }
+    if (options.secretInput !== undefined && (!options.privateOutput || options.controlStdin
+      || typeof options.secretInput !== "string" || Buffer.byteLength(options.secretInput) > 64 * 1024)) {
+      throw new Error("Private runtime credential input is invalid");
+    }
     if (this.active) throw new Error(`Another launcher operation is active: ${this.active}`);
     if (this.activeChild
       && this.activeChild.exitCode === null
@@ -860,7 +927,7 @@ class RuntimeHost {
           cwd: invocation.cwd,
           detached: DETACH_OWNED_CHILD,
           env: environment,
-          stdio: [options.controlStdin ? "pipe" : "ignore", "pipe", "pipe"],
+          stdio: [options.controlStdin || options.secretInput !== undefined ? "pipe" : "ignore", "pipe", "pipe"],
           windowsHide: true,
         });
         this.activeChild = child;
@@ -870,7 +937,8 @@ class RuntimeHost {
         const recordPipeError = (stream) => (error) => {
           pipeErrors.push(`${name} ${stream} pipe failed: ${error instanceof Error ? error.message : String(error)}`);
         };
-        if (options.controlStdin) child.stdin.on("error", recordPipeError("stdin"));
+        if (options.controlStdin || options.secretInput !== undefined) child.stdin.on("error", recordPipeError("stdin"));
+        if (options.secretInput !== undefined) child.stdin.end(options.secretInput);
         if (options.privateControlMessage !== undefined) child.stdin.write(options.privateControlMessage, error => {
           if (error) recordPipeError("stdin")(error);
         });
@@ -962,11 +1030,12 @@ class RuntimeHost {
             reject(new Error(pipeErrors.join("; ")));
             return;
           }
+          const protect = value => options.secretInput ? value.split(options.secretInput).join("[redacted]") : value;
           resolve({
             code: code ?? 1,
             signal,
-            stdout: Buffer.concat(stdout).toString("utf8"),
-            stderr: Buffer.concat(stderr).toString("utf8"),
+            stdout: protect(Buffer.concat(stdout).toString("utf8")),
+            stderr: protect(Buffer.concat(stderr).toString("utf8")),
           });
         });
       });
@@ -1034,8 +1103,8 @@ class RuntimeHost {
     const full = config?.mode === "full" && config?.tunnel;
     checks.push({
       id: "dev-tunnel-credentials",
-      status: full && fs.existsSync(config.tunnel.runtimeKeyFile) ? "ok" : "error",
-      message: full && fs.existsSync(config.tunnel.runtimeKeyFile)
+      status: full && (config.tunnel.credential || fs.existsSync(config.tunnel.runtimeKeyFile)) ? "ok" : "error",
+      message: full && (config.tunnel.credential || fs.existsSync(config.tunnel.runtimeKeyFile))
         ? "DEV tunnel credentials are configured"
         : "DEV Full harness tunnel credentials are not configured",
     });
@@ -1106,7 +1175,11 @@ class RuntimeHost {
       config = this.supervisor.readConfig();
       if (config) health = await this.supervisor.proxyHealthPayload(config);
     } catch { /* An unavailable daemon is diagnostic information, not a failed inspection. */ }
-    return withCatalogObservation(JSON.parse(result.stdout), health, config, this.supervisor.daemon?.pid);
+    const report = withCatalogObservation(JSON.parse(result.stdout), health, config, this.supervisor.daemon?.pid);
+    // The support export observes this receipt; it must never start diagnostics
+    // or a CLI child merely to fill a missing section.
+    this.lastRouteDiagnostics = { value: report, observedAt: Date.now() };
+    return report;
   }
 
   async restoreBridgeRouteWithinOperation(operationName, { keepPendingChain = false } = {}) {
@@ -1773,7 +1846,7 @@ class RuntimeHost {
       || explicitTunnel.tunnelId !== activeTunnel.tunnelId
       || activeTunnel.profileName !== expectedTunnelProfile
       || activeTunnel.alias !== expectedTunnelProfile
-      || path.basename(activeTunnel.runtimeKeyFile) !== expectedKeyFile
+      || !activeTunnel.credential && path.basename(activeTunnel.runtimeKeyFile || '') !== expectedKeyFile
     );
     if (existing.owner !== "launcher") {
       return { updated: false };
@@ -1934,7 +2007,7 @@ class RuntimeHost {
     return { ...rollback, runtime };
   }
 
-  setupMcp({ tunnelId = "", runtimeKey = "", replace = false, interactionMode } = {}, afterRuntimeReady) {
+  setupMcp({ tunnelId = "", runtimeKey = "", replace = false, interactionMode, credentialStorage } = {}, afterRuntimeReady) {
     this.assertProductionProfile("Native Codex MCP setup");
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
     const targetMode = interactionMode ?? this.browserInteractionMode();
@@ -1960,12 +2033,11 @@ class RuntimeHost {
         afterRuntimeReady,
       });
     }
-    const keyPath = this.writeEphemeralRuntimeKey(runtimeKey);
     args.push(
       "--tunnel-id",
       tunnelId,
-      "--runtime-key-file",
-      keyPath,
+      "--runtime-key-stdin",
+      "--credential-storage", credentialStorage ?? "os-vault",
       "--acknowledge-unofficial",
       "--restart-service",
     );
@@ -1974,10 +2046,11 @@ class RuntimeHost {
       successMessage: "Local MCP tools are ready",
       timeoutMs: MCP_SETUP_TIMEOUT_MS,
       afterRuntimeReady,
-    }).finally(() => fs.rmSync(keyPath, { force: true }));
+      secretInput: runtimeKey.trim(), privateOutput: true,
+    });
   }
 
-  setupDevMcp({ tunnelId = "", runtimeKey = "", replace = false, interactionMode } = {}, afterRuntimeReady) {
+  setupDevMcp({ tunnelId = "", runtimeKey = "", replace = false, interactionMode, credentialStorage } = {}, afterRuntimeReady) {
     if (this.launcherProfile !== "development") {
       throw new Error("DEV MCP setup requires the isolated DEV launcher");
     }
@@ -2005,14 +2078,14 @@ class RuntimeHost {
         afterRuntimeReady,
       });
     }
-    const keyPath = this.writeEphemeralRuntimeKey(runtimeKey);
-    args.push("--tunnel-id", tunnelId, "--runtime-key-file", keyPath);
+    args.push("--tunnel-id", tunnelId, "--runtime-key-stdin", "--credential-storage", credentialStorage ?? "os-vault");
     return this.runDevSetup("dev-mcp-setup", args, {
       message: "Configuring the isolated DEV Full harness",
       successMessage: "DEV Full harness is configured",
       timeoutMs: MCP_SETUP_TIMEOUT_MS,
       afterRuntimeReady,
-    }).finally(() => fs.rmSync(keyPath, { force: true }));
+      secretInput: runtimeKey.trim(), privateOutput: true,
+    });
   }
 
   async setBrowserInteractionMode(mode, afterRuntimeReady) {

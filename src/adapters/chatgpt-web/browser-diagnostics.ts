@@ -15,6 +15,53 @@ export function redactChatGptUiDiagnostic(value: string): string {
     .replace(/\b(turn|binding|call)_[A-Za-z0-9_-]{12,}\b/g, "$1_[redacted]");
 }
 
+const CHATGPT_DIAGNOSTIC_CAUSE_DEPTH = 4;
+export const CHATGPT_DIAGNOSTIC_CAUSE_MAX_CHARS = 300;
+
+function diagnosticCauseEntry(value: unknown): string | undefined {
+  const firstLine = (text: string) => text.split(/\r?\n/, 1)[0]!.replace(/\s+/g, " ").trim();
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return firstLine(String(value)) || undefined;
+  }
+  if (!value || typeof value !== "object") return undefined;
+  const { name, message } = value as { name?: unknown; message?: unknown };
+  if (typeof message !== "string") return undefined;
+  const label = typeof name === "string" && name.trim() ? name.trim() : "Error";
+  const line = firstLine(message);
+  return line ? `${label}: ${line}` : label;
+}
+
+/**
+ * The causes behind a wrapped error, outermost first ("Error: A <- TimeoutError: B"). Only each
+ * name and first message line survive: Playwright appends call logs that can quote rendered
+ * elements, and persisted traces and logs never carry page content.
+ */
+export function chatGptDiagnosticCauseChain(
+  error: unknown,
+  maxChars = CHATGPT_DIAGNOSTIC_CAUSE_MAX_CHARS,
+): string | undefined {
+  const entries: string[] = [];
+  const seen = new Set<unknown>([error]);
+  let cause = error && typeof error === "object" ? (error as { cause?: unknown }).cause : undefined;
+  while (cause !== undefined && cause !== null && !seen.has(cause) && entries.length < CHATGPT_DIAGNOSTIC_CAUSE_DEPTH) {
+    seen.add(cause);
+    const entry = diagnosticCauseEntry(cause);
+    if (entry) entries.push(entry);
+    cause = typeof cause === "object" ? (cause as { cause?: unknown }).cause : undefined;
+  }
+  if (entries.length === 0) return undefined;
+  const chain = redactChatGptUiDiagnostic(entries.join(" <- "))
+    // A first line can open a context envelope whose closing tag was on a dropped line.
+    .replace(/<codex_context_json>(?!\[redacted\]<\/codex_context_json>)[\s\S]*$/i, "<codex_context_json>[redacted]");
+  return chain.length > maxChars ? `${chain.slice(0, Math.max(0, maxChars - 1))}…` : chain;
+}
+
+/** A failure message for logs: the primary sentence unchanged, then its short sanitized cause. */
+export function chatGptFailureMessageWithCause(message: string, error: unknown): string {
+  const cause = chatGptDiagnosticCauseChain(error);
+  return cause ? `${message} (cause: ${cause})` : message;
+}
+
 const CHATGPT_DIAGNOSTIC_SAFE_STRING_KEYS = new Set([
   "tag",
   "role",
@@ -236,6 +283,7 @@ export class ChatGptBrowserDiagnostics {
         })),
       ]);
       const capturedAt = new Date().toISOString();
+      const cause = error !== undefined ? chatGptDiagnosticCauseChain(error) : undefined;
       if (screenshotResult.status === "fulfilled" && screenshotResult.value) {
         atomicWriteFile(join(this.directory, `${stem}.png`), screenshotResult.value);
       }
@@ -260,6 +308,7 @@ export class ChatGptBrowserDiagnostics {
         checkpoint,
         ...(error !== undefined ? {
           error: redactChatGptUiDiagnostic(error instanceof Error ? error.message : String(error)),
+          ...(cause ? { cause } : {}),
         } : {}),
         ...(stateResult.status === "fulfilled"
           ? { state: sanitizeChatGptBrowserDiagnosticState(stateResult.value) }

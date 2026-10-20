@@ -1,10 +1,14 @@
+import { StringDecoder } from "node:string_decoder";
+import { Transform } from "node:stream";
+import { spawn } from "node:child_process";
+import { tunnelLaunchEnvironment, TUNNEL_RUNTIME_KEY_SELECTOR, type TunnelCredentialProvider } from "./tunnel-credential";
 import { safeTunnelDetail, tunnelCommandOutput, tunnelConnectLaunchError, parseTunnelStatus, type TunnelRuntimeStatus } from "./tunnel-status";
 import { snapshotFile, writeFileSnapshot, type FileSnapshot } from "./file-transactions";
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { unzipSync } from "fflate";
-import type { AppConfig, BrowserInteractionMode, TunnelConfig } from "./config";
+import type { AppConfig, BrowserInteractionMode, TunnelConfig, TunnelCredentialReference } from "./config";
 import {
   CHATGPT_ASYNC_CONNECTOR_NAME,
   PREVIOUS_ASYNC_CONNECTOR_NAME,
@@ -476,7 +480,8 @@ export function installRuntimeKeyBytes(
 export function createTunnelConfig(options: {
   binaryPath: string;
   tunnelId: string;
-  runtimeKeyFile: string;
+  runtimeKeyFile?: string;
+  credential?: TunnelCredentialReference;
   profileName?: string;
   alias?: string;
 }): TunnelConfig {
@@ -489,7 +494,7 @@ export function createTunnelConfig(options: {
   return {
     binaryPath: options.binaryPath,
     tunnelId: options.tunnelId,
-    runtimeKeyFile: options.runtimeKeyFile,
+    ...(options.credential ? { credential: options.credential } : { runtimeKeyFile: options.runtimeKeyFile! }),
     profileDir: join(getConfigDir(), "tunnel", "profiles"),
     profileName,
     alias,
@@ -550,10 +555,11 @@ function throwIfAborted(signal?: AbortSignal): void {
   }
 }
 
-export function connectTunnel(config: AppConfig, signal?: AbortSignal): void {
+export function connectTunnel(config: AppConfig, signal?: AbortSignal, credentialProvider?: Pick<TunnelCredentialProvider, "resolve">): void {
   throwIfAborted(signal);
   const settings = tunnel(config);
   mkdirSync(settings.profileDir, { recursive: true, mode: 0o700 });
+  const environment = tunnelLaunchEnvironment(config, credentialProvider);
   const result = runCommand(settings.binaryPath, [
     "runtimes", "connect",
     "--alias", settings.alias,
@@ -561,14 +567,20 @@ export function connectTunnel(config: AppConfig, signal?: AbortSignal): void {
     "--profile-dir", settings.profileDir,
     "--tunnel-client-bin", settings.binaryPath,
     "--tunnel-id", settings.tunnelId,
-    "--runtime-api-key", `file:${settings.runtimeKeyFile}`,
+    "--runtime-api-key", settings.credential ? TUNNEL_RUNTIME_KEY_SELECTOR : `file:${settings.runtimeKeyFile}`,
     "--mcp-command", mcpCommand(config),
     "--json",
   ], {
     timeout: TUNNEL_READY_TIMEOUT_MS, signal,
-    env: { ...process.env, MCP_STDIO_SEND_INITIALIZED_NOTIFICATION: "true" },
+    env: environment,
   });
   throwIfAborted(signal);
+  const injected = environment.NEKODEX_TUNNEL_RUNTIME_KEY;
+  if (injected) {
+    result.stdout = result.stdout.split(injected).join("[redacted]");
+    result.stderr = result.stderr.split(injected).join("[redacted]");
+    delete environment.NEKODEX_TUNNEL_RUNTIME_KEY;
+  }
   const structuredOutput = result.stdout.trim();
   const launchError = structuredOutput
     ? tunnelConnectLaunchError(structuredOutput)
@@ -681,4 +693,52 @@ export async function waitForTunnelReady(
     status = tunnelStatus(config, signal, Math.min(10_000, remainingBeforeProbe));
   }
   return status;
+}
+
+
+/** Validate actual selector and cloud owner; a comment containing the selector is insufficient. */
+export function assertProtectedTunnelProfile(config: AppConfig): void {
+  const settings = tunnel(config);
+  if (settings.credential) {
+    const text = readFileSync(join(settings.profileDir, `${settings.profileName}.yaml`), "utf8");
+    let profile: { control_plane?: { api_key?: unknown; tunnel_id?: unknown } };
+    try { profile = Bun.YAML.parse(text) as typeof profile; }
+    catch { throw new Error("Protected tunnel profile cannot be parsed; rerun full setup before starting the service"); }
+    if (profile?.control_plane?.api_key !== TUNNEL_RUNTIME_KEY_SELECTOR
+      || profile.control_plane.tunnel_id !== settings.tunnelId) {
+      throw new Error("Protected tunnel profile is not migrated to its environment selector; rerun full setup before starting the service");
+    }
+  }
+}
+
+/** Headless launch owner. Every invocation resolves the saved scoped reference afresh. */
+export async function runTunnelCredentialProcess(config: AppConfig,
+  provider?: Pick<TunnelCredentialProvider, "resolve">): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  const settings = tunnel(config);
+  assertProtectedTunnelProfile(config);
+  const env = tunnelLaunchEnvironment(config, provider);
+  return new Promise((resolveExit, reject) => {
+    const secret = env.NEKODEX_TUNNEL_RUNTIME_KEY;
+    const child = spawn(settings.binaryPath, ["run", "--profile-dir", settings.profileDir, "--profile", settings.profileName],
+      { stdio: ["inherit", "pipe", "pipe"], env, windowsHide: true });
+    const redact = () => {
+      let pending = ""; const decoder = new StringDecoder("utf8");
+      return new Transform({ transform(chunk, _encoding, callback) {
+        if (!secret) { callback(null, chunk); return; }
+        pending = (pending + decoder.write(chunk)).split(secret).join("[redacted]");
+        const emit = Math.max(0, pending.length - secret.length);
+        callback(null, pending.slice(0, emit)); pending = pending.slice(emit);
+      }, flush(callback) { pending += decoder.end(); callback(null, secret ? pending.split(secret).join("[redacted]") : pending); } });
+    };
+    child.stdout.pipe(redact()).pipe(process.stdout, { end: false });
+    child.stderr.pipe(redact()).pipe(process.stderr, { end: false });
+    // spawn captures the environment; the wrapper never keeps a global plaintext mirror.
+    delete env.NEKODEX_TUNNEL_RUNTIME_KEY;
+    const forwardInt = () => { child.kill("SIGINT"); };
+    const forwardTerm = () => { child.kill("SIGTERM"); };
+    process.on("SIGINT", forwardInt); process.on("SIGTERM", forwardTerm);
+    const detach = () => { process.off("SIGINT", forwardInt); process.off("SIGTERM", forwardTerm); };
+    child.once("error", error => { detach(); reject(error); });
+    child.once("close", (code, signal) => { detach(); resolveExit({ code, signal }); });
+  });
 }

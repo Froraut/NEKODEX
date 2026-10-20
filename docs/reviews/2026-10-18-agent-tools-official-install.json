@@ -1,0 +1,40 @@
+{
+  "observedAt": "2026-10-18T09:00:25.800Z",
+  "package": "@modelcontextprotocol/server-filesystem",
+  "version": "1.0.0",
+  "registry": "https://registry.npmjs.org",
+  "actionId": "official-proof-03ece21a-78c6-4d49-989c-2c9c71b3224b",
+  "temporaryOwnedHome": true,
+  "mcpStarted": false,
+  "admitted": "preparing",
+  "preparation": {
+    "state": "prepared",
+    "graphPackages": 104,
+    "graphSha256": "a45f4b2c643fe49640139df7c4248cc3bf52f708cca55fc5d6de5c12b556dc8c",
+    "lockSha256": "d64c2f8a69294ec74bab2d668798afa09af81552ea8cacc40f3bf55481b2fc5b"
+  },
+  "installation": {
+    "state": "installed",
+    "tree": {
+      "sha256": "4905b698868fd4db935db930a0721b1d0ffe3d0a3babaab53b2bbf4b3929b860",
+      "files": 4691
+    },
+    "entrySha256": "68e6aae96c907bf00089dd48b9f2fdd06113e6588d9915f19852cb468f9296d8"
+  },
+  "configuration": {
+    "hostEnabled": false,
+    "serverEnabled": false,
+    "ownedMcpPid": null,
+    "recipeEntrySha256": "68e6aae96c907bf00089dd48b9f2fdd06113e6588d9915f19852cb468f9296d8",
+    "managedTreeSha256": "4905b698868fd4db935db930a0721b1d0ffe3d0a3babaab53b2bbf4b3929b860",
+    "sandboxRequested": true
+  },
+  "result": "passed",
+  "installerPids": [
+    38432,
+    38445
+  ],
+  "installerPidsReaped": true,
+  "installerActiveCount": 0,
+  "ownedTemporaryTreesRemoved": true
+}

@@ -1,0 +1,516 @@
+// Fixed, owned stdio port. No shell, network, arbitrary path or permission-request API.
+import AppKit
+import ApplicationServices
+import CryptoKit
+import Foundation
+import ScreenCaptureKit
+
+let providerID = "nekodex-macos-desktop-v1"
+let maximumRequestBytes = 64 * 1024
+let maximumImageBytes = 8 * 1024 * 1024
+let initialParent = getppid()
+func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+func token(_ value: Any) -> String { digest((try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])) ?? Data()) }
+func exact(_ value: [String: Any], _ keys: [String]) -> Bool { Set(value.keys) == Set(keys) }
+func number(_ value: Any?) -> Double? {
+    guard let n = value as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(), n.doubleValue.isFinite else { return nil }
+    return n.doubleValue
+}
+func foregroundMode(_ value: [String: Any]) throws -> Bool {
+    guard let raw = value["waitForForeground"] else { return false }
+    guard let flag = raw as? NSNumber, CFGetTypeID(flag) == CFBooleanGetTypeID(), flag.boolValue else { try reject("invalid-foreground-mode") }
+    return true
+}
+func string(_ value: Any?, max: Int = 160) -> String? {
+    guard let value = value as? String, !value.isEmpty, value.utf8.count <= max else { return nil }; return value
+}
+// LaunchServices launchDate is nil for valid GUI applications started by direct executable.
+// Bind PID reuse to the kernel's exact start timeval instead; never fall back to PID alone.
+func processInstance(_ pid: pid_t) -> String? {
+    guard pid > 0 else { return nil }
+    var info = proc_bsdinfo()
+    let expected = Int32(MemoryLayout<proc_bsdinfo>.size)
+    let count = withUnsafeMutablePointer(to: &info) { pointer in
+        proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, UnsafeMutableRawPointer(pointer), expected)
+    }
+    guard count == expected, info.pbi_pid == UInt32(pid), info.pbi_start_tvsec > 0, info.pbi_start_tvusec < 1_000_000 else { return nil }
+    let seconds = info.pbi_start_tvsec.multipliedReportingOverflow(by: 1_000_000)
+    let microseconds = seconds.partialValue.addingReportingOverflow(info.pbi_start_tvusec)
+    guard !seconds.overflow, !microseconds.overflow else { return nil }
+    return "\(pid):\(microseconds.partialValue)"
+}
+struct PortError: Error { let code: String }
+func reject(_ code: String) throws -> Never { throw PortError(code: code) }
+struct WindowRow {
+    let id: CGWindowID; let pid: pid_t; let processID: String; let epoch: String
+    let frame: CGRect; let owner: String; let title: String
+    var json: [String: Any] { ["windowId": String(id), "processId": processID, "windowEpoch": epoch,
+        "owner": owner, "title": title, "frame": ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height],
+        "foreground": NSWorkspace.shared.frontmostApplication?.processIdentifier == pid] }
+}
+struct Captured {
+    let binding: [String: Any]; let png: Data; let resource: String; let frame: CGRect
+    let lastInput: TimeInterval; let focusedElement: AXUIElement?
+    let targets: [AXTarget]
+}
+struct AXTarget {
+    let element: AXUIElement; let frame: CGRect; let signature: String; let press: Bool
+    let selectedTextWritable: Bool; let valueWritable: Bool; let value: String?; let range: CFRange?; let depth: Int
+    var text: Bool { range != nil && value != nil && (selectedTextWritable || valueWritable) }
+}
+func attribute(_ element: AXUIElement, _ name: CFString) -> CFTypeRef? {
+    var value: CFTypeRef?; return AXUIElementCopyAttributeValue(element, name, &value) == .success ? value : nil
+}
+func axFrame(_ element: AXUIElement) -> CGRect? {
+    guard let p = attribute(element, kAXPositionAttribute as CFString), let s = attribute(element, kAXSizeAttribute as CFString),
+          CFGetTypeID(p) == AXValueGetTypeID(), CFGetTypeID(s) == AXValueGetTypeID() else { return nil }
+    var point = CGPoint.zero; var size = CGSize.zero
+    guard AXValueGetValue(p as! AXValue, .cgPoint, &point), AXValueGetValue(s as! AXValue, .cgSize, &size) else { return nil }
+    return CGRect(origin: point, size: size)
+}
+func sameFrame(_ a: CGRect, _ b: CGRect) -> Bool {
+    abs(a.minX - b.minX) < 0.5 && abs(a.minY - b.minY) < 0.5 && abs(a.width - b.width) < 0.5 && abs(a.height - b.height) < 0.5
+}
+func lastInputTime() -> TimeInterval {
+    let types: [CGEventType] = [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown,
+        .otherMouseUp, .mouseMoved, .leftMouseDragged, .rightMouseDragged, .keyDown, .keyUp, .flagsChanged, .scrollWheel]
+    let now = ProcessInfo.processInfo.systemUptime
+    return types.reduce(0) { value, type in
+        let elapsed = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: type)
+        return elapsed.isFinite && elapsed >= 0 ? max(value, now - elapsed) : value
+    }
+}
+
+@MainActor final class DesktopPort {
+    var enabled = false
+    var selected: WindowRow?
+    var selectedAX: AXUIElement?
+    var captured: Captured?
+    var image: Captured?
+    var uncertain = false
+    let session = UUID().uuidString.lowercased()
+    var propertyElements: [(AXUIElement, String)] = []
+
+    func permissions() -> [String: Any] {
+        ["screenCaptureGranted": CGPreflightScreenCaptureAccess(), "accessibilityGranted": AXIsProcessTrusted(),
+         "postEventGranted": CGPreflightPostEventAccess()]
+    }
+    func windows() -> [WindowRow] {
+        guard let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return [] }
+        return rows.compactMap { row in
+            guard let wid = number(row[kCGWindowNumber as String]), let rawPID = number(row[kCGWindowOwnerPID as String]),
+                  wid >= 1, wid <= Double(UInt32.max), rawPID > 0, rawPID <= Double(Int32.max), Int32(rawPID) != getpid(),
+                  number(row[kCGWindowLayer as String]) == 0, (number(row[kCGWindowAlpha as String]) ?? 1) > 0,
+                  let bounds = row[kCGWindowBounds as String] as? NSDictionary,
+                  let frame = CGRect(dictionaryRepresentation: bounds), frame.width >= 1, frame.height >= 1,
+                  let processID = processInstance(pid_t(rawPID)) else { return nil }
+            let pid = pid_t(rawPID)
+            let owner = String((row[kCGWindowOwnerName as String] as? String ?? "Application").prefix(160))
+            let title = String((row[kCGWindowName as String] as? String ?? "").prefix(512))
+            return WindowRow(id: CGWindowID(wid), pid: pid, processID: processID,
+                epoch: token([String(Int(wid)), processID, owner, title]), frame: frame, owner: owner, title: title)
+        }.prefix(128).map { $0 }
+    }
+    func currentWindow() throws -> WindowRow {
+        guard let selected = selected, let current = windows().first(where: { $0.id == selected.id }),
+              current.processID == selected.processID, current.epoch == selected.epoch else { try reject("selected-window-changed") }
+        if let element = selectedAX, !axWindows(current).contains(where: { CFEqual($0, element) }) { try reject("selected-window-instance-changed") }
+        return current
+    }
+    func axWindows(_ row: WindowRow) -> [AXUIElement] {
+        (attribute(AXUIElementCreateApplication(row.pid), kAXWindowsAttribute as CFString) as? [AXUIElement]) ?? []
+    }
+    func matchAX(_ row: WindowRow) -> AXUIElement? {
+        guard AXIsProcessTrusted() else { return nil }
+        let candidates = axWindows(row).filter { element in
+            guard let frame = axFrame(element), sameFrame(frame, row.frame) else { return false }
+            return row.title.isEmpty || (attribute(element, kAXTitleAttribute as CFString) as? String) == row.title
+        }
+        return candidates.count == 1 ? candidates[0] : nil
+    }
+    func focusElement(_ row: WindowRow) -> AXUIElement? {
+        guard let element = attribute(AXUIElementCreateApplication(row.pid), kAXFocusedUIElementAttribute as CFString),
+              CFGetTypeID(element) == AXUIElementGetTypeID() else { return nil }
+        return (element as! AXUIElement)
+    }
+    // CG's complete stacking order includes menus, sheets and nonstandard layers that
+    // the selectable normal-window inventory intentionally omits. Never send a pixel
+    // click through one of those surfaces, even when it belongs to the same PID.
+    func pixelTarget(_ row: WindowRow, point: CGPoint) throws {
+        guard let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]],
+              let hit = rows.first(where: { value in
+                  guard (number(value[kCGWindowAlpha as String]) ?? 1) > 0,
+                        let bounds = value[kCGWindowBounds as String] as? NSDictionary,
+                        let frame = CGRect(dictionaryRepresentation: bounds) else { return false }
+                  return frame.contains(point)
+              }), number(hit[kCGWindowNumber as String]) == Double(row.id),
+              number(hit[kCGWindowOwnerPID as String]) == Double(row.pid) else { try reject("pixel-target-occluded-or-changed") }
+        guard !CGEventSource.buttonState(.combinedSessionState, button: .left),
+              !CGEventSource.buttonState(.combinedSessionState, button: .right),
+              !CGEventSource.buttonState(.combinedSessionState, button: .center) else { try reject("human-mouse-button-held") }
+    }
+    // An exact approved call may explicitly wait for a human to return this window.
+    // This loop never captures, activates, accepts a caller clock or expires consent.
+    func waitForForeground(_ original: WindowRow, expectedFocus: AXUIElement? = nil, enforceFocus: Bool = false) async throws {
+        while true {
+            try Task.checkCancellation()
+            guard getppid() == initialParent, enabled, !uncertain else { try reject("foreground-owner-unavailable") }
+            var input = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
+            guard Darwin.poll(&input, 1, 0) >= 0,
+                  input.revents & Int16(POLLHUP | POLLERR | POLLNVAL) == 0 else { try reject("foreground-parent-port-closed") }
+            let row = try currentWindow()
+            guard sameFrame(row.frame, original.frame) else { try reject("foreground-window-frame-changed") }
+            let target = try boundWindow(row)
+            let focused = attribute(AXUIElementCreateApplication(row.pid), kAXFocusedWindowAttribute as CFString)
+            let currentFocus = focusElement(row)
+            let matchingFocus = !enforceFocus || (expectedFocus == nil ? currentFocus == nil : currentFocus.map { CFEqual($0, expectedFocus!) } == true)
+            let released = !CGEventSource.buttonState(.combinedSessionState, button: .left)
+                && !CGEventSource.buttonState(.combinedSessionState, button: .right)
+                && !CGEventSource.buttonState(.combinedSessionState, button: .center)
+                && CGEventSource.flagsState(.combinedSessionState).intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift]).isEmpty
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier == row.pid,
+               let focused = focused, CFEqual(focused, target), windows().first?.id == row.id,
+               matchingFocus, released, ProcessInfo.processInfo.systemUptime - lastInputTime() >= 0.15 { return }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+    }
+    func inputOwner(_ row: WindowRow, expectedFocus: AXUIElement?, requirePostEvent: Bool = true) throws {
+        guard AXIsProcessTrusted(), (!requirePostEvent || CGPreflightPostEventAccess()), NSWorkspace.shared.frontmostApplication?.processIdentifier == row.pid,
+              let target = selectedAX, axWindows(row).contains(where: { CFEqual($0, target) }),
+              let frame = axFrame(target), sameFrame(frame, row.frame),
+              let focused = attribute(AXUIElementCreateApplication(row.pid), kAXFocusedWindowAttribute as CFString), CFEqual(focused, target),
+              windows().first?.id == row.id else { try reject("selected-window-not-exactly-focused") }
+        let currentFocus = focusElement(row)
+        if let expected = expectedFocus {
+            guard let current = currentFocus, CFEqual(current, expected) else { try reject("focused-element-changed") }
+        } else if currentFocus != nil { try reject("focused-element-changed") }
+        let flags = CGEventSource.flagsState(.combinedSessionState)
+        guard flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift]).isEmpty else { try reject("human-modifier-held") }
+    }
+    func boundWindow(_ row: WindowRow) throws -> AXUIElement {
+        guard AXIsProcessTrusted(), let target = selectedAX, axWindows(row).contains(where: { CFEqual($0, target) }),
+              let frame = axFrame(target), sameFrame(frame, row.frame) else { try reject("selected-ax-window-changed") }
+        return target
+    }
+    func controls(_ row: WindowRow) -> [AXTarget] {
+        guard let window = try? boundWindow(row) else { return [] }
+        var result: [AXTarget] = []; var seen: [AXUIElement] = []; var pending: [(AXUIElement, Int)] = [(window, 0)]
+        while !pending.isEmpty && seen.count < 512 && result.count < 128 {
+            let (element, depth) = pending.removeLast()
+            if seen.contains(where: { CFEqual($0, element) }) { continue }; seen.append(element)
+            if (attribute(element, kAXSubroleAttribute as CFString) as? String) == (kAXSecureTextFieldSubrole as String) { continue }
+            if depth < 12, let children = attribute(element, kAXChildrenAttribute as CFString) as? [AXUIElement] {
+                pending.append(contentsOf: children.prefix(128).map { ($0, depth + 1) })
+            }
+            guard let frame = axFrame(element), !frame.intersection(row.frame).isNull, frame.width > 0, frame.height > 0,
+                  (attribute(element, kAXEnabledAttribute as CFString) as? Bool) != false,
+                  (attribute(element, kAXHiddenAttribute as CFString) as? Bool) != true,
+                  let role = attribute(element, kAXRoleAttribute as CFString) as? String else { continue }
+            var elementPID: pid_t = 0
+            guard AXUIElementGetPid(element, &elementPID) == .success, elementPID == row.pid else { continue }
+            if let elementWindow = attribute(element, kAXWindowAttribute as CFString), !CFEqual(elementWindow, window) { continue }
+            let subrole = attribute(element, kAXSubroleAttribute as CFString) as? String ?? ""
+            if subrole == (kAXSecureTextFieldSubrole as String) { continue }
+            var actionNames: CFArray?; _ = AXUIElementCopyActionNames(element, &actionNames)
+            let press = ((actionNames as? [String]) ?? []).contains(kAXPressAction as String)
+            let isText = role == (kAXTextFieldRole as String) || role == (kAXTextAreaRole as String)
+            var selectedWritable: DarwinBoolean = false; var valueWritable: DarwinBoolean = false
+            if isText {
+                _ = AXUIElementIsAttributeSettable(element, kAXSelectedTextAttribute as CFString, &selectedWritable)
+                _ = AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &valueWritable)
+            }
+            guard press || (isText && (selectedWritable.boolValue || valueWritable.boolValue)) else { continue }
+            let rawValue = attribute(element, kAXValueAttribute as CFString)
+            let textValue = isText ? rawValue as? String : nil
+            if let textValue = textValue, textValue.utf16.count > 64_000 { continue }
+            var range: CFRange?
+            if isText, let value = attribute(element, kAXSelectedTextRangeAttribute as CFString), CFGetTypeID(value) == AXValueGetTypeID() {
+                var r = CFRange(); if AXValueGetValue(value as! AXValue, .cfRange, &r), r.location >= 0, r.length >= 0,
+                    r.location <= (textValue?.utf16.count ?? 0), r.length <= (textValue?.utf16.count ?? 0) - r.location { range = r }
+            }
+            let title = attribute(element, kAXTitleAttribute as CFString) as? String ?? ""
+            let valueState: Any = textValue ?? (rawValue as? NSNumber)?.stringValue ?? ""
+            let signature = token([role, subrole, title, valueState, press, selectedWritable.boolValue, valueWritable.boolValue,
+                frame.minX, frame.minY, frame.width, frame.height, range?.location ?? -1, range?.length ?? -1,
+                (attribute(element, kAXFocusedAttribute as CFString) as? Bool) ?? false])
+            result.append(AXTarget(element: element, frame: frame, signature: signature, press: press,
+                selectedTextWritable: selectedWritable.boolValue, valueWritable: valueWritable.boolValue,
+                value: textValue, range: range, depth: depth))
+        }
+        return result
+    }
+    // Trusted property readback has its own fresh AX read. It neither captures the
+    // screen nor turns an input receipt into an application result.
+    func applicationProperties(_ row: WindowRow) throws -> [[String: Any]] {
+        let window = try boundWindow(row)
+        var result: [[String: Any]] = []; var seen: [AXUIElement] = []; var pending: [(AXUIElement, Int)] = [(window, 0)]
+        while !pending.isEmpty && seen.count < 512 && result.count < 128 {
+            let (element, depth) = pending.removeLast()
+            if seen.contains(where: { CFEqual($0, element) }) { continue }; seen.append(element)
+            guard (attribute(element, kAXSubroleAttribute as CFString) as? String) != (kAXSecureTextFieldSubrole as String),
+                  (attribute(element, kAXHiddenAttribute as CFString) as? Bool) != true else { continue }
+            var pid: pid_t = 0
+            guard AXUIElementGetPid(element, &pid) == .success, pid == row.pid else { continue }
+            if let elementWindow = attribute(element, kAXWindowAttribute as CFString), !CFEqual(elementWindow, window) { continue }
+            if depth < 12, let children = attribute(element, kAXChildrenAttribute as CFString) as? [AXUIElement] {
+                pending.append(contentsOf: children.prefix(128).map { ($0, depth + 1) })
+            }
+            guard let frame = axFrame(element), frame.width > 0, frame.height > 0, !frame.intersection(row.frame).isNull,
+                  let role = attribute(element, kAXRoleAttribute as CFString) as? String else { continue }
+            let identifier = attribute(element, kAXIdentifierAttribute as CFString) as? String
+            let title = attribute(element, kAXTitleAttribute as CFString) as? String
+            let rawValue = attribute(element, kAXValueAttribute as CFString)
+            var value: Any?
+            if let text = rawValue as? String, text.utf16.count <= 4096 { value = text }
+            else if let numeric = rawValue as? NSNumber, numeric.doubleValue.isFinite { value = numeric }
+            let elementID: String
+            if let retained = propertyElements.first(where: { CFEqual($0.0, element) }) { elementID = retained.1 }
+            else {
+                guard propertyElements.count < 512 else { try reject("property-identity-capacity") }
+                elementID = "ax-" + UUID().uuidString.lowercased(); propertyElements.append((element, elementID))
+            }
+            var item: [String: Any] = ["elementId": elementID, "role": String(role.prefix(160))]
+            if let identifier = identifier, !identifier.isEmpty, identifier.utf16.count <= 512 { item["identifier"] = identifier }
+            if let title = title, !title.isEmpty, title.utf16.count <= 512 { item["title"] = title }
+            if let value = value { item["value"] = value }
+            if let enabled = attribute(element, kAXEnabledAttribute as CFString) as? Bool { item["enabled"] = enabled }
+            if let focused = attribute(element, kAXFocusedAttribute as CFString) as? Bool { item["focused"] = focused }
+            result.append(item)
+        }
+        guard let encoded = try? JSONSerialization.data(withJSONObject: result), encoded.count <= 60 * 1024 else { try reject("property-snapshot-size-limit") }
+        return result
+    }
+    func capture(_ row: WindowRow, scope: String) async throws -> Captured {
+        guard enabled, CGPreflightScreenCaptureAccess() else { try reject("screen-capture-unavailable") }
+        _ = try boundWindow(row)
+        let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+        guard let window = content.windows.first(where: { $0.windowID == row.id && $0.owningApplication?.processID == row.pid }),
+              window.isOnScreen, sameFrame(window.frame, row.frame) else { try reject("capture-window-changed") }
+        let filter = SCContentFilter(desktopIndependentWindow: window)
+        guard abs(filter.contentRect.width - row.frame.width) < 0.5, abs(filter.contentRect.height - row.frame.height) < 0.5 else { try reject("window-content-coordinate-mismatch") }
+        let scale = Double(filter.pointPixelScale)
+        guard scale.isFinite, scale > 0 else { try reject("capture-scale-unavailable") }
+        let width = Int(ceil(row.frame.width * scale)); let height = Int(ceil(row.frame.height * scale))
+        guard width > 0, height > 0, width <= 8192, height <= 8192, width * height <= 16_777_216 else { try reject("capture-size-limit") }
+        let configuration = SCStreamConfiguration(); configuration.width = width; configuration.height = height
+        configuration.showsCursor = false; configuration.ignoreShadowsSingleWindow = true
+        let beforeTargets = controls(row)
+        let cgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+        let current = try currentWindow()
+        let targets = controls(current)
+        guard targets.count == beforeTargets.count, zip(targets, beforeTargets).allSatisfy({ CFEqual($0.element, $1.element) && $0.signature == $1.signature }) else { try reject("ax-state-changed-during-capture") }
+        guard current.processID == row.processID, current.epoch == row.epoch, sameFrame(current.frame, row.frame),
+              cgImage.width == width, cgImage.height == height,
+              let png = NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:]), png.count <= maximumImageBytes else { try reject("capture-changed-or-too-large") }
+        let observationID = UUID().uuidString.lowercased(); let resource = "native-desktop:\(session):\(observationID)"
+        let frameEpoch = token([row.frame.minX, row.frame.minY, row.frame.width, row.frame.height, scale])
+        let binding: [String: Any] = ["providerId": providerID, "scopeId": scope, "observationId": observationID, "platform": "darwin",
+            "windowId": String(row.id), "processId": row.processID, "windowEpoch": row.epoch,
+            "frameId": "window-\(row.id)", "frameEpoch": frameEpoch, "screenshotId": digest(png),
+            "coordinateSpace": "screenshot-pixels", "width": width, "height": height]
+        return Captured(binding: binding, png: png, resource: resource, frame: row.frame, lastInput: lastInputTime(), focusedElement: AXIsProcessTrusted() ? focusElement(row) : nil, targets: targets)
+    }
+    func perform(_ request: [String: Any]) async throws -> [String: Any] {
+        guard number(request["version"]) == 1, let command = string(request["command"], max: 32) else { try reject("invalid-request") }
+        let base = ["version", "id", "command"]
+        switch command {
+        case "status":
+            guard exact(request, base) else { try reject("invalid-request") }
+            var state = permissions(); state["enabled"] = enabled; state["providerId"] = providerID; state["uncertain"] = uncertain
+            let current = try? currentWindow()
+            state["selected"] = selected?.json ?? NSNull(); state["selectionCurrent"] = current != nil
+            state["inputWindowBound"] = current.flatMap { try? boundWindow($0) } != nil; return state
+        case "listWindows":
+            guard exact(request, base) else { try reject("invalid-request") }
+            return ["windows": windows().map(\.json)]
+        case "enable":
+            guard exact(request, base + ["enabled"]), let value = request["enabled"] as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() else { try reject("invalid-request") }
+            enabled = value.boolValue; selected = nil; selectedAX = nil; captured = nil; image = nil; propertyElements = []
+            return ["enabled": enabled]
+        case "select":
+            guard exact(request, base + ["selection"]), enabled, !uncertain,
+                  let selection = request["selection"] as? [String: Any], exact(selection, ["windowId", "processId", "windowEpoch"]),
+                  let row = windows().first(where: { $0.json["windowId"] as? String == selection["windowId"] as? String
+                    && $0.processID == selection["processId"] as? String && $0.epoch == selection["windowEpoch"] as? String }) else { try reject("selection-unavailable-or-changed") }
+            selected = row; selectedAX = matchAX(row); captured = nil; image = nil; propertyElements = []
+            return ["selected": row.json, "inputWindowBound": selectedAX != nil]
+        case "properties":
+            guard exact(request, base + ["selection"]), enabled, !uncertain, AXIsProcessTrusted(),
+                  let selection = request["selection"] as? [String: Any], exact(selection, ["windowId", "processId", "windowEpoch"]) else { try reject("property-read-unavailable") }
+            let row = try currentWindow()
+            guard selection["windowId"] as? String == String(row.id), selection["processId"] as? String == row.processID,
+                  selection["windowEpoch"] as? String == row.epoch else { try reject("property-selection-changed") }
+            let properties = try applicationProperties(row)
+            let current = try currentWindow(); _ = try boundWindow(current)
+            guard sameFrame(current.frame, row.frame), token(properties) == token(try applicationProperties(current)) else { try reject("property-state-changed-during-read") }
+            return ["selection": selection, "observedAt": ISO8601DateFormatter().string(from: Date()), "properties": properties]
+        case "observe":
+            let waits = try foregroundMode(request)
+            guard exact(request, base + ["scopeId"] + (waits ? ["waitForForeground"] : [])), !uncertain,
+                  let scope = string(request["scopeId"]) else { try reject("observation-unavailable") }
+            captured = nil; image = nil
+            let row = try currentWindow()
+            if waits { try await waitForForeground(row) }
+            let foregroundBaseline = lastInputTime()
+            let value = try await capture(try currentWindow(), scope: scope)
+            if waits {
+                try inputOwner(try currentWindow(), expectedFocus: value.focusedElement, requirePostEvent: false)
+                guard value.lastInput <= foregroundBaseline + 0.005, lastInputTime() <= foregroundBaseline + 0.005 else { try reject("human-input-changed") }
+            }
+            captured = value; image = value
+            return value.binding.merging(["kind": "desktop", "screenshotResource": value.resource]) { _, new in new }
+        case "image":
+            guard exact(request, base + ["binding", "resource", "encoding"]), let value = image,
+                  let binding = request["binding"] as? [String: Any], NSDictionary(dictionary: binding).isEqual(to: value.binding),
+                  request["resource"] as? String == value.resource else { try reject("image-resource-unavailable") }
+            if request["encoding"] as? String == "png" { return ["mimeType": "image/png", "base64": value.png.base64EncodedString(), "sha256": digest(value.png)] }
+            guard request["encoding"] as? String == "jpeg", let bitmap = NSBitmapImageRep(data: value.png) else { try reject("image-encoding-unsupported") }
+            for quality in [0.8, 0.55, 0.3, 0.1, 0.01] {
+                if let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: quality]), jpeg.count <= 160 * 1024 {
+                    return ["mimeType": "image/jpeg", "base64": jpeg.base64EncodedString(), "sha256": digest(jpeg),
+                        "sourceScreenshotId": digest(value.png), "width": bitmap.pixelsWide, "height": bitmap.pixelsHigh]
+                }
+            }
+            try reject("model-image-budget-exceeded")
+        case "act":
+            guard exact(request, base + ["binding", "action", "operationId"]), let operationID = string(request["operationId"]),
+                  let binding = request["binding"] as? [String: Any], let action = request["action"] as? [String: Any] else { try reject("invalid-request") }
+            func receipt(_ outcome: String, _ executed: Bool, _ reason: String) -> [String: Any] {
+                ["operationId": operationID, "outcome": outcome, "executed": executed, "reason": reason]
+            }
+            guard getppid() == initialParent, enabled, !uncertain, let original = captured, NSDictionary(dictionary: binding).isEqual(to: original.binding) else { return receipt("rejected", false, "stale-observation") }
+            captured = nil // One attempt owns this observation even if later validation refuses input.
+            let row = try currentWindow()
+            let waits = try foregroundMode(action)
+            if waits && !sameFrame(row.frame, original.frame) { return receipt("rejected", false, "owner-or-frame-changed") }
+            if waits { try await waitForForeground(row, expectedFocus: original.focusedElement, enforceFocus: true) }
+            let foregroundBaseline = lastInputTime()
+            let fresh = try await capture(try currentWindow(), scope: binding["scopeId"] as! String)
+            guard fresh.binding["screenshotId"] as? String == binding["screenshotId"] as? String,
+                  fresh.binding["frameEpoch"] as? String == binding["frameEpoch"] as? String else { return receipt("rejected", false, "screen-or-frame-changed") }
+            let current = try currentWindow()
+            guard sameFrame(current.frame, original.frame) else { return receipt("rejected", false, "owner-or-frame-changed") }
+            // Only exact same-image/frame/focus handoff can establish a new private input
+            // boundary. Original binding is unchanged and never replaced with fresh.binding.
+            let inputBaseline: TimeInterval
+            if waits {
+                try inputOwner(current, expectedFocus: original.focusedElement, requirePostEvent: false)
+                guard fresh.lastInput <= foregroundBaseline + 0.005, lastInputTime() <= foregroundBaseline + 0.005 else { return receipt("rejected", false, "human-input-changed") }
+                inputBaseline = fresh.lastInput
+            } else { inputBaseline = original.lastInput }
+            if action["kind"] as? String == "click" {
+                guard exact(action, ["kind", "x", "y"] + (waits ? ["waitForForeground"] : [])), let x = number(action["x"]), let y = number(action["y"]),
+                      x.rounded() == x, y.rounded() == y, x >= 0, y >= 0,
+                      x < Double(binding["width"] as! Int), y < Double(binding["height"] as! Int) else { return receipt("rejected", false, "coordinates-outside-observation") }
+                let point = CGPoint(x: row.frame.minX + x * row.frame.width / Double(binding["width"] as! Int),
+                    y: row.frame.minY + y * row.frame.height / Double(binding["height"] as! Int))
+                let candidates = original.targets.filter { $0.press && $0.frame.intersection(row.frame).contains(point) }
+                    .sorted { $0.depth != $1.depth ? $0.depth > $1.depth : $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
+                if let target = candidates.first {
+                    guard candidates.count < 2 || candidates[1].depth != target.depth,
+                          let nowTarget = fresh.targets.first(where: { CFEqual($0.element, target.element) }), nowTarget.signature == target.signature else { return receipt("rejected", false, "ambiguous-or-changed-ax-target") }
+                    _ = try boundWindow(current)
+                    guard let last = controls(current).first(where: { CFEqual($0.element, target.element) }), last.signature == target.signature else { return receipt("rejected", false, "ax-target-changed-before-input") }
+                    guard getppid() == initialParent else { return receipt("rejected", false, "parent-owner-exited") }
+                    if waits {
+                        try inputOwner(try currentWindow(), expectedFocus: original.focusedElement, requirePostEvent: false)
+                        guard lastInputTime() <= inputBaseline + 0.005 else { return receipt("rejected", false, "human-input-changed") }
+                    }
+                    let status = AXUIElementPerformAction(target.element, kAXPressAction as CFString)
+                    if status == .success { return receipt("completed", true, "ax-press-dispatched; application-result-unverified") }
+                    uncertain = status == .cannotComplete; return receipt(uncertain ? "unknown" : "rejected", false, "ax-press-not-confirmed")
+                }
+                // Generic event input is available only when the selected exact window is already foreground.
+                try inputOwner(current, expectedFocus: original.focusedElement)
+                guard fresh.lastInput <= inputBaseline + 0.005, lastInputTime() <= inputBaseline + 0.005 else { return receipt("rejected", false, "human-input-changed") }
+                guard let source = CGEventSource(stateID: .privateState),
+                      let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
+                      let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) else { return receipt("rejected", false, "event-unavailable") }
+                guard getppid() == initialParent else { return receipt("rejected", false, "parent-owner-exited") }
+                // Recheck focus, point stacking and physical button/modifier state as
+                // close to dispatch as possible; no activation or click-through.
+                try inputOwner(try currentWindow(), expectedFocus: original.focusedElement)
+                try pixelTarget(current, point: point)
+                guard lastInputTime() <= inputBaseline + 0.005 else { return receipt("rejected", false, "human-input-changed") }
+                down.flags = []; up.flags = []; down.postToPid(row.pid); up.postToPid(row.pid)
+            } else if action["kind"] as? String == "type" {
+                guard exact(action, ["kind", "text"] + (waits ? ["waitForForeground"] : [])), let text = action["text"] as? String, !text.isEmpty, text.utf16.count <= 8000 else { return receipt("rejected", false, "invalid-literal-text") }
+                if let focused = original.focusedElement, let target = original.targets.first(where: { CFEqual($0.element, focused) && $0.text }) {
+                    guard let currentTarget = fresh.targets.first(where: { CFEqual($0.element, target.element) }), currentTarget.signature == target.signature,
+                          let currentFocus = focusElement(current), CFEqual(currentFocus, target.element),
+                          let oldValue = target.value, let range = target.range else { return receipt("rejected", false, "captured-text-target-changed") }
+                    let window = try boundWindow(current)
+                    guard let focusedWindow = attribute(AXUIElementCreateApplication(row.pid), kAXFocusedWindowAttribute as CFString), CFEqual(window, focusedWindow),
+                          let last = controls(current).first(where: { CFEqual($0.element, target.element) }), last.signature == target.signature else { return receipt("rejected", false, "text-target-changed-before-input") }
+                    let status: AXError
+                    guard getppid() == initialParent else { return receipt("rejected", false, "parent-owner-exited") }
+                    if waits {
+                        try inputOwner(try currentWindow(), expectedFocus: original.focusedElement, requirePostEvent: false)
+                        guard lastInputTime() <= inputBaseline + 0.005 else { return receipt("rejected", false, "human-input-changed") }
+                    }
+                    if target.selectedTextWritable { status = AXUIElementSetAttributeValue(target.element, kAXSelectedTextAttribute as CFString, text as CFString) }
+                    else {
+                        let replacement = (oldValue as NSString).replacingCharacters(in: NSRange(location: range.location, length: range.length), with: text)
+                        status = AXUIElementSetAttributeValue(target.element, kAXValueAttribute as CFString, replacement as CFString)
+                    }
+                    if status == .success { return receipt("completed", true, "ax-literal-text-dispatched; application-result-unverified") }
+                    uncertain = status == .cannotComplete; return receipt(uncertain ? "unknown" : "rejected", false, "ax-text-not-confirmed")
+                }
+                return receipt("rejected", false, "captured-supported-text-target-unavailable")
+            } else { return receipt("rejected", false, "unsupported-action") }
+            return receipt("completed", true, "input-dispatched; application-result-unverified")
+        case "invalidate":
+            guard exact(request, base) else { try reject("invalid-request") }
+            captured = nil; image = nil; return ["invalidated": true]
+        case "shutdown":
+            guard exact(request, base) else { try reject("invalid-request") }
+            captured = nil; image = nil; selected = nil; selectedAX = nil; propertyElements = []; return ["closing": true]
+        default: try reject("unsupported-command")
+        }
+    }
+}
+
+final class Lines: @unchecked Sendable {
+    var pending = Data()
+    func next() throws -> Data? {
+        while true {
+            if let newline = pending.firstIndex(of: 10) {
+                guard newline <= maximumRequestBytes else { try reject("request-size-limit") }
+                let line = pending.prefix(upTo: newline); pending.removeSubrange(...newline); return Data(line)
+            }
+            guard pending.count <= maximumRequestBytes else { try reject("request-size-limit") }
+            var bytes = [UInt8](repeating: 0, count: 4096)
+            let count = Darwin.read(STDIN_FILENO, &bytes, bytes.count)
+            if count == 0 { return nil }
+            if count < 0 { if errno == EINTR { continue }; try reject("stdin-unavailable") }
+            pending.append(contentsOf: bytes.prefix(count))
+        }
+    }
+}
+@main struct Main {
+    @MainActor static func main() async {
+        let port = DesktopPort(); let lines = Lines()
+        let ownerWatch = DispatchSource.makeTimerSource(queue: .global(qos: .background))
+        ownerWatch.schedule(deadline: .now() + 1, repeating: 1)
+        ownerWatch.setEventHandler { if getppid() != initialParent { Darwin._exit(0) } }
+        ownerWatch.resume()
+        while true {
+            var requestID = "invalid"
+            do {
+                guard let bytes = try await Task.detached(operation: { try lines.next() }).value else { break }
+                guard let request = try JSONSerialization.jsonObject(with: bytes) as? [String: Any], let id = string(request["id"]) else { try reject("invalid-request") }
+                requestID = id
+                let value = try await port.perform(request)
+                let reply: [String: Any] = ["version": 1, "id": id, "ok": true, "value": value]
+                FileHandle.standardOutput.write((try JSONSerialization.data(withJSONObject: reply, options: [.sortedKeys])) + Data([10]))
+                if request["command"] as? String == "shutdown" { break }
+            } catch {
+                let code = (error as? PortError)?.code ?? "native-operation-unavailable"
+                let reply: [String: Any] = ["version": 1, "id": requestID, "ok": false, "error": code]
+                if let bytes = try? JSONSerialization.data(withJSONObject: reply) { FileHandle.standardOutput.write(bytes + Data([10])) }
+                if code == "request-size-limit" { break }
+            }
+        }
+        ownerWatch.cancel()
+    }
+}
