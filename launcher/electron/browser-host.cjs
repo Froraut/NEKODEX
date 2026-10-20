@@ -197,6 +197,15 @@ function combinedError(primary, label, secondary) {
   return new Error(`${first}; ${label}: ${second}`);
 }
 
+// Import failures surfaced only a stage, so a failed sign-in could not be diagnosed afterwards.
+// Log the launcher's own error sentence; drop anything that could carry an address, URL,
+// cookie value or other provider data.
+function sessionImportFailureReason(error) {
+  const message = (error instanceof Error ? error.message : "").split("\n")[0].trim();
+  if (!message || message.length > 160 || /@|:\/\/|[{}=\d]/.test(message)) return null;
+  return /^[A-Za-z][A-Za-z ,.;:'’()/-]*$/.test(message) ? message : null;
+}
+
 function normalizeBounds(bounds) {
   const read = (value) => Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
   return {
@@ -3378,6 +3387,7 @@ class BrowserHost {
       this.logger.warn("browser.session_import_verification_failed", {
         stage: verificationStage,
         code: typeof caught?.code === "string" && /^[a-z_-]{1,64}$/.test(caught.code) ? caught.code : null,
+        reason: sessionImportFailureReason(caught),
         authenticationStatus: this.state.authenticationStatus,
         observation: this.lastAuthenticationSurfaceObservation ?? null,
       });
@@ -4086,5 +4096,6 @@ module.exports = {
   MANUAL_COMPACTION_SUBMIT_TIMEOUT_MS,
   navigationErrorForLog,
   navigationOriginForLog,
+  sessionImportFailureReason,
   TEMPORARY_CHAT_URL,
 };
