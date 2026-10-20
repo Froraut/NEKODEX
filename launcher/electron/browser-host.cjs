@@ -1917,6 +1917,8 @@ class BrowserHost {
     if (details.statusCode >= 200 && details.statusCode < 400) {
       this.cloudflareChallengeRecoveryArmed = true;
       this.cloudflareChallengeDeferred = false;
+      // ChatGPT answers again: the user (or a new network route) completed the check.
+      if (this.state?.securityCheckRequired) this.clearSecurityCheckRequired("backend-response");
       return false;
     }
     if (!isChatGptCloudflareChallengeResponse(details)) return false;
@@ -1981,9 +1983,12 @@ class BrowserHost {
         this.logger.error("browser.cloudflare_challenge_recovery_failed", navigationErrorForLog(error));
         // An account or operation that took ownership while the read was pending owns its UI too.
         if (error?.code === "CHALLENGE_RECOVERY_SUPERSEDED") return;
+        // A reload could not clear it: ChatGPT is waiting for a person to complete Cloudflare's
+        // check, which a hidden view never can. Say so plainly until ChatGPT answers again.
+        this.logger.warn("browser.security_check_required", {});
         this.setState({ status: "error",
           message: "ChatGPT security verification needs attention. Open the browser and complete verification; your draft was kept.",
-          loading: false });
+          loading: false, authenticated: false, authenticationStatus: "unavailable", securityCheckRequired: true });
       })
       .finally(() => {
         if (this.cloudflareChallengeRecovery === tracked) this.cloudflareChallengeRecovery = null;
@@ -2191,8 +2196,25 @@ class BrowserHost {
       visible: this.visible,
       surfaceActive: this.surfaceActive,
     };
+    // A pending Cloudflare check outranks whatever a later session read reports (usually a
+    // 403), so every surface keeps asking the user to complete it until ChatGPT answers.
+    if (this.state.securityCheckRequired) {
+      if (this.state.authenticationStatus === "verified" || this.state.authenticationStatus === "signed-out") {
+        this.state.securityCheckRequired = false;
+        this.logger?.info?.("browser.security_check_cleared", { proof: "session-check" });
+      } else if (this.state.authenticationStatus === "unavailable") {
+        this.state.authenticationIssue = "challenge";
+      }
+    }
     publishBrowserSnapshot(this);
     syncSessionRecheck(this);
+  }
+
+  clearSecurityCheckRequired(proof) {
+    this.logger?.info?.("browser.security_check_cleared", { proof });
+    this.setState({ securityCheckRequired: false,
+      ...(this.state.authenticationIssue === "challenge"
+        ? { authenticationIssue: authenticationIssue(this.state.message) } : {}) });
   }
 
   sessionRecheckEnabled() {
