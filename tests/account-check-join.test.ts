@@ -62,3 +62,41 @@ test("Check account waits for the running inspection before its busy check", asy
   await wait;
   expect(waited).toBe(true);
 });
+
+test("Retry joins a follow-on check that a chained Check starts, then runs", async () => {
+  const inspection = deferred();
+  const verification = deferred();
+  let retries = 0;
+  const host: any = { activeTraceId: null, readOnlyInspection: { name: "session inspection", done: inspection.promise } };
+  const accounts = pool(host);
+  const original = AccountBrowserPool.prototype.refreshAccountAuthentication;
+  accounts.refreshAccountAuthentication = function (id: string, joined?: number) {
+    if (host.readOnlyInspection) return original.call(this, id, joined);
+    retries += 1;
+    return Promise.resolve({ retried: true });
+  };
+  const result = accounts.refreshAccountAuthentication("default");
+  // The session inspection hands the page straight to connector verification.
+  host.readOnlyInspection = { name: "connector verification", done: verification.promise };
+  inspection.resolve();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(retries).toBe(0);
+  host.readOnlyInspection = null;
+  verification.resolve();
+  await expect(result).resolves.toEqual({ retried: true });
+  expect(retries).toBe(1);
+});
+
+test("a Check that waited through a launcher restart pause stops before inspecting", async () => {
+  const running = deferred();
+  let inspected = false;
+  const host: any = { activeTraceId: null, readOnlyInspection: { name: "session inspection", done: running.promise },
+    inspectSession: async () => { inspected = true; } };
+  const accounts = pool(host);
+  const check = accounts.checkAccount("default");
+  accounts.inspectionsPaused = true;
+  host.readOnlyInspection = null;
+  running.resolve();
+  await expect(check).rejects.toThrow("paused for launcher restart");
+  expect(inspected).toBe(false);
+});

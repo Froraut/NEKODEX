@@ -123,6 +123,18 @@ test("a check that leaves the home page on its saved chat brings it back before 
   expect(probes.every(options => options.preserveVerified === true)).toBe(true);
 }, 10_000);
 
+test("a released conversation page, which may hold a draft, is observed in place", async () => {
+  const conversation = "https://chatgpt.com/c/11111111-2222-3333-4444-555555555555?temporary-chat=true";
+  const { host, loads, probes, observed } = releasedHomeHost(conversation, async () => {});
+  host.runAuthenticationProbe = async (options: any = {}) => { probes.push(options); return { authenticated: true }; };
+  // A page load during the check asked for an observation of the released page.
+  host.authProbeDeferredForInspection = true;
+  await host.withReadOnlyInspection("session verification retry", async () => {}, { preserveSelection: true });
+  await observed();
+  expect(loads).toEqual([]);
+  expect(probes).toHaveLength(1);
+});
+
 test("a new check cancels the observation of the page the previous one released", async () => {
   const { host, probes, observed } = releasedHomeHost("https://chatgpt.com/", () => new Promise<void>(() => {}));
   host.runAuthenticationProbe = async (options: any = {}) => { probes.push(options); return { authenticated: true }; };

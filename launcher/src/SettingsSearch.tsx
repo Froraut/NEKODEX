@@ -50,7 +50,8 @@ export function SettingsSearch({ surface, language, reveal }: {
         : (current + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
       buttons[next]?.focus();
     } else if (event.key === "Enter" && event.target === input.current) {
-      event.preventDefault(); select(matches[0]!);
+      event.preventDefault();
+      if (matches[0]) select(matches[0]);
     } else if (current >= 0 && (event.key === "Home" || event.key === "End")) {
       event.preventDefault(); buttons[event.key === "Home" ? 0 : buttons.length - 1]?.focus();
     }

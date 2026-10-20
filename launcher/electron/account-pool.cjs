@@ -792,6 +792,9 @@ class AccountBrowserPool {
     if (this.inspectionsPaused) throw new Error('Browser checks are paused for launcher restart');
     const host = this.getHost(id);
     await this.waitForAccountInspection(id);
+    // A launcher restart or shutdown can pause checks while this one waited.
+    if (this.inspectionsPaused) throw new Error('Browser checks are paused for launcher restart');
+    if (this.destroyed) throw new Error('ChatGPT account pool is closed');
     this.assertAccountOperationAvailable(id);
     const epoch = this.invalidateEvidence(id);
     try {
@@ -819,7 +822,7 @@ class AccountBrowserPool {
       throw error;
     } finally { this.publish(); }
   }
-  refreshAccountAuthentication(id) {
+  refreshAccountAuthentication(id, joinedChecks = 0) {
     validateAccountId(id);
     if (this.destroyed) return Promise.reject(new Error('ChatGPT account pool is closed'));
     const existing = this.authenticationRefreshOperations.get(id);
@@ -828,13 +831,14 @@ class AccountBrowserPool {
     const host = this.getHost(id);
     const inspection = host.readOnlyInspection?.done;
     if (inspection && !host.activeTraceId && !this.accountMutationOperationLabel(id)) {
-      // Join the running check, then retry once it has released the browser.
+      // Join the running check, then retry once it has released the browser. Startup and Check
+      // chain a session inspection into connector verification, so join up to three checks.
       let joined;
       joined = Promise.resolve(inspection).catch(() => {}).then(() => {
         if (this.authenticationRefreshOperations.get(id) === joined) this.authenticationRefreshOperations.delete(id);
-        return host.readOnlyInspection ? Promise.reject(this.accountOperationError(id)
+        return host.readOnlyInspection && joinedChecks >= 2 ? Promise.reject(this.accountOperationError(id)
           ?? new Error('This ChatGPT account is still being checked; retry after it finishes'))
-          : this.refreshAccountAuthentication(id);
+          : this.refreshAccountAuthentication(id, joinedChecks + 1);
       });
       this.authenticationRefreshOperations.set(id, joined);
       return joined;

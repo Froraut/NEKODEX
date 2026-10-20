@@ -768,12 +768,12 @@ class BrowserHost {
         if (this.readOnlyInspection === inspection) {
           this.readOnlyInspection = null;
           publishBrowserSnapshot(this);
-          // Page loads during the check were not observed, and a check that failed or was cut off
-          // can leave the page on its saved chat. Observe the released page once, so a real
-          // sign-out during the check is still published.
+          // Page loads during the check were not observed, and a connector check that failed or
+          // was cut off can leave the page on its new saved chat. Observe the released page once,
+          // so a real sign-out during the check is still published.
           const deferred = this.authProbeDeferredForInspection;
           this.authProbeDeferredForInspection = false;
-          if ((deferred || this.homeLeftOffTemporaryChat()) && !this.destroyed) {
+          if ((deferred || this.homeLeftOnSavedNewChat()) && !this.destroyed) {
             void this.observeReleasedHome().catch(() => {});
           }
         }
@@ -781,11 +781,15 @@ class BrowserHost {
     return inspection.done;
   }
 
-  homeLeftOffTemporaryChat() {
+  // Connector verification works on a new saved chat. Only that page is taken back to Temporary
+  // Chat: a conversation, temporary or saved, may hold an unsent draft and stays untouched.
+  homeLeftOnSavedNewChat() {
     const contents = this.view?.webContents;
     if (!contents || contents.isDestroyed() || browserInteractionModeFor(this) !== "automatic") return false;
-    const url = contents.getURL();
-    return httpsOrigin(url) === CHATGPT_ORIGIN && !isTemporaryChatUrl(url);
+    let parsed;
+    try { parsed = new URL(contents.getURL()); } catch { return false; }
+    return parsed.origin === CHATGPT_ORIGIN && parsed.pathname === "/"
+      && parsed.searchParams.get("temporary-chat") !== "true";
   }
 
   // Bring the released home page back to Temporary Chat and wait for its composer before
@@ -798,7 +802,7 @@ class BrowserHost {
     const timeout = setTimeout(() => controller.abort(), RELEASED_HOME_OBSERVATION_MS);
     timeout.unref?.();
     try {
-      if (this.homeLeftOffTemporaryChat()) {
+      if (this.homeLeftOnSavedNewChat()) {
         this.logger.info("browser.session_surface_reloaded", { reason: "check-released" });
         await awaitInspection(this.view.webContents.loadURL(TEMPORARY_CHAT_URL), controller.signal).catch(() => {});
       }
@@ -1688,7 +1692,7 @@ class BrowserHost {
     this.homeNavigationTimeout = null;
   }
 
-  async hardRefreshHome(timeoutMs = BROWSER_NAVIGATION_TIMEOUT_MS, signal) {
+  async hardRefreshHome(timeoutMs = BROWSER_NAVIGATION_TIMEOUT_MS, signal, message = "Refreshing the ChatGPT connector catalog") {
     signal?.throwIfAborted();
     const contents = this.view?.webContents;
     if (!contents || contents.isDestroyed()) {
@@ -1696,7 +1700,7 @@ class BrowserHost {
     }
     this.setState({
       status: "loading",
-      message: "Refreshing the ChatGPT connector catalog",
+      message,
       loading: true,
     });
     await new Promise((resolve, reject) => {
@@ -1755,14 +1759,19 @@ class BrowserHost {
 
   async refreshChatGptHomeDocument(signal) {
     signal?.throwIfAborted();
-    // A navigation from the idle host already creates a fresh ChatGPT document. Reload only an
-    // existing Temporary Chat document so the helper observes one authoritative SPA bootstrap.
+    await this.reloadTemporaryChat(signal);
+    await this.waitForAuthenticated(60_000, signal, { preserveVerified: true });
+  }
+
+  // A navigation from the idle host or another page already creates a fresh ChatGPT document. An
+  // existing Temporary Chat document is reloaded past the HTTP cache and service worker, so the
+  // helper observes one authoritative SPA bootstrap and a stuck error page is not served again.
+  async reloadTemporaryChat(signal, message) {
     if (isTemporaryChatUrl(this.view.webContents.getURL())) {
-      await this.hardRefreshHome(BROWSER_NAVIGATION_TIMEOUT_MS, signal);
+      await this.hardRefreshHome(BROWSER_NAVIGATION_TIMEOUT_MS, signal, message);
     } else {
       await awaitInspection(this.view.webContents.loadURL(TEMPORARY_CHAT_URL), signal);
     }
-    await this.waitForAuthenticated(60_000, signal, { preserveVerified: true });
   }
 
   workspaceRequestOwner(details) {
@@ -3657,7 +3666,7 @@ class BrowserHost {
           && surface?.composer === false && surface.readyState === "complete"
           && !contents.isDestroyed() && contents.getURL().startsWith(CHATGPT_ORIGIN)) {
           this.logger.info("browser.session_surface_reloaded", { reason: "composer-missing" });
-          await awaitInspection(contents.loadURL(TEMPORARY_CHAT_URL), signal);
+          await this.reloadTemporaryChat(signal, "Checking saved ChatGPT session");
           state = await awaitInspection(this.probeAuthentication({ signal, observationOnly: true }), signal);
           signal.throwIfAborted();
         }
