@@ -1922,9 +1922,13 @@ class AccountBrowserPool {
     const settledFailureCode = settledStatus === 'failed' && result?.authenticationRequired
       ? 'chatgpt_sign_in_required' : failureCode;
     // A failed turn may retain its inspection surface; host end must succeed before refund.
-    const unsent = Boolean(tab && (owner.turnTabs.get(tab.id) === tab || result?.releasedUnsent === true)
-      && owner.taskLedger?.get(tab.taskRecordId)?.terminal
-      && owner.taskLedger.get(tab.taskRecordId).submission === 'not-sent');
+    // A failed navigation can tear the tab down before endTurn runs. This execution's own ledger
+    // record still proves that nothing reached ChatGPT, so Codex may retry it.
+    const record = tab ? owner.taskLedger?.get(tab.taskRecordId)
+      : owner.taskLedger?.snapshot?.().filter(row => row.traceId === traceId)
+        .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+    const unsent = Boolean((tab ? owner.turnTabs.get(tab.id) === tab || result?.releasedUnsent === true : record)
+      && record?.terminal && record.submission === 'not-sent');
     if (unsent) this.rollbackUnsentAdmission(traceId, helperPid);
     const pendingRemoval = this.unsentAdmissions?.get(traceId)?.removedOwner;
     if (pendingRemoval) this.settleRemovedUnsentAdmission(pendingRemoval);
