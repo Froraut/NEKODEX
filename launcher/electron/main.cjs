@@ -2818,6 +2818,7 @@ async function start() {
     getPool: () => browserHost,
     getInteractionMode: () => stateStore.read().browserInteractionMode,
     BrowserWindow, clipboard, codexHome: LAUNCHER_PROFILE.codexHome, logger,
+    openExternal: url => shell.openExternal(url),
   });
   registerLifecycleParticipant("Codex account sign-in", accountToolsService);
   const startupOwner = lifecycleAdmission.acquire("local runtime startup");

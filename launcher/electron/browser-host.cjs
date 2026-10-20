@@ -5,7 +5,7 @@ const { BrowserManualTurns, manualPromptDigest, MANUAL_SUBMIT_TIMEOUT_MS, MANUAL
 const { BrowserTurnLifecycle, TURN_HEARTBEAT_SWEEP_MS } = require("./browser-turn-lifecycle.cjs");
 const { BrowserWorkspaceWindows } = require("./browser-workspace-windows.cjs");
 const { OPENAI_API_TUNNELS_URL, openAiApiPanelUrl, allowedOpenAiApiPanelUrl,
-  openAiApiSessionMutation, isOpenAiApiSessionMutationRequest, googleRefusedEmbeddedSignIn } = require("./openai-api-panel.cjs");
+  openAiApiSessionMutation, isOpenAiApiSessionMutationRequest, googleRefusedEmbeddedSignIn, passkeyRequiredInEmbeddedSignIn } = require("./openai-api-panel.cjs");
 const { authenticationIssue } = require("./authentication-issue.cjs");
 const { validateAccountId } = require("./account-registry.cjs");
 const fs = require("node:fs");
@@ -2852,9 +2852,12 @@ class BrowserHost {
           this.apiPanelContents.set(contents, window);
           this.workspaceMetadata.set(contents, metadata);
           this.permissionPolicy.register(contents, 'auth'); this.externalLinkBroker.register(contents);
-          contents.on("did-navigate", (_event, address) => {
-            if (googleRefusedEmbeddedSignIn(address)) this.handOffRefusedApiPanel(contents);
-          });
+          const handOff = (_event, address) => {
+            if (googleRefusedEmbeddedSignIn(address)) this.handOffRefusedApiPanel(contents, "google");
+            else if (passkeyRequiredInEmbeddedSignIn(address)) this.handOffRefusedApiPanel(contents, "passkey");
+          };
+          contents.on("did-navigate", handOff);
+          contents.on("did-navigate-in-page", handOff);
         },
         unregister: contents => {
           for (const [requestId, pending] of this.workspaceMutationRequests) {
@@ -2956,10 +2959,12 @@ class BrowserHost {
   }
 
   /** Google refused sign-in in the panel: continue the same fixed Platform page in the system browser. */
-  handOffRefusedApiPanel(contents) {
+  handOffRefusedApiPanel(contents, reason = "google") {
     const window = this.apiPanelContents.get(contents);
+    if (!window || window.isDestroyed() || this.apiPanelHandoffs?.has(window)) return;
+    (this.apiPanelHandoffs ??= new WeakSet()).add(window);
     const section = [...(this.apiPanelWindows ?? new Map())].find(([, candidate]) => candidate === window)?.[0] ?? "tunnels";
-    this.logger.info("browser.api_panel_google_handoff", { section });
+    this.logger.info(reason === "passkey" ? "browser.api_panel_passkey_handoff" : "browser.api_panel_google_handoff", { section });
     void shell.openExternal(openAiApiPanelUrl(section)).catch(error => this.logger.warn("browser.api_panel_handoff_failed", {
       message: error instanceof Error ? error.message : String(error) }));
     if (window && !window.isDestroyed()) window.close();

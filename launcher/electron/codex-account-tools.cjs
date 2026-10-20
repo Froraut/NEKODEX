@@ -1,6 +1,7 @@
 const { AccountQuotaReader } = require('./account-quotas.cjs');
 const { createCodexLoginController, OFFICIAL_DEVICE_VERIFICATION_URL } = require('./codex-login.cjs');
 const { allowedAuthUrl } = require('./browser-navigation-policy.cjs');
+const { passkeyRequiredInEmbeddedSignIn } = require('./openai-api-panel.cjs');
 const { validateAccountId } = require('./account-registry.cjs');
 const { awaitInspection } = require('./inspection-control.cjs');
 
@@ -11,7 +12,7 @@ function sameIdentity(a, b) {
 
 /** Account-scoped quota reads and the official shared Codex device-login flow. */
 function createCodexAccountTools({ getPool, getInteractionMode = () => 'automatic', BrowserWindow, clipboard, codexHome, logger,
-  quotaReader = new AccountQuotaReader(), createController = createCodexLoginController }) {
+  quotaReader = new AccountQuotaReader(), createController = createCodexLoginController, openExternal }) {
   let binding = null;
   let lastFlow = null;
   let starting = false;
@@ -316,6 +317,18 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
         void controller.cancel({ flowId, accountId: id }).then(watch).catch(() => {});
       }
     });
+    // The device code works in any browser. A passkey step cannot finish in this embedded window,
+    // so continue in the system browser and keep the flow (and its copyable code) running.
+    const passkeyHandoff = (_event, url) => {
+      if (!passkeyRequiredInEmbeddedSignIn(url) || window.isDestroyed() || typeof openExternal !== 'function') return;
+      logger?.info?.('codex.login_passkey_handoff', { accountId: id });
+      void Promise.resolve(openExternal(OFFICIAL_DEVICE_VERIFICATION_URL)).catch(error => logger?.warn?.('codex.login_handoff_failed', {
+        message: error instanceof Error ? error.message : String(error) }));
+      ownedClosures.add(window);
+      window.close();
+    };
+    window.webContents.on('did-navigate', passkeyHandoff);
+    window.webContents.on('did-navigate-in-page', passkeyHandoff);
     try { await window.loadURL(OFFICIAL_DEVICE_VERIFICATION_URL); return true; }
     catch { if (!window.isDestroyed()) window.close(); throw new Error('The official Codex sign-in page could not open'); }
   }
