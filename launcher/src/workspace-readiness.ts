@@ -48,6 +48,8 @@ export interface WorkspaceReadinessInput {
   manual: boolean;
   development: boolean;
   authenticationStatus: WorkspaceAuthenticationStatus;
+  /** Why the session could not be checked; "challenge" waits for a person to pass Cloudflare's check. */
+  authenticationIssue?: BrowserState["authenticationIssue"];
   smokePassed: boolean;
   installed: boolean;
   catalogVerified: boolean;
@@ -81,6 +83,7 @@ export type ConnectionStatusKey =
   | "confirm-in-codex"         // the user still has to confirm the models in the Codex picker
   | "needs-sign-in"
   | "verification-unavailable" // the session could not be checked (not proof of sign-out)
+  | "security-check"           // ChatGPT waits for a person to pass Cloudflare's check
   | "catalog-unavailable"
   | "needs-setup"              // a required connection is not set up
   | "not-connected"            // an optional connection is not set up
@@ -91,7 +94,7 @@ export type ConnectionStatusKey =
 /** StateDot state: green ready, amber busy/attention, grey idle, rose error. */
 export type ConnectionDot = "ready" | "busy" | "idle" | "error";
 /** The short action cue of a connection row ("Manage ›"). */
-export type ConnectionAction = "manage" | "connect" | "sign-in" | "retry" | "open" | "open-routing-checks";
+export type ConnectionAction = "manage" | "connect" | "sign-in" | "retry" | "open" | "open-browser" | "open-routing-checks";
 
 export interface ConnectionStatus {
   key: ConnectionStatusKey;
@@ -141,9 +144,17 @@ function toolsCapability(input: WorkspaceReadinessInput): WorkspaceCapabilitySta
 const status = (key: ConnectionStatusKey, dot: ConnectionDot, action: ConnectionAction, ready = false): ConnectionStatus =>
   ({ key, dot, action, ready });
 
+// Only a person passes Cloudflare's check, and a retry reloads the page that shows it. A session check does not
+// pass it either, so the warning stays up while one runs.
+function securityCheckPending(input: WorkspaceReadinessInput): boolean {
+  return input.authenticationIssue === "challenge"
+    && (input.authenticationStatus === "unavailable" || input.authenticationStatus === "unknown");
+}
+
 function sessionConnection(input: WorkspaceReadinessInput): ConnectionStatus {
   if (input.manual) return status("manual", "idle", "manage", true);
   if (input.authenticationStatus === "verified") return status("verified", "ready", "manage", true);
+  if (securityCheckPending(input)) return status("security-check", "busy", "open-browser");
   if (input.authenticationStatus === "unknown") return status("checking", "busy", "open");
   // Not proof of sign-out: the next step is to check the session again, not to sign in.
   if (input.authenticationStatus === "unavailable") return status("verification-unavailable", "busy", "retry");
@@ -200,6 +211,7 @@ export function deriveWorkspaceReadiness(input: WorkspaceReadinessInput): Worksp
   });
 
   if (!input.manual) {
+    if (securityCheckPending(input)) return result("retry-session", "session-unavailable");
     if (input.authenticationStatus === "unknown") return result("wait", "session-checking");
     if (input.authenticationStatus === "unavailable") return result("retry-session", "session-unavailable");
     if (input.authenticationStatus === "signed-out") return result("open-accounts", "session-signed-out");
@@ -287,6 +299,7 @@ export function workspaceReadinessInput({ snapshot, browser, catalogFailure, too
     manual,
     development: snapshot.profile === "development",
     authenticationStatus: manual ? "verified" : authenticationStatus,
+    authenticationIssue: browser?.authenticationIssue ?? null,
     smokePassed: snapshot.smokePassed,
     installed: snapshot.state.coreSetupComplete === true,
     catalogUnavailable: Boolean(catalogFailure),

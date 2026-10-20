@@ -1448,6 +1448,13 @@ class BrowserHost {
         ? { url, loading: true }
         : { status: "loading", message: "Opening ChatGPT", url, loading: true });
     });
+    contents.on("did-navigate", () => {
+      // A new document does not keep the throttling that was turned off for the previous one, so
+      // a check that reloads this offscreen page would wait on a document that renders no frame:
+      // ChatGPT never measures its composer there. Electron 44 also reports such a page
+      // "visible", so the session probe then never accepts it.
+      if (this.homeThrottlingOff) this.applyHomeThrottling(contents, false);
+    });
     contents.on("did-finish-load", () => {
       this.primaryRendererReady = true;
       this.notePrimaryRendererRecovered(contents);
@@ -1917,6 +1924,8 @@ class BrowserHost {
     if (details.statusCode >= 200 && details.statusCode < 400) {
       this.cloudflareChallengeRecoveryArmed = true;
       this.cloudflareChallengeDeferred = false;
+      // ChatGPT answers again: the user (or a new network route) completed the check.
+      if (this.state?.securityCheckRequired) this.clearSecurityCheckRequired("backend-response");
       return false;
     }
     if (!isChatGptCloudflareChallengeResponse(details)) return false;
@@ -1981,9 +1990,12 @@ class BrowserHost {
         this.logger.error("browser.cloudflare_challenge_recovery_failed", navigationErrorForLog(error));
         // An account or operation that took ownership while the read was pending owns its UI too.
         if (error?.code === "CHALLENGE_RECOVERY_SUPERSEDED") return;
+        // A reload could not clear it: ChatGPT is waiting for a person to complete Cloudflare's
+        // check, which a hidden view never can. Say so plainly until ChatGPT answers again.
+        this.logger.warn("browser.security_check_required", {});
         this.setState({ status: "error",
           message: "ChatGPT security verification needs attention. Open the browser and complete verification; your draft was kept.",
-          loading: false });
+          loading: false, authenticated: false, authenticationStatus: "unavailable", securityCheckRequired: true });
       })
       .finally(() => {
         if (this.cloudflareChallengeRecovery === tracked) this.cloudflareChallengeRecovery = null;
@@ -2107,6 +2119,13 @@ class BrowserHost {
   setHomeThrottling(contents, throttled) {
     if (!contents || contents.isDestroyed() || this.view?.webContents !== contents) return;
     if (throttled && (this.activeTraceId || this.manualOperation || this.loginOperation)) return;
+    this.applyHomeThrottling(contents, throttled);
+  }
+
+  // Records the home page's throttling so the next document gets it too (see bindWebContents).
+  applyHomeThrottling(contents, throttled) {
+    if (!contents || contents.isDestroyed()) return;
+    this.homeThrottlingOff = !throttled;
     try { contents.setBackgroundThrottling(throttled); } catch {}
   }
 
@@ -2191,8 +2210,29 @@ class BrowserHost {
       visible: this.visible,
       surfaceActive: this.surfaceActive,
     };
+    // A pending Cloudflare check outranks whatever a later session read reports (usually a
+    // 403), so every surface keeps asking the user to complete it until ChatGPT answers.
+    if (this.state.securityCheckRequired) {
+      if (this.state.authenticationStatus === "verified" || this.state.authenticationStatus === "signed-out") {
+        this.state.securityCheckRequired = false;
+        this.logger?.info?.("browser.security_check_cleared", { proof: "session-check" });
+      } else {
+        // Also while a session check runs ("unknown"): the check itself does not pass Cloudflare.
+        this.state.authenticationIssue = "challenge";
+      }
+    }
     publishBrowserSnapshot(this);
     syncSessionRecheck(this);
+  }
+
+  clearSecurityCheckRequired(proof) {
+    this.logger?.info?.("browser.security_check_cleared", { proof });
+    this.setState({ securityCheckRequired: false,
+      ...(this.state.authenticationIssue === "challenge"
+        ? { authenticationIssue: authenticationIssue(this.state.message) } : {}) });
+    // ChatGPT answers again, but the account still reads unavailable, and the background re-check
+    // does not run while the browser is shown. Observe the session now.
+    if (proof === "backend-response") void this.probeAuthentication().catch(() => {});
   }
 
   sessionRecheckEnabled() {
@@ -2802,7 +2842,7 @@ class BrowserHost {
 
   async returnToIdle() {
     this.hide();
-    this.view.webContents.setBackgroundThrottling(true);
+    this.applyHomeThrottling(this.view.webContents, true);
     if (this.view.webContents.getURL() !== IDLE_BROWSER_URL) {
       await this.view.webContents.loadURL(IDLE_BROWSER_URL);
     }
@@ -4075,7 +4115,7 @@ class BrowserHost {
     const contents = this.view?.webContents;
     try {
       publishBrowserSnapshot(this);
-      if (contents && !contents.isDestroyed()) contents.setBackgroundThrottling(false);
+      this.applyHomeThrottling(contents, false);
       return await action();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -4086,7 +4126,7 @@ class BrowserHost {
     } finally {
       // Native renderer bookkeeping must not retain the operation lease if it throws.
       this.manualOperation = null;
-      try { if (contents && !contents.isDestroyed()) contents.setBackgroundThrottling(true); }
+      try { this.applyHomeThrottling(contents, true); }
       finally { publishBrowserSnapshot(this); }
     }
   }

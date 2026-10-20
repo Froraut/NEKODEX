@@ -3,6 +3,8 @@ import type { Language } from "./types";
 const en = {
   session: {
     verificationUnavailable: "Verification unavailable",
+    securityCheckTitle: "Security check needed",
+    securityCheckAction: "Open Browser",
     verificationUnavailableBody: "NEKODEX could not check this session. This does not mean the account is signed out.",
     lastVerifiedAt: "Last verified {time}",
     retryVerification: "Retry verification",
@@ -62,6 +64,8 @@ export type WorkflowCopy = StringShape<typeof en>;
 const ru: WorkflowCopy = {
   session: {
     verificationUnavailable: "Проверка недоступна",
+    securityCheckTitle: "Нужна проверка безопасности",
+    securityCheckAction: "Открыть браузер",
     verificationUnavailableBody: "NEKODEX не смог проверить этот сеанс. Это не означает, что выполнен выход из аккаунта.",
     lastVerifiedAt: "Последняя проверка: {time}",
     retryVerification: "Повторить проверку",
@@ -118,6 +122,8 @@ const ru: WorkflowCopy = {
 const zhCN: WorkflowCopy = {
   session: {
     verificationUnavailable: "无法验证",
+    securityCheckTitle: "需要安全验证",
+    securityCheckAction: "打开浏览器",
     verificationUnavailableBody: "NEKODEX 无法检查此会话。这并不表示账号已退出登录。",
     lastVerifiedAt: "上次验证：{time}",
     retryVerification: "重试验证",
@@ -174,6 +180,8 @@ const zhCN: WorkflowCopy = {
 const zhTW: WorkflowCopy = {
   session: {
     verificationUnavailable: "無法驗證",
+    securityCheckTitle: "需要安全驗證",
+    securityCheckAction: "開啟瀏覽器",
     verificationUnavailableBody: "NEKODEX 無法檢查此工作階段。這不表示帳號已登出。",
     lastVerifiedAt: "上次驗證：{time}",
     retryVerification: "重試驗證",
@@ -230,6 +238,8 @@ const zhTW: WorkflowCopy = {
 const ja: WorkflowCopy = {
   session: {
     verificationUnavailable: "確認できません",
+    securityCheckTitle: "セキュリティチェックが必要です",
+    securityCheckAction: "ブラウザーを開く",
     verificationUnavailableBody: "NEKODEX はこのセッションを確認できませんでした。サインアウトしたことを意味しません。",
     lastVerifiedAt: "前回の確認: {time}",
     retryVerification: "確認を再試行",
@@ -286,6 +296,8 @@ const ja: WorkflowCopy = {
 const ko: WorkflowCopy = {
   session: {
     verificationUnavailable: "확인할 수 없음",
+    securityCheckTitle: "보안 확인 필요",
+    securityCheckAction: "브라우저 열기",
     verificationUnavailableBody: "NEKODEX가 이 세션을 확인하지 못했습니다. 계정에서 로그아웃되었다는 뜻은 아닙니다.",
     lastVerifiedAt: "마지막 확인: {time}",
     retryVerification: "확인 다시 시도",

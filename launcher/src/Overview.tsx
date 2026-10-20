@@ -151,6 +151,7 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
               // "Retry verification" checks the session here, like the hero; every other action opens the page.
               onClick={() => {
                 if (connection.status.action === "retry") { void retrySession(); return; }
+                if (connection.status.action === "open-browser") { navigate("browser"); return; }
                 if (connection.status.action === "open-routing-checks") requestRoutingChecks();
                 navigate(connection.surface);
               }} />)}</div>
