@@ -1448,6 +1448,13 @@ class BrowserHost {
         ? { url, loading: true }
         : { status: "loading", message: "Opening ChatGPT", url, loading: true });
     });
+    contents.on("did-navigate", () => {
+      // A new document does not keep the throttling that was turned off for the previous one, so
+      // a check that reloads this offscreen page would wait on a document that renders no frame:
+      // ChatGPT never measures its composer there. Electron 44 also reports such a page
+      // "visible", so the session probe then never accepts it.
+      if (this.homeThrottlingOff) this.applyHomeThrottling(contents, false);
+    });
     contents.on("did-finish-load", () => {
       this.primaryRendererReady = true;
       this.notePrimaryRendererRecovered(contents);
@@ -2112,6 +2119,13 @@ class BrowserHost {
   setHomeThrottling(contents, throttled) {
     if (!contents || contents.isDestroyed() || this.view?.webContents !== contents) return;
     if (throttled && (this.activeTraceId || this.manualOperation || this.loginOperation)) return;
+    this.applyHomeThrottling(contents, throttled);
+  }
+
+  // Records the home page's throttling so the next document gets it too (see bindWebContents).
+  applyHomeThrottling(contents, throttled) {
+    if (!contents || contents.isDestroyed()) return;
+    this.homeThrottlingOff = !throttled;
     try { contents.setBackgroundThrottling(throttled); } catch {}
   }
 
@@ -2824,7 +2838,7 @@ class BrowserHost {
 
   async returnToIdle() {
     this.hide();
-    this.view.webContents.setBackgroundThrottling(true);
+    this.applyHomeThrottling(this.view.webContents, true);
     if (this.view.webContents.getURL() !== IDLE_BROWSER_URL) {
       await this.view.webContents.loadURL(IDLE_BROWSER_URL);
     }
@@ -4097,7 +4111,7 @@ class BrowserHost {
     const contents = this.view?.webContents;
     try {
       publishBrowserSnapshot(this);
-      if (contents && !contents.isDestroyed()) contents.setBackgroundThrottling(false);
+      this.applyHomeThrottling(contents, false);
       return await action();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -4108,7 +4122,7 @@ class BrowserHost {
     } finally {
       // Native renderer bookkeeping must not retain the operation lease if it throws.
       this.manualOperation = null;
-      try { if (contents && !contents.isDestroyed()) contents.setBackgroundThrottling(true); }
+      try { this.applyHomeThrottling(contents, true); }
       finally { publishBrowserSnapshot(this); }
     }
   }
