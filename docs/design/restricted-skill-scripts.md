@@ -108,6 +108,7 @@ distributions/versions, shell, PDF OCR/full visual interpretation, network resou
 and Windows/Linux remain separate work. The
 [full-shell/native-build VM proposal](isolated-execution-environments.md) is design
 only. This source contract does not establish installed-app delivery.
+*Status 2026-10-21: PEP 508 markers, extras and direct-URL pins for explicitly selected, SHA-pinned artifacts are now evaluated on `main`, and the isolated VM is no longer design-only: it ships in local builds and an installed `.13` task imported a VM-built C extension. Other Python distributions, PDF OCR, network resources and Windows/Linux remain open.*
 
 
 Selected PDF v5 packages retain bounded raw PDF files as immutable dependencies,

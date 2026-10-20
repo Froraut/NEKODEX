@@ -58,3 +58,10 @@ fake-SFTP/runner integration. P03/P06 real remote proof remains open.
 Final remote source gates passed: both TypeScript projects19:04, renderer196
 modules19:05–19:06, plain CLI643/exact `6.1.32-nekodex.9`19:06 and
 module-map730/final check/documented paths. Source commit/new CI remain pending.
+
+Status 2026-10-21: the source was committed as `bbf9108` and reached `main` with the
+adoption stack (`296addd`, CI passed). Real remote proof has since passed separately:
+real SSH/SFTP read/write/command and worktree create/Open/archive
+([receipt](../reviews/2026-10-18-real-remote-workspace.md)), and a real Native Goal
+that used `remote/read` and `remote/command` on an actual SSH host
+([review](../reviews/2026-10-19-real-native-remote-agent.md)).

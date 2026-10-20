@@ -1243,6 +1243,24 @@ class RuntimeHost {
     }
   }
 
+  // Upgrades prune older runtimes, so Codex's Interrupt hook follows the runtime that runs now. A failure
+  // leaves the route and the running runtime alone; the next start or upgrade tries again.
+  async refreshInterruptHook(name) {
+    try {
+      const refreshed = await this.run(name, ["route", "refresh-hook"], {
+        embedded: true,
+        message: "Updating the Codex interrupt hook",
+        successMessage: "Codex interrupt hook is current",
+        timeoutMs: 15_000,
+      });
+      if (JSON.parse(refreshed.stdout)?.changed === true) this.logger.info("bridge.interrupt_hook_refreshed", {});
+    } catch (error) {
+      this.logger.warn("bridge.interrupt_hook_refresh_failed", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   async connectBridgeRoute() {
     this.assertProductionProfile("Codex bridge routing");
     const name = "bridge-connect";
@@ -1251,7 +1269,10 @@ class RuntimeHost {
     try {
       const current = await this.bridgeStatusAwaitingChainedGateway(name);
       if (!current.installed) throw new Error("Install the Codex integration before connecting the bridge route");
-      if (current.active) return current;
+      if (current.active) {
+        await this.refreshInterruptHook(name);
+        return current;
+      }
       try {
         const connected = await this.run(name, ["route", "connect"], {
           embedded: true,
@@ -1264,6 +1285,7 @@ class RuntimeHost {
         if (!verified.installed || !verified.active) {
           throw new Error("Codex bridge route connection did not persist in the active config");
         }
+        await this.refreshInterruptHook(name);
         return result;
       } catch (error) {
         // Route failure does not revoke a proven local/native runtime. Startup/update

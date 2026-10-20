@@ -18,6 +18,7 @@ import {
   installCodexInterruptHook,
   installCodexInterruptHookCommand,
   installCodexInterruptHookTrust,
+  restoreCodexInterruptHookTrust,
   verifyCodexInterruptHook,
 } from "./codex-interrupt-hook";
 import {
@@ -724,6 +725,56 @@ export function activateCodexIntegration(): SetCodexIntegrationActiveResult {
     route.hooksText && hooksJson ? [{ path: hooksJson.path, data: route.hooksText, followSymlink: true }] : [],
   );
   return { changed: true, active: true };
+}
+
+/**
+ * Points the installed JSON Interrupt hook at the current runtime. Upgrades prune older runtimes, so a hook
+ * installed by an earlier release would run a program that no longer exists and Codex interrupts would never
+ * reach NEKODEX. Only the hook entry, its trust and the journal change: the route (which the user may have put
+ * behind a gateway) and every other setting stay as they are.
+ */
+export function refreshCodexInterruptHook(config: Pick<AppConfig, "runtimeCommand"> = loadConfig()): { changed: boolean } {
+  const existing = readJournal({ reconcileInactiveHook: false });
+  if (!existing || existing.version !== 11 || !existing.active || existing.interruptHook.storage !== "json") {
+    return { changed: false };
+  }
+  const command = codexInterruptHookCommand(config);
+  if (existing.interruptHook.command === command) return { changed: false };
+  assertJournalTargetsConfig(existing, getCodexConfigPath());
+  // A hook entry the user edited is theirs: restoreManagedJsonHook refuses it and nothing is written.
+  const restoredHooks = restoreManagedJsonHook(existing);
+  if (!restoredHooks) return { changed: false };
+  const hook = installCodexInterruptHookJson(restoredHooks.text, command);
+  const stateKey = codexJsonInterruptHookStateKey(restoredHooks.path, hook.installed.groupIndex, hook.installed.hookIndex);
+  const configText = readFileSync(existing.configPath, "utf8");
+  const untrusted = restoreCodexInterruptHookTrust(configText, {
+    stateKey: existing.interruptHook.stateKey,
+    trustedHash: existing.interruptHook.trustedHash,
+    fragment: existing.interruptHook.trustFragment,
+  });
+  const trust = installCodexInterruptHookTrust(untrusted, stateKey, codexInterruptHookHash(command));
+  assertValidCodexToml(trust.text);
+  const refreshed: CodexIntegrationJournal = {
+    ...existing,
+    interruptHook: {
+      storage: "json",
+      command,
+      hooksPath: restoredHooks.path,
+      groupIndex: hook.installed.groupIndex,
+      hookIndex: hook.installed.hookIndex,
+      entryHash: hook.installed.entryHash,
+      stateKey,
+      trustedHash: trust.installed.trustedHash,
+      trustFragment: trust.installed.fragment,
+    },
+  };
+  writeIntegrationState(
+    refreshed,
+    { path: existing.configPath, data: trust.text },
+    [],
+    [{ path: restoredHooks.path, data: hook.text, followSymlink: true }],
+  );
+  return { changed: true };
 }
 
 export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {

@@ -280,6 +280,8 @@ test("security recovery succeeds when a silent hidden page proves the session af
   await host.reloadHomeAfterCloudflareChallenge();
   expect(loads).toEqual(["https://chatgpt.com/?temporary-chat=true"]);
   expect(logs).toContainEqual(["browser.cloudflare_challenge_recovered", { proof: "session-verified" }]);
+  // No 2xx backend response re-armed recovery, so the success itself must: a later challenge recovers again.
+  expect(host.cloudflareChallengeRecoveryArmed).toBe(true);
 }, 15_000);
 
 test("security recovery accepts a backend response after the reload", async () => {

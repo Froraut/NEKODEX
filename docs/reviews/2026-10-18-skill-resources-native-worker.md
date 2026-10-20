@@ -58,6 +58,14 @@ pre-start source admission and connected public effective-policy checks before
 creating one new ephemeral thread. It does not add turn/approval authority to the
 existing metadata/fork client and is not yet connected to main/Bun/product UI.
 
+Status 2026-10-21: this and the next paragraph are superseded. The leaf now runs under main's
+[Native account execution](../../launcher/electron/native-account-execution.cjs),
+reached through the main [Native bridge](../../launcher/electron/agent-native-bridge.cjs)
+and the Bun [Native port](../../src/agent-mode/native-provider.ts), with Native
+account and thread panels in the UI. Official-account inference has run: real
+models on 18 October ([evidence](2026-10-18-native-real-models.md)) and official
+sign-in with a ten-model catalog in installed `.13`.
+
 The current product route for official-account inference remains unavailable.
 Stock Codex can bootstrap eligible managed cloud policy and plugin warmups before
 the public configuration RPC is processed; a post-start check alone does not
@@ -93,3 +101,6 @@ generation. No full repository suite, distribution packaging, signing,
 notarization, release assets, merge or installed-app replacement was performed
 for this batch. D01's separately verified installed credential migration remains
 documented in [its receipt](2026-10-18-d01-implementation.md).
+
+Status 2026-10-21: the batch was committed as `d5da164` and reached `main` with the
+adoption stack (`296addd`, CI passed).

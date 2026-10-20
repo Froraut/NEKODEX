@@ -22,7 +22,7 @@ User request: implement all additions and reliability improvements identified in
 - [x] Firefox passkey request: implement supported safe flow or document concrete platform limitation, not a pretend Chrome-compatible import.
 - [x] Review latest Pro selector refinements against local implementation.
 - [x] Development build + focused/manual verification within shared right-size budget.
-- [ ] Scoped source commit/push and concrete app handoff; installed versus source outcome explicit.
+- [x] Scoped source commit/push and concrete app handoff; installed versus source outcome explicit. *Superseded (status 2026-10-21): commit `637ce65` was pushed (PR #1), merged into `main` by `32896d1`, and `v5.3.0-nekodex.1` was published. The pending 5.3.0 install handoff below was overtaken by later releases (latest public prerelease `v6.1.28-nekodex.1`) and local builds, so it is no longer an open requirement.*
 
 Unconfirmed upstream incidents are investigation requirements, not a promise to cure upstream safety/service failures. Native endpoint switch PR 544 and Windows-only packaging/CA items need applicability decisions; no unsupported endpoint change. Preserve account data, current production tasks, Native4 contracts and local setup transaction safeguards.
 

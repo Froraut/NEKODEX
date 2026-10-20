@@ -43,3 +43,12 @@ recorded in [evidence](../reviews/2026-10-18-owned-native-images.md). Real accou
 login/catalog/inference, actual UI image flows, actual whole Bun/ToolJournal/main HTTP integration passed1/40 with a fake leaf;
 root TS18:30/renderer TS18:29, renderer195/plainCLI638/exact `.9` and final
 module-map/paths passed at 18:32. Source commit/CI remain pending.
+
+Status 2026-10-21: the batch was committed as `70ffe3b` and reached `main` with the
+adoption stack (`296addd`, CI passed). Real-account image input has since passed in
+installed `.13`: a direct PNG-only vision task on 2026-10-19 and, on 2026-10-20 at
+about 00:59 UTC, an approved `skill-resource/read` PNG tool result carried into the
+Native continuation, whose final matched a withheld expected answer
+([acceptance](/Users/alex/Documents/ChatGPT/Nekodex/reviews/evidence/native-integrated-20261019/native-login-20261020/p16-native-consumer/skill-resource-image/independent-final-acceptance.json)).
+The two-image/160 KiB binding budget is unchanged, and real file-upload correlation
+remains untested.
