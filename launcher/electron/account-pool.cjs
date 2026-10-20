@@ -20,6 +20,7 @@ const { AccountOperationLeases, validateRead, validateExclusive } = require('./a
 
 // Under the runtime's 30 s session-inspection deadline, leaving time for its own short read.
 const READ_ONLY_INSPECTION_WAIT_MS = 20_000;
+const EVIDENCE_RESTORE_RETRY_DELAYS_MS = [10_000, 30_000, 60_000, 120_000];
 
 /** Hosts share one launcher log; stamp each event with its account unless it already names one. */
 function accountScopedLogger(logger, accountId) {
@@ -933,6 +934,7 @@ class AccountBrowserPool {
     for (const id of pending) this.evidenceRefreshing.add(id);
     const release = id => { if (pending.includes(id)) this.evidenceRefreshing.delete(id); };
     const sessions = new Map();
+    const deferredRestores = new Set();
     const reserved = account => {
       const label = this.leases().exclusiveLabel(account.id);
       if (!label) return false;
@@ -977,7 +979,13 @@ class AccountBrowserPool {
             }
           }
         }
-        catch (error) { this.logger.warn('browser.account_refresh_failed', { accountId: account.id, message: error.message }); }
+        catch (error) {
+          this.logger.warn('browser.account_refresh_failed', { accountId: account.id, message: error.message });
+          // A startup probe that timed out retries through the evidence restore once startup finishes.
+          if (host.state.authenticated === true && !this.inspectionsPaused && !this.destroyed) {
+            deferredRestores.add(account.id);
+          }
+        }
         finally { release(account.id); }
       }
     };
@@ -989,6 +997,7 @@ class AccountBrowserPool {
       await checkSessions(others);
       await checkEvidence(others);
     } finally { for (const id of pending) this.evidenceRefreshing.delete(id); }
+    for (const id of deferredRestores) this.scheduleEvidenceRestore(id);
     this.publish();
     return this.snapshot();
   }
@@ -1013,7 +1022,8 @@ class AccountBrowserPool {
     }
     const host = this.hosts.get(id);
     if (!host) return;
-    const restore = { waitForTunnel, revision: 0, timer: null, wake: null, ownsRefreshing: false, cancelled: false, authRetryQueued: false };
+    const restore = { waitForTunnel, revision: 0, timer: null, wake: null, ownsRefreshing: false, cancelled: false, authRetryQueued: false,
+      failures: 0 };
     const sleep = ms => new Promise(resolve => {
       restore.wake = resolve;
       restore.timer = setTimeout(() => { restore.timer = null; restore.wake = null; resolve(); }, ms);
@@ -1036,11 +1046,24 @@ class AccountBrowserPool {
         if (this.capabilities.has(id) && (!connector || this.connectors.has(id))) return;
         const revision = restore.revision;
         this.evidenceRefreshing.add(id); restore.ownsRefreshing = true;
+        let failure = null;
         try { await this.checkAccount(id, connector); }
         catch (error) {
           // A new sign-in/tunnel receipt during the check supersedes its old evidence.
-          if (!restore.cancelled && restore.revision === revision) throw error;
+          if (!restore.cancelled && restore.revision === revision) failure = error;
         } finally { this.evidenceRefreshing.delete(id); restore.ownsRefreshing = false; }
+        if (failure) {
+          // Right after a launch or a wake ChatGPT is often still loading and the model picker
+          // times out. Retry with growing pauses instead of leaving the card on "Needs setup".
+          const delays = this.options?.evidenceRestoreRetryDelaysMs ?? EVIDENCE_RESTORE_RETRY_DELAYS_MS;
+          if (restore.failures >= delays.length) throw failure;
+          const delayMs = delays[restore.failures++];
+          this.logger?.info('browser.account_evidence_restore_retry', { accountId: id, attempt: restore.failures, delayMs,
+            message: (failure instanceof Error ? failure.message : String(failure)).split('\n')[0].slice(0, 200) });
+          this.publish();
+          await sleep(delayMs);
+          continue;
+        }
         if (restore.revision === revision && !tunnelWait) return;
       }
     })().catch(error => {

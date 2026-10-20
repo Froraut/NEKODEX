@@ -155,3 +155,44 @@ test("an account whose evidence is being rebuilt reports it as checking", () => 
   expect(pool.accountSnapshot().accounts[0]).toMatchObject({ evidenceChecking: false });
   expect(other.evidenceChecking).toBe(false);
 });
+
+test("an evidence restore that times out retries with pauses until the account checks out", async () => {
+  const host = { state: { authenticated: true }, activeTraceId: null };
+  const events: string[] = [];
+  let attempts = 0;
+  const capabilities = new Map();
+  const pool: any = Object.assign(Object.create(AccountBrowserPool.prototype), {
+    hosts: new Map([["prim2", host]]), capabilities, connectors: new Map(), reservations: new Map(),
+    destroyed: false, inspectionsPaused: false, accountOperationLabel: () => null,
+    accountTunnel: () => ({ required: false }), options: { bootstrapAccountConnectors: () => false, evidenceRestoreRetryDelaysMs: [5, 5, 5] },
+    logger: { info: (event: string) => events.push(event), warn: (event: string) => events.push(event) }, publish() {},
+    checkAccount: async () => {
+      attempts += 1;
+      if (attempts < 3) throw new Error("locator.getAttribute: Timeout 1000ms exceeded.");
+      capabilities.set("prim2", {});
+    },
+  });
+  pool.scheduleEvidenceRestore("prim2");
+  await pool.evidenceRestores.get("prim2")?.done;
+  expect(attempts).toBe(3);
+  expect(capabilities.has("prim2")).toBe(true);
+  expect(events.filter(event => event === "browser.account_evidence_restore_retry")).toHaveLength(2);
+  expect(events).not.toContain("browser.account_evidence_restore_failed");
+});
+
+test("an evidence restore gives up after its retries and reports the failure once", async () => {
+  const events: string[] = [];
+  let attempts = 0;
+  const pool: any = Object.assign(Object.create(AccountBrowserPool.prototype), {
+    hosts: new Map([["prim2", { state: { authenticated: true }, activeTraceId: null }]]), capabilities: new Map(),
+    connectors: new Map(), reservations: new Map(), destroyed: false, inspectionsPaused: false,
+    accountOperationLabel: () => null, accountTunnel: () => ({ required: false }),
+    options: { bootstrapAccountConnectors: () => false, evidenceRestoreRetryDelaysMs: [5, 5] },
+    logger: { info: (event: string) => events.push(event), warn: (event: string) => events.push(event) }, publish() {},
+    checkAccount: async () => { attempts += 1; throw new Error("Effort operation timed out"); },
+  });
+  pool.scheduleEvidenceRestore("prim2");
+  await pool.evidenceRestores.get("prim2")?.done;
+  expect(attempts).toBe(3);
+  expect(events.filter(event => event === "browser.account_evidence_restore_failed")).toHaveLength(1);
+});
