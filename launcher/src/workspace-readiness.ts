@@ -144,14 +144,18 @@ function toolsCapability(input: WorkspaceReadinessInput): WorkspaceCapabilitySta
 const status = (key: ConnectionStatusKey, dot: ConnectionDot, action: ConnectionAction, ready = false): ConnectionStatus =>
   ({ key, dot, action, ready });
 
+// Only a person passes Cloudflare's check, and a retry reloads the page that shows it. A session check does not
+// pass it either, so the warning stays up while one runs.
+function securityCheckPending(input: WorkspaceReadinessInput): boolean {
+  return input.authenticationIssue === "challenge"
+    && (input.authenticationStatus === "unavailable" || input.authenticationStatus === "unknown");
+}
+
 function sessionConnection(input: WorkspaceReadinessInput): ConnectionStatus {
   if (input.manual) return status("manual", "idle", "manage", true);
   if (input.authenticationStatus === "verified") return status("verified", "ready", "manage", true);
+  if (securityCheckPending(input)) return status("security-check", "busy", "open-browser");
   if (input.authenticationStatus === "unknown") return status("checking", "busy", "open");
-  // Only a person passes Cloudflare's check, and a retry reloads the page that shows it.
-  if (input.authenticationStatus === "unavailable" && input.authenticationIssue === "challenge") {
-    return status("security-check", "busy", "open-browser");
-  }
   // Not proof of sign-out: the next step is to check the session again, not to sign in.
   if (input.authenticationStatus === "unavailable") return status("verification-unavailable", "busy", "retry");
   return status("needs-sign-in", "busy", "sign-in");
@@ -207,6 +211,7 @@ export function deriveWorkspaceReadiness(input: WorkspaceReadinessInput): Worksp
   });
 
   if (!input.manual) {
+    if (securityCheckPending(input)) return result("retry-session", "session-unavailable");
     if (input.authenticationStatus === "unknown") return result("wait", "session-checking");
     if (input.authenticationStatus === "unavailable") return result("retry-session", "session-unavailable");
     if (input.authenticationStatus === "signed-out") return result("open-accounts", "session-signed-out");

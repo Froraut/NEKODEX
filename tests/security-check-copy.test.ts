@@ -29,3 +29,18 @@ test("the session row and its words lead to the browser for a pending check, nev
   expect(deriveWorkspaceReadiness({ ...input, authenticationIssue: "access" }).connections.session)
     .toMatchObject({ key: "verification-unavailable", action: "retry" });
 });
+
+test("a session check in progress keeps the security check up everywhere", () => {
+  const { deriveWorkspaceReadiness } = require("../launcher/src/workspace-readiness");
+  const input = { manual: false, development: false, authenticationStatus: "unknown", authenticationIssue: "challenge",
+    smokePassed: true, installed: true, catalogUnavailable: false, catalogVerified: true, pickerConfirmed: true,
+    toolsInstalled: false, toolsVerified: false, runtime: {} };
+  const readiness = deriveWorkspaceReadiness(input);
+  expect(readiness.connections.session).toMatchObject({ key: "security-check", action: "open-browser" });
+  expect(readiness.reason).toBe("session-unavailable");
+  const headline = workspaceHeadline(readiness,
+    { app: copyFor("en"), language: "en", development: false, manual: false, authenticationIssue: "challenge" } as any);
+  expect(headline).toMatchObject({ title: "Security check needed", step: "open-workspace" });
+  // Without a pending check, a session check still reads as checking.
+  expect(deriveWorkspaceReadiness({ ...input, authenticationIssue: null }).connections.session).toMatchObject({ key: "checking" });
+});

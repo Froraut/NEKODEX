@@ -620,6 +620,8 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
           const credentialLabel = account.authenticated ? text.openInBrowser : copy.accountsSignIn;
           const authUnavailable = account.authenticationStatus === "unavailable";
           const authChecking = account.authenticationStatus === "unknown";
+          // A session check does not pass Cloudflare's check, so its warning stays up while one runs.
+          const securityCheck = account.authenticationIssue === "challenge" && (authUnavailable || authChecking);
           const authRefreshBusy = authRefreshing.has(account.id);
           const lastVerified = localizedTime(account.lastVerifiedAt, language);
           const active = account.activeTurns > 0;
@@ -786,8 +788,8 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
               {caption ? <p className="accounts-card__hint nk-type-caption" id={ids.hint} role="status">{caption}</p> : null}
             </>}>
             <div className="accounts-card__body">
-              {authUnavailable ? <Notice tone="warning" id={ids.session}
-                title={account.authenticationIssue === "challenge" ? workflow.session.securityCheckTitle : undefined}
+              {authUnavailable || securityCheck ? <Notice tone="warning" id={ids.session}
+                title={securityCheck ? workflow.session.securityCheckTitle : undefined}
                 meta={lastVerified ? workflow.session.lastVerifiedAt.replace("{time}", lastVerified) : undefined}
                 action={selected ? <Button size="sm" variant="ghost" icon="browser"
                   disabled={mutationsDisabled || active || loginBoundActive || quotaReadBusy}
