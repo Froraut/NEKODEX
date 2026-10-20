@@ -5,6 +5,10 @@ const { processIdentity } = require('./update-recovery.cjs');
 
 const keyOf = binding => `${binding.accountId}\0${binding.interactionMode}`;
 const stateName = binding => Buffer.from(keyOf(binding)).toString("hex");
+// Under load tunnel-client's scoped status can take far longer than 5 s; a stalled identity
+// read then failed the whole start and left the just-started process unowned.
+const TUNNEL_IDENTITY_STATUS_TIMEOUT_MS = 15_000;
+const ACCOUNT_TUNNEL_STATUS_WAIT_MS = 30_000;
 const processStartedAt = Date.now() - process.uptime() * 1_000;
 const currentProcessMarker = marker => marker?.ownerPid === process.pid
   && Date.parse(marker.updatedAt) >= processStartedAt - 5_000;
@@ -35,6 +39,10 @@ class AccountTunnelPeer extends RuntimeSupervisor {
     this.ownedAliasVerified = false;
     this.connectAttempted = false;
     this.initialAliasAbsent = false;
+    // Set when this launcher connected an alias it had just seen absent. It survives failed
+    // attempts until ownership is verified or the alias is gone: a probe that stalls under load
+    // must not turn this launcher's own tunnel-client into an unowned alias it can never stop.
+    this.ownAttemptPending = false;
     this.restartOwnedAlias = false;
     this.ownedTunnel = null;
     // PID and start identity proven when this peer last verified ownership.
@@ -224,7 +232,7 @@ class AccountTunnelPeer extends RuntimeSupervisor {
     // the PID when live_runtime is {found:false}. Its scoped status command
     // exposes process.pid; never adopt that PID without matching every identity.
     const result = await this.runTunnelCommand(config,
-      ["runtimes", "status", config.tunnel.alias, "--json"], 5_000,
+      ["runtimes", "status", config.tunnel.alias, "--json"], TUNNEL_IDENTITY_STATUS_TIMEOUT_MS,
       "Account tunnel process identity", signal);
     if (result.code !== 0) {
       return { ...health, ready: false, statusKnown: false,
@@ -362,9 +370,10 @@ class AccountTunnelPeer extends RuntimeSupervisor {
     // Inventory commands use this directory as their cwd before the SDK's
     // connect command creates a profile. Prepare a first account's private path.
     fs.mkdirSync(config.tunnel.profileDir, { recursive: true, mode: 0o700 });
-    const existing = await this.waitForKnownTunnelStatus(config, 10_000, options?.recoverySignal);
-    const wasOwnAttempt = this.connectAttempted && this.initialAliasAbsent;
+    const existing = await this.waitForKnownTunnelStatus(config, ACCOUNT_TUNNEL_STATUS_WAIT_MS, options?.recoverySignal);
+    const wasOwnAttempt = this.ownAttemptPending || this.connectAttempted && this.initialAliasAbsent;
     this.initialAliasAbsent = existing.absent === true || existing.state === "stopped";
+    if (this.initialAliasAbsent) this.ownAttemptPending = false;
     let replacedStale = false;
     if (!this.ownedAliasVerified && !wasOwnAttempt && !this.initialAliasAbsent
       && Number.isInteger(existing.pid) && existing.pid > 0) {
@@ -392,6 +401,7 @@ class AccountTunnelPeer extends RuntimeSupervisor {
       // super.startTunnel has checked local inventory, /healthz, /readyz and MCP
       // diagnostics. The identity stays scoped to this alias and profile.
       this.ownedAliasVerified = true;
+      this.ownAttemptPending = false;
       const pid = this.tunnel?.pid;
       const identity = Number.isInteger(pid) && pid > 0 ? processIdentity(pid) : null;
       this.verifiedTunnel = identity ? { pid, identity } : null;
@@ -424,6 +434,7 @@ class AccountTunnelPeer extends RuntimeSupervisor {
     }
     this.connectAttempted = true;
     this.connectRanThisStart = true;
+    if (this.initialAliasAbsent) this.ownAttemptPending = true;
     return super.runTunnelConnectCommand(config, signal);
   }
 
@@ -442,16 +453,21 @@ class AccountTunnelPeer extends RuntimeSupervisor {
     const ownOrphan = !this.tunnel && this.recoverableMarker(marker, health.pid);
     // This launcher's own process left behind by a failed probe is equally exact.
     const ownStale = !this.tunnel && this.ownedStaleMarker(marker, health.pid);
-    const newAttempt = this.connectAttempted && this.initialAliasAbsent;
+    const newAttempt = this.ownAttemptPending || this.connectAttempted && this.initialAliasAbsent;
     if (!currentOwner && !ownOrphan && !ownStale && !newAttempt) {
       throw new Error("Account tunnel shutdown has no current launcher ownership proof");
     }
-    if (!Number.isInteger(expectedPid) || expectedPid < 1 || health.pid !== expectedPid) {
+    // A start whose status probe stalled never learned its process PID. The alias was absent
+    // before this launcher connected it, so the process now serving it is that connection.
+    const targetPid = Number.isInteger(expectedPid) && expectedPid > 0 ? expectedPid
+      : newAttempt && Number.isInteger(health.pid) && health.pid > 0 ? health.pid : expectedPid;
+    if (!Number.isInteger(targetPid) || targetPid < 1 || health.pid !== targetPid) {
       throw new Error("Account tunnel process identity changed before shutdown");
     }
     const result = await super.runTunnelStopCommand(config, signal);
     if (result.code === 0) {
       this.ownedAliasVerified = false;
+      this.ownAttemptPending = false;
       this.connectAttempted = false;
       this.verifiedTunnel = null;
     }
