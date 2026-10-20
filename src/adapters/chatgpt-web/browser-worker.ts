@@ -298,6 +298,14 @@ export type ChatGptCompletionFenceStart =
   | { revision: number }
   | { blockedReason: "active_work" | "unacknowledged_async_result"; blockedCount: number };
 
+/** Temporary Chat no longer lists plugins, so a turn that needs the connector runs on a saved chat. */
+export function chatGptTurnUsesSavedChat(
+  useSavedChats: boolean | undefined,
+  capabilities: Pick<ChatGptWebCapabilities, "localToolsEnabled">,
+): boolean {
+  return useSavedChats === true || capabilities.localToolsEnabled === true;
+}
+
 /** Runs in the page. Read the submitted text, excluding only observed renderer chrome. */
 export function readChatGptUserMessage(
   target: Element,
@@ -2063,10 +2071,9 @@ export class ChatGptBrowserWorker {
     const captureDiagnostic = (checkpoint: string): Promise<void> => diagnostics.capture(page, checkpoint);
     try {
       await captureDiagnostic("connector-verification-started");
-      await this.prepareTemporaryChatSurface(page, captureDiagnostic);
-      // The launcher refreshes its owned ChatGPT document before starting this helper. A second
-      // reload here can discard the first catalog's exact mismatch evidence and report a generic
-      // menu failure instead of identifying the connector the account actually exposes.
+      // Temporary Chat no longer lists plugins, so the connector is proven on a new saved chat.
+      // Verification never submits, so ChatGPT history gains no conversation.
+      await this.prepareTemporaryChatSurface(page, captureDiagnostic, undefined, true);
       await this.selectConnector(page, captureDiagnostic);
       // Verification proves selection but does not submit a turn. Leaving the selected plugin in
       // ChatGPT's persisted composer draft makes the next hard refresh restore half-hydrated plugin
@@ -2080,6 +2087,18 @@ export class ChatGptBrowserWorker {
       throw error;
     } finally {
       diagnostics.dispose();
+      // The launcher's session checks observe Temporary Chat on this same home page.
+      await this.returnToTemporaryChat(page);
+    }
+  }
+
+  private async returnToTemporaryChat(page: Page): Promise<void> {
+    const temporaryUrl = chatGptNewChatUrl(false);
+    if (page.isClosed() || page.url() === temporaryUrl) return;
+    try {
+      await page.goto(temporaryUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    } catch (error) {
+      console.warn(`[chatgpt-web] could not return the home page to Temporary Chat: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -2389,6 +2408,7 @@ export class ChatGptBrowserWorker {
     const browserCapabilities = turn.nativeConnector
       ? { ...turn.capabilities, localToolsEnabled: true }
       : turn.capabilities;
+    const useSavedChat = chatGptTurnUsesSavedChat(this.config.useSavedChats, browserCapabilities);
     if (turn.compactionExecution !== undefined) {
       let execution: ChatGptWebCompactionExecution;
       try {
@@ -2679,7 +2699,7 @@ export class ChatGptBrowserWorker {
             page,
             checkpoint => diagnostics.capture(page, checkpoint),
             browserStageAbortSignal(stageSignal, turn.abortSignal),
-            this.config.useSavedChats,
+            useSavedChat,
           ),
         );
       }
@@ -2828,7 +2848,7 @@ export class ChatGptBrowserWorker {
         }
         // Saved chats move from / to /c/<id> after the first staged Send. Re-prove
         // the picker on that conversation even if final effort equals staging effort.
-        if (mode.effort !== requestedMode.effort || this.config.useSavedChats) {
+        if (mode.effort !== requestedMode.effort || useSavedChat) {
           mode = await runBrowserStage(
             turn.traceId,
             "final_part_effort_selection",
@@ -2898,7 +2918,7 @@ export class ChatGptBrowserWorker {
                 page,
                 checkpoint => diagnostics.capture(page, checkpoint),
                 refreshSignal,
-                this.config.useSavedChats,
+                useSavedChat,
               );
               mode = await this.selectModelAndEffort(
                 page,

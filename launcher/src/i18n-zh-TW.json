@@ -374,7 +374,7 @@
   "freshConversation": "每回合建立新聊天（實驗性）",
   "freshConversationBody": "每回合在新聊天中傳送完整任務上下文。增加輸入量，避免重用舊聊天。保留本機工具連線。",
   "savedChats": "在 ChatGPT 中儲存聊天",
-  "savedChatsBody": "啟用後，聊天會儲存在 ChatGPT 歷史紀錄中。ChatGPT 可能會套用已儲存的記憶與自訂指示。",
+  "savedChatsBody": "啟用後，聊天會儲存在 ChatGPT 歷史紀錄中。ChatGPT 可能會套用已儲存的記憶與自訂指示。由於 ChatGPT 臨時聊天不再提供外掛，工具任務一律使用會儲存的聊天。",
   "pacingTitle": "帳戶節奏控制",
   "pacingBody": "節奏控制適用於新回合。限流後的冷卻始終有效，不會將任務切換到其他帳戶。這些控制無法保證帳戶安全。",
   "pacingStopped": "帳戶已暫停。恢復前請檢查 ChatGPT 帳戶。",
