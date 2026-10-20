@@ -759,6 +759,12 @@ class BrowserHost {
         if (this.readOnlyInspection === inspection) {
           this.readOnlyInspection = null;
           publishBrowserSnapshot(this);
+          // Page loads during the check were not observed; observe the released page once, so a
+          // real sign-out during the check is still published.
+          if (this.authProbeDeferredForInspection && !this.destroyed) {
+            this.authProbeDeferredForInspection = false;
+            void this.probeAuthentication().catch(() => {});
+          }
         }
       });
     return inspection.done;
@@ -1712,7 +1718,7 @@ class BrowserHost {
     } else {
       await awaitInspection(this.view.webContents.loadURL(TEMPORARY_CHAT_URL), signal);
     }
-    await this.waitForAuthenticated(60_000, signal);
+    await this.waitForAuthenticated(60_000, signal, { preserveVerified: true });
   }
 
   workspaceRequestOwner(details) {
@@ -3640,6 +3646,13 @@ class BrowserHost {
     // only the ordinary probe: setup, observation-only and caller-cancelled probes keep
     // their own authority and cancellation semantics.
     const ordinary = !options.forSetup && !options.observationOnly && !options.signal;
+    // A check that owns the page also navigates it (connector verification visits a saved chat)
+    // and probes with its own signal. A page-load probe meanwhile would publish that visit as a
+    // lost sign-in; observe once the check has released the page instead.
+    if (ordinary && this.readOnlyInspection) {
+      this.authProbeDeferredForInspection = true;
+      return Promise.resolve(this.snapshot());
+    }
     if (ordinary && this.defaultAuthProbe) return this.defaultAuthProbe;
     const operation = (this.authProbeTail ?? Promise.resolve()).then(
       () => this.runAuthenticationProbe(options),
@@ -3656,7 +3669,7 @@ class BrowserHost {
     return tracked;
   }
 
-  async runAuthenticationProbe({ forSetup = false, observationOnly = false, signal } = {}) {
+  async runAuthenticationProbe({ forSetup = false, observationOnly = false, preserveVerified = false, signal } = {}) {
     signal?.throwIfAborted();
     requireAutomaticBrowserInspection(this, "ChatGPT authentication probe");
     if (!this.view || this.view.webContents.isDestroyed()) {
@@ -3792,6 +3805,11 @@ class BrowserHost {
       const failure = result.sessionVerification === "unavailable" ? result.verificationFailure
         : authResult?.sessionVerification === "unavailable" ? authResult.verificationFailure
           : "Temporary Chat surface unavailable";
+      if (preserveVerified && !(rejected && loaded) && this.state.authenticationStatus === "verified") {
+        // The caller owns this page and is waiting through its own reload. A page that is still
+        // loading is not a lost session, so tell the caller without publishing a sign-in drop.
+        return { ...this.snapshot(), authenticated: false, authenticationStatus: "unknown" };
+      }
       if (rejected && loaded) this.retireAuthenticatedIdentity();
       const checkedAt = new Date().toISOString();
       this.setState({
@@ -3810,7 +3828,7 @@ class BrowserHost {
     return this.snapshot();
   }
 
-  async waitForAuthenticated(timeoutMs = 180_000, signal) {
+  async waitForAuthenticated(timeoutMs = 180_000, signal, { preserveVerified = false } = {}) {
     const deadline = Date.now() + timeoutMs;
     let challengeReloadAt = 0;
     while (Date.now() < deadline) {
@@ -3820,7 +3838,7 @@ class BrowserHost {
         this.authNavigationError = null;
         throw error;
       }
-      const state = await awaitInspection(this.probeAuthentication({ signal }), signal);
+      const state = await awaitInspection(this.probeAuthentication({ signal, preserveVerified }), signal);
       signal?.throwIfAborted();
       if (state.authenticated) return state;
       // A challenge during sign-in leaves ChatGPT on "We couldn't load your account" with no
@@ -3899,6 +3917,8 @@ class BrowserHost {
         signal,
       });
       signal?.throwIfAborted();
+      // The helper returns the page to Temporary Chat; publish ready only once it has loaded again.
+      await this.waitForAuthenticated(30_000, signal, { preserveVerified: true });
       this.logger.info("connector.verified", { appName: connectorName });
       this.setState({ status: "ready", message: "ChatGPT connector is available" });
       return result;

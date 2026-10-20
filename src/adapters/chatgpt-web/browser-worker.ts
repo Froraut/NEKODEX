@@ -2097,6 +2097,8 @@ export class ChatGptBrowserWorker {
     if (page.isClosed() || page.url() === temporaryUrl) return;
     try {
       await page.goto(temporaryUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
+      // The launcher observes this page next; hand it back with its composer, not mid-load.
+      await this.activeComposer(page, 30_000);
     } catch (error) {
       console.warn(`[chatgpt-web] could not return the home page to Temporary Chat: ${error instanceof Error ? error.message : String(error)}`);
     }

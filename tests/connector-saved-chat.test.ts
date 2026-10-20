@@ -11,6 +11,7 @@ function verificationFixture(selectConnector: () => Promise<void>) {
   let url = TEMPORARY_CHAT;
   const surfaces: boolean[] = [];
   const navigations: string[] = [];
+  const composerWaits: string[] = [];
   const page: any = {
     url: () => url,
     isClosed: () => false,
@@ -25,10 +26,11 @@ function verificationFixture(selectConnector: () => Promise<void>) {
     },
     selectConnector,
     clearChatGptComposerState: async () => {},
+    activeComposer: async () => { composerWaits.push(url); },
   });
   return {
     verify: () => worker.verifyConnectorExclusive("verify_connector_saved_chat"),
-    surfaces, navigations, url: () => url,
+    surfaces, navigations, composerWaits, url: () => url,
     cleanup: () => rmSync(diagnosticsRoot, { recursive: true, force: true }),
   };
 }
@@ -40,6 +42,8 @@ test("connector verification proves the plugin on a saved chat and returns to Te
     expect(fixture.surfaces).toEqual([true]);
     expect(fixture.navigations).toEqual([TEMPORARY_CHAT]);
     expect(fixture.url()).toBe(TEMPORARY_CHAT);
+    // The page is handed back only once Temporary Chat shows its composer again.
+    expect(fixture.composerWaits).toEqual([TEMPORARY_CHAT]);
   } finally {
     fixture.cleanup();
   }
