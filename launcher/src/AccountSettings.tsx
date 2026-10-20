@@ -7,6 +7,7 @@ import { AccountCodexAllowance, AccountCodexLogin, AccountCodexLoginProgress } f
 import { AccountReadiness, accountPacingStatus } from "./AccountReadiness";
 import { AccountToolsOnboarding } from "./AccountToolsOnboarding";
 import { quotaPortfolioSummary } from "./QuotaPortfolioSummary";
+import { quotaAutoRetries, quotaAutoRetryDelay } from "./quota-auto-retry";
 import { accountToolsCopy, accountToolsStep, accountTunnelFor } from "./account-tools-onboarding";
 import { accountsCopy } from "./accounts-copy";
 import { AccountCard, Button, Checkbox, Disclosure, Notice, Page, Panel, Select, SurfaceHeader, TextField, cx, type Status, type Tone } from "./design";
@@ -219,10 +220,44 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
     setQuotas(current => new Map([...current].filter(([id]) => activeIds.has(id))));
     setQuotaFailures(current => new Set([...current].filter(id => activeIds.has(id))));
     // The allowance is held only in memory, so every launch starts unread. Read it once for each
-    // verified account instead of leaving "not checked yet"; any cached result stops this.
+    // verified account instead of leaving "not checked yet"; a cached result stops this unless it failed transiently.
     const autoRead = new Set(manual || transitionBusy ? [] : state.accounts
       .filter(account => account.authenticated && account.authenticationStatus === "verified")
       .map(account => account.id));
+    // A read that failed transiently (timeout, network, session not ready yet) is read again a few times per launch,
+    // and the card keeps reading meanwhile instead of saying the allowance is not available. A manual refresh, an
+    // evidence or identity change, Manual mode, a transition and leaving the page cancel the waiting re-read.
+    const retryTimers = new Set<number>();
+    const failed = (id: string, revision: number) => {
+      // The card says the allowance could not be read; a toast would repeat it without more detail.
+      if (!disposed && quotaRevisions.current.get(id) === revision) setQuotaFailures(current => new Set(current).add(id));
+    };
+    const show = (id: string, revision: number, value: AccountQuotaSnapshot | null) => {
+      const delay = autoRead.has(id) ? quotaAutoRetryDelay(value, quotaAutoRetries.spent(id), Date.now()) : null;
+      if (delay === null || value === null) setQuotas(current => new Map(current).set(id, value));
+      else {
+        setQuotas(current => { const next = new Map(current); next.delete(id); return next; });
+        const timer = window.setTimeout(() => { retryTimers.delete(timer); void reread(id, revision, value); }, delay);
+        retryTimers.add(timer);
+      }
+      setQuotaFailures(current => {
+        if (!current.has(id)) return current;
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+    };
+    const reread = async (id: string, revision: number, previous: AccountQuotaSnapshot) => {
+      if (disposed || quotaRevisions.current.get(id) !== revision) return;
+      // A Codex sign-in owns this account's session now: show the failed read instead of reading.
+      if (loginLockedIdRef.current === id) { setQuotas(current => new Map(current).set(id, previous)); return; }
+      quotaAutoRetries.spend(id);
+      try {
+        const value = await api.refreshAccountCodexQuota(id);
+        if (disposed || quotaRevisions.current.get(id) !== revision) return;
+        show(id, revision, value);
+      } catch { failed(id, revision); }
+    };
     void (async () => {
       for (const id of hydrationAccounts) {
         const revision = revisions.get(id)!;
@@ -234,20 +269,14 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
             value = await api.refreshAccountCodexQuota(id);
             if (disposed || quotaRevisions.current.get(id) !== revision) continue;
           }
-          setQuotas(current => new Map(current).set(id, value));
-          setQuotaFailures(current => {
-            if (!current.has(id)) return current;
-            const next = new Set(current);
-            next.delete(id);
-            return next;
-          });
-        } catch {
-          // The card says the allowance could not be read; a toast would repeat it without more detail.
-          if (!disposed && quotaRevisions.current.get(id) === revision) setQuotaFailures(current => new Set(current).add(id));
-        }
+          show(id, revision, value);
+        } catch { failed(id, revision); }
       }
     })();
-    return () => { disposed = true; };
+    return () => {
+      disposed = true;
+      for (const timer of retryTimers) window.clearTimeout(timer);
+    };
   }, [api, quotaEvidenceKey, manual, transitionBusy]);
 
   useEffect(() => {
