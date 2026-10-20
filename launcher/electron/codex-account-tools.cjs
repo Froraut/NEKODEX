@@ -1,6 +1,7 @@
 const { AccountQuotaReader } = require('./account-quotas.cjs');
 const { createCodexLoginController, OFFICIAL_DEVICE_VERIFICATION_URL } = require('./codex-login.cjs');
 const { allowedAuthUrl } = require('./browser-navigation-policy.cjs');
+const { passkeyRequiredInEmbeddedSignIn } = require('./openai-api-panel.cjs');
 const { validateAccountId } = require('./account-registry.cjs');
 const { awaitInspection } = require('./inspection-control.cjs');
 
@@ -11,7 +12,7 @@ function sameIdentity(a, b) {
 
 /** Account-scoped quota reads and the official shared Codex device-login flow. */
 function createCodexAccountTools({ getPool, getInteractionMode = () => 'automatic', BrowserWindow, clipboard, codexHome, logger,
-  quotaReader = new AccountQuotaReader(), createController = createCodexLoginController }) {
+  quotaReader = new AccountQuotaReader(), createController = createCodexLoginController, openExternal }) {
   let binding = null;
   let lastFlow = null;
   let starting = false;
@@ -117,7 +118,8 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
     account(id);
     const host = pool().hosts.get(id);
     if (!host || host.view.webContents.isDestroyed()) return null;
-    return quotaReader.snapshot(host.view.webContents.session, id, pool().evidenceEpoch(id));
+    // Allowance belongs to the signed-in identity; account checks bump evidence, not identity.
+    return quotaReader.snapshot(host.view.webContents.session, id, pool().accountIdentityLease(id).identityEpoch);
   }
   async function runQuotaRefresh(id, currentPool, epoch, identity) {
     if (stopping) throw new Error('Codex account tools are closing');
@@ -126,7 +128,7 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
     }
     const host = currentPool.getHost(id);
     await host.ready();
-    if (stopping || destroyed || getPool() !== currentPool || currentPool.evidenceEpoch(id) !== epoch
+    if (stopping || destroyed || getPool() !== currentPool
       || !sameIdentity(identity, currentPool.accountIdentityLease(id))) {
       throw new Error('The account changed while its limits were being read; refresh again');
     }
@@ -137,8 +139,8 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
     );
     try {
       quotaAccounts.add(id);
-      const result = await quotaReader.read(host.view.webContents.session, id, epoch, { refresh: true });
-      if (stopping || destroyed || getPool() !== currentPool || currentPool.evidenceEpoch(id) !== epoch
+      const result = await quotaReader.read(host.view.webContents.session, id, identity.identityEpoch, { refresh: true });
+      if (stopping || destroyed || getPool() !== currentPool
         || !sameIdentity(identity, currentPool.accountIdentityLease(id))) {
         quotaReader.clear(id);
         throw new Error('The account changed while its limits were being read; refresh again');
@@ -154,7 +156,7 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
     const epoch = currentPool.evidenceEpoch(id);
     const identity = currentPool.accountIdentityLease(id);
     const existing = quotaRefreshes.get(id);
-    if (existing && existing.pool === currentPool && existing.epoch === epoch
+    if (existing && existing.pool === currentPool
       && sameIdentity(existing.identity, identity)) return existing.operation;
     const operation = runQuotaRefresh(id, currentPool, epoch, identity);
     const entry = { pool: currentPool, epoch, identity, operation };
@@ -192,7 +194,8 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
     if (!host || host.view.webContents.isDestroyed()) {
       return portfolioRow(value, evidenceEpoch, 'skipped', null, 'host_unavailable');
     }
-    const cached = quotaReader.snapshot(host.view.webContents.session, value.id, evidenceEpoch);
+    const cached = quotaReader.snapshot(host.view.webContents.session, value.id,
+      currentPool.accountIdentityLease(value.id).identityEpoch);
     const retryAt = cached?.retryAt ? Date.parse(cached.retryAt) : NaN;
     if (Number.isFinite(retryAt) && retryAt > Date.now()) {
       return portfolioRow(value, evidenceEpoch, 'skipped', cached, cached.refreshError ?? cached.reason ?? 'rate_limited');
@@ -314,6 +317,18 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
         void controller.cancel({ flowId, accountId: id }).then(watch).catch(() => {});
       }
     });
+    // The device code works in any browser. A passkey step cannot finish in this embedded window,
+    // so continue in the system browser and keep the flow (and its copyable code) running.
+    const passkeyHandoff = (_event, url) => {
+      if (!passkeyRequiredInEmbeddedSignIn(url) || window.isDestroyed() || typeof openExternal !== 'function') return;
+      logger?.info?.('codex.login_passkey_handoff', { accountId: id });
+      void Promise.resolve(openExternal(OFFICIAL_DEVICE_VERIFICATION_URL)).catch(error => logger?.warn?.('codex.login_handoff_failed', {
+        message: error instanceof Error ? error.message : String(error) }));
+      ownedClosures.add(window);
+      window.close();
+    };
+    window.webContents.on('did-navigate', passkeyHandoff);
+    window.webContents.on('did-navigate-in-page', passkeyHandoff);
     try { await window.loadURL(OFFICIAL_DEVICE_VERIFICATION_URL); return true; }
     catch { if (!window.isDestroyed()) window.close(); throw new Error('The official Codex sign-in page could not open'); }
   }

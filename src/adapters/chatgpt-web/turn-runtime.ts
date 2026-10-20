@@ -403,7 +403,8 @@ export function createChatGptTurnRuntimeFactory(context: ChatGptTurnRuntimeConte
             });
           }
           const manualLease = await zeroRiskManualControl.start(retainedLauncherDescriptor, {
-            useSavedChats: provider.chatgptWeb?.useSavedChats === true,
+            // Manual mode always selects the plugin, and Temporary Chat no longer lists plugins.
+            useSavedChats: true,
             ...owner,
             prompt: compiled.text,
             ...(resumeCompiled ? { resumePrompt: resumeCompiled.text } : {}),

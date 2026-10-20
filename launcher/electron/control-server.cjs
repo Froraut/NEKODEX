@@ -615,9 +615,10 @@ class BrowserControlServer {
             body.failureCode,
             body.status === "completed" && body.toolProof ? { tool: body.toolProof.tool } : undefined,
           );
+          // The helper sends a primary sentence of at most 500 characters plus a cause of at most 300.
           this.logger.info("browser.turn_ended", { traceId: body.traceId, status: body.status,
             ...(body.status === "failed" && typeof body.failureCode === "string" ? { failureCode: body.failureCode } : {}),
-            ...(body.status === "failed" && typeof body.message === "string" ? { message: body.message.slice(0, 400) } : {}) });
+            ...(body.status === "failed" && typeof body.message === "string" ? { message: body.message.slice(0, 900) } : {}) });
           return { ok: true, ...release };
         });
         writeJson(response, 200, result);

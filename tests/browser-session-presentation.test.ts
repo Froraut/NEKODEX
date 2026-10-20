@@ -83,3 +83,52 @@ test('a loaded verified home presents idle readiness after a retired preflight f
   host.setState({ authenticated: false, authenticationStatus: 'unavailable', message: 'ChatGPT session verification unavailable: session HTTP 403' });
   expect(host.snapshot()).toMatchObject({ status: 'error', authenticated: false, authenticationStatus: 'unavailable' });
 });
+
+test('a check waiting through its own reload never publishes a mid-load page as a lost sign-in', async () => {
+  const host = fixture('', '', false);
+  host.state = { status: 'ready', message: 'ChatGPT is ready', authenticated: true, authenticationStatus: 'verified' };
+  const quiet = await host.runAuthenticationProbe({ preserveVerified: true });
+  expect(quiet).toMatchObject({ authenticated: false, authenticationStatus: 'unknown' });
+  expect(host.state).toMatchObject({ authenticated: true, authenticationStatus: 'verified' });
+  // Without the owner's flag the same observation is published as before.
+  await expect(host.runAuthenticationProbe()).resolves.toMatchObject({ authenticated: false, authenticationStatus: 'unavailable' });
+});
+
+test('page-load probes wait while a check owns the page and run once after it releases it', async () => {
+  const host = fixture('', '');
+  host.state = { status: 'ready', message: 'ChatGPT is ready', authenticated: true, authenticationStatus: 'verified' };
+  let probes = 0;
+  host.runAuthenticationProbe = async () => { probes += 1; return host.snapshot(); };
+  host.ready = async () => {};
+  host.manualOperation = null;
+  host.view.webContents.setBackgroundThrottling = () => {};
+  let release!: () => void;
+  const check = host.withReadOnlyInspection('connector verification', () => new Promise<void>(resolve => { release = resolve; }),
+    { preserveSelection: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  await host.probeAuthentication();
+  await host.probeAuthentication();
+  expect(probes).toBe(0);
+  release();
+  await check;
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(probes).toBe(1);
+});
+
+test('a renewed session for the same ChatGPT user is reported as such, a different user is not', async () => {
+  const renewed = fixture('', '');
+  renewed.authPrincipalFingerprint = 'a'.repeat(64);
+  renewed.authSessionFingerprint = 'c'.repeat(64);
+  const calls: unknown[] = [];
+  renewed.onAuthIdentityChanged = (...args: unknown[]) => { calls.push(args[2]); };
+  await renewed.runAuthenticationProbe();
+  expect(calls).toEqual([{ principalChanged: false }]);
+
+  const replaced = fixture('', '');
+  replaced.authPrincipalFingerprint = 'd'.repeat(64);
+  replaced.authSessionFingerprint = 'b'.repeat(64);
+  const replacedCalls: unknown[] = [];
+  replaced.onAuthIdentityChanged = (...args: unknown[]) => { replacedCalls.push(args[2]); };
+  await replaced.runAuthenticationProbe();
+  expect(replacedCalls).toEqual([{ principalChanged: true }]);
+});

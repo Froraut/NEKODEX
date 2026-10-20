@@ -1518,7 +1518,8 @@ function registerIpc({ logger, stateStore }) {
     confirmExistingChromeImport: () => confirmExistingChromeImport(dialog, mainWindow, stateStore.read().language),
     selectChromeConnectionFile: signal => selectChromeConnectionFile({
       dialog, window: mainWindow, homeDir: app.getPath("home"), language: stateStore.read().language, signal,
-      isCurrent: () => browserHost.existingChromeLoginController?.signal === signal
+      // browserHost is the account pool; the import (and its controller) runs on the default host.
+      isCurrent: () => browserHost?.getHost("default").existingChromeLoginController?.signal === signal
         && stateStore.read().browserInteractionMode === "automatic" && mainWindow && !mainWindow.isDestroyed(),
     }),
     copyChromeSettingsAddress: () => clipboard.writeText(CHROME_SETTINGS_ADDRESS),
@@ -2817,6 +2818,7 @@ async function start() {
     getPool: () => browserHost,
     getInteractionMode: () => stateStore.read().browserInteractionMode,
     BrowserWindow, clipboard, codexHome: LAUNCHER_PROFILE.codexHome, logger,
+    openExternal: url => shell.openExternal(url),
   });
   registerLifecycleParticipant("Codex account sign-in", accountToolsService);
   const startupOwner = lifecycleAdmission.acquire("local runtime startup");

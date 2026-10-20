@@ -54,14 +54,17 @@ function parseBindings(contents) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || value.version !== VERSION || !value.accounts || typeof value.accounts !== 'object'
     || Array.isArray(value.accounts) || Object.keys(value).some(key => !['version', 'accounts'].includes(key))) return null;
+  // One unreadable entry must not discard the others: a later save would rewrite the file
+  // without them and silently erase another account's verified binding.
   const accounts = {};
+  let skipped = 0;
   for (const [accountId, raw] of Object.entries(value.accounts)) {
-    try { validateAccountId(accountId); } catch { return null; }
+    try { validateAccountId(accountId); } catch { skipped++; continue; }
     const binding = validateBinding(raw);
-    if (!binding) return null;
+    if (!binding) { skipped++; continue; }
     accounts[accountId] = binding;
   }
-  return { version: VERSION, accounts };
+  return { version: VERSION, accounts, skipped };
 }
 
 function readBindingFile(file) {
@@ -69,9 +72,10 @@ function readBindingFile(file) {
     const stat = fs.lstatSync(file);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_FILE_BYTES) return { state: { version: VERSION, accounts: {} }, rawDigest: null, corrupt: true };
     const contents = fs.readFileSync(file, 'utf8');
-    const state = parseBindings(contents);
+    const parsed = parseBindings(contents);
+    const state = parsed && { version: parsed.version, accounts: parsed.accounts };
     return state
-      ? { state, rawDigest: createHash('sha256').update(contents).digest('hex'), corrupt: false }
+      ? { state, rawDigest: createHash('sha256').update(contents).digest('hex'), corrupt: parsed.skipped > 0 }
       : { state: { version: VERSION, accounts: {} }, rawDigest: createHash('sha256').update(contents).digest('hex'), corrupt: true };
   } catch (error) {
     if (error.code === 'ENOENT') return { state: { version: VERSION, accounts: {} }, rawDigest: null, corrupt: false };

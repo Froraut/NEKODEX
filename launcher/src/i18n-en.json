@@ -125,7 +125,7 @@
   "freshConversation": "Fresh chat for every turn (experimental)",
   "freshConversationBody": "Send the complete task context in a new chat each turn. Uses more input and avoids retained-chat reuse. Local tools remain attached.",
   "savedChats": "Save chats in ChatGPT",
-  "savedChatsBody": "When enabled, chats are stored in ChatGPT history. ChatGPT may apply your saved memory and custom instructions.",
+  "savedChatsBody": "When enabled, chats are stored in ChatGPT history. ChatGPT may apply your saved memory and custom instructions. Tool tasks always use saved chats, because ChatGPT no longer offers plugins in Temporary Chat.",
   "manualSubmitTime": "Manual submission time",
   "manualSubmitTimeBody": "Time to paste the prompt and upload attachments before confirming Sent. Changes apply to new turns.",
   "skillAttachments": "Skills as files (experimental)",
