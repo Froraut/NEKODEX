@@ -129,6 +129,7 @@ const SHELL_ZOOM_LEVEL_STEP = 0.5;
 const SHELL_ZOOM_LEVEL_LIMIT = 5;
 const CLOUDFLARE_CHALLENGE_RECOVERY_DELAY_MS = 500;
 const CLOUDFLARE_CHALLENGE_RECOVERY_SETTLE_MS = 1_000;
+const CLOUDFLARE_CHALLENGE_RECOVERY_PROOF_TIMEOUT_MS = 8_000;
 const SESSION_TOKEN_COOKIE = /^__Secure-next-auth\.session-token(?:\.\d+)?$/;
 const SESSION_TOKEN_SETTLE_MS = 1_500;
 const NETWORK_EGRESS_CHECK_INTERVAL_MS = 10 * 60_000;
@@ -1949,13 +1950,23 @@ class BrowserHost {
     this.setState({ status: "loading", message: "Refreshing ChatGPT security check", loading: true });
     this.cloudflareChallengeRecoveryArmed = false;
     await contents.loadURL(url);
+    // A hidden, throttled home page can stay silent well past one second after the reload, so a
+    // fixed settle reported every recovery as failed while the challenge had already cleared.
+    // Wait for a successful backend response; failing that, ChatGPT's own session check decides.
+    const deadline = Date.now() + CLOUDFLARE_CHALLENGE_RECOVERY_PROOF_TIMEOUT_MS;
     await sleep(CLOUDFLARE_CHALLENGE_RECOVERY_SETTLE_MS);
+    while (!this.cloudflareChallengeRecoveryArmed && Date.now() < deadline) {
+      assertCurrent();
+      await sleep(250);
+    }
     assertCurrent();
-    if (!this.cloudflareChallengeRecoveryArmed) {
+    const state = await this.probeAuthentication();
+    if (!this.cloudflareChallengeRecoveryArmed && state?.authenticationStatus !== "verified") {
       throw new Error("ChatGPT security check is still blocking backend requests. Reload ChatGPT and retry.");
     }
-    await this.probeAuthentication();
-    this.logger.info("browser.cloudflare_challenge_recovered");
+    this.logger.info("browser.cloudflare_challenge_recovered", {
+      proof: this.cloudflareChallengeRecoveryArmed ? "backend-response" : "session-verified",
+    });
   }
 
   turnTabSnapshots() {
