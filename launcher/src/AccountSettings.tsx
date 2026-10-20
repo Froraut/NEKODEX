@@ -218,12 +218,22 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
     // on every card whenever one account changes. An account with no value yet reads as loading (undefined).
     setQuotas(current => new Map([...current].filter(([id]) => activeIds.has(id))));
     setQuotaFailures(current => new Set([...current].filter(id => activeIds.has(id))));
+    // The allowance is held only in memory, so every launch starts unread. Read it once for each
+    // verified account instead of leaving "not checked yet"; any cached result stops this.
+    const autoRead = new Set(manual || transitionBusy ? [] : state.accounts
+      .filter(account => account.authenticated && account.authenticationStatus === "verified")
+      .map(account => account.id));
     void (async () => {
       for (const id of hydrationAccounts) {
         const revision = revisions.get(id)!;
         try {
-          const value = await api.accountCodexQuotaSnapshot(id);
+          let value = await api.accountCodexQuotaSnapshot(id);
           if (disposed || quotaRevisions.current.get(id) !== revision) continue;
+          if (value === null && autoRead.has(id) && loginLockedIdRef.current !== id) {
+            setQuotas(current => { const next = new Map(current); next.delete(id); return next; });
+            value = await api.refreshAccountCodexQuota(id);
+            if (disposed || quotaRevisions.current.get(id) !== revision) continue;
+          }
           setQuotas(current => new Map(current).set(id, value));
           setQuotaFailures(current => {
             if (!current.has(id)) return current;
@@ -238,7 +248,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
       }
     })();
     return () => { disposed = true; };
-  }, [api, quotaEvidenceKey]);
+  }, [api, quotaEvidenceKey, manual, transitionBusy]);
 
   useEffect(() => {
     const nextChange = nextQuotaClockAt(quotas.values(), quotaClock);
