@@ -746,9 +746,23 @@ class AccountBrowserPool {
       if (changed) this.scheduleEvidenceRestore(id, { waitForTunnel: true });
     }
   }
+  /**
+   * A Check or Retry pressed while this account's own read-only check (a background session
+   * re-check, a connector or session inspection) runs waits for it instead of failing with
+   * "busy". Tasks, logins and other mutations still refuse as before.
+   */
+  async waitForAccountInspection(id) {
+    const host = this.getHost(id);
+    for (let rounds = 0; rounds < 3; rounds++) {
+      const running = host.readOnlyInspection?.done ?? this.authenticationRefreshOperations.get(id);
+      if (!running || host.activeTraceId || this.accountMutationOperationLabel(id)) return;
+      await Promise.resolve(running).catch(() => {});
+    }
+  }
   async checkAccount(id, connector = false) {
     if (this.inspectionsPaused) throw new Error('Browser checks are paused for launcher restart');
     const host = this.getHost(id);
+    await this.waitForAccountInspection(id);
     this.assertAccountOperationAvailable(id);
     const epoch = this.invalidateEvidence(id);
     try {
@@ -783,6 +797,19 @@ class AccountBrowserPool {
     if (existing) return existing;
     if (this.inspectionsPaused) return Promise.reject(new Error('Browser checks are paused for launcher restart'));
     const host = this.getHost(id);
+    const inspection = host.readOnlyInspection?.done;
+    if (inspection && !host.activeTraceId && !this.accountMutationOperationLabel(id)) {
+      // Join the running check, then retry once it has released the browser.
+      let joined;
+      joined = Promise.resolve(inspection).catch(() => {}).then(() => {
+        if (this.authenticationRefreshOperations.get(id) === joined) this.authenticationRefreshOperations.delete(id);
+        return host.readOnlyInspection ? Promise.reject(this.accountOperationError(id)
+          ?? new Error('This ChatGPT account is still being checked; retry after it finishes'))
+          : this.refreshAccountAuthentication(id);
+      });
+      this.authenticationRefreshOperations.set(id, joined);
+      return joined;
+    }
     const conflict = this.accountOperationError(id);
     if (conflict) return Promise.reject(conflict);
     if (host.activeTraceId || [...this.reservations.values()].includes(id)) {

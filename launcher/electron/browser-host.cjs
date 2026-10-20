@@ -3489,8 +3489,21 @@ class BrowserHost {
         if (contents.getURL() === IDLE_BROWSER_URL || this.primaryNavigationFailed) {
           await awaitInspection(contents.loadURL(TEMPORARY_CHAT_URL), signal);
         }
-        const state = await awaitInspection(this.probeAuthentication({ signal, observationOnly: true }), signal);
+        let state = await awaitInspection(this.probeAuthentication({ signal, observationOnly: true }), signal);
         signal.throwIfAborted();
+        // ChatGPT's own error pages ("We couldn't load your account", an unfinished security
+        // check) keep the Temporary Chat URL but render no composer, so no draft can be lost.
+        // Re-observing them never recovers; load the page again once and re-check.
+        const surface = this.lastAuthenticationSurfaceObservation;
+        if (state.authenticationStatus !== "verified" && state.authenticationStatus !== "signed-out"
+          && (this.authGeneration ?? 0) === generation
+          && surface?.composer === false && surface.readyState === "complete"
+          && !contents.isDestroyed() && contents.getURL().startsWith(CHATGPT_ORIGIN)) {
+          this.logger.info("browser.session_surface_reloaded", { reason: "composer-missing" });
+          await awaitInspection(contents.loadURL(TEMPORARY_CHAT_URL), signal);
+          state = await awaitInspection(this.probeAuthentication({ signal, observationOnly: true }), signal);
+          signal.throwIfAborted();
+        }
         if ((this.authGeneration ?? 0) !== generation) {
           throw new Error("ChatGPT session verification is unavailable: browser session changed");
         }
