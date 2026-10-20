@@ -26,6 +26,7 @@ import {
   deactivateCodexIntegration,
   inspectCodexIntegration,
   readCodexSubagentProtocol,
+  refreshCodexInterruptHook,
   setCodexSubagentProtocol,
   uninstallCodexIntegration,
 } from "./codex-integration";
@@ -61,7 +62,7 @@ Usage:
   codex-chatgpt-web doctor [--json]
   codex-chatgpt-web compaction-checkpoints list
   codex-chatgpt-web compaction-checkpoints show ID --binding HASH
-  codex-chatgpt-web route <status|connect|disconnect|diagnostics> [--profile NAME]
+  codex-chatgpt-web route <status|connect|disconnect|refresh-hook|diagnostics> [--profile NAME]
   codex-chatgpt-web subagents <status|compatibility-v1|native>
   codex-chatgpt-web provider <status|mixed|web-only> [--catalog PATH]
   codex-chatgpt-web api <status|enable|disable|rotate|key>
@@ -461,7 +462,9 @@ async function routeCommand(args: string[]): Promise<void> {
       ? activateCodexIntegration()
       : action === "disconnect"
         ? deactivateCodexIntegration()
-        : undefined;
+        : action === "refresh-hook"
+          ? refreshCodexInterruptHook()
+          : undefined;
   if (!result) throw new Error(`Unknown route action: ${action}`);
   stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if ("changed" in result && result.changed) {
