@@ -6,7 +6,7 @@ import { CHATGPT_DOM_REVISION_ATTRIBUTES } from "./browser-dom-revision";
 import { CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS, CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS, ChatGptBrowserObservationTimeoutError, CHATGPT_SEND_ENABLE_GRACE_MS, settleChatGptUi, withChatGptBrowserObservationTimeout } from "./browser-operation-support";
 import { chatGptConnectorUnavailableError, ChatGptPersistentBrowserStateError, ensureChatGptPersonalizedConnectorAccess, clearChatGptPersonalizationComposer } from "./browser-personalization";
 import { ChatGptVisibleTraceTracker } from "./browser-visible-trace";
-import { ChatGptBrowserDiagnostics, stalledTurnDiagnostic, redactChatGptUiDiagnostic } from "./browser-diagnostics";
+import { ChatGptBrowserDiagnostics, chatGptFailureMessageWithCause, stalledTurnDiagnostic, redactChatGptUiDiagnostic } from "./browser-diagnostics";
 import { submissionDomState, type ChatGptSubmissionDomCache, type ChatGptSubmissionDomState } from "./browser-submission-dom";
 import { absentResponseDomSnapshot, resetChatGptResponseDomCache, responseDomSnapshot, type ChatGptResponseDomCache, type ChatGptResponseDomSnapshot } from "./browser-response-dom";
 import { assertChatGptPromptAttachments, chatGptPromptFilePayloads } from "./attachment-payloads";
@@ -2318,7 +2318,12 @@ export class ChatGptBrowserWorker {
         || (error instanceof ChatGptWebAdapterError && error.code === "client_cancelled")
         ? "aborted"
         : "failed";
-      terminalMessage = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
+      // The launcher logs this as browser.turn_ended: keep the primary sentence, then the cause
+      // a wrapper such as the pinned-model error would otherwise hide.
+      terminalMessage = chatGptFailureMessageWithCause(
+        error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+        error,
+      );
       throw error;
     } finally {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
@@ -3465,8 +3470,10 @@ export class ChatGptBrowserWorker {
       }
       const reportedError = chatGptSubmittedProviderFailure(error, providerSubmissionStage);
       console.error(
-        `[chatgpt-web] browser turn ${turn.traceId} failed:`
-        + ` ${redactChatGptUiDiagnostic(reportedError instanceof Error ? reportedError.message : String(reportedError))}`,
+        `[chatgpt-web] browser turn ${turn.traceId} failed: ${chatGptFailureMessageWithCause(
+          redactChatGptUiDiagnostic(reportedError instanceof Error ? reportedError.message : String(reportedError)),
+          reportedError,
+        )}`,
       );
       if (diagnosticPage && !diagnosticPage.isClosed()) {
         await diagnostics.capture(diagnosticPage, "turn-failed", reportedError);
