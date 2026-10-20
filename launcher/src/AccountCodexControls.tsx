@@ -239,7 +239,8 @@ function QuotaContent({ copy, disabledReason, failed, freshnessCopy, language, n
   if (quota === undefined) return disabledReason ? null : <p className="accounts-allowance__message nk-type-small" role="status">{copy.quotaChecking}</p>;
   if (quota === null) return disabledReason ? null : <p className="accounts-allowance__message nk-type-small">{copy.quotaNotChecked}</p>;
   if (quota.availability !== "available" || quota.coverage !== "reported_buckets") {
-    const message = quotaUnavailableMessage(copy, quota.reason);
+    // A transient failure (timeout, network, session not ready) says nothing about the account's allowance.
+    const message = quota.transient ? readFailedText : quotaUnavailableMessage(copy, quota.reason);
     if (message === disabledReason && !quota.checkedAt && !quota.retryAt) return null;
     return <div className="accounts-allowance__status" role="status">
       {message !== disabledReason ? <p className="accounts-allowance__message nk-type-small">{message}</p> : null}

@@ -432,6 +432,10 @@ export interface AccountQuotaSnapshot {
   freshness?: "fresh" | "stale";
   freshUntil?: string | null;
   refreshError?: string | null;
+  /** An unavailable read that can heal by itself (timeout, network, 5xx, session not ready, cancelled read). */
+  transient?: boolean;
+  /** For a transient read: how long after checkedAt another read may succeed. */
+  retryAfterMs?: number | null;
 }
 export interface AccountQuotaPortfolioRow {
   accountId: string;
