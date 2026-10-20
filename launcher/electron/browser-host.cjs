@@ -99,6 +99,9 @@ const BROWSER_CHECK_TIMEOUT_MS = 90_000;
 const CONNECTOR_SESSION_SETTLE_MS = 30_000;
 const CONNECTOR_VERIFICATION_TIMEOUT_MS = BROWSER_HELPER_OPERATION_TIMEOUT_MS + CONNECTOR_SESSION_SETTLE_MS;
 const RELEASED_HOME_OBSERVATION_MS = 30_000;
+const HOME_RECOVERY_CHECK = "home page recovery";
+const HOME_RECOVERY_TIMEOUT_MS = 60_000;
+const HOME_RECOVERY_SETTLE_MS = 30_000;
 // A crashed or hung primary ChatGPT page never heals on its own: Electron keeps the dead
 // WebContents (and its CDP target) until something reloads it, so every later turn and
 // readiness probe stalls on it. Reload it with backoff, bounded per window.
@@ -768,17 +771,35 @@ class BrowserHost {
         if (this.readOnlyInspection === inspection) {
           this.readOnlyInspection = null;
           publishBrowserSnapshot(this);
-          // Page loads during the check were not observed, and a connector check that failed or
-          // was cut off can leave the page on its new saved chat. Observe the released page once,
-          // so a real sign-out during the check is still published.
           const deferred = this.authProbeDeferredForInspection;
           this.authProbeDeferredForInspection = false;
-          if ((deferred || this.homeLeftOnSavedNewChat()) && !this.destroyed) {
-            void this.observeReleasedHome().catch(() => {});
+          if (this.destroyed) return;
+          // Page loads during the check were not observed; observe the released page once, so a
+          // real sign-out during the check is still published.
+          const observe = () => { if (deferred) void this.observeReleasedHome().catch(() => {}); };
+          const cancelled = controller.signal.aborted && controller.signal.reason?.name === "AbortError";
+          if (name !== HOME_RECOVERY_CHECK && !cancelled && this.homeLeftOnSavedNewChat()) {
+            void this.recoverReleasedHome().catch(observe);
+          } else {
+            observe();
           }
         }
       });
     return inspection.done;
+  }
+
+  // A connector check that failed or was cut off can leave the home page on its new saved chat.
+  // Take it back to Temporary Chat as a check of its own, so other checks and Retry wait for it
+  // and cancelling it stops the navigation. Its release observes the page as usual.
+  recoverReleasedHome() {
+    return this.withReadOnlyInspection(HOME_RECOVERY_CHECK, async signal => {
+      this.logger.info("browser.session_surface_reloaded", { reason: "check-released" });
+      await awaitInspection(this.view.webContents.loadURL(TEMPORARY_CHAT_URL), signal);
+      // Hand the page back with its composer, not mid-load; a slower page is observed after release.
+      await this.waitForAuthenticated(HOME_RECOVERY_SETTLE_MS, signal, { preserveVerified: true }).catch(error => {
+        if (signal.aborted) throw error;
+      });
+    }, { preserveSelection: true, timeoutMs: HOME_RECOVERY_TIMEOUT_MS });
   }
 
   // Connector verification works on a new saved chat. Only that page is taken back to Temporary
@@ -792,28 +813,23 @@ class BrowserHost {
       && parsed.searchParams.get("temporary-chat") !== "true";
   }
 
-  // Bring the released home page back to Temporary Chat and wait for its composer before
-  // publishing, so a page that is merely loading is not reported as a lost sign-in. The next
-  // check cancels this and observes the page itself.
+  // Wait for the released page's composer before publishing, so a page that is still loading is
+  // not reported as a lost sign-in. This only reads the page; the next check cancels it.
   async observeReleasedHome() {
     this.releasedHomeObservation?.abort();
     const controller = new AbortController();
     this.releasedHomeObservation = controller;
-    const timeout = setTimeout(() => controller.abort(), RELEASED_HOME_OBSERVATION_MS);
-    timeout.unref?.();
+    const { signal } = controller;
     try {
-      if (this.homeLeftOnSavedNewChat()) {
-        this.logger.info("browser.session_surface_reloaded", { reason: "check-released" });
-        await awaitInspection(this.view.webContents.loadURL(TEMPORARY_CHAT_URL), controller.signal).catch(() => {});
+      const deadline = Date.now() + RELEASED_HOME_OBSERVATION_MS;
+      while (Date.now() < deadline) {
+        const state = await this.probeAuthentication({ signal, preserveVerified: true });
+        if (state.authenticated) return;
+        await delay(750, undefined, { signal });
       }
-      await this.waitForAuthenticated(RELEASED_HOME_OBSERVATION_MS, controller.signal, { preserveVerified: true });
-    } catch {
-      // Not back in time: publish what the page shows now, unless a new check owns it.
-      if (this.releasedHomeObservation === controller && !this.readOnlyInspection && !this.destroyed) {
-        await this.probeAuthentication();
-      }
+      // Still not back: publish what the page shows now, unless a new check owns it.
+      if (!this.readOnlyInspection && !this.destroyed) await this.probeAuthentication();
     } finally {
-      clearTimeout(timeout);
       if (this.releasedHomeObservation === controller) this.releasedHomeObservation = null;
     }
   }

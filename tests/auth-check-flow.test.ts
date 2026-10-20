@@ -98,55 +98,82 @@ function releasedHomeHost(url: string, loadURL: (next: string) => Promise<void>)
   const fixture = homeHost({ readOnlyInspection: null, manualOperation: null, ready: async () => {},
     state: { status: "ready", authenticated: true, authenticationStatus: "verified" } });
   let current = url;
+  let stops = 0;
   fixture.contents.getURL = () => current;
   fixture.contents.loadURL = async (next: string) => { fixture.loads.push(next); await loadURL(next); current = next; };
+  fixture.contents.isLoadingMainFrame = () => true;
+  fixture.contents.stop = () => { stops += 1; };
   const probes: any[] = [];
   let observed: Promise<void> | undefined;
+  let recovered: Promise<void> | undefined;
   const observe = fixture.host.observeReleasedHome;
   fixture.host.observeReleasedHome = function () { observed = observe.call(this); return observed; };
-  return { ...fixture, probes, observed: () => observed };
+  const recover = fixture.host.recoverReleasedHome;
+  fixture.host.recoverReleasedHome = function () { recovered = recover.call(this); return recovered; };
+  return { ...fixture, probes, observed: () => observed, recovered: () => recovered, stops: () => stops };
 }
 
-test("a check that leaves the home page on its saved chat brings it back before observing it", async () => {
-  const { host, loads, logs, probes, observed } = releasedHomeHost("https://chatgpt.com/", async () => {});
+test("a check that leaves the home page on its new saved chat takes it back as a check of its own", async () => {
+  const { host, loads, logs, probes, recovered } = releasedHomeHost("https://chatgpt.com/", async () => {});
+  let operationDuringRecovery: string | null = null;
   host.runAuthenticationProbe = async (options: any = {}) => {
     probes.push(options);
+    operationDuringRecovery = host.currentOperation();
     // Still loading on the first look, verified on the second.
     return probes.length > 1 ? { authenticated: true } : { authenticated: false, authenticationStatus: "unknown" };
   };
   await host.withReadOnlyInspection("connector verification", async () => {}, { preserveSelection: true });
-  await observed();
+  await recovered();
   expect(loads).toEqual([TEMPORARY_CHAT]);
   expect(logs).toContainEqual(["browser.session_surface_reloaded", { reason: "check-released" }]);
+  // Other checks, Retry and evidence restores see the recovery as this account's operation.
+  expect(operationDuringRecovery).toBe("home page recovery");
   expect(probes).toHaveLength(2);
   // Every look while the page came back kept a verified session from being published as lost.
   expect(probes.every(options => options.preserveVerified === true)).toBe(true);
+  expect(host.readOnlyInspection).toBeNull();
 }, 10_000);
 
 test("a released conversation page, which may hold a draft, is observed in place", async () => {
   const conversation = "https://chatgpt.com/c/11111111-2222-3333-4444-555555555555?temporary-chat=true";
-  const { host, loads, probes, observed } = releasedHomeHost(conversation, async () => {});
+  const { host, loads, probes, observed, recovered } = releasedHomeHost(conversation, async () => {});
   host.runAuthenticationProbe = async (options: any = {}) => { probes.push(options); return { authenticated: true }; };
   // A page load during the check asked for an observation of the released page.
   host.authProbeDeferredForInspection = true;
   await host.withReadOnlyInspection("session verification retry", async () => {}, { preserveSelection: true });
   await observed();
+  expect(recovered()).toBeUndefined();
   expect(loads).toEqual([]);
   expect(probes).toHaveLength(1);
+  expect(probes[0]).toMatchObject({ preserveVerified: true });
 });
 
-test("a new check cancels the observation of the page the previous one released", async () => {
-  const { host, probes, observed } = releasedHomeHost("https://chatgpt.com/", () => new Promise<void>(() => {}));
-  host.runAuthenticationProbe = async (options: any = {}) => { probes.push(options); return { authenticated: true }; };
+test("other checks wait for the recovery, and cancelling it stops its navigation", async () => {
+  const { host, loads, recovered, stops } = releasedHomeHost("https://chatgpt.com/", () => new Promise<void>(() => {}));
+  host.runAuthenticationProbe = async () => ({ authenticated: true });
   await host.withReadOnlyInspection("connector verification", async () => {}, { preserveSelection: true });
-  let release!: () => void;
-  const next = host.withReadOnlyInspection("session verification retry",
-    () => new Promise<void>(resolve => { release = resolve; }), { preserveSelection: true });
-  await observed();
-  // The page belongs to the new check, so nothing was observed or published for the old one.
-  expect(probes).toEqual([]);
-  release();
-  await next;
+  expect(host.currentOperation()).toBe("home page recovery");
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(loads).toEqual([TEMPORARY_CHAT]);
+  await expect(host.withReadOnlyInspection("session inspection", async () => {}, { preserveSelection: true }))
+    .rejects.toThrow("Finish the account's active task or operation");
+  await host.cancelReadOnlyInspection();
+  await recovered()?.catch(() => {});
+  expect(stops()).toBe(1);
+  expect(host.readOnlyInspection).toBeNull();
+});
+
+test("a check cancelled for a restart leaves the page as it is", async () => {
+  const { host, loads, recovered } = releasedHomeHost("https://chatgpt.com/", async () => {});
+  host.runAuthenticationProbe = async () => ({ authenticated: true });
+  const check = host.withReadOnlyInspection("connector verification",
+    (signal: AbortSignal) => new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason))),
+    { preserveSelection: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  await host.cancelReadOnlyInspection();
+  await check.catch(() => {});
+  expect(recovered()).toBeUndefined();
+  expect(loads).toEqual([]);
 });
 
 test("connector verification gets the helper's limit plus the session wait, other checks keep 90 s", async () => {
