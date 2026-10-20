@@ -343,6 +343,11 @@ export function workspaceHeadline(readiness: WorkspaceReadiness, { app, language
     case "session-checking":
       return { title: app.checkingSignIn, body: words.sessionCheckingBody, tone: "info", step: "wait", action: checking };
     case "session-unavailable":
+      // Only a person can pass Cloudflare's check, so lead straight to the browser that shows it.
+      if (authenticationIssue === "challenge") {
+        return { title: workflow.session.securityCheckTitle, body: sessionIssueCopy(language, authenticationIssue),
+          tone: "warning", step: "open-workspace", action: workflow.session.securityCheckAction, secondary: "activity" };
+      }
       return { title: workflow.session.verificationUnavailable, body: sessionIssueCopy(language, authenticationIssue),
         tone: "warning", step: "retry-session", action: workflow.session.retryVerification, secondary: "activity" };
     case "session-signed-out":

@@ -786,6 +786,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
             </>}>
             <div className="accounts-card__body">
               {authUnavailable ? <Notice tone="warning" id={ids.session}
+                title={account.authenticationIssue === "challenge" ? workflow.session.securityCheckTitle : undefined}
                 meta={lastVerified ? workflow.session.lastVerifiedAt.replace("{time}", lastVerified) : undefined}
                 action={selected ? <Button size="sm" variant="ghost" icon="browser"
                   disabled={mutationsDisabled || active || loginBoundActive || quotaReadBusy}
