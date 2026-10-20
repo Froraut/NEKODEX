@@ -1,6 +1,7 @@
 # Полная программа развития NEKODEX
 
-Обновлено: 19 октября 2026 года. Рабочая ветка: `codex/full-adoption-20261018`.
+Обновлено: 21 октября 2026 года (раздел «Статус 21 октября 2026 года» в конце).
+Рабочая ветка: `codex/full-adoption-20261018`; 20 октября влита в `main` (`296addd`).
 Это программа реализации всего набора возможностей из
 [36 строк предыдущей оценки](../reviews/2026-10-18-deferred-features-next.md),
 включая прежде отложенные области. Она заменяет прежнюю очередь «только
@@ -271,7 +272,9 @@ signing, installed replacement и release. Source commit/PR может сохр�
 - **OAuth MCP:** reviewed binding, transport, core/main lifecycle и UI
   интегрированы и имеют controlled targeted checks. Реальный provider остаётся
   unconfigured; actual OAuth authorization, discovery и tool effect этим не
-  подтверждены.
+  подтверждены. *Статус на 21 октября 2026 года: реальные Linear authorization,
+  discovery и один одобренный tool call приняты в установленной `.13` — см.
+  «Статус 21 октября 2026 года».*
 - **Связанные исправления:** Native dropdown refresh, copy/отступы, повтор
   shutdown после отказа и обработка schema unions входят в эту source-партию.
   Их сохранённые focused результаты не подменяют итоговую installed-проверку.
@@ -349,6 +352,9 @@ DEV GUI сценарии. Их сборка/установка как новой
   неоднозначным. Эти процессы и retained state сохранены; новый real-provider
   model turn и capture не получены.
   [Physical-owner observation](/Users/alex/Documents/ChatGPT/Nekodex/reviews/evidence/native-integrated-20261019/source-next-20261019/dev-acceptance/native-recovery-process-proof.json).
+  *Статус на 21 октября 2026 года: real-provider проверка выполнена в установленной
+  `.13` — canonical first pair, fork точного хода и recall 81; полный transcript и
+  external handoff по-прежнему не заявлены. См. «Статус 21 октября 2026 года».*
 - **P03–P08 / реальные remote mutation faults:** на unchanged source `4ea88cc`
   подтверждены три границы: exclusive SFTP temp WRITE до ACK, final atomic
   rename до ACK и managed Git worktree create с живыми remote children перед
@@ -382,6 +388,9 @@ listener с зарегистрированными host/port/path и отказ�
 публичного клиента, а не вход в Linear, account grant, refresh/revoke или
 выполненный MCP tool. Импорт в текущий аккаунт и реальный OAuth callback ещё
 требуют admitted Native authority и отдельного пользовательского consent.
+*Статус на 21 октября 2026 года: в установленной `.13` выполнены Read consent,
+защищённый callback, discovery и один одобренный вызов; см. «Статус 21 октября
+2026 года».*
 [Official Linear MCP](https://linear.app/docs/mcp),
 [Public setup receipt](/Users/alex/Documents/ChatGPT/Nekodex/reviews/evidence/native-integrated-20261019/source-next-20261019/oauth-linear/configuration-readiness.json).
 
@@ -415,3 +424,58 @@ P16 scoped readiness теперь использует тот же native scope 
 EN/RU причиной. Общий Agent-mode API и UUID VM-контракт не менялись. Один
 реальный HTTP status regression принят; ранее выполненный UUID GUI
 picker/build/attach/revoke переиспользован без нового VM запуска.
+
+### Статус 21 октября 2026 года
+
+Сверено 21 октября 2026 года по `main`, ветке `fix/codex-hook-and-recovery-20261021`
+и сохранённым evidence. Записи выше не переписаны; где они расходятся с этим
+статусом, действует этот статус. Все 44 ID сохранены, ALL44/macOS не завершён.
+
+- **Merge:** стек [#96](https://github.com/Froraut/NEKODEX/pull/96),
+  [#97](https://github.com/Froraut/NEKODEX/pull/97), [#98](https://github.com/Froraut/NEKODEX/pull/98),
+  [#100](https://github.com/Froraut/NEKODEX/pull/100) и [#101](https://github.com/Froraut/NEKODEX/pull/101)
+  влит в `main` 20 октября (`296addd`); затем [#103](https://github.com/Froraut/NEKODEX/pull/103),
+  [#104](https://github.com/Froraut/NEKODEX/pull/104) и [#105](https://github.com/Froraut/NEKODEX/pull/105)
+  (`3b1d081`). CI обоих merge commits успешен.
+- **Установка и release:** локальные сборки `6.1.32-nekodex.14`…`.20` установлены
+  последовательно: `.14` — 20 октября в 13:34 UTC, текущая `.20` (эта ветка,
+  `5a45350`) — 20 октября около 23:00 UTC (21 октября по Минску). Публичных release
+  после `v6.1.28-nekodex.1` не было: DMG/ZIP и notarization не выполнялись.
+- **Установленная `.13`** (результаты в теле [PR #98](https://github.com/Froraut/NEKODEX/pull/98)):
+  официальный Native вход и catalog из десяти моделей; реальная baseline 4014;
+  canonical first pair и fork точного хода с recall 81, после чего consents
+  отозваны и global recording OFF; PNG-only vision совпал с независимым withheld
+  ответом; named Goal interruption освободил точного owner без replay.
+  [Acceptance](/Users/alex/Documents/ChatGPT/Nekodex/reviews/evidence/native-integrated-20261019/native-login-20261020/acceptance.json).
+- **P15 / OAuth MCP:** Linear Read consent, защищённый callback и authenticated
+  discovery завершены. После отдельного human approval выполнен ровно один
+  `search_documentation`; один MANUAL Step продолжил тот же worker
+  (review_required 2/2, pending 0). Затем Refresh → connected, Revoke → revoked,
+  MCP OFF/servers=[].
+  [Lifecycle](/Users/alex/Documents/ChatGPT/Nekodex/reviews/evidence/native-integrated-20261019/native-login-20261020/linear-oauth-lifecycle.json).
+- **P16 / P17:** в установленной `.13` принят native-package VM consumer: одна
+  offline build, attachment и human-approved `vm-shell/run` с импортом C-extension.
+  20 октября около 00:59 UTC приняты typed image read через `skill-resource/read`
+  (PNG 5909 B, итог совпал с withheld oracle) и public GET `https://example.com`
+  через `vm-network/request` (HTTP 200, 577 B): оба `independent-final-acceptance.json`
+  имеют `passed: true`. Затем обе задачи остановлены, network grant и managed skill
+  version отозваны.
+  [P16 image](/Users/alex/Documents/ChatGPT/Nekodex/reviews/evidence/native-integrated-20261019/native-login-20261020/p16-native-consumer/skill-resource-image/independent-final-acceptance.json),
+  [P17 GET](/Users/alex/Documents/ChatGPT/Nekodex/reviews/evidence/native-integrated-20261019/native-login-20261020/p17-native-network-consumer/independent-final-acceptance.json).
+
+Остаётся открытым:
+
+- **P11:** реальная отправка в ChatGPT; Firefox load/pair/lifecycle (официальный
+  Firefox 158 с отдельным QA-профилем остановлен на экране Terms, temporary add-on
+  не загружен); подписанная distribution.
+- **P12–P13:** real-model/real-app acceptance browser и desktop.
+- **DW9:** семантическая проверка Goal.
+- **DW2, DW5, DW7:** внешний client reuse/exclusive handoff и полный transcript не
+  заявлены.
+- **P23:** положительное архивирование owner recovery.
+- **P24:** packaging, notarization, публикация.
+- **Этап 2:** Windows/Linux.
+- **P18:** QuickJS/WASM — только при измеренном composition gap.
+
+Границы, явно названные unsupported в таблицах и связанных контрактах, принятыми
+приёмками не расширяются.

@@ -1,6 +1,7 @@
 # Isolated execution environments: proposed continuation
 
 **Development product flow accepted; production/installed delivery remains open.**
+*Status 2026-10-21: the helper, guest image and manifests ship inside local NEKODEX builds (`Resources/runtime/app/execution-vm`), and an installed `.13` Native task imported a C extension built in the VM. Public release packaging, guest networking, Darwin parity and a production image/update policy remain open.*
 The dedicated helper, guest producer, strict protocol and private execution leaf
 now exist and actual pipeline/background/cancel/timeout/core EOF checks passed.
 See [physical ownership evidence](../reviews/2026-10-19-isolated-shell.md) and

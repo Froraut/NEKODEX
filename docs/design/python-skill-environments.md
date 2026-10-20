@@ -53,7 +53,7 @@ including `>1.7.post2` accepting `1.7.post3` and `<1.0rc2` accepting `1.0rc1`.
 Explicit artifact selection opts into that artifact's prerelease; no package
 discovery or automatic version choice occurs.
 
-PEP 508 markers, extras and direct URLs are explicitly refused. Native extensions,
+PEP 508 markers, extras and direct URLs are explicitly refused. *Status 2026-10-21: superseded on `main`: `src/agent-tools/skill-python-requirements.ts` now evaluates PEP 508 markers, extras and direct-URL pins, but only against explicitly selected artifacts with exact SHA-256 mappings; nothing is fetched or resolved (see [standalone skills resources](standalone-skills-resources.md)).* Native extensions,
 native executable payloads, `.pth`, bytecode/startup customization, editable
 metadata, `.data` installation schemes/scripts, sdists, VCS/build inputs, declared
 external requirements and unsupported archive/metadata features are refused.

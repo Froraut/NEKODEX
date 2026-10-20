@@ -155,12 +155,20 @@ prove model use or a completed task outcome. Selected offline pure-wheel Python
 dependencies now have a separate [environment contract](python-skill-environments.md)
 and [actual dateutil/six Native acceptance](../reviews/2026-10-19-python-environments.md),
 with distinct Review/Prepare, task-generation Attach and per-call approval.
-PEP508 markers/extras/URLs, native wheels/builds/data schemes and other Python
-distributions remain unsupported. Broader executables and shell,
-other binary/multimedia assets, remote resources and automatic dependency discovery
-remain unsupported and require separate authority and executor design.
-The [isolated execution environment continuation](isolated-execution-environments.md)
-is a design-only full-shell/native-build proposal; it is not current support.
+As of 2026-10-21 on `main`, PEP 508 markers, extras and direct-URL pins are
+evaluated, but only against explicitly selected artifacts with exact SHA-256
+mappings; nothing is fetched or resolved. This host environment still admits only
+pure wheels: native wheels, `.data` schemes and other Python distributions remain
+unsupported here. Broader host executables and shell, other binary/multimedia assets,
+remote resources and automatic dependency discovery remain unsupported and require
+separate authority and executor design.
+The [isolated execution environment](isolated-execution-environments.md) is no longer
+design-only: its offline Linux VM shell, C/CPython builds and selected in-tree PEP 517
+builds with Linux ARM64 native-wheel validation have
+[development acceptance](../reviews/2026-10-19-pep517-environment-acceptance.md), and
+an installed `.13` Native task imported a VM-built C extension
+([PR #98](https://github.com/Froraut/NEKODEX/pull/98)). `.data` schemes, general
+`build_sdist` and guest network access stay unsupported there.
 
 ## Mixed image package batch
 

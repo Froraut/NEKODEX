@@ -182,8 +182,14 @@ invocation generator, prompt-to-command setup or automatic registry import.
 Setup must not put credentials into arguments or source labels. The unsandboxed SDK transport inherits
 its documented small baseline environment; only the credential resolver supplies
 additional named values, and launch diagnostics discard server stderr. The host
-never copies another client's API keys or OAuth files. HTTP/OAuth and arbitrary
-package installation remain unsupported. The fixed official npm recipe has the
+never copies another client's API keys or OAuth files. These recipes stay stdio
+with `auth:none`. As of 2026-10-21 on `main`, remote HTTPS MCP servers are reachable
+only through the separate Protected MCP OAuth owner described in
+[ARCHITECTURE.md](../../ARCHITECTURE.md): a reviewed provider/account/resource pin,
+a protected vault and a main-owned Streamable HTTP transport, used through the same
+per-call approval and ToolJournal. One approved real Linear read-only call passed in
+installed `.13`. Unauthenticated HTTP MCP and arbitrary package installation remain
+unsupported. The fixed official npm recipe has the
 separate managed installation contract below; it never installs a plugin into
 another client's registry.
 
