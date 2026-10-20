@@ -47,7 +47,7 @@ import { inspectCodexIntegrationWithChain } from "./codex-chained-route";
 import { runDevCommand } from "./dev-chat/cli";
 import { runCompactionModelConfigCommand } from "./compaction-model-config";
 import { authorizeLauncherControl, runModelCapabilitiesConfigCommand, runProModelVersionConfigCommand } from "./pro-model-config";
-import { readCodexRouteDiagnostics } from "./route-diagnostics";
+import { readCodexRouteDiagnosticsWithChain } from "./route-diagnostics";
 import { takeFlag, takeOption } from "./lib/cli-args";
 
 const HELP = `codex-chatgpt-web ${VERSION}
@@ -441,7 +441,7 @@ async function routeCommand(args: string[]): Promise<void> {
   if (action === "diagnostics") {
     const profile = takeOption(args, "--profile");
     assertNoArgs(args);
-    stdout.write(`${JSON.stringify(readCodexRouteDiagnostics({ profile }), null, 2)}\n`);
+    stdout.write(`${JSON.stringify(await readCodexRouteDiagnosticsWithChain({ profile }), null, 2)}\n`);
     return;
   }
   assertNoArgs(args);

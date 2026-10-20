@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { inspectCodexIntegrationWithChain, type ChainedRouteProof } from "./codex-chained-route";
 import { readJournalSnapshot } from "./codex-integration-journal";
 import { readBoundedUtf8File } from "./read-bounded-file";
 import { getCodexHome } from "./codex-integration-shared";
@@ -29,12 +30,14 @@ const safeName = (value: unknown): string | null => typeof value === "string" &&
 /** Report configured routing without returning TOML, provider URLs, credentials, or mutating it. */
 export function diagnoseCodexConfiguration(
   text: string | null,
-  { codexHome, profile, profileText, profileReadError, integration }: {
+  { codexHome, profile, profileText, profileReadError, integration, chainedRoute }: {
     codexHome: string;
     profile?: string;
     profileText?: string;
     profileReadError?: boolean;
     integration: IntegrationInspection | null;
+    /** A loopback gateway proven to forward to this runtime (see verifyChainedCodexRoute). */
+    chainedRoute?: ChainedRouteProof;
   },
 ): CodexRouteDiagnostics {
   const result: CodexRouteDiagnostics = {
@@ -103,13 +106,26 @@ export function diagnoseCodexConfiguration(
   if (result.customProvider) result.issueCodes.push("custom-provider");
   if (result.modelCatalogOverride) result.issueCodes.push("catalog-override");
   if (integration?.installed && integration.routeUrl) {
-    result.routeMatches = effective.openai_base_url === integration.routeUrl;
+    // A verified local gateway in front of this runtime (codex-providers) still routes to it, as
+    // route status and doctor already accept.
+    const throughGateway = chainedRoute !== undefined && chainedRoute.upstreamUrl === integration.routeUrl
+      && effective.openai_base_url === chainedRoute.url;
+    result.routeMatches = effective.openai_base_url === integration.routeUrl || throughGateway;
     if (integration.active && !result.routeMatches) result.issueCodes.push("route-mismatch");
   }
   return result;
 }
 
-export function readCodexRouteDiagnostics(options: { profile?: string } = {}): CodexRouteDiagnostics {
+/** Diagnostics that also accept a verified gateway chain; the proof needs a health read, so this is async. */
+export async function readCodexRouteDiagnosticsWithChain(
+  options: { profile?: string } = {},
+  inspect: () => Promise<{ chainedRoute?: ChainedRouteProof }> = inspectCodexIntegrationWithChain,
+): Promise<CodexRouteDiagnostics> {
+  const chainedRoute = await inspect().then(status => status.chainedRoute, () => undefined);
+  return readCodexRouteDiagnostics({ ...options, chainedRoute });
+}
+
+export function readCodexRouteDiagnostics(options: { profile?: string; chainedRoute?: ChainedRouteProof } = {}): CodexRouteDiagnostics {
   const home = resolve(getCodexHome());
   const configPath = join(home, "config.toml");
   let integration: IntegrationInspection | null = null;
@@ -150,5 +166,6 @@ export function readCodexRouteDiagnostics(options: { profile?: string } = {}): C
   } catch {
     profileReadError = true;
   }
-  return diagnoseCodexConfiguration(text, { codexHome: home, profile: options.profile, profileText, profileReadError, integration });
+  return diagnoseCodexConfiguration(text, { codexHome: home, profile: options.profile, profileText, profileReadError, integration,
+    chainedRoute: options.chainedRoute });
 }
