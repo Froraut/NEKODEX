@@ -133,6 +133,8 @@ const CLOUDFLARE_CHALLENGE_RECOVERY_PROOF_TIMEOUT_MS = 8_000;
 const CLOUDFLARE_CHALLENGE_DEFERRED_POLL_MS = 2_000;
 const DEFERRED_CHALLENGE_SIGN_IN_RELOAD_MS = 15_000;
 const SESSION_TOKEN_COOKIE = /^__Secure-next-auth\.session-token(?:\.\d+)?$/;
+const CLOUDFLARE_COOKIE = /^(?:cf_clearance|__cf_bm|_cfuvid|__cflb|__cfruid|cf_chl_.*)$/;
+const NON_COOKIE_STORAGES = ["filesystem", "indexdb", "localstorage", "shadercache", "websql", "serviceworkers", "cachestorage"];
 const SESSION_TOKEN_SETTLE_MS = 1_500;
 const NETWORK_EGRESS_CHECK_INTERVAL_MS = 10 * 60_000;
 const CHATGPT_VIEWPORT_CSS = `
@@ -3237,7 +3239,7 @@ class BrowserHost {
     return this.snapshot();
   }
 
-  async clearOwnedSessionForPasskey() {
+  async clearOwnedSessionForPasskey({ keepCloudflareCookies = false } = {}) {
     if (!(this.turnTabs instanceof Map)) throw new Error("Owned ChatGPT tab registry is unavailable");
     this.authGeneration = (this.authGeneration ?? 0) + 1;
     if (this.authView) this.closeAuthView(this.authView, true, false);
@@ -3251,7 +3253,19 @@ class BrowserHost {
       throw new Error("Owned ChatGPT views do not share one browser session");
     }
     await Promise.all(contents.map(candidate => candidate.loadURL(IDLE_BROWSER_URL)));
-    await browserSession.clearStorageData();
+    if (keepCloudflareCookies) {
+      // Cloudflare's cookies here were issued to this view's own user agent and network. An
+      // import replaces the ChatGPT sign-in only; keeping them avoids a fresh challenge.
+      await browserSession.clearStorageData({ storages: NON_COOKIE_STORAGES });
+      for (const cookie of await browserSession.cookies.get({})) {
+        if (CLOUDFLARE_COOKIE.test(cookie.name)) continue;
+        const host = String(cookie.domain ?? "").replace(/^\./, "");
+        if (!host) continue;
+        await browserSession.cookies.remove(`${cookie.secure ? "https" : "http"}://${host}${cookie.path || "/"}`, cookie.name);
+      }
+    } else {
+      await browserSession.clearStorageData();
+    }
     browserSession.flushStorageData();
     await browserSession.cookies.flushStore();
     this.retireAuthenticatedIdentity();
@@ -3406,9 +3420,12 @@ class BrowserHost {
       signal?.throwIfAborted();
       sessionMutated = true;
       verificationStage = "install-session";
-      await this.clearOwnedSessionForPasskey();
+      await this.clearOwnedSessionForPasskey({ keepCloudflareCookies: true });
       for (const cookie of state.cookies) {
         signal?.throwIfAborted();
+        // Chrome's Cloudflare cookies are bound to Chrome's user agent; installing them here
+        // replaced this view's working ones and triggered a challenge after every import.
+        if (CLOUDFLARE_COOKIE.test(cookie.name)) continue;
         await contents.session.cookies.set(cookie);
       }
       contents.session.flushStorageData();
