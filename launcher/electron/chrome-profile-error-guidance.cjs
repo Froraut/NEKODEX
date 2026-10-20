@@ -14,6 +14,9 @@ const GUIDANCE = Object.freeze({
   'chrome-permission-timeout': [
     'Chrome connection approval timed out. Keep the selected profile open, retry, and respond to the Chrome permission prompt.',
     'Истекло время ожидания разрешения Chrome. Оставьте выбранный профиль открытым, повторите попытку и ответьте на запрос разрешения Chrome.'],
+  'chrome-discovery-timeout': [
+    'Chrome did not provide its connection or the selected profile in time. Keep the selected profile open, check that remote debugging is enabled at chrome://inspect/#remote-debugging, then retry.',
+    'Chrome не передал сведения о соединении или выбранный профиль вовремя. Оставьте выбранный профиль открытым, проверьте, что удалённая отладка включена на chrome://inspect/#remote-debugging, и повторите подключение.'],
   'chrome-unavailable': [
     'Open the selected Chrome profile and enable remote debugging at chrome://inspect/#remote-debugging, then retry.',
     'Откройте выбранный профиль Chrome и включите удалённую отладку на chrome://inspect/#remote-debugging, затем повторите подключение.'],

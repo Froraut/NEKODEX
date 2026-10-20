@@ -49,7 +49,8 @@ function publicPasskeyProgress(progress) {
 function passkeyLoginFailure(error, { aborted, progressPhase }) {
   const message = error instanceof Error ? error.message : String(error);
   const cancelled = (aborted || error?.code === "profile-login-cancelled") && !CLEANUP_FAILURE.test(message);
-  const phase = cancelled ? "cancelled" : /timed out/i.test(message) ? "timed-out" : "failed";
+  // waitForAuthenticated reports "ChatGPT login was not completed before the timeout".
+  const phase = cancelled ? "cancelled" : /timed out|before the timeout/i.test(message) ? "timed-out" : "failed";
   const errorCode = phase === "cancelled" ? null
     : isExistingChromeErrorCode(error?.code) ? error.code
     : ["chrome-account-mismatch", "chrome-account-unverified", "chrome-account-unidentified",

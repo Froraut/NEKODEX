@@ -70,7 +70,9 @@ function createProfileClaim(port, now = Date.now()) {
     openedAt: new Date(now).toISOString() });
 }
 
-async function createProfileClaimServer({ signal, timeoutMs = 15_000 } = {}) {
+// Chrome can take well over 15 s to start a cold profile, show a profile-picker or restore
+// windows; the wait for its GET starts only once the launch has been handed to Chrome.
+async function createProfileClaimServer({ signal, timeoutMs = 45_000 } = {}) {
   signal?.throwIfAborted();
   let claim;
   let settled = false;
@@ -111,14 +113,17 @@ async function createProfileClaimServer({ signal, timeoutMs = 15_000 } = {}) {
       server.listen(0, '127.0.0.1', resolve);
     });
     claim = createProfileClaim(server.address().port);
-    timer = setTimeout(() => {
-      const error = new Error('Chrome did not open the selected profile verification page. Retry the import.');
-      error.code = 'chrome-profile-claim-missing';
-      finish(error);
-    }, timeoutMs);
+    const startWaiting = () => {
+      if (settled || timer) return;
+      timer = setTimeout(() => {
+        const error = new Error('Chrome did not open the selected profile verification page. Retry the import.');
+        error.code = 'chrome-profile-claim-missing';
+        finish(error);
+      }, timeoutMs);
+    };
     signal?.addEventListener('abort', abort, { once: true });
     if (signal?.aborted) abort();
-    return { claim, loaded, cleanup };
+    return { claim, loaded, cleanup, startWaiting };
   } catch (error) { finish(error); throw error; }
 }
 
@@ -194,6 +199,7 @@ function createChromeProfileChoice({ root, coreHome, BrowserWindow, window, exec
         claimServer = await createProfileClaimServer({ signal });
         try {
           await launch(executable(), selected.id, claimServer.claim.url, root);
+          claimServer.startWaiting();
           await claimServer.loaded;
           signal?.throwIfAborted();
           return claimServer.claim;

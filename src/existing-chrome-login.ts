@@ -1,4 +1,5 @@
-import { constants, closeSync, fstatSync, lstatSync, openSync, readSync, rmSync } from "node:fs";
+import { constants, rmSync } from "node:fs";
+import { lstat, open } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -33,7 +34,7 @@ const CLEANUP_TIMEOUT_MS = 2_000;
 const PROFILE_CLAIM_LOOKUPS = 5;
 
 export type ExistingChromeLoginErrorCode = "consent-required" | "unsupported-platform" | "chrome-unavailable" | "chrome-profile-access-denied"
-  | "invalid-endpoint" | "chrome-permission-denied" | "chrome-permission-timeout" | "chrome-too-old"
+  | "invalid-endpoint" | "chrome-permission-denied" | "chrome-permission-timeout" | "chrome-discovery-timeout" | "chrome-too-old"
   | "chrome-disconnected" | "chrome-profile-claim-missing" | "invalid-response" | "session-missing" | "cancelled" | "capture-write-failed";
 const MESSAGES: Record<ExistingChromeLoginErrorCode, string> = {
   "consent-required": "Confirm access to your current Chrome profile before importing its ChatGPT sign-in.",
@@ -43,6 +44,7 @@ const MESSAGES: Record<ExistingChromeLoginErrorCode, string> = {
   "invalid-endpoint": "Chrome's local connection information is unavailable or invalid. Reopen its remote debugging settings and retry.",
   "chrome-permission-denied": "Chrome did not allow the connection. Choose Allow in Chrome when you retry.",
   "chrome-permission-timeout": "Chrome did not finish approving the connection in time. Check its Allow prompt and retry.",
+  "chrome-discovery-timeout": "Chrome did not provide its connection or the selected profile in time. Keep the selected profile open with remote debugging enabled and retry.",
   "chrome-too-old": "Importing an existing Chrome sign-in requires Google Chrome 144 or later with native connection approval enabled.",
   "chrome-disconnected": "The connection to Chrome ended. Keep Chrome open and retry the import.",
   "chrome-profile-claim-missing": "Chrome did not expose the selected profile verification page. Keep the selected profile window open and retry.",
@@ -118,28 +120,42 @@ export function parseExistingChromeEndpoint(contents: string): string {
 }
 
 /** One small regular file; enforce no-follow and file ownership where supported by the OS. */
-function discoverEndpoint(path: string): string {
-  let fd: number | undefined;
-  try {
-    if (lstatSync(path).isSymbolicLink()) throw failure("invalid-endpoint");
-    fd = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0));
-    const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.size > 2048 || (process.getuid && stat.uid !== process.getuid())) throw failure("invalid-endpoint");
-    const buffer = Buffer.alloc(2049);
-    let count = 0;
-    while (count < buffer.length) {
-      const bytes = readSync(fd, buffer, count, buffer.length - count, null);
-      if (!bytes) break;
-      count += bytes;
-    }
-    if (count > 2048) throw failure("invalid-endpoint");
-    return parseExistingChromeEndpoint(new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, count)));
-  } catch (error) {
+// macOS can hold the open of a protected Chrome file while it decides on access. Read it off
+// the event loop and treat a stalled read as denied access, so the caller's file-picker
+// fallback can run instead of the whole budget being spent here.
+const DISCOVERY_READ_TIMEOUT_MS = 10_000;
+async function discoverEndpointWithin(path: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
+  const read = (async () => {
+    if ((await lstat(path)).isSymbolicLink()) throw failure("invalid-endpoint");
+    const handle = await open(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0));
+    try {
+      // A late open after the timeout has nobody waiting; close it and stop.
+      if (settled) return "";
+      const stat = await handle.stat();
+      if (!stat.isFile() || stat.size > 2048 || (process.getuid && stat.uid !== process.getuid())) throw failure("invalid-endpoint");
+      const buffer = Buffer.alloc(2049);
+      let count = 0;
+      while (count < buffer.length) {
+        const { bytesRead } = await handle.read(buffer, count, buffer.length - count, null);
+        if (!bytesRead) break;
+        count += bytesRead;
+      }
+      if (count > 2048) throw failure("invalid-endpoint");
+      return parseExistingChromeEndpoint(new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, count)));
+    } finally { await handle.close().catch(() => {}); }
+  })().catch(error => {
     if (error instanceof ExistingChromeLoginError) throw error;
     if (isJsonRecord(error) && (error.code === "EACCES" || error.code === "EPERM")) throw failure("chrome-profile-access-denied");
     if (isJsonRecord(error) && error.code === "ENOENT") throw failure("chrome-unavailable");
     throw failure("invalid-endpoint");
-  } finally { if (fd !== undefined) closeSync(fd); }
+  });
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(failure("chrome-profile-access-denied")), timeoutMs);
+  });
+  try { return await abortable(Promise.race([read, timeout]), signal); }
+  finally { settled = true; if (timer) clearTimeout(timer); read.catch(() => {}); }
 }
 
 /** Validate only the fields accepted by the app. Unknown/partitioned cookies are discarded. */
@@ -193,7 +209,7 @@ async function selectedDiscoveryEndpoint(data: Promise<string> | undefined, time
     () => { throw failure("invalid-endpoint"); },
   );
   const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(failure("chrome-permission-timeout")), timeoutMs);
+    timer = setTimeout(() => reject(failure("chrome-discovery-timeout")), timeoutMs);
   });
   try { return await abortable(Promise.race([received, timeout]), signal); }
   finally { if (timer) clearTimeout(timer); }
@@ -220,7 +236,7 @@ async function selectedProfileClaim(data: Promise<ExistingChromeProfileClaim> | 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const received = Promise.resolve(data).then(validateProfileClaim, () => { throw failure("invalid-response"); });
   const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(failure("chrome-permission-timeout")), timeoutMs);
+    timer = setTimeout(() => reject(failure("chrome-discovery-timeout")), timeoutMs);
   });
   try { return await abortable(Promise.race([received, timeout]), signal); }
   finally { if (timer) clearTimeout(timer); }
@@ -314,10 +330,13 @@ export async function captureExistingChromeLogin(options: ExistingChromeLoginOpt
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) throw failure("invalid-response");
   let deadline = Date.now() + timeoutMs;
+  // Until Chrome is asked to connect, running out of time is a discovery failure (connection
+  // file or profile claim), not an unanswered Allow prompt.
+  let connecting = false;
   const check = () => {
     if (options.signal?.aborted) throw failure("cancelled");
     const remaining = deadline - Date.now();
-    if (remaining <= 0) throw failure("chrome-permission-timeout");
+    if (remaining <= 0) throw failure(connecting ? "chrome-permission-timeout" : "chrome-discovery-timeout");
     return remaining;
   };
   const progress = (phase: ExistingChromeLoginProgress["phase"]) => {
@@ -329,9 +348,10 @@ export async function captureExistingChromeLogin(options: ExistingChromeLoginOpt
   // including when the control payload is missing, malformed, cancelled or late.
   const endpoint = Object.hasOwn(options, "discoveryData")
     ? await selectedDiscoveryEndpoint(options.discoveryData, check(), options.signal)
-    : discoverEndpoint(existingChromePortFile());
+    : await discoverEndpointWithin(existingChromePortFile(), Math.min(DISCOVERY_READ_TIMEOUT_MS, check()), options.signal);
   const profileClaim = await selectedProfileClaim(options.profileClaim, check(), options.signal);
   progress("waiting-for-chrome");
+  connecting = true;
   const permissionStartedAt = Date.now();
   const connection = await connect(endpoint, options.signal);
   // Preserve the network/data-processing budget without charging the time spent in Allow.
