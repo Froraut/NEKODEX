@@ -1983,7 +1983,7 @@ class AccountBrowserPool {
     } finally { this.traceOwners.delete(traceId); this.publish(); }
     return result;
   }
-  beginManualTurn(...args) {
+  async beginManualTurn(...args) {
     this.assertTurnAdmission();
     // Manual submission is deliberately tied to the profile visible to the user.
     const [traceId, , , key] = args;
@@ -2012,7 +2012,7 @@ class AccountBrowserPool {
     this.ensureTabCapacity(host, traceId, key, null, true);
     let lease;
     try {
-      lease = { ...this.getHost(id).beginManualTurn(...args), accountTunnelRequired: tunnel.required === true,
+      lease = { ...await this.getHost(id).beginManualTurn(...args), accountTunnelRequired: tunnel.required === true,
         ...(tunnel.required && tunnel.tunnelId ? { tunnelId: tunnel.tunnelId } : {}) };
       if (key) this.persistAffinity([key], id);
     } catch (error) {

@@ -339,10 +339,10 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
     watch();
     return progress(result);
   }
-  function copyCode(flowId, id) {
+  async function copyCode(flowId, id) {
     const value = requireOwner(flowId, id);
     if (!value.canOpen || !value.userCode) return false;
-    clipboard.writeText(value.userCode);
+    await clipboard.writeText(value.userCode);
     return true;
   }
   async function destroy() {

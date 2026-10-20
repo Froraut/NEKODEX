@@ -8,14 +8,14 @@ const { authenticationProbeScript } = require("../launcher/electron/browser-auth
 const { isTemporaryChatUrl } = require("../launcher/electron/browser-navigation-policy.cjs");
 
 const electronDefault = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
-  + "NEKODEX/6.1.2-nekodex.1 Chrome/146.0.7680.216 Electron/41.10.7 Safari/537.36";
+  + "NEKODEX/6.1.2-nekodex.1 Chrome/152.0.7977.167 Electron/44.9.0 Safari/537.36";
 
 test("the app-wide UA survives NEKODEX and Electron patch updates and is idempotent", () => {
-  const stable = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
-  expect(stableChromiumUserAgent(electronDefault, "146.0.7680.216")).toBe(stable);
-  expect(stableChromiumUserAgent(electronDefault.replace("6.1.2-nekodex.1", "6.2.0-nekodex.1"), "146.0.7690.1")).toBe(stable);
+  const stable = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36";
+  expect(stableChromiumUserAgent(electronDefault, "152.0.7977.167")).toBe(stable);
+  expect(stableChromiumUserAgent(electronDefault.replace("6.1.2-nekodex.1", "6.2.0-nekodex.1"), "152.0.7977.200")).toBe(stable);
   // Views derive their UA from the fallback main.cjs already replaced.
-  expect(stableChromiumUserAgent(stable, "146.0.7680.216")).toBe(stable);
+  expect(stableChromiumUserAgent(stable, "152.0.7977.167")).toBe(stable);
   expect(() => stableChromiumUserAgent("garbage", "146")).toThrow();
 });
 

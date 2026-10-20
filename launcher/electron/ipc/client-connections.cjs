@@ -31,7 +31,7 @@ function registerClientConnections({ handle, runtimeHost, clipboard, isDevProfil
     if (isDevProfile) throw new Error('Use the main NEKODEX profile to copy its API key');
     const receipt = await run('api-key');
     if (typeof receipt.key !== 'string' || !/^sk-local-[a-f0-9]{64}$/.test(receipt.key)) throw new Error('Local API returned an invalid key');
-    clipboard.writeText(receipt.key);
+    await clipboard.writeText(receipt.key);
     return { copied: true };
   });
 }

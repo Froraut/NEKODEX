@@ -8,7 +8,7 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
-    target: "chrome138",
+    target: "chrome152",
     sourcemap: false,
   },
   server: {

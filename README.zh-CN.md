@@ -38,7 +38,7 @@ ChatGPT 会远程处理提示。账户、工作区和工具权限仍适用；本
 
 ## 从源码运行
 
-需要 Bun 1.4.0。开发启动器使用独立的配置和浏览器存储，不会接管已安装应用的账户资料。
+需要 Bun 1.4.3。开发启动器使用独立的配置和浏览器存储，不会接管已安装应用的账户资料。
 
 ```bash
 git clone https://github.com/Froraut/NEKODEX.git nekodex
