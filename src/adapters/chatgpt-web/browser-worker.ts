@@ -184,7 +184,8 @@ class ChatGptPromptAttachmentIntegrityError extends ChatGptWebAdapterError {
 
 const browserStageTimeouts = {
   browserPage: 60_000,
-  temporaryChatPreparation: 150_000,
+  // Includes up to CHATGPT_NETWORK_RETRY_BUDGET_MS of retries while ChatGPT is unreachable.
+  temporaryChatPreparation: 360_000,
   effortSelection: 120_000,
   promptAttachment: 60_000,
   fileAttachment: 120_000,
@@ -297,6 +298,25 @@ export interface BrowserTurn {
 export type ChatGptCompletionFenceStart =
   | { revision: number }
   | { blockedReason: "active_work" | "unacknowledged_async_result"; blockedCount: number };
+
+const CHATGPT_NETWORK_RETRY_BUDGET_MS = 300_000;
+const CHATGPT_NETWORK_ATTEMPT_TIMEOUT_MS = 30_000;
+const CHATGPT_NETWORK_RETRY_DELAYS_MS = [3_000, 6_000, 12_000, 20_000, 30_000];
+const RETRYABLE_CHATGPT_NETWORK_ERROR = /net::ERR_(?:TIMED_OUT|CONNECTION_(?:CLOSED|RESET|REFUSED|ABORTED|FAILED|TIMED_OUT)|NETWORK_(?:CHANGED|IO_SUSPENDED)|INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|NAME_RESOLUTION_FAILED|ADDRESS_UNREACHABLE|PROXY_CONNECTION_FAILED|TUNNEL_CONNECTION_FAILED|EMPTY_RESPONSE|HTTP2_PROTOCOL_ERROR|QUIC_PROTOCOL_ERROR|SSL_PROTOCOL_ERROR|SOCKET_NOT_CONNECTED)\b/;
+
+/** A failed new-chat navigation sent nothing; a dropped or timed-out connection is worth retrying. */
+export function chatGptNavigationRetryReason(error: unknown): string | null {
+  if (!(error instanceof Error)) return null;
+  const network = RETRYABLE_CHATGPT_NETWORK_ERROR.exec(error.message);
+  if (network) return network[0];
+  return error.name === "TimeoutError" ? "page load timed out" : null;
+}
+
+/** The pause before retry number `attempt` (1-based), or null when the budget cannot fit another try. */
+export function chatGptNavigationRetryDelayMs(attempt: number, elapsedMs: number): number | null {
+  const delayMs = CHATGPT_NETWORK_RETRY_DELAYS_MS[Math.min(attempt - 1, CHATGPT_NETWORK_RETRY_DELAYS_MS.length - 1)]!;
+  return elapsedMs + delayMs + CHATGPT_NETWORK_ATTEMPT_TIMEOUT_MS > CHATGPT_NETWORK_RETRY_BUDGET_MS ? null : delayMs;
+}
 
 /** Temporary Chat no longer lists plugins, so a turn that needs the connector runs on a saved chat. */
 export function chatGptTurnUsesSavedChat(
@@ -761,12 +781,53 @@ export class ChatGptBrowserWorker {
     );
   }
 
+  /**
+   * Opening a new chat sends nothing, so a dropped or timed-out connection (a VPN reconnecting,
+   * Wi-Fi changing) is retried with growing pauses for up to five minutes. Each retry is reported
+   * to the caller, which shows it in Codex, instead of failing the whole task on the first error.
+   */
+  private async openChatGptWithNetworkRetry(
+    page: Page,
+    url: string,
+    abortSignal?: AbortSignal,
+    onNetworkRetry?: (note: string) => void,
+    captureDiagnostic?: (checkpoint: string) => Promise<void>,
+  ): Promise<void> {
+    const startedAt = Date.now();
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await withBrowserTurnAbort(page.goto(url, {
+          waitUntil: "domcontentloaded",
+          timeout: CHATGPT_NETWORK_ATTEMPT_TIMEOUT_MS,
+        }), abortSignal);
+        if (attempt > 1) onNetworkRetry?.("ChatGPT is reachable again; continuing the task.");
+        return;
+      } catch (error) {
+        if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+        const reason = chatGptNavigationRetryReason(error);
+        const delayMs = reason ? chatGptNavigationRetryDelayMs(attempt, Date.now() - startedAt) : null;
+        if (!reason || delayMs === null) throw error;
+        const note = `ChatGPT is unreachable (${reason}); nothing was sent. Retrying in ${Math.round(delayMs / 1_000)} s`
+          + ` (attempt ${attempt + 1}).`;
+        console.warn(`[chatgpt-web] ${note}`);
+        onNetworkRetry?.(note);
+        await captureDiagnostic?.(`network-retry-${attempt}`);
+        await this.waitBeforeNetworkRetry(delayMs, abortSignal);
+      }
+    }
+  }
+
+  private waitBeforeNetworkRetry(delayMs: number, abortSignal?: AbortSignal): Promise<void> {
+    return withBrowserTurnAbort(new Promise<void>(resolve => setTimeout(resolve, delayMs)), abortSignal);
+  }
+
   /** Put each operation on a new owned chat document. Maintenance remains temporary. */
   private async prepareTemporaryChatSurface(
     page: Page,
     captureDiagnostic?: (checkpoint: string) => Promise<void>,
     abortSignal?: AbortSignal,
     useSavedChats = false,
+    onNetworkRetry?: (note: string) => void,
   ): Promise<Locator> {
     if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
     // Launcher verification refreshes its owned page before attaching Playwright so a newly added
@@ -775,10 +836,7 @@ export class ChatGptBrowserWorker {
     // about:blank and therefore still performs exactly one navigation through this same method.
     const chatUrl = chatGptNewChatUrl(useSavedChats);
     if (page.url() !== chatUrl) {
-      await withBrowserTurnAbort(page.goto(chatUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: 60_000,
-      }), abortSignal);
+      await this.openChatGptWithNetworkRetry(page, chatUrl, abortSignal, onNetworkRetry, captureDiagnostic);
       await captureDiagnostic?.(useSavedChats ? "saved-chat-navigation-complete" : "temporary-chat-navigation-complete");
     }
     let composer: Locator;
@@ -2707,6 +2765,7 @@ export class ChatGptBrowserWorker {
             checkpoint => diagnostics.capture(page, checkpoint),
             browserStageAbortSignal(stageSignal, turn.abortSignal),
             useSavedChat,
+            note => turn.onReasoningSummary?.(note),
           ),
         );
       }
