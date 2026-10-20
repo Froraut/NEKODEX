@@ -97,7 +97,7 @@
   {"path":"launcher/electron/chrome-profile-picker.css","dependencies":[]},
   {"path":"launcher/electron/chrome-profile-picker.html","dependencies":[]},
   {"path":"launcher/electron/chrome-session-identity.cjs","dependencies":["launcher/electron/browser-user-agent.cjs","launcher/electron/passkey-login-state.cjs","node:crypto"]},
-  {"path":"launcher/electron/codex-account-tools.cjs","dependencies":["launcher/electron/account-quotas.cjs","launcher/electron/account-registry.cjs","launcher/electron/browser-navigation-policy.cjs","launcher/electron/codex-login.cjs","launcher/electron/inspection-control.cjs"]},
+  {"path":"launcher/electron/codex-account-tools.cjs","dependencies":["launcher/electron/account-quotas.cjs","launcher/electron/account-registry.cjs","launcher/electron/browser-navigation-policy.cjs","launcher/electron/codex-login.cjs","launcher/electron/inspection-control.cjs","launcher/electron/openai-api-panel.cjs"]},
   {"path":"launcher/electron/codex-client-control.cjs","dependencies":["launcher/electron/codex-fork-journal.cjs","launcher/electron/process-tree.cjs","node:child_process","node:path","node:string_decoder"]},
   {"path":"launcher/electron/codex-client-control.d.cts","dependencies":[]},
   {"path":"launcher/electron/codex-fork-journal.cjs","dependencies":["launcher/electron/atomic-file.cjs","node:crypto","node:fs","node:path"]},
