@@ -4,7 +4,7 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { canonical, digest, fail, SOURCE, VERSION } = require('./owned-native-admission.cjs');
 const { uuid } = require('./owned-native-journal.cjs');
-const { observeNativeRecoveryProcesses, recoveryExecutableDigest, NATIVE_RECOVERY_OBSERVER_SOURCE } = require('./native-recovery-processes.cjs');
+const { observeNativeRecoveryProcesses, recoveryExecutableDigest, validExcludedZombies, NATIVE_RECOVERY_OBSERVER_SOURCE } = require('./native-recovery-processes.cjs');
 const HASH = /^[a-f0-9]{64}$/;
 const isHash = value => typeof value === 'string' && HASH.test(value);
 const MARKER_KEYS = { authority: ['pid', 'nonce'], execution: ['pid', 'actionId', 'serverGeneration'], inventory: ['pid', 'actionId', 'nonce'] };
@@ -164,14 +164,19 @@ function createNativeAccountRecovery({ authorityHome, executable, executableSha2
     const formerPids = [...new Set(plan.markers.map(row => row.formerPid))];
     const proof = await (testHooks.observeProcesses || observeNativeRecoveryProcesses)({ getMetadataRuntimePin: async () => runtime, paths: [...pins.map(row => row.executable), '/usr/bin/sandbox-exec'], formerPids });
     if (proof.complete !== true || proof.matches?.length !== 0 || proof.former?.length !== formerPids.length || proof.former.some((row, index) => row.pid !== formerPids[index] || row.absent !== true)) throw fail('recovery_physical_owner_unverified', 'A Native owner, worker or launch carrier is live or unverified');
-    return { pins, observerSourceSha256: digest(NATIVE_RECOVERY_OBSERVER_SOURCE), runtime: { bunPath: runtime.bunPath, bunSha256: runtime.bunSha256 }, physicalProof: { method: 'libproc-owned-uid-v1', uid: process.getuid(), absentFormerPids: formerPids, relevantProcesses: 0 } };
+    const excludedZombies = proof.excludedZombies ?? [];
+    if (!validExcludedZombies(excludedZombies)) throw fail('recovery_physical_owner_unverified', 'Excluded zombie process evidence is malformed');
+    // Excluded zombies are receipt evidence, not part of the review digest: the
+    // kernel reaping one must not expire a reviewed plan, like an observer PID.
+    return { executables: { pins, observerSourceSha256: digest(NATIVE_RECOVERY_OBSERVER_SOURCE), runtime: { bunPath: runtime.bunPath, bunSha256: runtime.bunSha256 }, physicalProof: { method: 'libproc-owned-uid-v1', uid: process.getuid(), absentFormerPids: formerPids, relevantProcesses: 0 } },
+      evidence: { excludedZombies: excludedZombies.map(({ pid, uid, start }) => ({ pid, uid, start })) } };
   }
   async function prepare(allowHeld = false) {
     if (isBusy() || closing || active || !allowHeld && heldRecovery()) throw fail('recovery_owner_held', 'Native recovery or execution ownership is held');
-    const plan = gather(), executables = await observe(plan);
+    const plan = gather(), { executables, evidence } = await observe(plan);
     if (closing || isBusy()) throw fail('recovery_owner_held', 'Native ownership closed or changed during observation');
     if (canonical(plan) !== canonical(gather())) throw fail('recovery_source_changed', 'Native ownership changed during physical observation');
-    return { plan, executables, reviewDigest: digest(canonical({ plan, executables })) };
+    return { plan, executables, evidence, reviewDigest: digest(canonical({ plan, executables })) };
   }
   async function previewRecovery() {
     try { const value = await prepare(); return { state: 'reviewable', reviewDigest: value.reviewDigest, observedAt: Date.now(), markers: value.plan.markers.map(({ kind, profileId, epoch, sha256, formerPid }) => ({ kind, ...(profileId ? { profileId, epoch } : {}), sha256, formerPid })), unsettledActionCount: value.plan.unsettledActionCount }; }
@@ -193,13 +198,14 @@ function createNativeAccountRecovery({ authorityHome, executable, executableSha2
     try {
       lockBytes = JSON.stringify({ pid: process.pid, nonce: randomUUID(), actionId }); fs.writeFileSync(gate, lockBytes, { flag: 'wx', mode: 0o600 }); sync(storage);
       directoryPath = path.join(storage, actionId); fs.mkdirSync(directoryPath, { mode: 0o700 });
-      row = { version: 1, actionId, reviewDigest, state: 'prepared', ownerHeld: true, archivedCount: 0, unsettledActionCount: prepared.plan.unsettledActionCount, preparedAt: Date.now(), plan: prepared.plan, executables: prepared.executables, gateFacts: facts(privateRead(gate, 4096)), archive: [] };
+      row = { version: 1, actionId, reviewDigest, state: 'prepared', ownerHeld: true, archivedCount: 0, unsettledActionCount: prepared.plan.unsettledActionCount, preparedAt: Date.now(), plan: prepared.plan, executables: prepared.executables, processEvidence: { prepared: prepared.evidence }, gateFacts: facts(privateRead(gate, 4096)), archive: [] };
       writeReceipt(receiptPath(actionId), row);
       // Exclusive gate is held. Recheck all bytes and one fresh kernel proof
       // immediately before the first marker retirement; no original action runs.
       if (isBusy() || canonical(prepared.plan) !== canonical(gather())) throw fail('recovery_source_changed', 'Native ownership changed before retirement');
       const proofPlan = await observe(prepared.plan);
-      if (canonical(proofPlan) !== canonical(prepared.executables) || canonical(gather()) !== canonical(prepared.plan)) throw fail('recovery_source_changed', 'Native ownership proof changed');
+      row.processEvidence.retirement = proofPlan.evidence;
+      if (canonical(proofPlan.executables) !== canonical(prepared.executables) || canonical(gather()) !== canonical(prepared.plan)) throw fail('recovery_source_changed', 'Native ownership proof changed');
       for (let index = 0; index < prepared.plan.markers.length; index++) {
         testHooks.beforeRetire?.(index);
         for (const [file, expected] of prepared.plan.directories) if (canonical(directory(file)) !== canonical(expected)) throw fail('recovery_source_changed', 'Native recovery directory identity changed');

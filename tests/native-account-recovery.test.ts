@@ -197,6 +197,83 @@ test('path-unavailable exclusion requires stable noncandidate kernel accounting 
   }
 });
 
+function runZombieObserver(rows: Array<{ stat?: number; uid?: number; ruid?: number; pid?: number; sec?: bigint; usec?: number; status?: number; size?: number }>, options: { absentAfter?: number; liveAfter?: number } = {}) {
+  let output = '', lists = 0, sysctls = 0;
+  const process = { argv: ['', '', 'fixture'], pid: 700, getuid: () => 501,
+    kill: (pid: number) => { if (pid === 123 && options.absentAfter !== undefined && lists >= options.absentAfter) throw Object.assign(new Error('Reaped'), { code: 'ESRCH' }); },
+    stdout: { write: (text: string) => { output += text; } }, exitCode: 0 };
+  const source = NATIVE_RECOVERY_OBSERVER_SOURCE.replace(/^import[^\n]*\n/gm, '');
+  new Function('process', 'Buffer', 'dlopen', 'ptr', 'readFileSync', source)(process, Buffer, () => ({ close() {}, symbols: {
+    proc_listpids(_type: number, _uid: number, bytes: Buffer) { lists++; [123, 700].forEach((pid, i) => bytes.writeInt32LE(pid, i * 4)); return 8; },
+    proc_pidinfo(pid: number, _kind: number, _arg: number, bytes: Buffer) {
+      if (pid === 123 && !(options.liveAfter !== undefined && lists >= options.liveAfter)) return 0;
+      bytes.writeUInt32LE(0x4000, 0); bytes.writeUInt32LE(2, 4); bytes.writeUInt32LE(pid, 12); bytes.writeUInt32LE(501, 20); bytes.write('unrelated-daem', 48); bytes.writeBigUInt64LE(9n, 120); return 136;
+    },
+    proc_pidpath(_pid: number, bytes: Buffer) { bytes.write('/unrelated/application'); return 22; },
+    sysctl(mib: Int32Array, count: number, bytes: Buffer, size: BigUint64Array) {
+      expect([...mib]).toEqual([1, 14, 1, 123]); expect(count).toBe(4);
+      const row = rows[Math.min(sysctls++, rows.length - 1)];
+      if (row.status) return row.status;
+      size[0] = BigInt(row.size ?? 648); if (row.size === 0) return 0;
+      bytes.writeBigInt64LE(row.sec ?? 1792577207n, 0); bytes.writeInt32LE(row.usec ?? 861562, 8); bytes[36] = row.stat ?? 5; bytes.writeInt32LE(row.pid ?? 123, 40);
+      bytes.writeUInt32LE(row.ruid ?? 501, 392); bytes.writeUInt32LE(row.uid ?? 501, 420); return 0;
+    },
+  } }), (value: any) => value, () => JSON.stringify({ uid: 501, paths: ['/qualified/codex'], formerPids: [] }));
+  return { result: JSON.parse(output), sysctls };
+}
+
+test('only a positively identified same-UID zombie is excluded from an uninspectable libproc row', () => {
+  const zombie = { pid: 123, uid: 501, start: '1792577207:861562' };
+  const { result, sysctls } = runZombieObserver([{}]);
+  expect(result).toMatchObject({ complete: true, matches: [], excludedZombies: [zombie] }); expect(sysctls).toBe(2);
+  // Running, stopped, other-UID, other-PID, short or failed kinfo_proc and malformed start all stay fail-closed.
+  for (const row of [{ stat: 2 }, { stat: 4 }, { uid: 0 }, { ruid: 0 }, { pid: 124 }, { size: 0 }, { size: 492 }, { status: -1 }, { sec: -1n }, { usec: 1000000 }])
+    expect(runZombieObserver([row]).result).toMatchObject({ complete: false, reasonCode: 'uninspectable_process' });
+});
+
+test('excluded zombies are rechecked after the second enumeration and a reused PID blocks', () => {
+  // Reaped before the final recheck: still a proven exit.
+  expect(runZombieObserver([{}, { size: 0 }], { absentAfter: 2 }).result).toMatchObject({ complete: true, matches: [], excludedZombies: [{ pid: 123 }] });
+  // Same PID now running a different, unobserved process, or a different zombie start identity.
+  for (const [rows, options] of [[[{}, { stat: 2 }], { liveAfter: 2 }], [[{}, { size: 0 }], {}], [[{}, { sec: 1792577208n }], {}]] as const) {
+    const { result } = runZombieObserver(rows as any, options);
+    expect(result).toMatchObject({ complete: false, reasonCode: 'process_identity_changed', blockedProcess: { pid: 123, uid: 501, start: '1792577207:861562', status: 5 } });
+  }
+});
+
+test('excluded zombie evidence is recorded in the receipt without changing the review digest', async () => {
+  const sets = [[{ pid: 4242, uid: process.getuid(), start: '1:2' }], [], [{ pid: 4343, uid: process.getuid(), start: '3:4' }]];
+  const f = fixture({ observeProcesses: (input: any, count: number) => ({ complete: true, matches: [], excludedZombies: sets[(count - 1) % 3], former: input.formerPids.map((pid: number) => ({ pid, absent: true })) }) });
+  try {
+    const preview = await f.authority.previewRecovery(), actionId = randomUUID();
+    expect(preview).toMatchObject({ state: 'reviewable' }); expect(JSON.stringify(preview)).not.toContain('4242');
+    expect(await f.authority.recoverOwner({ actionId, reviewDigest: preview.reviewDigest })).toMatchObject({ state: 'completed', archivedCount: 2 });
+    const receipt = JSON.parse(readFileSync(join(f.authorityHome, 'owner-recovery', actionId, 'receipt.json'), 'utf8'));
+    expect(receipt.processEvidence).toEqual({ prepared: { excludedZombies: [] }, retirement: { excludedZombies: sets[2] } });
+  } finally { await f.close(); }
+  const malformed = fixture({ observeProcesses: (input: any) => ({ complete: true, matches: [], excludedZombies: [{ pid: 4242, uid: 0, start: '1:2' }], former: input.formerPids.map((pid: number) => ({ pid, absent: true })) }) });
+  try { expect(await malformed.authority.previewRecovery()).toMatchObject({ state: 'blocked', reasonCode: 'recovery_physical_owner_unverified' }); } finally { await malformed.close(); }
+});
+
+test.skipIf(process.platform !== 'darwin')('actual macOS observer excludes a real unreaped zombie and still sees its live parent', async () => {
+  const bunPath = realpathSync(process.execPath), bunSha256 = sha(readFileSync(bunPath));
+  // The child exits at once; exec'd sleep never waits, so the child stays SZOMB.
+  const parent = Bun.spawn(['/bin/sh', '-c', '/usr/bin/true & echo $!; exec /bin/sleep 30'], { stdin: 'ignore', stdout: 'pipe', stderr: 'ignore' });
+  try {
+    const reader = parent.stdout.getReader(); let text = '';
+    while (!text.includes('\n')) { const { value, done } = await reader.read(); if (done) break; text += new TextDecoder().decode(value); }
+    reader.releaseLock();
+    const zombiePid = Number(text.trim()); expect(Number.isSafeInteger(zombiePid) && zombiePid > 1).toBe(true);
+    for (let i = 0; i < 100 && Bun.spawnSync(['/bin/ps', '-o', 'stat=', '-p', String(zombiePid)]).stdout.toString().trim() !== 'Z'; i++) await Bun.sleep(20);
+    expect(Bun.spawnSync(['/bin/ps', '-o', 'stat=', '-p', String(zombiePid)]).stdout.toString().trim()).toBe('Z');
+    const proof = await observeNativeRecoveryProcesses({ getMetadataRuntimePin: async () => ({ bunPath, bunSha256 }), paths: ['/bin/sleep'], formerPids: [] });
+    expect(proof).toMatchObject({ complete: true, uid: process.getuid() });
+    expect(proof.excludedZombies.find((row: any) => row.pid === zombiePid)).toMatchObject({ uid: process.getuid(), start: expect.stringMatching(/^\d+:\d+$/) });
+    expect(proof.matches.find((row: any) => row.pid === parent.pid)).toMatchObject({ executable: '/bin/sleep', role: 'trusted-executable' });
+    expect(proof.matches.some((row: any) => row.pid === zombiePid)).toBe(false);
+  } finally { parent.kill('SIGKILL'); await parent.exited; }
+}, 12000);
+
 test.skipIf(process.platform !== 'darwin')('actual bounded macOS libproc observer sees exact trusted executable/start without exposing argv', async () => {
   const bunPath = realpathSync(process.execPath), bunSha256 = sha(readFileSync(bunPath));
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'native-observer-fixture-'))), bunfig = join(root, 'bunfig.toml');

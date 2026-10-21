@@ -46,6 +46,17 @@ discovery. The source basis is Apple's
 [mutable long name](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_sysctl.c#L2855-L2865)
 and [exec completion flag](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_exec.c#L2233-L2236).
 
+libproc cannot inspect an exited child that its parent has not yet reaped. Such a
+zombie has released its address space, descriptors and locks, so it cannot own
+Native state, but it would otherwise block recovery until an unrelated parent
+waits for it. The observer excludes a libproc-uninspectable PID only when
+`sysctl` `KERN_PROC_PID` positively reports that PID as `SZOMB` with the current
+real and effective UID. Every other uninspectable process still blocks. After the
+second enumeration each excluded zombie must still be the same zombie (PID, UID,
+start identity) or be strictly absent; a reused PID blocks. The excluded rows
+(PID, UID, start) are recorded in the recovery receipt as process evidence, not
+in the review digest, so the kernel reaping a zombie does not expire consent.
+
 The observer uses exactly two enumerations. Each added PID receives the same full
 observation; removed PIDs require final strict ESRCH. Reused, live or unverifiable
 removed PIDs block recovery. Former-owner absence is checked again after this
