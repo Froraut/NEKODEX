@@ -85,3 +85,44 @@ test.skipIf(!executable)("cancelling manual approval leaves all decision buttons
     }))).toEqual({ allowed: 0, denied: 0, alwaysAllowed: 0 });
   } finally { await browser.close(); }
 });
+
+const stopButton = '<form data-chatgpt-composer><button type="button" id="stop" aria-label="Stop" data-testid="stop-button">Stop</button></form>';
+
+test.skipIf(!executable)("auto-approve waits while the requesting message is still streaming", async () => {
+  const browser = await chromium.launch({ executablePath: executable, headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(card("streaming") + stopButton);
+    let heartbeats = 0;
+    let settled = false;
+    const waiting = resolveChatGptToolConfirmation(page, "Codex Native6", true, undefined, undefined,
+      () => { heartbeats += 1; }).finally(() => { settled = true; });
+    await new Promise(resolve => setTimeout(resolve, 300));
+    expect(settled).toBe(false);
+    expect(heartbeats).toBeGreaterThan(0);
+    expect(await page.evaluate(() => (window as any).allowed || 0)).toBe(0);
+    await page.evaluate(() => document.querySelector("#stop")?.remove());
+    expect(await waiting).toBe(true);
+    expect(await page.evaluate(() => (window as any).allowed)).toBe(1);
+  } finally { await browser.close(); }
+});
+
+test.skipIf(!executable)("a streaming timeout or cancellation sends no automatic approval", async () => {
+  const browser = await chromium.launch({ executablePath: executable, headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(card("late") + stopButton);
+    await expect(resolveChatGptToolConfirmation(page, "Codex Native6", true, undefined, undefined, undefined, 200))
+      .rejects.toThrow(/still preparing the tool request/);
+    const controller = new AbortController();
+    const cancelled = resolveChatGptToolConfirmation(page, "Codex Native6", true, controller.signal)
+      .then(() => undefined, (error: unknown) => error);
+    setTimeout(() => controller.abort(), 100);
+    expect(String(await cancelled)).toContain("aborted");
+    expect(await page.locator("#late").count()).toBe(1);
+    expect(await page.evaluate(() => (window as any).allowed || 0)).toBe(0);
+    // A card resolved elsewhere while Stop is visible needs no click.
+    await page.evaluate(() => document.querySelector("#late")?.remove());
+    expect(await resolveChatGptToolConfirmation(page, "Codex Native6", true)).toBe(false);
+  } finally { await browser.close(); }
+});

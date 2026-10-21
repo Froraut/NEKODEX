@@ -1,6 +1,7 @@
 import type { Locator, Page, Request, Response } from "playwright-core";
 import { ChatGptWebAdapterError } from "./adapter-error";
-import { throwIfPromptAttachmentAborted, withChatGptBrowserObservationTimeout } from "./browser-operation-support";
+import { CHATGPT_STOP_BUTTON_SELECTOR } from "../../chatgpt-session";
+import { throwIfPromptAttachmentAborted, withBrowserTurnAbort, withChatGptBrowserObservationTimeout } from "./browser-operation-support";
 import type { ChatGptWebModelMode } from "./model";
 
 export const chatGptRateLimitDialog = (page: Page): Locator => page.locator('[role="dialog"]')
@@ -268,6 +269,7 @@ export async function resolveChatGptToolConfirmation(
   signal?: AbortSignal,
   onVisible?: () => Promise<void>,
   onWaiting?: () => void,
+  streamingTimeoutMs = 60_000,
 ): Promise<boolean> {
   const escapedAppName = appName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const dialogs = page.locator('[role="dialog"], [data-testid="tool-approval-card"], [data-codex-approval-surface="true"]')
@@ -292,6 +294,20 @@ export async function resolveChatGptToolConfirmation(
     if (await allowCurrentAction.count() !== 1 || await deny.count() > 1) {
       throw new Error("ChatGPT approval does not expose a unique one-time Allow action");
     }
+    // Saved chats can mount the approval before the requesting message finishes streaming.
+    // Submitting it while Stop is present can produce "Invalid conversation body" (upstream #858).
+    const stop = page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({ visible: true }).last();
+    const readyDeadline = Date.now() + streamingTimeoutMs;
+    while (await stop.isVisible().catch(() => false)) {
+      if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+      if (!await dialog.isVisible().catch(() => false)) return true;
+      if (Date.now() >= readyDeadline) {
+        throw new Error("ChatGPT is still preparing the tool request; automatic approval was not sent. Wait for Stop to disappear, then approve the request in ChatGPT.");
+      }
+      onWaiting?.();
+      await withBrowserTurnAbort(new Promise(resolveSleep => setTimeout(resolveSleep, 50)), signal);
+    }
+    if (!await dialog.isVisible().catch(() => false)) return true;
     if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
     await allowCurrentAction.click({ timeout: 10_000 });
     await dialog.waitFor({ state: "hidden", timeout: 10_000 });
