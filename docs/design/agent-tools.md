@@ -158,9 +158,9 @@ again; browser peer fixtures own lower-level stale/ref/cancel contracts.
 The native desktop controller plugs into the same host through the optional
 `desktopTools` composition port, which auto-registers its pure built-in executor.
 Do not register that same object a second time through `builtins`. Its status is
-passive; explicit `inspectDesktopPermissions`, `listDesktopWindows`,
-`setDesktopEnabled`, `selectDesktopWindow`, `revokeDesktopTools` admin actions
-use trusted controller methods. Root constructs the controller from the exact
+passive; explicit `inspectDesktopPermissions`, `openDesktopPermissionSettings`,
+`listDesktopWindows`, `setDesktopEnabled`, `selectDesktopWindow`,
+`revokeDesktopTools` admin actions use trusted controller methods. Root constructs the controller from the exact
 pinned helper factory; renderer/model arguments cannot name executables or
 native commands. Metadata inspection, enabling, exact window/task attachment
 and model-requested capture/input remain separate actions. Selected-window

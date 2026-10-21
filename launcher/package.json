@@ -100,7 +100,7 @@
         "[/\\\\]Contents[/\\\\]Resources[/\\\\]app\\.asar\\.unpacked[/\\\\]electron[/\\\\]oauth-vault-helper[/\\\\]darwin-(?:arm64|x64)[/\\\\]nekodex-oauth-vault-helper$",
         "[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]app[/\\\\]oauth-vault-helper[/\\\\]darwin-(?:arm64|x64)[/\\\\]nekodex-oauth-vault-helper$",
         "[/\\\\]Resources[/\\\\].*\\.(?:pak|ttf|woff2?|png|mp4|icns)$",
-        "[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]app[/\\\\]desktop-helper[/\\\\]darwin-(?:arm64|x64)[/\\\\]nekodex-desktop-helper$",
+        "[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]app[/\\\\]desktop-helper[/\\\\]darwin-(?:arm64|x64)[/\\\\]NEKODEX Desktop Helper\\.app(?:[/\\\\].*)?$",
         "[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]app[/\\\\]skill-pdf-helper[/\\\\]darwin-(?:arm64|x64)[/\\\\]nekodex-skill-pdf-helper$",
         "[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]app[/\\\\]execution-vm[/\\\\]darwin-arm64[/\\\\]nekodex-execution-vm-helper$",
         "[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]app[/\\\\]owned-native[/\\\\]build[/\\\\](?:aarch64|x86_64)-apple-darwin[/\\\\]nekodex-owned-native-worker$"

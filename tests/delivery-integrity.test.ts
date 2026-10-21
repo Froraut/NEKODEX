@@ -11,6 +11,7 @@ const require = createRequire(import.meta.url);
 const { BROWSER_COMPANION_RESOURCES, validatePackagedRuntimeAssets } = require("../launcher/scripts/release-signing.cjs");
 const { assertIdentity, assertVmEntitlements, assertVaultEntitlements } = require("../launcher/scripts/verify-macos-install.cjs");
 const { createProductionVmRuntimeManifest } = require("../scripts/build-execution-vm-helper.cjs");
+const { DESKTOP_HELPER_EXECUTABLE_PATH, DESKTOP_HELPER_INFO_PLIST_PATH } = require("../scripts/build-desktop-helper.cjs");
 const sha = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 
 function assetsFixture(root: string) {
@@ -26,7 +27,7 @@ function assetsFixture(root: string) {
   // The real reviewed Chrome manifest: its key must produce the pinned extension ID.
   write("browser-companion/manifest.json", readFileSync(new URL("../browser-companion/manifest.json", import.meta.url)));
   write("browser-companion/manifest.firefox.json");
-  for (const [folder, binary] of [["credential-helper", "nekodex-credential-helper"], ["desktop-helper", "nekodex-desktop-helper"], ["skill-pdf-helper", "nekodex-skill-pdf-helper"], ["oauth-vault-helper", "nekodex-oauth-vault-helper"]]) write(`${folder}/darwin-arm64/${binary}`);
+  for (const [folder, binary] of [["credential-helper", "nekodex-credential-helper"], ["desktop-helper", DESKTOP_HELPER_EXECUTABLE_PATH], ["desktop-helper", DESKTOP_HELPER_INFO_PLIST_PATH], ["skill-pdf-helper", "nekodex-skill-pdf-helper"], ["oauth-vault-helper", "nekodex-oauth-vault-helper"]]) write(`${folder}/darwin-arm64/${binary}`);
   write("skill-pdf-helper/darwin-arm64/manifest.json", "{}");
   const directory = "execution-vm/darwin-arm64";
   const executable = write(`${directory}/nekodex-execution-vm-helper`, "signed-helper-fixture");
@@ -72,6 +73,23 @@ test("delivery closure requires companion resources and rejects altered VM bytes
     chmodSync(executable, 0o755);
     rmSync(join(root, "app/browser-companion/firefox/session.js"));
     expect(() => validatePackagedRuntimeAssets(root, { platform: "darwin", arch: "arm64" })).toThrow();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("delivery closure requires the desktop helper as its fixed bundle, not a bare executable", () => {
+  const root = mkdtempSync(join(tmpdir(), "nekodex-delivery-desktop-"));
+  try {
+    assetsFixture(root);
+    expect(DESKTOP_HELPER_EXECUTABLE_PATH).toBe("NEKODEX Desktop Helper.app/Contents/MacOS/nekodex-desktop-helper");
+    for (const relative of [DESKTOP_HELPER_INFO_PLIST_PATH, DESKTOP_HELPER_EXECUTABLE_PATH]) {
+      const target = join(root, "app/desktop-helper/darwin-arm64", relative), bytes = readFileSync(target);
+      rmSync(target);
+      expect(() => validatePackagedRuntimeAssets(root, { platform: "darwin", arch: "arm64" })).toThrow(relative.split("/").at(-1));
+      writeFileSync(target, bytes);
+    }
+    writeFileSync(join(root, "app/desktop-helper/darwin-arm64/nekodex-desktop-helper"), "legacy bare layout");
+    rmSync(join(root, "app/desktop-helper/darwin-arm64/NEKODEX Desktop Helper.app"), { recursive: true });
+    expect(() => validatePackagedRuntimeAssets(root, { platform: "darwin", arch: "arm64" })).toThrow("NEKODEX Desktop Helper.app");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

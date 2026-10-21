@@ -4,6 +4,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { validateRuntimeBundle } = require("../electron/runtime-install.cjs");
 const { assertMacPublisher, validatePackagedRuntimeAssets, validateOwnedNativePackagedAssets } = require("./release-signing.cjs");
+const { DESKTOP_HELPER_BUNDLE, DESKTOP_HELPER_IDENTIFIER } = require("../../scripts/build-desktop-helper.cjs");
 
 const TEAM = "CNMWGJF2CG";
 const APP_ID = "dev.codexwebgpt.launcher";
@@ -75,7 +76,8 @@ function inspectMacInstall({ appPath, version, arch = process.arch, durableRunti
   signature(path.join(runtime, "runtime/bun"));
   const helperIdentities = [
     ["credential-helper", "nekodex-credential-helper", "dev.nekodex.tunnel-credential-helper.v1"],
-    ["desktop-helper", "nekodex-desktop-helper", "dev.nekodex.desktop-provider.v1"],
+    // The signed bundle, so its sealed Info.plist and stable TCC identity are verified too.
+    ["desktop-helper", DESKTOP_HELPER_BUNDLE, DESKTOP_HELPER_IDENTIFIER],
     ["skill-pdf-helper", "nekodex-skill-pdf-helper", "dev.nekodex.skill-pdf-reader.v1"],
     ["oauth-vault-helper", "nekodex-oauth-vault-helper", "dev.nekodex.mcp-oauth-vault-helper.v1"],
   ];

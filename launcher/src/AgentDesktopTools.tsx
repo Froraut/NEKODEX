@@ -1,8 +1,10 @@
 import { Badge, Button, Notice, Panel } from './design';
-import type { AgentDesktopToolsProps, MacosWindowSelection } from './agent-desktop-types';
+import type { AgentDesktopToolsProps, DesktopPermission, MacosWindowSelection } from './agent-desktop-types';
 import './surfaces/agent-desktop.css';
 
 const sameWindow = (a: MacosWindowSelection, b: MacosWindowSelection) => a.windowId === b.windowId && a.processId === b.processId && a.windowEpoch === b.windowEpoch;
+/** The entry the user turns on; equal to the helper bundle's CFBundleName. */
+export const DESKTOP_HELPER_ENTRY = 'NEKODEX Desktop Helper';
 
 /** Pure cached presentation. Mounting, parent refreshes and task selection never
  * inspect permissions, enumerate native windows, capture or dispatch input. */
@@ -14,6 +16,15 @@ export function AgentDesktopTools({ api, desktop, scope, locked, choose, act, re
   const closed = desktop?.state === 'closed';
   const enabled = desktop?.enabled === true;
   const send = (body: Record<string, unknown>) => void act(async () => { await api.request(body); await refresh(); });
+  const client = desktop?.permissionClient ?? null;
+  const settingsDisabled = locked || !desktop || !supported || closed;
+  const screenPane = { en: 'Screen & System Audio Recording', ru: 'Запись экрана и системного звука' }, accessibilityPane = { en: 'Accessibility', ru: 'Универсальный доступ' };
+  const rows: { permission: DesktopPermission; label: string; granted: boolean | undefined; pane: { en: string; ru: string } }[] = [
+    { permission: 'screenCapture', label: choose('Screen recording permission', 'Разрешение записи экрана'), granted: desktop?.permissions?.screenCaptureGranted, pane: screenPane },
+    { permission: 'accessibility', label: choose('Accessibility permission (AX)', 'Разрешение универсального доступа (AX)'), granted: desktop?.permissions?.accessibilityGranted, pane: accessibilityPane },
+    { permission: 'postEvent', label: choose('Post-event permission — foreground pixel fallback', 'Разрешение отправки событий — ввод по пикселям активного окна'), granted: desktop?.permissions?.postEventGranted, pane: accessibilityPane },
+  ];
+  const missing = rows.some(row => row.granted === false);
   const permission = (value: boolean | undefined) => value === undefined ? choose('Not inspected', 'Не проверено') : value ? choose('Granted', 'Разрешено системой') : choose('Unavailable', 'Нет системного разрешения');
   return <Panel title={choose('Selected macOS desktop tools', 'Инструменты выбранного окна macOS')} className="agent-desktop-tools">
     <p>{choose('Desktop access is off by default and after a runtime restart. Inspect permissions and window metadata explicitly, then enable the provider and attach one exact window to the selected task generation.', 'Доступ к рабочему столу по умолчанию и после перезапуска среды выключен. Явно проверьте разрешения и список окон, включите provider и прикрепите одно точное окно к выбранному поколению задачи.')}</p>
@@ -24,11 +35,18 @@ export function AgentDesktopTools({ api, desktop, scope, locked, choose, act, re
     </div>
     {!desktop ? <Notice>{choose('Native desktop controller status is unavailable. This panel does not start a helper automatically.', 'Состояние native desktop controller недоступно. Эта панель не запускает helper автоматически.')}</Notice> : !supported ? <Notice tone="warning">{choose('Native desktop control is available only on macOS. This platform is unavailable.', 'Native desktop поддерживается только на macOS. На текущей платформе он недоступен.')}</Notice> : desktop.state === 'unavailable' || closed ? <Notice tone="warning">{desktop.reason ?? choose('The native desktop owner is unavailable.', 'Native desktop owner недоступен.')}</Notice> : null}
     <dl className="agent-desktop-tools__permissions">
-      <div><dt>{choose('Screen recording permission', 'Разрешение записи экрана')}</dt><dd>{permission(desktop?.permissions?.screenCaptureGranted)}</dd></div>
-      <div><dt>{choose('Accessibility permission (AX)', 'Разрешение универсального доступа (AX)')}</dt><dd>{permission(desktop?.permissions?.accessibilityGranted)}</dd></div>
-      <div><dt>{choose('Post-event permission — foreground pixel fallback', 'Разрешение отправки событий — ввод по пикселям активного окна')}</dt><dd>{permission(desktop?.permissions?.postEventGranted)}</dd></div>
+      {rows.map(row => <div key={row.permission}><dt>{row.label}</dt><dd>{permission(row.granted)}
+        {row.granted === false ? <> · <Button size="sm" disabled={settingsDisabled} onClick={() => send({ action: 'openDesktopPermissionSettings', permission: row.permission, explicitUserAction: true })}>{choose(`Open ${row.pane.en}`, `Открыть «${row.pane.ru}»`)}</Button></> : null}
+      </dd></div>)}
     </dl>
-    <p className="agent-desktop-tools__muted">{choose('Permission values are cached until you inspect them. These controls never request OS permission or activate a window automatically. AX supports selected accessible background windows; pixel fallback is restricted to the selected foreground window.', 'Разрешения показаны из последней явной проверки. Эти кнопки не запрашивают системные разрешения и не активируют окна автоматически. AX поддерживает выбранные доступные фоновые окна; ввод по пикселям ограничен выбранным активным окном.')}</p>
+    {client && !client.selfResponsible ? <Notice tone="warning">{choose(`The helper is not running under its own identity, so macOS is judging the app or terminal that started NEKODEX. Do not grant that app; it would give every process it starts the same access. Update NEKODEX, then inspect again.`, `Helper запущен не под собственным идентификатором, и macOS проверяет приложение или терминал, запустивший NEKODEX. Не выдавайте разрешение ему: тогда доступ получат все его процессы. Обновите NEKODEX и проверьте снова.`)}</Notice> : null}
+    {missing ? <Notice>
+      <p>{choose(`macOS grants these permissions to "${DESKTOP_HELPER_ENTRY}", not to NEKODEX itself. Use the button next to a missing permission: macOS may first ask about "${DESKTOP_HELPER_ENTRY}", then System Settings opens at Privacy & Security. Turn on "${DESKTOP_HELPER_ENTRY}" in Screen & System Audio Recording and in Accessibility, then choose Disable and release desktop access and inspect again: macOS applies a new screen recording grant only to a fresh helper process.`, `macOS выдаёт эти разрешения «${DESKTOP_HELPER_ENTRY}», а не самому NEKODEX. Нажмите кнопку рядом с недостающим разрешением: macOS может сначала спросить о «${DESKTOP_HELPER_ENTRY}», затем откроются «Конфиденциальность и безопасность» в Системных настройках. Включите «${DESKTOP_HELPER_ENTRY}» в «Запись экрана и системного звука» и в «Универсальный доступ», затем нажмите «Выключить и освободить доступ» и проверьте снова: новое разрешение записи экрана macOS применяет только к новому процессу helper.`)}</p>
+      <p>{choose('One grant survives NEKODEX updates. After the update that introduced this helper identity, grant it once more; earlier entries for NEKODEX or a terminal are not used and can be turned off.', 'Одно разрешение сохраняется при обновлениях NEKODEX. После обновления, в котором появился этот идентификатор helper, выдайте разрешение ещё один раз; прежние записи NEKODEX или терминала не используются, их можно выключить.')}</p>
+      {client?.bundlePath ? <p>{choose(`If "${DESKTOP_HELPER_ENTRY}" is not listed, click +, press Command-Shift-G and paste:`, `Если «${DESKTOP_HELPER_ENTRY}» нет в списке, нажмите +, затем Command-Shift-G и вставьте:`)} <code>{client.bundlePath}</code></p> : null}
+    </Notice> : null}
+    <p className="agent-desktop-tools__muted">{choose(`Enable desktop provider shows a macOS alert from "${DESKTOP_HELPER_ENTRY}": choose Allow there to enable it. Window titles appear after enabling.`, `«Включить desktop provider» показывает системное окно от «${DESKTOP_HELPER_ENTRY}»: нажмите в нём «Allow». Заголовки окон видны после включения.`)}</p>
+    <p className="agent-desktop-tools__muted">{choose('Permission values are cached until you inspect them. Inspection never prompts. Only an Open System Settings button asks macOS to list the helper, for that one permission; it never grants access or activates a window. AX supports selected accessible background windows; pixel fallback is restricted to the selected foreground window.', 'Разрешения показаны из последней явной проверки. Проверка не вызывает системный запрос. Только кнопка открытия Системных настроек просит macOS добавить helper в список для одного разрешения; она не выдаёт доступ и не активирует окна. AX поддерживает выбранные доступные фоновые окна; ввод по пикселям ограничен выбранным активным окном.')}</p>
     <div className="agent-desktop-tools__actions">
       <Button disabled={locked || !desktop || !supported || closed} onClick={() => send({ action: 'inspectDesktopPermissions', explicitUserAction: true })}>{choose('Inspect permissions without prompting', 'Проверить разрешения без системного запроса')}</Button>
       <Button disabled={locked || !desktop || !supported || closed} onClick={() => send({ action: 'listDesktopWindows', explicitUserAction: true })}>{choose('List window metadata', 'Получить список окон')}</Button>

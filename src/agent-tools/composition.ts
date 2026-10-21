@@ -12,7 +12,7 @@ import type { StandaloneBuiltinToolsProvider, StandaloneToolsPort, ToolDescripto
 import type { AgentBrowserToolsProvider } from "../browser-companion/agent-tools";
 import type { BrowserBinding } from "../browser-companion/protocol";
 import type { AgentDesktopToolsProvider } from "../browser-companion/agent-desktop-tools";
-import type { MacosWindowSelection } from "../browser-companion/macos-desktop";
+import type { DesktopPermission, MacosWindowSelection } from "../browser-companion/macos-desktop";
 import type { AgentTask } from "../agent-mode/types";
 import type { AgentEvidenceReference } from "../agent-mode/http";
 import { createAgentToolsRoutes } from "./http";
@@ -519,6 +519,7 @@ export class AgentToolsComposition {
     return this.options.desktopTools;
   }
   inspectDesktopPermissions(explicitUserAction: boolean) { return this.track(async () => { await this.desktopControl(explicitUserAction, true).inspectPermissions(explicitUserAction); return this.status().desktopTools; }); }
+  openDesktopPermissionSettings(permission: DesktopPermission, explicitUserAction: boolean) { return this.track(async () => { await this.desktopControl(explicitUserAction, true).openPermissionSettings(permission, explicitUserAction); return this.status().desktopTools; }); }
   listDesktopWindows(explicitUserAction: boolean) { return this.track(async () => { await this.desktopControl(explicitUserAction, true).listWindows(explicitUserAction); return this.status().desktopTools; }); }
   setDesktopEnabled(enabled: boolean, explicitUserAction: boolean) { return this.track(async () => { await this.desktopControl(explicitUserAction, enabled).setEnabled(enabled, explicitUserAction); return this.status().desktopTools; }); }
   selectDesktopWindow(scope: ToolScope, expectedSelection: MacosWindowSelection, explicitUserAction: boolean) {

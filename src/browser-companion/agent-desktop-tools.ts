@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { validateToolScope } from "../agent-tools/journal";
 import type { ToolDescriptor, ToolInvocation, ToolOutcome, ToolScope } from "../agent-tools/types";
-import { macosWindowSelectionSchema, type MacosDesktopProvider, type MacosDesktopStatus, type MacosWindowMetadata, type MacosWindowSelection } from "./macos-desktop";
+import { desktopPermissionSchema, macosWindowSelectionSchema, type DesktopPermission, type MacosDesktopProvider, type MacosDesktopStatus, type MacosWindowMetadata, type MacosWindowSelection } from "./macos-desktop";
 import type { AgentTask, OutcomeEvidence } from "../agent-mode/types";
 import { desktopApplicationPropertiesSchema, desktopPropertyExpectationSchema, desktopPropertyReference, evaluateDesktopProperty } from "./desktop-outcome";
 import { desktopBindingOf, desktopBindingSchema, desktopObservationSchema, type DesktopObservation, type DesktopReceipt } from "./providers";
@@ -86,6 +86,7 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
       providerId: PROVIDER_ID, platform, state: closed ? "closed" as const : reason && !enabled ? "unavailable" as const : enabled ? "enabled" as const : "disabled" as const,
       enabled, created: !!native, activeCount: count, available: available(), reason,
       permissions: cached ? { screenCaptureGranted: cached.screenCaptureGranted, accessibilityGranted: cached.accessibilityGranted, postEventGranted: cached.postEventGranted } : null,
+      permissionClient: cached ? structuredClone(cached.permissionClient) : null,
       permissionInspectionAt: inspectedAt, nativeStatus: cached ? structuredClone(cached) : null,
       windows: structuredClone(windows), selected, restartPolicy: "off" as const,
       modelImage: { mimeType: "image/jpeg" as const, maxBytes: MAX_MODEL_IMAGE, coordinateSpace: "screenshot-pixels" as const },
@@ -154,6 +155,13 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
       catch (error) { reason = error instanceof Error ? error.message.slice(0, 240) : "Desktop permissions could not be inspected"; throw error; }
       return status();
     },
+    /** Registers only the helper's own identity, opens the exact pane, then re-reads status. */
+    async openPermissionSettings(permission: DesktopPermission, explicitUserAction: boolean) {
+      explicit(explicitUserAction); const value = desktopPermissionSchema.parse(permission);
+      try { await run(undefined, async signal => { const provider = resource(); await provider.openPermissionSettings(value, true, signal); await inspect(provider, signal); }); reason = null; }
+      catch (error) { reason = error instanceof Error ? error.message.slice(0, 240) : "System Settings could not be opened"; throw error; }
+      return status();
+    },
     async listWindows(explicitUserAction: boolean) {
       explicit(explicitUserAction);
       try { await run(undefined, async signal => { windows = await resource().listWindows(signal); }); reason = null; }
@@ -172,6 +180,18 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
         await run(undefined, async signal => { const provider = resource(); await provider.setEnabled(true, true); enabled = true; await inspect(provider, signal); });
         reason = null;
       } catch (error) { enabled = false; reason = error instanceof Error ? error.message.slice(0, 240) : "Desktop provider could not be enabled"; throw error; }
+      // The helper lists titles only after its confirmed enable, so re-read a list taken before it.
+      // A failed refresh may have stopped the helper (no automatic restart), so it releases the
+      // owner exactly like Disable instead of reporting an enabled provider that cannot work.
+      if (windows.length) {
+        try { await run(undefined, async signal => { windows = await resource().listWindows(signal); }); }
+        catch (error) {
+          invalidate(); enabled = false; cached = null; windows = [];
+          await native?.setEnabled(false, true).catch(() => {});
+          reason = `Desktop access was released because the window list could not be refreshed after enabling: ${error instanceof Error ? error.message : "unknown failure"}`.slice(0, 240);
+          throw error;
+        }
+      }
       return status();
     },
     async selectAndBind(scope: ToolScope, expectedSelection: MacosWindowSelection, explicitUserAction: boolean) {

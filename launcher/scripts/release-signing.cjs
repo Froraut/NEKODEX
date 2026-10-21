@@ -4,6 +4,7 @@ const { spawnSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
 const { isDeepStrictEqual } = require("node:util");
 const { CHROME_COMPANION_ID } = require("../electron/ipc/browser-companion.cjs");
+const { DESKTOP_HELPER_IDENTIFIER, DESKTOP_HELPER_EXECUTABLE_PATH, DESKTOP_HELPER_INFO_PLIST_PATH } = require("../../scripts/build-desktop-helper.cjs");
 
 /** Chrome derives an unpacked extension's ID from its manifest key: SHA-256 of the DER SPKI, a-p digits. */
 function chromeExtensionIdFromKey(key) {
@@ -26,7 +27,7 @@ function validatePackagedRuntimeAssets(runtimeRoot, { platform = process.platfor
   for (const name of BROWSER_COMPANION_RESOURCES) required.push(`browser-companion/${name}`, `browser-companion/firefox/${name}`);
   if (platform === "darwin") {
     for (const [directory, executable] of [["credential-helper", "nekodex-credential-helper"], ["oauth-vault-helper", "nekodex-oauth-vault-helper"],
-      ["desktop-helper", "nekodex-desktop-helper"], ["skill-pdf-helper", "nekodex-skill-pdf-helper"]]) {
+      ["desktop-helper", DESKTOP_HELPER_EXECUTABLE_PATH], ["desktop-helper", DESKTOP_HELPER_INFO_PLIST_PATH], ["skill-pdf-helper", "nekodex-skill-pdf-helper"]]) {
       required.push(`${directory}/${platform}-${arch}/${executable}`);
     }
     required.push(`skill-pdf-helper/${platform}-${arch}/manifest.json`);
@@ -154,9 +155,12 @@ function signCredentialHelper(target, platform = process.platform, env = process
   run("codesign", ["--force", "--identifier", identifier, "--sign", "-", target], { env });
 }
 // Desktop TCC identity is distinct from the vault helper and needs no Bun/JIT entitlements.
+// The target is the whole app bundle: TCC keys the self-responsible helper by its bundle
+// identifier and this designated requirement, which stay equal across releases.
 function signDesktopHelper(target, platform = process.platform, env = process.env, { development = false } = {}) {
   if (platform !== "darwin") return;
-  const identifier = "dev.nekodex.desktop-provider.v1";
+  if (path.extname(target) !== ".app") throw new Error("Desktop helper signing target must be its app bundle");
+  const identifier = DESKTOP_HELPER_IDENTIFIER;
   const release = signingConfiguration(platform, env).release;
   const identity = release ? env.CSC_NAME : env.NEKODEX_LOCAL_APP_SIGNING_IDENTITY;
   const keychain = release ? env.CODEX_WEB_GPT_SIGNING_KEYCHAIN : env.NEKODEX_LOCAL_APP_SIGNING_KEYCHAIN;
