@@ -2522,8 +2522,10 @@ class RuntimeSupervisor {
         let child;
         try {
           const env = { ...process.env, ...proxyEnvironment };
-          // Never inherit an unrelated tunnel's key into control or MCP work.
+          // Never inherit an unrelated tunnel's key into control or MCP work, nor the
+          // daemon's listener admission key, which a proxy environment could also carry.
           delete env[TUNNEL_RUNTIME_KEY_ENV];
+          delete env.CODEX_CHATGPT_WEB_API_KEY;
           if (config.tunnel.credential && args[0] === 'runtimes' && ['connect', 'status'].includes(args[1])) {
             this.credentialProvider ??= createCredentialProvider({ coreHome: this.coreHome });
             Object.assign(env, tunnelCredentialEnvironment(config, args, this.credentialProvider, this.binding));

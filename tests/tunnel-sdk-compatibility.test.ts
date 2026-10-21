@@ -52,28 +52,35 @@ test.skipIf(process.platform === "win32")("CLI, launchd and desktop startup carr
   const binary = join(root, "tunnel-fixture");
   const receipt = join(root, "receipt.json");
   const previousFlag = process.env.MCP_STDIO_SEND_INITIALIZED_NOTIFICATION;
+  const previousKey = process.env.CODEX_CHATGPT_WEB_API_KEY;
   process.env.MCP_STDIO_SEND_INITIALIZED_NOTIFICATION = "false";
-  writeFileSync(binary, `#!${process.execPath}\nconst fs=require('node:fs'); const result={running:true,healthy:true,flag:process.env.MCP_STDIO_SEND_INITIALIZED_NOTIFICATION,proxy:process.env.HTTPS_PROXY,argv:process.argv.slice(2)};fs.writeFileSync(${JSON.stringify(receipt)},JSON.stringify(result)); console.log(JSON.stringify(result));\n`, { mode: 0o700 });
+  process.env.CODEX_CHATGPT_WEB_API_KEY = "daemon-admission-key-that-must-not-leak-000000";
+  writeFileSync(binary, `#!${process.execPath}\nconst fs=require('node:fs'); const result={running:true,healthy:true,flag:process.env.MCP_STDIO_SEND_INITIALIZED_NOTIFICATION,proxy:process.env.HTTPS_PROXY,key:process.env.CODEX_CHATGPT_WEB_API_KEY??'absent',argv:process.argv.slice(2)};fs.writeFileSync(${JSON.stringify(receipt)},JSON.stringify(result)); console.log(JSON.stringify(result));\n`, { mode: 0o700 });
   const config = configAt(root, binary);
   try {
     connectTunnel(config);
     const cli = JSON.parse(readFileSync(receipt, "utf8"));
     expect(cli.flag).toBe("true");
+    expect(cli.key).toBe("absent");
     expect(cli.argv).toContain("saved-alias");
     expect(cli.argv).toContain("saved-profile");
     expect(tunnelServiceDefinition(config)).toContain("<key>MCP_STDIO_SEND_INITIALIZED_NOTIFICATION</key>\n    <string>true</string>");
     const supervisor = new RuntimeSupervisor({ coreHome: root,
-      tunnelProxyEnvironmentProvider: async () => ({ HTTPS_PROXY: "http://127.0.0.1:9999" }) });
+      tunnelProxyEnvironmentProvider: async () => ({ HTTPS_PROXY: "http://127.0.0.1:9999",
+        CODEX_CHATGPT_WEB_API_KEY: "daemon-admission-key-from-proxy-env-0000000000" }) });
     const recovery = new AbortController();
     const started = await supervisor.runTunnelCommand(config, ["runtimes", "connect"], 3_000, "fixture start", recovery.signal);
-    expect(JSON.parse(started.stdout)).toMatchObject({ flag: "true", proxy: "http://127.0.0.1:9999" });
+    expect(JSON.parse(started.stdout)).toMatchObject({ flag: "true", proxy: "http://127.0.0.1:9999", key: "absent" });
     const control = await supervisor.runTunnelCommand(config, ["runtimes", "cleanup", "--json"], 3_000, "fixture control", recovery.signal);
-    expect(JSON.parse(control.stdout)).toMatchObject({ flag: "false", proxy: "http://127.0.0.1:9999" });
+    expect(JSON.parse(control.stdout)).toMatchObject({ flag: "false", proxy: "http://127.0.0.1:9999", key: "absent" });
+    expect(process.env.CODEX_CHATGPT_WEB_API_KEY).toBe("daemon-admission-key-that-must-not-leak-000000");
     recovery.abort();
     await expect(supervisor.runTunnelCommand(config, ["runtimes", "connect"], 3_000, "cancelled fixture", recovery.signal)).rejects.toThrow("cancelled");
   } finally {
     if (previousFlag === undefined) delete process.env.MCP_STDIO_SEND_INITIALIZED_NOTIFICATION;
     else process.env.MCP_STDIO_SEND_INITIALIZED_NOTIFICATION = previousFlag;
+    if (previousKey === undefined) delete process.env.CODEX_CHATGPT_WEB_API_KEY;
+    else process.env.CODEX_CHATGPT_WEB_API_KEY = previousKey;
     rmSync(root, { recursive: true, force: true });
   }
 }, 10_000);
