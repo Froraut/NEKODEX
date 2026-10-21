@@ -380,11 +380,13 @@ func lastInputTime() -> TimeInterval {
         }
     }
     func inputOwner(_ row: WindowRow, expectedFocus: AXUIElement?, requirePostEvent: Bool = true) throws {
-        guard AXIsProcessTrusted(), (!requirePostEvent || CGPreflightPostEventAccess()), NSWorkspace.shared.frontmostApplication?.processIdentifier == row.pid,
-              let target = selectedAX, axWindows(row).contains(where: { CFEqual($0, target) }),
-              let frame = axFrame(target), sameFrame(frame, row.frame),
-              let focused = attribute(AXUIElementCreateApplication(row.pid), kAXFocusedWindowAttribute as CFString), CFEqual(focused, target),
-              foregroundWindowOrder(row) else { try reject("selected-window-not-exactly-focused") }
+        guard AXIsProcessTrusted() else { try reject("selected-window-accessibility-unavailable") }
+        guard !requirePostEvent || CGPreflightPostEventAccess() else { try reject("selected-window-post-event-unavailable") }
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == row.pid else { try reject("selected-process-not-frontmost") }
+        guard let target = selectedAX, axWindows(row).contains(where: { CFEqual($0, target) }) else { try reject("selected-ax-window-changed") }
+        guard let frame = axFrame(target), sameFrame(frame, row.frame) else { try reject("selected-window-frame-changed") }
+        guard let focused = attribute(AXUIElementCreateApplication(row.pid), kAXFocusedWindowAttribute as CFString), CFEqual(focused, target) else { try reject("selected-window-not-exactly-focused") }
+        guard foregroundWindowOrder(row) else { try reject("selected-window-not-foremost") }
         let currentFocus = focusElement(row)
         if let expected = expectedFocus {
             guard let current = currentFocus, CFEqual(current, expected) else { try reject("focused-element-changed") }
