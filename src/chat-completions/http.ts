@@ -12,6 +12,19 @@ const ROUTES = new Set([...MODEL_ROUTES, "/v1/chat/completions", "/v1/messages",
   "/claude/v1/messages", "/claude/v1/messages/count_tokens"]);
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_STREAM_QUEUE_BYTES = 4 * 1024 * 1024;
+/** Explicit per-request opt-in to the bound browser-companion ChatGPT tab; absent means the built-in browser. */
+export const COMPANION_ACCOUNT_HEADER = "x-nekodex-companion-account";
+/** Companion outcomes after a send began; every other companion code was refused before sending. */
+const COMPANION_UNCERTAIN = new Set(["companion_outcome_unknown", "companion_response_unobserved"]);
+
+export function chatCompletionCompanionAccount(req: Request): string | undefined {
+  const value = req.headers.get(COMPANION_ACCOUNT_HEADER);
+  if (value === null) return undefined;
+  if (!/^[a-f0-9]{12}$/.test(value)) {
+    throw new ChatCompletionError("X-NEKODEX-Companion-Account must be the 12-character account fingerprint NEKODEX shows for the bound ChatGPT tab", 400, "invalid_request", COMPANION_ACCOUNT_HEADER);
+  }
+  return value;
+}
 
 /** This key is listener-scoped admission, not an account credential or native capability. */
 export function chatCompletionApiKey(config: AppConfig, value = process.env.CODEX_CHATGPT_WEB_API_KEY): string | undefined {
@@ -48,6 +61,12 @@ export function publicChatError(error: unknown): { status: number; body: { error
       // Audited launcher text: it names the missing account requirement and proves nothing was sent.
       // 400, not 409: OpenAI SDKs retry 409, and each retry would wait out another admission grace.
       status = 400; code = error.code; message = error.message;
+    } else if (error.code.startsWith("companion_")) {
+      // Fixed text keeps extension-reported reasons out of the API. The code tells the client
+      // whether its opted-in request was refused unsent or has an outcome held in NEKODEX.
+      code = error.code;
+      if (COMPANION_UNCERTAIN.has(error.code)) message = "The browser companion send has no confirmed outcome; NEKODEX holds it and never resends it. Inspect the ChatGPT tab";
+      else { status = 400; message = "The browser companion refused this request before sending; nothing was sent"; }
     }
   } else if (error instanceof Error && error.name === "AbortError") {
     status = 499; code = "request_cancelled"; message = "Request cancelled";
@@ -124,7 +143,10 @@ export function chatCompletionModels(config: AppConfig): Response {
 export async function chatCompletionRequest(req: Request, config: AppConfig, signal: AbortSignal,
   execute: ChatCompletionExecutor = createChatCompletionExecutor(), nativeBridge?: NativeChatCompletionBridge): Promise<Response> {
   let input: ChatCompletionInput;
-  try { input = parseChatCompletion(await readBody(req, AbortSignal.any([signal, AbortSignal.timeout(30_000)]))); prepareChatCompletion(input, config);
+  try { const companionAccount = chatCompletionCompanionAccount(req);
+    input = parseChatCompletion(await readBody(req, AbortSignal.any([signal, AbortSignal.timeout(30_000)])));
+    if (companionAccount !== undefined) input.companionAccount = companionAccount;
+    prepareChatCompletion(input, config);
     if (nativeBridge?.isContinuation(input) && (input.tools.length === 0 || input.toolChoice === "none"))
       throw new ChatCompletionError("Tool continuation requires the original function tools", 409, "tool_continuation_conflict");
     if (!nativeBridge?.isContinuation(input)) requireChatCompletionAvailability(config); signal.throwIfAborted(); }

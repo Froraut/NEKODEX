@@ -21,9 +21,18 @@ if [ "$(uname -s)" != "Darwin" ]; then
   echo "The terminal-only installer supports macOS only; use the desktop launcher on Windows or Linux" >&2
   exit 1
 fi
+# Releases are built for Apple Silicon only. A Rosetta shell reports x86_64 there,
+# so ask the hardware before refusing an Intel Mac (before any download).
 case "$(uname -m)" in
   arm64) ARCH="arm64" ;;
-  x86_64) ARCH="amd64" ;;
+  x86_64)
+    if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ]; then
+      ARCH="arm64"
+    else
+      echo "NEKODEX releases are built for Apple Silicon Macs only; nothing was installed or changed on this Intel Mac. The last Intel app build is linked at https://github.com/$TRUSTED_REPOSITORY#download" >&2
+      exit 1
+    fi
+    ;;
   *) echo "Unsupported macOS architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 

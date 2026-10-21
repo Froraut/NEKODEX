@@ -94,13 +94,13 @@ jobs:
         run: bun test tests/execution-vm-contract.test.ts tests/python-build-scope-status.test.ts tests/python-build-http-diagnostic.test.ts tests/execution-vm-network-grant-http.test.ts --timeout 10000
       - name: Run passive VM admission, export, delivery integrity and release input contracts
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
-        run: bun test tests/execution-vm-production-runtime.test.ts tests/execution-vm-export-contract.test.ts tests/execution-vm-network.test.ts tests/python-build.test.ts tests/delivery-integrity.test.ts tests/native-release-inputs.test.ts --timeout 10000
+        run: bun test tests/execution-vm-production-runtime.test.ts tests/execution-vm-export-contract.test.ts tests/execution-vm-network.test.ts tests/python-build.test.ts tests/delivery-integrity.test.ts tests/native-release-inputs.test.ts tests/release-arm64-only.test.ts --timeout 10000
       - name: Run passive dependency, OAuth and selected-page contracts
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
-        run: bun test tests/skill-python-requirements.test.ts tests/agent-oauth.test.ts tests/browser-companion-dispatch.test.ts tests/browser-companion-firefox.test.ts tests/browser-companion-chatgpt.test.ts tests/browser-companion-chatgpt-page.test.ts tests/browser-companion-store-package.test.ts --timeout 10000
+        run: bun test tests/skill-python-requirements.test.ts tests/agent-oauth.test.ts tests/browser-companion.test.ts tests/browser-companion-dispatch.test.ts tests/browser-companion-firefox.test.ts tests/browser-companion-identity.test.ts tests/browser-companion-runtime.test.ts tests/browser-companion-ipc-identity.test.ts tests/browser-companion-chatgpt.test.ts tests/browser-companion-chatgpt-page.test.ts tests/browser-companion-store-package.test.ts --timeout 10000
       - name: Run scoped local API consumer regressions
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
-        run: bun test tests/local-control-api-client.test.ts --timeout 10000
+        run: bun test tests/local-control-api-client.test.ts tests/local-api.test.ts --timeout 10000
       - name: Run selected Python resource and approval flow regressions
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun test tests/agent-skill-python-flow.test.ts tests/agent-skill-script-resources.test.ts tests/agent-skill-script-tools.test.ts --timeout 10000

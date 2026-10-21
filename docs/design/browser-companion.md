@@ -11,9 +11,9 @@ load/pair/send acceptance is still separate.
 document, one queued/dispatched operation and bounded receipts. Its HTTP handler
 is injected into a loopback listener by the application composition root; creating
 the module does not start a listener or install an extension. The root must bind
-**127.0.0.1:17843 only**, use the user's exact extension ID, and keep the bootstrap
-out of public HTTP routes and diagnostics. The extension pins this same origin
-both in fetch code and CSP. No task/model argument can select a different host.
+**127.0.0.1:17843 only**, use the reviewed extension identity (see below), and keep
+the bootstrap out of public HTTP routes and diagnostics. The extension pins this
+same origin both in fetch code and CSP. No task/model argument can select a different host.
 
 `runtime.ts` supplies the actual application owner: `createBrowserCompanionRuntime`
 starts disabled, and its explicit `enable(extensionId)` creates one Bun listener
@@ -23,6 +23,29 @@ disable and runtime shutdown first revoke/settle the host, retain an unknown
 receipt for dispatched input, and close the owned listener. A concurrent runtime
 quit joins the same shutdown promise. Neither extension identity nor enablement,
 pairing secrets or page content is persisted as startup policy.
+
+## Extension identity
+
+Chrome derives an unpacked extension's ID from the manifest `key` when one is
+present, and otherwise from the absolute load path. The installed artifact lives
+under `versions/<version>/app/browser-companion`, so a path-derived ID changed with
+every update and broke the pinned origin, pairing and the user's toolbar pin.
+`manifest.json` therefore carries the base64 DER SubjectPublicKeyInfo of a fixed
+RSA-2048 key, and the reviewed Chrome artifact loads as
+**`bocnhdmjkjcoedkephdeoeipmmfbanpc`** from any path. Loading the next version's
+directory replaces the previous unpacked registration under that same ID. Unpacked
+loading needs only the public key; the private key was not kept and is not in the
+repository, and nothing signs a CRX with it.
+
+The application owner pins that identity: `runtime.enable`, the Electron IPC and the
+launcher surface accept only this Chrome ID (prefilled in the surface), or the Firefox
+ID `browser-companion@nekodex.local` (its unchanged `browser_specific_settings.gecko.id`)
+with the profile-specific `moz-extension://UUID` origin. Firefox has no `key`
+support, so its manifest carries none. The host leaf still accepts any exact
+identity for fixtures. The packaging gate checks that the shipped Chrome manifest
+key produces the pinned ID. The Chrome Web Store archive omits the development key:
+a store listing, postponed by the owner, would get a different, store-assigned ID
+that must be added to this pin when it exists.
 
 `http.ts` provides `browserCompanionRequest(req, getRuntime)` for the existing
 `/admin/browser-companion` control route. The composition root must apply its
@@ -107,6 +130,7 @@ protocol version and session ID. Tokens never appear in URLs or sanitized status
 | `poll` | One session-tab owner; deliver at most one command, marking it dispatched before responding |
 | `result` | Reconcile only that operation ID and exact document owner |
 | `revoke` | Retire the pairing and selected scope without replaying dispatched work |
+| `state` | Read-only check that this exact session is still paired; the popup uses it to show a revoked or restarted pairing instead of a stale one |
 
 The host has one operation slot. Queued cancellation produces `not_sent`.
 Cancellation after delivery, missing document results, lost responses and partial
@@ -265,12 +289,12 @@ exact, explicitly bound chatgpt.com document. Ownership stays where it was:
 
 - `ChatGptBrowserWorker.run` remains the only ChatGPT admission point, duplicate/
   capacity registry and settlement owner for Responses, Chat Completions and every
-  other consumer. At admission it asks the process-local
-  `adapters/chatgpt-web/companion-transport-port.ts` whether a companion transport
-  is **engaged**. If so, that one turn runs through the companion leaf instead of the
-  launcher helper/embedded page; the choice is final for the turn. A refused
-  companion turn never falls back to the embedded browser, and an embedded turn
-  never moves to the companion.
+  other consumer. At admission it routes a turn to the process-local
+  `adapters/chatgpt-web/companion-transport-port.ts` only when the turn itself
+  explicitly opts in (`companionAccount`, see **Routing**); the companion's bound,
+  sending or held state never routes a turn. The choice is final for the turn. A
+  refused companion turn never falls back to the embedded browser, and an embedded
+  turn never moves to the companion.
 - `src/browser-companion/chatgpt-transport.ts` is the leaf. The runtime creates one
   per process (it survives listener Disable/Enable) and the server composition root
   installs its port with the lazily created runtime and removes it on shutdown.
@@ -296,14 +320,33 @@ model-control label and the exact session/scope/tab/window/frame/document/epoch
 anchor. An optional trusted-owner `account` digest must match. Pairing, revoke,
 disable and a new pairing unbind. NEKODEX does not operate ChatGPT's model picker
 through the companion: the user attests the mode at binding time, and each send
-refuses if the visible label changed.
+refuses if the visible label changed. The surface fills the model version from the
+selected mode (GPT-5.6 Sol levels `5.6`, GPT-6 Astra Pro `6`, Luna none) and requires
+it for Sol/Pro, because those model rows send their version and a binding without it
+would refuse every turn.
 
-**Admission (nothing sent).** A turn is refused before any prompt is prepared when
-a held outcome exists, another companion turn is active, the selected anchor is no
-longer the bound document (tab/document mismatch), the extension lacks
-`chatgpt-v1`, the requested model/effort/version differs from the binding, or the
-turn needs features this transport does not provide: local tools/MCP connector,
-account tunnel, retained or resumed conversations, compaction, Luna checkpoints.
+**Routing (explicit opt-in).** A binding does not capture other work. A turn is a
+companion turn only when its consumer names the bound account. Today that is a Local
+API Chat Completions request with `X-NEKODEX-Companion-Account: <fingerprint>`, the
+12-character account fingerprint that NEKODEX shows for the binding. Every other
+turn uses the built-in browser while a tab is bound, sending or held: Codex
+Native/Responses, Hermes, Claude Messages, Agent tasks, and Local API requests
+without the header. The header on any other route is refused with
+`400 companion_route_unsupported`, so it is never silently ignored. An opted-in turn
+is refused, never rerouted, when nothing is bound, the fingerprint names another
+account (`companion_account_mismatch`), its model/effort/version differs, or it needs
+features the companion lacks: a fallback would send the prompt through another
+account or browser than the one the client named. The Local API returns these
+refusals as `400` with the `companion_*` code and fixed text; an unknown or
+unobserved send stays `502` with its code.
+
+**Admission (nothing sent).** An opted-in turn is refused before any prompt is
+prepared when a held outcome exists, another companion turn is active, no tab is
+bound, it names another account, the selected anchor is no longer the bound document
+(tab/document mismatch), the extension lacks `chatgpt-v1`, the requested
+model/effort/version differs from the binding, or the turn needs features this
+transport does not provide: local tools/MCP connector, account tunnel, retained or
+resumed conversations, compaction, Luna checkpoints.
 After `prepare()`, images, files, skill files, multipart context and prompts over
 200,000 characters are refused. These are `409` non-retryable adapter errors.
 
@@ -311,10 +354,10 @@ After `prepare()`, images, files, skill files, multipart context and prompts ove
 `onSendActivated`; the anchor is checked again synchronously with queueing, and
 pre-dispatch refusals keep their own codes. `onSendActivated` runs before the
 command is queued, so the existing turn runtime treats the prompt as never
-replayable from that point. An in-flight companion turn keeps the port engaged even
-if Unbind, revoke or Disable runs meanwhile, so no later admission can start the
-embedded sender beside it. The page function
-re-checks the account digest and visible model label, requires a visible tab, an
+replayable from that point. An in-flight companion turn stays active through Unbind,
+revoke or Disable, so a later opted-in turn is refused as busy instead of starting a
+second send; turns without the opt-in keep running in the built-in browser. The page
+function re-checks the account digest and visible model label, requires a visible tab, an
 empty new chat at `/` with no turns and no active generation, inserts the text with
 the same editing command the embedded worker uses, requires whitespace-normalized
 composer readback, waits for exactly one enabled send control and clicks it once.
@@ -341,11 +384,11 @@ false success.
 **No replay.** A send that is queued but never delivered settles `not_sent`. A send
 delivered without a terminal receipt (lost ACK, session/tab closed, timeout,
 cancellation) or reported `unknown` is **held**: the leaf records the operation,
-throws a non-retryable `502 companion_outcome_unknown`, keeps the port engaged even
-after Unbind, and refuses every later ChatGPT turn with
-`companion_outcome_held` until the user inspects the tab and explicitly releases
-that exact operation ID. The host also keeps its own unknown slot until a late
-receipt or revoke. A late ACK reconciles the host receipt but does not release the
+throws a non-retryable `502 companion_outcome_unknown`, and refuses every later
+opted-in turn with `companion_outcome_held`, even after Unbind, until the user
+inspects the tab and explicitly releases that exact operation ID. Turns without the
+opt-in never reach that tab and keep the built-in browser. The host also keeps its
+own unknown slot until a late receipt or revoke. A late ACK reconciles the host receipt but does not release the
 hold or trigger another send. A failure to observe the answer after a confirmed
 send is held as `companion_response_unobserved`. Holds live in process memory: an
 application restart discards the pairing and selected page authority, so a new
@@ -361,7 +404,9 @@ not a replacement for the tool-capable embedded flow.
 `scripts/build-browser-companion.ts <chrome|firefox> <new-dir>` writes a
 reproducible ZIP with `manifest.json` at its root and exactly the shipped files,
 including 16/32/48/128 px icons resized from the application icon. Permissions
-remain `activeTab`, `scripting` and `storage` plus the fixed loopback host.
+remain `activeTab`, `scripting` and `storage` plus the fixed loopback host. The
+unpacked Chrome build directory keeps the development `key` (pinned ID); the Chrome
+archive omits it, since a store listing gets its own store-assigned ID.
 [PRIVACY.md](../../browser-companion/PRIVACY.md) is the linkable store privacy
 policy and is linked from the popup. Nothing is signed or published by the build.
 
@@ -385,10 +430,13 @@ the full runtime bundle, installers, signing or dependency installation.
 
 `tests/browser-companion-extension.test.ts` additionally loads the actual MV3
 artifact in a disposable official Playwright Chromium profile and verifies its
-enabled extension identity. It pairs through the actual extension popup document,
-proves that pairing alone cannot read an ungranted tab, invokes the real browser
-action through the browser-level CDP `Extensions.triggerAction` on its exact tab
-target, and then selects/observes/types/reads/clicks/revokes on inert local markup.
+enabled extension identity (the pinned key-derived ID). It pairs through the actual
+extension popup document, proves that pairing alone cannot read an ungranted tab,
+invokes the real browser action through the browser-level CDP
+`Extensions.triggerAction` on its exact tab target, and then
+selects/observes/types/reads/clicks/revokes on inert local markup. A second case
+revokes from NEKODEX and checks that the session tab and a reopened popup report the
+revoke instead of a retained pairing.
 The `activeTab`, `scripting`, document targeting, host permission, popup fetch and
 session-storage paths are real Chrome APIs, with no API mocks or widened page
 host grants. The popup HTML runs as an extension test tab, as documented by
@@ -412,7 +460,12 @@ It creates no native child and captures or inputs nothing on the actual OS.
 transport with an inert extension protocol fixture: one send settled by the tied
 answer, lost ACK/unknown/unobservable answers held without a second send, late ACK,
 account/tab/model/turn mismatch and outdated-extension refusals, exact receipt
-validation, and routing through the existing worker `run` registry.
+validation, and opt-in routing through the existing worker `run` registry (unrelated
+turns stay embedded while bound or held). `tests/browser-companion-identity.test.ts`
+derives the Chrome ID from the manifest key and checks every pin;
+`tests/delivery-integrity.test.ts` checks that the packaging gate requires `chatgpt.js`,
+the icons and that key. `tests/local-api.test.ts` covers the opt-in header, its
+refusal on other routes and the `companion_*` API errors.
 `tests/browser-companion-chatgpt-extension.test.ts` loads the actual MV3 artifact in
 disposable Chromium, serves an inert ChatGPT-shaped document at
 `https://chatgpt.com/` only through the context's local routes (no OpenAI network),

@@ -17,8 +17,8 @@ export interface CodexThreadHandoffSnapshot {
   transport: 'owned-stdio-server';
   /** Codex's per-thread cross-process writer lock is the only exclusivity authority. */
   exclusivity: 'codex-thread-writer-lock';
-  /** Server approval/input requests are refused; Codex settles them as denied. */
-  approvals: 'refused';
+  /** The thread's approval requests get the protocol's user decline; every other server request is refused. */
+  approvals: 'declined';
   active: { actionId: string; threadId: string; phase: CodexHandoffPhase } | null;
   uncertainHandoffs: CodexHandoffAction[];
   errorCode: string | null;
@@ -28,6 +28,7 @@ export interface CodexThreadHandoffReceipt {
   threadId: string;
   turnId: string;
   turnStatus: 'completed' | 'interrupted' | 'failed';
+  /** Server requests not granted during the turn: declined approvals plus refused other requests. */
   approvalsRefused: number;
   /** The owned process closed, releasing the thread writer for the external client. */
   released: true;

@@ -118,7 +118,7 @@ import {
   type ChatGptWebModelFamily,
 } from "../../chatgpt-web-models";
 import { LauncherBrowserHelperClient } from "./launcher-helper-client";
-import { chatGptCompanionTransport } from "./companion-transport-port";
+import { chatGptCompanionTransport, isChatGptCompanionTurn } from "./companion-transport-port";
 import { acquireChatGptResponseArtifacts, chatGptArtifactMarkdown } from "./artifacts";
 import { MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_OUTSTANDING_TURNS } from "./concurrency";
 import {
@@ -251,6 +251,11 @@ export interface BrowserTurn {
   planObservation?: TaskPlanObservation;
   requestedModel?: string;
   accountRoutingKey?: string;
+  /**
+   * Explicit opt-in to the bound browser-companion ChatGPT tab: that binding's 12-character
+   * account fingerprint. Only such a turn uses the companion; it never falls back to this page.
+   */
+  companionAccount?: string;
   traceId: string;
   modelId: string;
   reasoning?: string;
@@ -599,17 +604,23 @@ export class ChatGptBrowserWorker {
         `ChatGPT Web has reached its ${outstandingLimit} active and waiting task limit; finish or cancel a task before submitting another`,
       ));
     }
-    // An explicitly bound browser-companion document is selected once, at admission. The
-    // companion leaf then submits at most once; it never falls back to the embedded page.
-    const companion = chatGptCompanionTransport();
-    const viaCompanion = companion?.engaged() === true;
+    // Only a turn that explicitly opts in to the bound browser-companion tab is routed there, once,
+    // at admission. Its leaf submits at most once and refuses rather than falling back to the
+    // embedded page; every other turn keeps the embedded path whatever the companion state.
+    const viaCompanion = isChatGptCompanionTurn(turn);
+    const companion = viaCompanion ? chatGptCompanionTransport() : undefined;
     const useHelper = !viaCompanion && this.config.browserHost === "launcher" && process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS !== "1";
     if (useHelper) {
       this.launcherHelper ??= new LauncherBrowserHelperClient(this.config);
     }
     // Capture the owner before deferring: close() may clear the field before this microtask.
     const helper = this.launcherHelper;
-    const run = Promise.resolve().then(() => viaCompanion ? companion!.run(turn) : useHelper ? helper!.run(turn) : this.runExclusive(turn));
+    const run = Promise.resolve().then(() => {
+      if (!viaCompanion) return useHelper ? helper!.run(turn) : this.runExclusive(turn);
+      if (!companion) throw new ChatGptWebAdapterError("The browser companion is not available in this runtime. Nothing was sent.", {
+        status: 409, errorType: "invalid_request_error", code: "companion_unavailable", retryable: false });
+      return companion.run(turn);
+    });
     this.activeRuns.set(turn.traceId, run);
     void run.finally(() => {
       if (this.activeRuns.get(turn.traceId) === run) this.activeRuns.delete(turn.traceId);

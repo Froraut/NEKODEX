@@ -106,8 +106,9 @@ This stages verified copies, creates a draft, compares GitHub's reported digests
 the lock, and only then publishes it as a not-latest prerelease. It refuses an existing tag.
 
 Release dry run (owner action): push the next version tag as usual, then run
-`gh workflow run release.yml --ref v<version> -f platform_scope=macos`. The `macos-15` log shows
-`{"fetched":10}` before `build:runtime`.
+`gh workflow run release.yml --ref v<version>`. Releases are macOS Apple Silicon only (owner
+decision, 2026-10-21; other platforms later), so there is no platform input and no Intel leg. The
+`macos-15` log shows `{"fetched":10}` before `build:runtime`.
 
 When the worker or guest is rebuilt and accepted, update `REVIEWED_OWNED_NATIVE_DEV_PIN` and
 the lock together, rename the tag from the new digests, and publish a new transport release.

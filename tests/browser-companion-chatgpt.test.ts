@@ -5,10 +5,12 @@ import { createCompanionChatGptTransport } from "../src/browser-companion/chatgp
 import { COMPANION_ORIGIN, type BrowserObservation, type CompanionCommand } from "../src/browser-companion/protocol";
 import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
-import { installChatGptCompanionTransport } from "../src/adapters/chatgpt-web/companion-transport-port";
+import { chatGptCompanionTransport, installChatGptCompanionTransport } from "../src/adapters/chatgpt-web/companion-transport-port";
 
 const extensionId = "e".repeat(32);
 const ACCOUNT = "a".repeat(64), OTHER_ACCOUNT = "b".repeat(64);
+/** The fingerprint NEKODEX shows for the binding; an opted-in turn names it. */
+const FINGERPRINT = ACCOUNT.slice(0, 12);
 type Reply = { outcome: "completed" | "rejected" | "unknown"; executed: boolean; reason?: string; chatgpt?: unknown } | "drop";
 
 /** Inert extension protocol fixture driving the real host over its HTTP handler. */
@@ -65,7 +67,7 @@ async function companion(options: { features?: string[]; url?: string } = {}) {
 
 function turn(overrides: Partial<BrowserTurn> = {}) {
   const calls = { prepare: 0, activated: 0, submitted: 0, deltas: [] as string[] };
-  const value: BrowserTurn = { traceId: `trace-${crypto.randomUUID()}`, modelId: "gpt-5.6-sol", reasoning: "max",
+  const value: BrowserTurn = { traceId: `trace-${crypto.randomUUID()}`, modelId: "gpt-5.6-sol", reasoning: "max", companionAccount: FINGERPRINT,
     capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: true },
     prepare: async () => { calls.prepare++; return { text: "Say hello", images: [], release: () => {} }; },
     onSendActivated: () => { calls.activated++; }, onSubmitted: () => { calls.submitted++; },
@@ -79,10 +81,9 @@ test("bound ChatGPT document sends once and settles with the observed answer tie
   const f = await companion();
   try {
     const transport = createCompanionChatGptTransport({ host: () => f.host, timing: fast });
-    expect(transport.port.engaged()).toBe(false);
+    expect(transport.status().state).toBe("unbound");
     await transport.bind({ modelId: "gpt-5.6-sol", reasoning: "max" });
-    expect(transport.status()).toMatchObject({ state: "bound", bound: { modelLabel: "Pro", accountFingerprint: ACCOUNT.slice(0, 12), tabId: 4, documentId: "document-1" } });
-    expect(transport.port.engaged()).toBe(true);
+    expect(transport.status()).toMatchObject({ state: "bound", bound: { modelLabel: "Pro", accountFingerprint: FINGERPRINT, tabId: 4, documentId: "document-1" } });
     const { turn: request, calls } = turn();
     const answer = await transport.port.run(request);
     expect(answer).toBe("Hello from **ChatGPT**");
@@ -117,13 +118,16 @@ test("lost send acknowledgement is held, never replayed, and a late ACK does not
     const second = turn();
     await expect(transport.port.run(second.turn)).rejects.toMatchObject({ code: "companion_outcome_held" });
     expect(second.calls.prepare).toBe(0);
-    // Unbinding cannot route the held work to another sender: the port stays engaged.
-    transport.unbind(); expect(transport.port.engaged()).toBe(true);
+    // Unbinding does not lift the hold: a later opted-in turn is still refused, unprepared.
+    transport.unbind();
+    const afterUnbind = turn();
+    await expect(transport.port.run(afterUnbind.turn)).rejects.toMatchObject({ code: "companion_outcome_held" });
+    expect(afterUnbind.calls.prepare).toBe(0);
     await new Promise(resolve => setTimeout(resolve, 50));
     expect(sends(f.commands)).toHaveLength(1);
     expect(() => transport.release("another-operation")).toThrow("No held");
     transport.release(held.operationId);
-    expect(transport.port.engaged()).toBe(false);
+    expect(transport.status()).toMatchObject({ state: "unbound", held: null });
   } finally { await f.close(); }
 });
 
@@ -177,7 +181,7 @@ test("same-document navigation to another conversation during settlement is held
   } finally { await f.close(); }
 });
 
-test("an in-flight companion turn stays engaged through Unbind, and a busy slot refuses before the send fence", async () => {
+test("an in-flight companion turn stays active through Unbind, and a busy slot refuses before the send fence", async () => {
   const f = await companion();
   try {
     const transport = createCompanionChatGptTransport({ host: () => f.host, timing: fast });
@@ -186,12 +190,11 @@ test("an in-flight companion turn stays engaged through Unbind, and a busy slot 
     const running = transport.port.run(turn().turn);
     while (!f.commands.some(command => command.chatgpt?.op === "read")) await new Promise(resolve => setTimeout(resolve, 5));
     transport.unbind();
-    // No later admission may pick the embedded sender while this send is still settling.
-    expect(transport.port.engaged()).toBe(true);
+    // A later opted-in turn cannot start a second send while this one is still settling.
     expect(transport.status().state).toBe("sending");
     await expect(transport.port.run(turn().turn)).rejects.toMatchObject({ code: "companion_busy" });
     expect(await running).toBe("Hello from **ChatGPT**");
-    expect(transport.port.engaged()).toBe(false);
+    expect(transport.status().state).toBe("unbound");
     // Another approved operation owns the host slot: refused before onSendActivated.
     await transport.bind({ modelId: "gpt-5.6-sol", reasoning: "max" });
     const previous = f.setHandler(command => command.kind === "observe" ? "drop" : previous(command));
@@ -213,6 +216,11 @@ test("account, tab, model and turn mismatches are refused before anything is sen
     await expect(transport.bind({ modelId: "gpt-5.6-sol", reasoning: "max", account: OTHER_ACCOUNT })).rejects.toThrow("different account");
     await expect(transport.bind({ modelId: "gpt-5.6-sol", reasoning: "max", selector: "button" })).rejects.toThrow();
     await transport.bind({ modelId: "gpt-5.6-sol", reasoning: "max" });
+    // The opt-in names the bound account: another (or a malformed) fingerprint is refused unprepared.
+    const otherAccount = turn({ companionAccount: OTHER_ACCOUNT.slice(0, 12) });
+    await expect(transport.port.run(otherAccount.turn)).rejects.toMatchObject({ code: "companion_account_mismatch", retryable: false });
+    const malformed = turn({ companionAccount: ACCOUNT });
+    await expect(transport.port.run(malformed.turn)).rejects.toMatchObject({ code: "companion_account_mismatch" });
     // Model selection is explicit: another requested mode is refused without preparing a prompt.
     const model = turn({ reasoning: "high" });
     await expect(transport.port.run(model.turn)).rejects.toMatchObject({ code: "companion_model_mismatch" });
@@ -222,7 +230,7 @@ test("account, tab, model and turn mismatches are refused before anything is sen
     await expect(transport.port.run(tools.turn)).rejects.toMatchObject({ code: "companion_turn_unsupported" });
     const attachment = turn({ prepare: async () => ({ text: "x", images: [{ mimeType: "image/png", data: "", detail: "auto" } as never], release: () => {} }) });
     await expect(transport.port.run(attachment.turn)).rejects.toMatchObject({ code: "companion_turn_unsupported" });
-    expect([model, family, tools].every(row => row.calls.prepare === 0 && row.calls.activated === 0)).toBe(true);
+    expect([otherAccount, malformed, model, family, tools].every(row => row.calls.prepare === 0 && row.calls.activated === 0)).toBe(true);
     // The page reports another signed-in account: refused by the document, executed nothing.
     f.page.account = OTHER_ACCOUNT;
     const account = turn();
@@ -285,26 +293,64 @@ test("host protocol accepts only the exact ChatGPT receipt for the delivered bun
   } finally { await f.close(); }
 });
 
-test("the existing worker run owner routes an engaged companion turn without a parallel sender", async () => {
-  const routed: string[] = [];
-  let engaged = true;
-  const uninstall = installChatGptCompanionTransport({ engaged: () => engaged, run: async request => { routed.push(request.traceId); await new Promise(resolve => setTimeout(resolve, 10)); return "answer"; } });
+function embeddedWorker(embedded: string[]) {
+  return Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+    config: { browserHost: "managed-chrome" }, activeRuns: new Map(),
+    runExclusive: async (request: BrowserTurn) => { embedded.push(request.traceId); return "embedded answer"; },
+  }) as ChatGptBrowserWorker;
+}
+
+test("the existing worker run owner routes only opted-in turns to the companion, with no parallel sender", async () => {
+  const routed: string[] = [], embedded: string[] = [];
+  const uninstall = installChatGptCompanionTransport({ run: async request => { routed.push(request.traceId); await new Promise(resolve => setTimeout(resolve, 10)); return "answer"; } });
   try {
-    expect(() => installChatGptCompanionTransport({ engaged: () => true, run: async () => "" })).toThrow("already installed");
-    const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
-      config: { browserHost: "managed-chrome" }, activeRuns: new Map(),
-      runExclusive: async () => { throw new Error("embedded sender must not run"); },
-    }) as ChatGptBrowserWorker;
+    expect(() => installChatGptCompanionTransport({ run: async () => "" })).toThrow("already installed");
+    const worker = embeddedWorker(embedded);
     const request = turn().turn;
     const running = worker.run(request);
     // The same registry still refuses a duplicate of the in-flight turn.
     await expect(worker.run(request)).rejects.toThrow("Duplicate");
     expect(await running).toBe("answer");
     expect(routed).toEqual([request.traceId]);
-    engaged = false;
-    await expect(worker.run(turn().turn)).rejects.toThrow("embedded sender must not run");
-    expect(routed).toHaveLength(1);
+    // A turn without the opt-in keeps the embedded sender, whatever the companion state.
+    const unrelated = turn({ companionAccount: undefined }).turn;
+    expect(await worker.run(unrelated)).toBe("embedded answer");
+    expect(embedded).toEqual([unrelated.traceId]); expect(routed).toHaveLength(1);
   } finally { uninstall(); }
+  // Without an installed companion an opted-in turn is refused, never sent through the embedded page.
+  expect(chatGptCompanionTransport()).toBeUndefined();
+  await expect(embeddedWorker(embedded).run(turn().turn)).rejects.toMatchObject({ code: "companion_unavailable", retryable: false });
+  expect(embedded).toHaveLength(1);
 });
 
-
+test("a bound, sending or held companion tab captures no other client's turn", async () => {
+  const f = await companion();
+  const transport = createCompanionChatGptTransport({ host: () => f.host, timing: fast });
+  const uninstall = installChatGptCompanionTransport(transport.port);
+  const embedded: string[] = [];
+  const worker = embeddedWorker(embedded);
+  try {
+    await transport.bind({ modelId: "gpt-5.6-sol", reasoning: "max" });
+    // Bound: same model and effort, but no opt-in (another client, account or task) stays embedded.
+    const unrelated = turn({ companionAccount: undefined });
+    expect(await worker.run(unrelated.turn)).toBe("embedded answer");
+    expect(unrelated.calls.prepare).toBe(0); expect(f.page.sends).toBe(0);
+    // Sending: an unrelated turn runs beside the companion send without touching the tab.
+    f.page.answerAfterReads = 5;
+    const opted = worker.run(turn().turn);
+    while (!f.commands.some(command => command.chatgpt?.op === "read")) await new Promise(resolve => setTimeout(resolve, 5));
+    expect(transport.status().state).toBe("sending");
+    expect(await worker.run(turn({ companionAccount: undefined }).turn)).toBe("embedded answer");
+    expect(await opted).toBe("Hello from **ChatGPT**");
+    expect(f.page.sends).toBe(1);
+    // Held: only opted-in turns are refused; others keep the embedded path, and nothing is resent.
+    await transport.bind({ modelId: "gpt-5.6-sol", reasoning: "max" });
+    const previous = f.setHandler(command => command.chatgpt?.op === "send" ? "drop" : previous(command));
+    await expect(worker.run(turn().turn)).rejects.toMatchObject({ code: "companion_outcome_unknown" });
+    expect(transport.status().state).toBe("held");
+    await expect(worker.run(turn().turn)).rejects.toMatchObject({ code: "companion_outcome_held" });
+    expect(await worker.run(turn({ companionAccount: undefined }).turn)).toBe("embedded answer");
+    expect(embedded).toHaveLength(3);
+    expect(sends(f.commands)).toHaveLength(2);
+  } finally { uninstall(); await f.close(); }
+});

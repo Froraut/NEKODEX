@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { semanticAttemptTerminal } from '../launcher/src/AgentModeSurface';
 import { stripIpcErrorPrefix } from '../launcher/src/ipc-error';
 import { browserCompanionRequest } from '../src/browser-companion/http';
+import { CHROME_COMPANION_ID } from '../src/browser-companion/firefox-identity';
 import { createBrowserCompanionRuntime } from '../src/browser-companion/runtime';
 const require = createRequire(import.meta.url);
 const { RuntimeSupervisor, AGENT_CONFLICT_PASSTHROUGH, BROWSER_COMPANION_REFUSALS } = require('../launcher/electron/runtime-supervisor.cjs') as {
@@ -103,7 +104,7 @@ test('browser-companion refusals reach the renderer with their exact fixed reaso
     const owner = sourceLiterals('src/browser-companion');
     for (const message of BROWSER_COMPANION_REFUSALS) expect(owner).toContain(JSON.stringify(message));
     expect(await ipc(bind)).toBe('Enable the local companion listener first');
-    await runtime.enable('c'.repeat(32));
+    await runtime.enable(CHROME_COMPANION_ID);
     expect(await ipc(bind)).toBe('Pair the companion and select the ChatGPT tab first');
     expect(await ipc({ action: 'release-chatgpt-held', operationId: 'chatgpt_send:none' })).toBe('No held ChatGPT companion outcome has that operation ID');
     expect(await ipc({ action: 'create-pairing' })).toBe('accepted');

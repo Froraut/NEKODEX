@@ -1,27 +1,17 @@
 const fs = require("node:fs");
 const manifest = require("../package.json");
-function releasePlan({ event, refType, tag, version, scope = "all", windowsDelivery = "signed" }) {
+// Owner decision (2026-10-21): releases are built and published for macOS Apple Silicon
+// (arm64) only. Intel is not built; Windows and Linux come later. This is the only build
+// leg, so nothing but the arm64 build can gate publication.
+const MACOS_ARM64 = Object.freeze({ runner: "macos-15", runtime_asset: "codex-chatgpt-web-darwin-arm64.tar.gz" });
+function releasePlan({ refType, tag, version }) {
   if (refType !== "tag" || tag !== `v${version}` || !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(version || "")) {
     throw new Error("Release requires an existing tag exactly matching package.json; select that tag when dispatching the workflow");
   }
-  if (event !== "workflow_dispatch") { scope = "all"; windowsDelivery = "signed"; }
-  if (!["signed", "preview"].includes(windowsDelivery)) throw new Error("Unsupported Windows delivery");
-  if (windowsDelivery === "preview" && (!version.includes("-") || scope !== "all")) throw new Error("Windows preview requires an all-platform prerelease");
-  if (!["all", "macos"].includes(scope)) throw new Error("Unsupported release platform scope");
-  if (scope !== "all" && !version.includes("-")) throw new Error("A stable release requires every supported platform; select a prerelease tag for macOS-only publication");
-  const include = [
-    { runner: "macos-15", runtime_asset: "codex-chatgpt-web-darwin-arm64.tar.gz", notices: scope === "macos" },
-    { runner: "macos-15-intel", runtime_asset: "codex-chatgpt-web-darwin-amd64.tar.gz", notices: false },
-  ];
-  if (scope === "all") include.push(
-    { runner: "ubuntu-latest", runtime_asset: "codex-chatgpt-web-linux-amd64.tar.gz", notices: true },
-    ...(windowsDelivery === "signed" ? [{ runner: "windows-latest", runtime_asset: "codex-chatgpt-web-windows-amd64.zip", notices: false }] : []),
-  );
-  return { include };
+  return { include: [{ ...MACOS_ARM64 }] };
 }
 if (require.main === module) {
-  const matrix = releasePlan({ event: process.env.GITHUB_EVENT_NAME, refType: process.env.GITHUB_REF_TYPE,
-    tag: process.env.GITHUB_REF_NAME, version: manifest.version, scope: process.env.RELEASE_PLATFORM_SCOPE || "all", windowsDelivery: process.env.RELEASE_WINDOWS_DELIVERY || "signed" });
+  const matrix = releasePlan({ refType: process.env.GITHUB_REF_TYPE, tag: process.env.GITHUB_REF_NAME, version: manifest.version });
   fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify(matrix)}\n`);
 }
-module.exports = { releasePlan };
+module.exports = { MACOS_ARM64, releasePlan };

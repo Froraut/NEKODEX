@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, renameSync,
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { zipSync } from "fflate";
+import { CHROME_COMPANION_ID } from "../src/browser-companion/firefox-identity";
 
 const sourceDirectory = fileURLToPath(new URL("../browser-companion/", import.meta.url));
 /** Every shipped file; the archive is uploadable as-is (manifest.json at the root, no dev files). */
@@ -24,17 +25,24 @@ export function buildBrowserCompanion(browser: "chrome" | "firefox", outputDirec
   const canonicalParent = realpathSync(dirname(target));
   if (insideSource(canonicalParent)) throw new Error("Companion output must be outside the source artifact");
   const manifest = JSON.parse(readFileSync(join(sourceDirectory, browser === "firefox" ? "manifest.firefox.json" : "manifest.json"), "utf8"));
-  const bytes: Record<string, Uint8Array> = { "manifest.json": new TextEncoder().encode(`${JSON.stringify(manifest, null, 2)}\n`) };
+  const manifestBytes = (value: unknown) => new TextEncoder().encode(`${JSON.stringify(value, null, 2)}\n`);
+  const bytes: Record<string, Uint8Array> = { "manifest.json": manifestBytes(manifest) };
   for (const file of sourceFiles) bytes[file] = readFileSync(join(sourceDirectory, file));
+  // The unpacked directory keeps the manifest key, so Chrome loads it with the pinned development ID.
+  // The store archive omits it: a Chrome Web Store listing gets its own store-assigned ID.
+  const { key: _developmentKey, ...storeManifest } = manifest;
+  const archived: Record<string, Uint8Array> = { ...bytes, "manifest.json": manifestBytes(storeManifest) };
   const temporary = mkdtempSync(join(dirname(target), ".nekodex-companion-"));
   try {
     const unpacked = join(temporary, browser); mkdirSync(unpacked);
     for (const [file, content] of Object.entries(bytes)) { mkdirSync(dirname(join(unpacked, file)), { recursive: true }); writeFileSync(join(unpacked, file), content); }
     // Fixed ZIP timestamps make the artifact identity reproducible for unchanged input.
-    const entries = Object.fromEntries(Object.entries(bytes).map(([file, content]) => [file, [content, { mtime: new Date(1980, 0, 1) }]])) as Parameters<typeof zipSync>[0];
+    const entries = Object.fromEntries(Object.entries(archived).map(([file, content]) => [file, [content, { mtime: new Date(1980, 0, 1) }]])) as Parameters<typeof zipSync>[0];
     const archiveName = `nekodex-browser-companion-${browser}-${manifest.version}.zip`;
     writeFileSync(join(temporary, archiveName), zipSync(entries, { level: 9 }));
-    writeFileSync(join(temporary, "development-artifact.json"), JSON.stringify({ browser, version: manifest.version, installState: "not-installed", signed: false, published: false, unpackedDirectory: browser, archive: archiveName, ...(browser === "firefox" ? { addonId: manifest.browser_specific_settings.gecko.id, minimumVersion: manifest.browser_specific_settings.gecko.strict_min_version } : {}) }, null, 2) + "\n");
+    writeFileSync(join(temporary, "development-artifact.json"), JSON.stringify({ browser, version: manifest.version, installState: "not-installed", signed: false, published: false, unpackedDirectory: browser, archive: archiveName,
+      ...(browser === "firefox" ? { addonId: manifest.browser_specific_settings.gecko.id, minimumVersion: manifest.browser_specific_settings.gecko.strict_min_version }
+        : { unpackedExtensionId: CHROME_COMPANION_ID, archiveManifestKey: false }) }, null, 2) + "\n");
     renameSync(temporary, target);
     return { directory: join(target, browser), manifestPath: join(target, browser, "manifest.json"), archive: join(target, archiveName) };
   } finally { rmSync(temporary, { recursive: true, force: true }); }

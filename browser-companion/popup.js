@@ -1,5 +1,5 @@
 import { createCompanionDispatcher } from "./dispatch.js";
-import { ORIGIN, COMPANION_FEATURES, extensionApi as api, companionRequest } from "./transport.js";
+import { ORIGIN, COMPANION_FEATURES, PAIRING_RETIRED_TEXT, extensionApi as api, companionPairingState, companionRequest } from "./transport.js";
 
 const say = text => { document.querySelector("#status").textContent = text; };
 const selectButton = document.querySelector("#select"), stopButton = document.querySelector("#stop"), revokeButton = document.querySelector("#revoke");
@@ -9,6 +9,13 @@ function render() {
   revokeButton.disabled = stopping || !pairing;
   stopButton.disabled = stopping || !pairing;
   document.querySelector("#host").textContent = pairing ? `Paired host: ${pairing.hostId}` : `Extension: ${api.runtime.id} · ${api.runtime.getURL("").replace(/\/$/, "")}`;
+}
+/** Drop only the exact pairing the host refused (and its dead session marker); a newer pasted pairing is never touched. */
+async function forgetRetired(probed) {
+  if (pairing?.sessionId !== probed.sessionId) return false;
+  pairing = undefined; owner = undefined;
+  if ((await api.storage.session.get("pairing")).pairing?.sessionId === probed.sessionId) await api.storage.session.remove(["pairing", "companionOwner"]);
+  return true;
 }
 document.querySelector("#pair-form").addEventListener("submit", async event => {
   event.preventDefault();
@@ -40,7 +47,11 @@ selectButton.addEventListener("click", async () => {
     say("Sharing selected tab. Keep the NEKODEX selected tab session open; this popup can close.");
   } catch (error) {
     if (handoffKey) await api.storage.session.remove(handoffKey);
-    say(error.message); render();
+    // A host refusal may mean NEKODEX revoked this pairing: show that state instead of a stale one.
+    const probed = pairing;
+    if (error?.status && probed && (await companionPairingState(probed)).state === "retired" && await forgetRetired(probed)) say(PAIRING_RETIRED_TEXT);
+    else say(error.message);
+    render();
   }
 });
 stopButton.addEventListener("click", async () => {
@@ -62,5 +73,16 @@ if (owner) {
   } catch { owner = undefined; }
 }
 render();
-if (owner) say("Selected sharing session is open. Stop sharing before selecting another tab.");
-else if (pairing) say("Pairing retained for this browser session. Select current tab to share it again.");
+if (pairing) {
+  // Session storage keeps the token after NEKODEX revokes or restarts; ask the host for the real state.
+  const probed = pairing;
+  say("Checking this pairing with NEKODEX…");
+  const current = await companionPairingState(probed);
+  if (pairing?.sessionId === probed.sessionId) {
+    if (current.state === "retired") { if (await forgetRetired(probed)) say(PAIRING_RETIRED_TEXT); }
+    else if (current.state === "unreachable") say("NEKODEX is not reachable at its local address, so this pairing cannot be used now. If NEKODEX turned the connection off or restarted, pair again.");
+    else if (owner) say("Selected sharing session is open. Stop sharing before selecting another tab.");
+    else say("Paired with NEKODEX. Select current tab to share it.");
+    render();
+  }
+} else if (owner) say("Selected sharing session is open. Stop sharing before selecting another tab.");

@@ -5,22 +5,11 @@ on:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
-      platform_scope:
-        description: Platforms to publish from the selected existing version tag
-        type: choice
-        required: true
-        default: macos
-        options:
-          - macos
-          - all
-      windows_delivery:
-        description: Windows delivery for all-platform prereleases; preview is an unsigned Actions artifact, never an authenticated update
-        type: choice
-        required: true
-        default: signed
-        options:
-          - signed
-          - preview
+      windows_preview:
+        description: Also build an unsigned Windows x64 preview Actions artifact (prerelease tags only). It is never published and never gates the release.
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -29,10 +18,12 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+# Releases are built and published for macOS Apple Silicon (arm64) only (owner decision,
+# 2026-10-21). Intel is not built; Windows and Linux come later. Publication depends on
+# the arm64 build alone, so no other platform can block a release.
 jobs:
   plan:
-    # Prereleases require an explicit platform selection; stable tags keep the
-    # all-platform automatic release path.
+    # Prerelease tags wait for an explicit dispatch; stable tags release on push.
     if: github.repository == 'Froraut/NEKODEX' && (github.event_name == 'workflow_dispatch' || !contains(github.ref_name, '-'))
     runs-on: ubuntu-latest
     outputs:
@@ -42,10 +33,7 @@ jobs:
         with:
           persist-credentials: false
       - id: plan
-        name: Validate selected release tag and platform scope
-        env:
-          RELEASE_PLATFORM_SCOPE: ${{ inputs.platform_scope || 'all' }}
-          RELEASE_WINDOWS_DELIVERY: ${{ inputs.windows_delivery || 'signed' }}
+        name: Validate the release tag and select the macOS arm64 build
         run: node scripts/release-plan.cjs
 
   build:
@@ -53,10 +41,11 @@ jobs:
     environment: release-signing
     timeout-minutes: 90
     strategy:
-      fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
+      - name: Require the Apple Silicon release runner
+        run: test "$(uname -s)/$(uname -m)" = "Darwin/arm64"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
@@ -66,28 +55,13 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun install --frozen-lockfile
         working-directory: launcher
-      - name: Prepare AVX2-independent Windows runtime
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/prepare-windows-baseline-bun.ps1 -Version 1.4.3 -GitHubEnv $env:GITHUB_ENV
-      - name: Prepare compatible Linux libnotify
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y meson ninja-build pkg-config libglib2.0-dev libgdk-pixbuf-2.0-dev binutils
-          ./scripts/prepare-linux-libnotify.sh
-      - name: Prepare owned AppImage toolset
-        if: runner.os == 'Linux'
-        run: bun run launcher/scripts/prepare-linux-appimage-tools.cjs
       - name: Check release version consistency
         run: bun run check-version
       - name: Fetch the accepted macOS arm64 Native inputs pinned by the source lock
-        if: matrix.runner == 'macos-15'
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/native-release-inputs.cjs fetch
       - name: Prepare macOS publisher credentials
-        if: runner.os == 'macOS'
         env:
           CSC_P12_BASE64: ${{ secrets.MACOS_DEVELOPER_ID_P12_BASE64 }}
           CSC_KEY_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_PASSWORD }}
@@ -97,14 +71,6 @@ jobs:
           APPLE_API_KEY_ID: ${{ vars.APPLE_NOTARY_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ vars.APPLE_NOTARY_API_ISSUER }}
         run: node scripts/prepare-release-signing-macos.cjs
-      - name: Prepare Windows publisher credentials
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
-          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
-          CODEX_WEB_GPT_WINDOWS_CERT_SHA1: ${{ vars.WINDOWS_SIGNING_CERT_SHA1 }}
-        run: ./scripts/prepare-release-signing-windows.ps1
       - name: Package authenticated publisher release
         env:
           CODEX_WEB_GPT_RELEASE: "1"
@@ -112,32 +78,17 @@ jobs:
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
           APPLE_API_KEY_ID: ${{ vars.APPLE_NOTARY_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ vars.APPLE_NOTARY_API_ISSUER }}
-          CODEX_WEB_GPT_WINDOWS_CERT_SHA1: ${{ vars.WINDOWS_SIGNING_CERT_SHA1 }}
         # Behavior checks belong to the reviewed source change. Packaging keeps
         # the mandatory native signature, notarization and integrity gates.
         run: |
           bun run --cwd launcher build:renderer
           bun run --cwd launcher build:runtime
           bun run --cwd launcher scripts/package.cjs
-      - name: Check final AppImage libnotify and unresolved launcher symbols on current Arch
-        if: runner.os == 'Linux'
-        run: |
-          artifact="$(find launcher/artifacts -maxdepth 1 -name '*-linux-x64.AppImage' -print -quit)"
-          test -n "$artifact"
-          docker run --rm -v "$PWD:/work:ro" -e APPIMAGE_PATH="/work/$artifact" archlinux:base \
-            sh -lc 'pacman -Sy --noconfirm binutils file glibc alsa-lib at-spi2-core cairo cups gtk3 libx11 libxcb libxcomposite libxdamage libxext libxfixes libxkbcommon libxrandr mesa nspr nss pango >/dev/null && /work/launcher/scripts/smoke-linux-appimage-symbols.sh "$APPIMAGE_PATH"'
       - name: Archive runtime
-        if: runner.os != 'Windows'
         run: tar -czf "${{ matrix.runtime_asset }}" -C launcher/build/runtime .
-      - name: Archive Windows runtime
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: Compress-Archive -Path launcher/build/runtime/* -DestinationPath "${{ matrix.runtime_asset }}"
       - name: Build third-party notices
-        if: matrix.notices
         run: bun run licenses
       - name: Upload third-party notices
-        if: matrix.notices
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-notices
@@ -150,29 +101,18 @@ jobs:
             ${{ matrix.runtime_asset }}
             launcher/artifacts/*.dmg
             launcher/artifacts/*.zip
-            launcher/artifacts/*.exe
-            launcher/artifacts/*.AppImage
           if-no-files-found: error
       - name: Remove temporary macOS signing credentials
-        if: always() && runner.os == 'macOS'
+        if: always()
         run: |
           keychain="$RUNNER_TEMP/codex-web-release-signing/release.keychain-db"
           if [ -f "$keychain" ]; then security delete-keychain "$keychain"; fi
           rm -rf "$RUNNER_TEMP/codex-web-release-signing"
-      - name: Remove temporary Windows signing certificate
-        if: always() && runner.os == 'Windows'
-        shell: pwsh
-        env:
-          SIGNING_CERT_SHA1: ${{ vars.WINDOWS_SIGNING_CERT_SHA1 }}
-        run: |
-          if ($env:SIGNING_CERT_SHA1 -match '^[A-Fa-f0-9]{40}$') {
-            Remove-Item -LiteralPath "Cert:\CurrentUser\My\$env:SIGNING_CERT_SHA1" -Force -ErrorAction SilentlyContinue
-          }
-          Remove-Item -LiteralPath "$env:RUNNER_TEMP/codex-web-release-signing.pfx" -Force -ErrorAction SilentlyContinue
 
+  # Opt-in development artifact only: publish never needs this job.
   windows-preview:
     needs: plan
-    if: github.event_name == 'workflow_dispatch' && inputs.platform_scope == 'all' && inputs.windows_delivery == 'preview'
+    if: github.event_name == 'workflow_dispatch' && inputs.windows_preview && contains(github.ref_name, '-')
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -217,6 +157,7 @@ jobs:
           retention-days: 90
 
   publish:
+    # The macOS arm64 build is the only dependency of publication.
     needs: build
     environment: release-publishing
     timeout-minutes: 20

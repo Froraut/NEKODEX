@@ -18,10 +18,12 @@ assert(process.argv[3] === undefined || canonicalOnly || handoffMode, 'Unsupport
 const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nekodex-client-control-offline-')));
 const home = path.join(root, 'codex');
 fs.mkdirSync(home);
+// `service_tier` is the profile's global default; the fixture thread records its own `default` tier.
 fs.writeFileSync(path.join(home, 'config.toml'), `model = "offline-fixture"
 model_provider = "offline_fixture"
 approval_policy = "never"
 sandbox_mode = "read-only"
+service_tier = "flex"
 [model_providers.offline_fixture]
 name = "Offline fixture"
 base_url = "http://127.0.0.1:9/v1"
@@ -105,7 +107,7 @@ async function main() {
       capabilities: { experimentalApi: false, requestAttestation: false } });
     assert.equal(init.codexHome, home);
     child.stdin.write(`${JSON.stringify({ method: 'initialized', params: {} })}\n`);
-    const start = await request('thread/start', { cwd: root });
+    const start = await request('thread/start', { cwd: root, serviceTier: 'default' });
     assert.equal(start.thread.status.type, 'idle');
     if (canonicalOnly) {
       const expected = ['DW5 inert offline user text.', 'DW5 inert offline assistant text.'];
@@ -149,6 +151,12 @@ async function main() {
     await request('thread/inject_items', { threadId: start.thread.id, items: [{ type: 'message', role: 'user',
       content: [{ type: 'input_text', text: 'Inert offline fixture history. No turn is started.' }] }] });
     if (handoffMode) {
+      const { thread: { path: rolloutPath } } = await request('thread/read', { threadId: start.thread.id, includeTurns: false });
+      // Service tiers of the settings snapshots this thread owns, read straight from its rollout.
+      const ownTiers = () => fs.readFileSync(rolloutPath, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line))
+        .filter(row => row.type === 'event_msg' && row.payload?.type === 'thread_settings_applied'
+          && row.payload.thread_id === start.thread.id).map(row => row.payload.thread_settings.service_tier ?? null);
+      assert.deepEqual(ownTiers(), ['default']);
       // The creator still owns the loaded thread: Codex's writer lock must refuse a second process.
       handoff = createCodexThreadHandoff({ executable, codexHome: home, cwd: root, environment,
         journalPath: path.join(root, 'private', 'handoffs.json'), requestTimeoutMs: 30_000, turnTimeoutMs: 20_000 });
@@ -159,14 +167,20 @@ async function main() {
       const receipt = await handoff.continueThread({ threadId: start.thread.id, text: 'Offline handoff turn', userInitiated: true });
       assert.equal(receipt.released, true);
       assert.equal(receipt.threadId, start.thread.id);
+      // The handoff kept the thread's own tier: no snapshot took the profile's global `flex`.
+      const handoffTiers = ownTiers();
+      assert(handoffTiers.length > 1 && handoffTiers.every(tier => tier === 'default'), JSON.stringify(handoffTiers));
       // Released: another official process can now become the writer.
       const nextOwnerResumed = await resumeInFreshProcess(start.thread.id);
       assert.equal(nextOwnerResumed, true);
+      // Contrast: a plain resume, like the handoff before this fix, applies the global default.
+      assert.equal(ownTiers().at(-1), 'flex');
       port = createCodexClientControl({ executable, codexHome: home, cwd: root, environment, requestTimeoutMs: 10_000 });
       const after = await port.readThread(start.thread.id);
       console.log(JSON.stringify({ mode: 'handoff', installedProtocol: port.snapshot().userAgent,
         ownerActiveRefused: true, acquiredAfterRelease: true, turnStatus: receipt.turnStatus,
         approvalsRefused: receipt.approvalsRefused, released: receipt.released, nextOwnerResumed, statusAfterRelease: after.thread.status.type,
+        serviceTierKept: true, plainResumeAppliedGlobalTier: true,
         uncertainHandoffs: handoff.snapshot().uncertainHandoffs.length, providerReachable: false }));
       return;
     }

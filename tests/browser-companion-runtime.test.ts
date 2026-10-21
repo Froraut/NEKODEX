@@ -4,8 +4,9 @@ import { createBrowserCompanionRuntime } from "../src/browser-companion/runtime"
 import { browserCompanionRequest } from "../src/browser-companion/http";
 import { browserBindingOf, COMPANION_ORIGIN } from "../src/browser-companion/protocol";
 import type { BrowserCompanionHost } from "../src/browser-companion/host";
+import { CHROME_COMPANION_ID, FIREFOX_COMPANION_ID } from "../src/browser-companion/firefox-identity";
 
-const extensionId = "c".repeat(32);
+const extensionId = CHROME_COMPANION_ID;
 test("companion runtime is off by default, explicitly owns one listener, and leaves conflicting ports alone", async () => {
   let starts = 0, stops = 0;
   const runtime = createBrowserCompanionRuntime({ startListener: () => { starts++; return { stop: async () => { stops++; } }; } });
@@ -13,9 +14,12 @@ test("companion runtime is off by default, explicitly owns one listener, and lea
     expect(runtime.status()).toMatchObject({ enabled: false, state: "disabled", restartPolicy: "off", chatGptSendSupported: true, chatGpt: { state: "unbound", bound: null, held: null } });
     expect(starts).toBe(0);
     await expect(runtime.enable("not-an-extension")).rejects.toThrow("extension ID");
+    // Only the reviewed key-derived Chrome ID is accepted; a path-derived or foreign ID is refused.
+    await expect(runtime.enable("d".repeat(32))).rejects.toThrow(CHROME_COMPANION_ID);
+    expect(starts).toBe(0);
     expect((await runtime.enable(extensionId)).enabled).toBe(true);
     expect((await runtime.enable(extensionId)).enabled).toBe(true); expect(starts).toBe(1);
-    await expect(runtime.enable("d".repeat(32))).rejects.toThrow("Disable");
+    await expect(runtime.enable(FIREFOX_COMPANION_ID, "moz-extension://c7b114ab-2233-4455-8899-0123456789ab")).rejects.toThrow("Disable");
     const offered = runtime.createPairing();
     expect(offered.pairing).toMatchObject({ extensionId, origin: COMPANION_ORIGIN, version: 1 });
     expect(JSON.stringify(runtime.status())).not.toContain(offered.pairing.pairingCode);
@@ -125,8 +129,7 @@ test("ChatGPT binding controls are explicit, bounded and never send through the 
     expect((await request({ ...bind, chatgpt: { ...bind.chatgpt, text: "send this" } })).status).toBe(400);
     expect((await request({ action: "send-chatgpt", text: "x" })).status).toBe(400);
     expect((await request({ action: "release-chatgpt-held", operationId: "chatgpt_send:none" })).body.error).toContain("No held");
-    expect((await request({ action: "unbind-chatgpt" })).body.value.chatGpt).toMatchObject({ state: "unbound", bound: null });
-    expect(runtime.chatGptTransport().engaged()).toBe(false);
+    expect((await request({ action: "unbind-chatgpt" })).body.value.chatGpt).toMatchObject({ state: "unbound", bound: null, held: null });
   } finally { await runtime.close(); }
 
   const require = createRequire(import.meta.url);

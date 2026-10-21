@@ -11,11 +11,13 @@ function validChatGptRequest(body) {
   if (body.action === 'release-chatgpt-held') return typeof body.operationId === 'string' && /^[A-Za-z0-9:_-]{1,160}$/.test(body.operationId) && body.chatgpt === undefined;
   return body.chatgpt === undefined && body.operationId === undefined;
 }
-/** Main-process projection of src/browser-companion/firefox-identity.ts. These inputs
- * come from the explicit local-user pin, never a request's network Origin header. */
+/** The reviewed Chrome artifact's manifest key fixes this ID on every install path. */
+const CHROME_COMPANION_ID = 'bocnhdmjkjcoedkephdeoeipmmfbanpc';
+/** Main-process projection of reviewedCompanionExtensionOrigin in src/browser-companion/firefox-identity.ts.
+ * These inputs come from the explicit local-user pin, never a request's network Origin header. */
 function companionExtensionOrigin(extensionId, pinnedOrigin) {
   if (typeof extensionId !== 'string') throw new Error('Invalid companion extension identity');
-  if (/^[a-p]{32}$/.test(extensionId)) {
+  if (extensionId === CHROME_COMPANION_ID) {
     const origin = `chrome-extension://${extensionId}`;
     if (pinnedOrigin !== undefined && pinnedOrigin !== origin) throw new Error('Invalid companion extension identity');
     return origin;
@@ -55,4 +57,4 @@ function registerBrowserCompanion({ handle, runtimeHost, clipboard }) {
     clipboard.writeText(text); return { copied: true };
   });
 }
-module.exports = { registerBrowserCompanion, companionExtensionOrigin };
+module.exports = { registerBrowserCompanion, companionExtensionOrigin, CHROME_COMPANION_ID };

@@ -36,6 +36,9 @@ export function prepareChatCompletion(input: ChatCompletionInput, config: AppCon
   try { assertChatGptWebInputWithinLimits(tokens + CHATGPT_WEB_PLATFORM_RESERVE_TOKENS, tokens,
     route.backendModel, route.adapterEffort, capabilities, prompt.length); }
   catch { throw new ChatCompletionError("Conversation exceeds this Web model's supported input limit", 400, "context_length_exceeded", "messages"); }
+  if (input.companionAccount !== undefined && input.tools.length && input.toolChoice !== "none") {
+    throw new ChatCompletionError("The browser companion sends one plain-text message; client functions are not supported", 400, "companion_turn_unsupported", "tools");
+  }
   if (input.tools.length && input.toolChoice !== "none" && config.mode !== "full") {
     throw new ChatCompletionError("Client functions require the configured local tools connector", 409, "tools_connector_required");
   }
@@ -72,6 +75,8 @@ export function createChatCompletionExecutor(dependencies: {
     const turn: BrowserTurn = {
       traceId, requestedModel: route.slug, modelId: route.backendModel, modelFamily: route.modelFamily,
       reasoning: route.adapterEffort, capabilities, abortSignal: combined,
+      // Only this explicit per-request opt-in routes the turn to the bound companion tab.
+      ...(input.companionAccount !== undefined ? { companionAccount: input.companionAccount } : {}),
       prepare: async () => { combined.throwIfAborted(); return { text: prompt, images: [], transport: "inline", inlineChars: prompt.length, release() {} }; },
       onTextDelta(delta) {
         if (combined.aborted) return;

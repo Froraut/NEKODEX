@@ -1,6 +1,8 @@
 import { expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createMacosDesktopProvider, NativeDesktopHelperClient, type NativeDesktopTransport } from '../src/browser-companion/macos-desktop';
 import { desktopBindingOf } from '../src/browser-companion/providers';
@@ -199,3 +201,50 @@ test('revoking an explicit foreground observation aborts its exact waiting reque
   expect(f.provider.passiveStatus().activeCount).toBe(0);
   await f.provider.close();
 });
+
+const helperSource = join(import.meta.dir, '..', 'launcher', 'native', 'desktop-provider.swift');
+const swiftCompiler = process.platform === 'darwin' ? spawnSync('/usr/bin/xcrun', ['--find', 'swiftc'], { encoding: 'utf8', timeout: 15000 }).status === 0 : false;
+// Live P13: postToPid of a CGEvent built from a global point reached the app without a window and
+// was dropped. The real helper source is compiled with an inert entry point that only encodes
+// events; it never selects a window, captures or posts input. Target-side delivery is live evidence.
+test.skipIf(!swiftCompiler)('pixel click events address the selected window with its window-relative point, never a bare global point', () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'nekodex-pixel-events-')));
+  try {
+    const harness = join(root, 'harness.swift'); const executable = join(root, 'harness');
+    writeFileSync(harness, `import AppKit
+@main struct PixelEventHarness {
+    @MainActor static func main() {
+        let port = DesktopPort()
+        func encode(_ local: CGPoint) -> Any {
+            guard let events = port.pixelClickEvents(window: 4242, local: local) else { return NSNull() }
+            return events.map { event -> [String: Any] in ["type": Int(event.type.rawValue), "x": event.location.x, "y": event.location.y,
+                "window": NSEvent(cgEvent: event)?.windowNumber ?? -1, "clickState": event.getIntegerValueField(.mouseEventClickState),
+                "button": event.getIntegerValueField(.mouseEventButtonNumber), "flags": event.flags.rawValue] }
+        }
+        let value: [String: Any] = ["display": CGDisplayBounds(CGMainDisplayID()).height > 0, "center": encode(CGPoint(x: 124, y: 168)),
+            "fractional": encode(CGPoint(x: 0.5, y: 311.5)), "negative": encode(CGPoint(x: -1, y: 4)), "infinite": encode(CGPoint(x: CGFloat.infinity, y: 4))]
+        print(String(data: try! JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), encoding: .utf8)!)
+    }
+}
+`);
+    const built = spawnSync('/usr/bin/xcrun', ['swiftc', '-parse-as-library', '-Onone', '-D', 'NEKODEX_DESKTOP_HELPER_HARNESS', helperSource, harness, '-o', executable],
+      { encoding: 'utf8', timeout: 170000 });
+    if (built.status !== 0) throw new Error(`harness compilation failed: ${built.stderr}`);
+    const run = spawnSync(executable, [], { encoding: 'utf8', timeout: 15000 });
+    if (run.status !== 0) throw new Error(`harness failed: ${run.stderr}`);
+    const value = JSON.parse(run.stdout) as Record<string, unknown>;
+    expect(value.negative).toBeNull(); expect(value.infinite).toBeNull();
+    // Without a main display there is no flip reference; the helper then refuses as event-unavailable.
+    if (value.display !== true) { expect(value.center).toBeNull(); return; }
+    const modifiers = 0x10000 | 0x20000 | 0x40000 | 0x80000 | 0x100000 | 0x200000 | 0x400000 | 0x800000;
+    for (const [name, x, y] of [['center', 124, 168], ['fractional', 0.5, 311.5]] as const) {
+      const events = value[name] as { type: number; x: number; y: number; window: number; clickState: number; button: number; flags: number }[];
+      expect(events.map(event => event.type)).toEqual([5, 1, 2]); // mouseMoved, leftMouseDown, leftMouseUp
+      expect(events.map(event => event.clickState)).toEqual([0, 1, 1]);
+      for (const event of events) {
+        expect(event).toMatchObject({ x, y, window: 4242, button: 0 });
+        expect(event.flags & modifiers).toBe(0);
+      }
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}, 180000);

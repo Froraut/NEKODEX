@@ -4,8 +4,20 @@ const { StringDecoder } = require('node:string_decoder');
 const { DETACH_OWNED_CHILD, terminateOwnedProcessTree } = require('./process-tree.cjs');
 
 const MAX_LINE_BYTES = 1024 * 1024;
+const THREAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const error = (code, message, details) => Object.assign(new Error(message), { code, ...details });
 const record = value => value && typeof value === 'object' && !Array.isArray(value);
+/** The user-decline answer to each approval request of the Codex 0.163 app-server v2 protocol
+ * (`codex app-server generate-ts`; `bespoke_event_handling.rs` at rust-v0.163.0). Codex records a
+ * declined command or file change as "rejected by user" and continues the turn (`cancel` would
+ * interrupt it); a permissions request is declined by granting nothing; an MCP elicitation,
+ * including an MCP tool approval, is declined with no content. None of these grants anything. */
+const APPROVAL_DECLINES = Object.freeze({
+  'item/commandExecution/requestApproval': () => ({ decision: 'decline' }),
+  'item/fileChange/requestApproval': () => ({ decision: 'decline' }),
+  'item/permissions/requestApproval': () => ({ permissions: {}, scope: 'turn' }),
+  'mcpServer/elicitation/request': () => ({ action: 'decline', content: null, _meta: null }),
+});
 
 function absolute(value, label) {
   if (typeof value !== 'string' || !path.isAbsolute(value) || value.includes('\0')) {
@@ -15,12 +27,15 @@ function absolute(value, label) {
 }
 
 /** One owned official `codex app-server` child (stdio) or proxy client. Main-only.
- * It owns exactly that child process and never starts/stops a daemon. Server requests
- * are refused with method-not-found: this client never grants approvals or tokens. */
+ * It owns exactly that child process and never starts/stops a daemon. This client never
+ * grants approvals, input, tool calls or tokens. By default every server request is refused
+ * with method-not-found. Only an owner of one thread's turn (`declineApprovalsFor`) answers
+ * that thread's approval requests with the protocol's user decline; every other request,
+ * including any unknown method, is still refused. */
 function createCodexAppServerConnection({ executable, codexHome, controlSocket, cwd,
   environment = process.env, spawnProcess = spawn, requestTimeoutMs = 15_000,
   stopGraceMs = 1000, maxLineBytes = MAX_LINE_BYTES, clientName = 'nekodex-client-control',
-  terminateProcess = terminateOwnedProcessTree, onNotification, onServerRequest } = {}) {
+  terminateProcess = terminateOwnedProcessTree, onNotification, onServerRequest, declineApprovalsFor } = {}) {
   executable = absolute(executable, 'Codex executable');
   codexHome = absolute(codexHome, 'Codex home');
   cwd = absolute(cwd || codexHome, 'Working directory');
@@ -28,7 +43,8 @@ function createCodexAppServerConnection({ executable, codexHome, controlSocket, 
   if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 120_000
     || !Number.isInteger(stopGraceMs) || stopGraceMs < 1 || stopGraceMs > 10_000
     || !Number.isInteger(maxLineBytes) || maxLineBytes < 128 || maxLineBytes > 16 * MAX_LINE_BYTES
-    || typeof clientName !== 'string' || !/^[a-z0-9-]{1,64}$/.test(clientName)) {
+    || typeof clientName !== 'string' || !/^[a-z0-9-]{1,64}$/.test(clientName)
+    || (declineApprovalsFor !== undefined && !(typeof declineApprovalsFor === 'string' && THREAD_ID.test(declineApprovalsFor)))) {
     throw error('invalid_configuration', 'Invalid Codex client bounds');
   }
   let child, connecting, closing, failure, initialized = false, closed = false, destroyed = false;
@@ -108,11 +124,17 @@ function createCodexAppServerConnection({ executable, codexHome, controlSocket, 
       if (!record(message)) { fail(error('invalid_response', 'Codex returned an invalid RPC envelope')); return; }
       if (typeof message.method === 'string') {
         if (message.id !== undefined) {
-          // This client cannot approve commands, tools, permissions or refresh auth.
-          // Codex settles a client error as a denied/failed request; it never runs on our behalf.
-          try { onServerRequest?.(message.method); } catch { /* Observer failures never grant a request. */ }
-          try { write({ id: message.id, error: { code: -32601, message: 'This client does not handle server requests' } }); }
-          catch { /* The transport failure already settles pending callers. */ }
+          // This client cannot approve commands, tools, permissions or refresh auth. A refusal is
+          // settled by Codex as a failed request; a decline as the user's denial. Neither runs anything.
+          const decline = declineApprovalsFor !== undefined && Object.hasOwn(APPROVAL_DECLINES, message.method)
+            && record(message.params) && message.params.threadId === declineApprovalsFor
+            ? APPROVAL_DECLINES[message.method]() : null;
+          try { onServerRequest?.(message.method, decline ? 'declined' : 'refused'); }
+          catch { /* Observer failures never grant a request. */ }
+          try {
+            write(decline ? { id: message.id, result: decline }
+              : { id: message.id, error: { code: -32601, message: 'This client does not handle server requests' } });
+          } catch { /* The transport failure already settles pending callers. */ }
         } else {
           try { onNotification?.(message.method, record(message.params) ? message.params : null); }
           catch { /* Notification observers are bounded consumers, never transport owners. */ }
