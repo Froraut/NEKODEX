@@ -88,3 +88,23 @@ test('guarded IPC keeps account epoch and registry review authority exact, witho
     expect(f.counters()).toEqual({ vaultReads: 0, opened: 0 });
   } finally { f.cleanup(); }
 });
+
+test('a missing Native execution authority is reported as offline, not as a broken OAuth registry', () => {
+  const f = fixture();
+  let ready = false;
+  const service = createAgentOAuthService({ ...f.options, getAuthority: () => ready ? { accountId: 'native:fixture-profile', epoch: 'restored' } : null });
+  try {
+    // After a restart main holds no ready execution until the explicit Native inspection.
+    const offline = service.status();
+    expect(offline.capabilities).toEqual({ oauth: false, secrets: false });
+    expect(offline.oauthRegistry).toMatchObject({ state: 'unavailable', providerCount: 0, reasonCode: 'account_authority_offline' });
+    expect(offline.oauthScope).toBeUndefined();
+    ready = true;
+    expect(service.status()).toMatchObject({ capabilities: { oauth: true }, oauthScope: { accountId: 'native:fixture-profile' } });
+    expect(service.status().oauthRegistry.reasonCode).toBeUndefined();
+    // A closed service keeps the generic reason even without an authority.
+    ready = false; service.close();
+    expect(service.status().oauthRegistry.reasonCode).toBeUndefined();
+    expect(f.counters()).toEqual({ vaultReads: 0, opened: 0 });
+  } finally { service.close(); f.cleanup(); }
+});

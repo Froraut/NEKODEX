@@ -3,7 +3,9 @@ import type { OAuthProviderRegistrationReview, OAuthProviderStatus } from '../..
 export interface AgentOAuthService {
   handles(action: string): boolean;
   status(): { oauthScope?: { accountId: string; epoch: string }; capabilities: { oauth: boolean; secrets: boolean };
-    oauthRegistry: { state: 'empty' | 'configured' | 'unavailable'; providerCount: number; reason?: string } };
+    oauthRegistry: { state: 'empty' | 'configured' | 'unavailable'; providerCount: number; reason?: string;
+      /** No current Native account authority: its execution is not ready (for example after a restart). */
+      reasonCode?: 'account_authority_offline' } };
   subscribeMcpInvalidation(listener: (providerId?: string) => void): () => void;
   reviewedMcpProviders(): { providerId: string; label: string; resource: string; issuer: string; clientId: string; metadataDigest: string; accountId: string; epoch: string }[];
   reviewProviderFile(file: string): Promise<OAuthProviderRegistrationReview>;

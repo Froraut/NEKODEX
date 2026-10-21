@@ -1,14 +1,18 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Badge, BadgeRow, Button, Checkbox, Notice, Panel, PanelStack } from './design';
 import type { AgentOAuthPanelPort, OAuthProviderStatus, OAuthProviderRegistrationReview } from '../../src/agent-tools/oauth-types';
 import { RemovalConfirmation } from './RemovalConfirmation';
 
 /** Status-only interface: no token fields, callback URL paste box or generic network endpoint. */
-export function AgentOAuthPanel({ api, scopeKey, choose, locked = false }: {
+export function AgentOAuthPanel({ api, scopeKey, choose, locked = false, accountOffline = false, offlineBanner }: {
   api?: AgentOAuthPanelPort;
   scopeKey: string;
   choose: (en: string, ru: string) => string;
   locked?: boolean;
+  /** Main reports no current Native account authority (its execution is not ready). */
+  accountOffline?: boolean;
+  /** One-click explicit Native check; receives the plain offline notice to show when no profile can be checked. */
+  offlineBanner?: (fallback: ReactNode) => ReactNode;
 }) {
   const [rows, setRows] = useState<OAuthProviderStatus[]>([]);
   const [busy, setBusy] = useState(false);
@@ -40,7 +44,8 @@ export function AgentOAuthPanel({ api, scopeKey, choose, locked = false }: {
   return <Panel title={choose('MCP provider authorization', 'Авторизация MCP-провайдеров')}>
     <PanelStack className="agent-tools-panel-body">
     <p>{choose('Choose a configured provider to open its sign-in and consent page. Credentials stay in protected storage. Resource authorization and approval of each tool call are separate.', 'Выберите настроенного провайдера для входа и согласия в браузере. Учётные данные остаются в защищённом хранилище. Доступ к ресурсу и подтверждение каждого вызова инструмента — отдельные действия.')}</p>
-    {!api ? <Notice>{choose('The protected OAuth service is unavailable in this session.', 'Защищённый сервис OAuth недоступен в этой сессии.')}</Notice> : null}
+    {!api && accountOffline ? (offlineBanner ?? (fallback => fallback))(<Notice tone="warning">{choose('Provider authorization belongs to the signed-in Native account. It becomes available once that account and its models are inspected in Agent mode.', 'Авторизация провайдеров привязана к аккаунту Native. Она станет доступна после проверки аккаунта и моделей в Agent mode.')}</Notice>) : null}
+    {!api && !accountOffline ? <Notice>{choose('The protected OAuth service is unavailable in this session.', 'Защищённый сервис OAuth недоступен в этой сессии.')}</Notice> : null}
     {api && !rows.length ? <Notice>{choose('No provider with validated OAuth metadata and an explicitly registered client is configured.', 'Нет провайдеров с проверенными метаданными OAuth и явно зарегистрированным клиентом.')}</Notice> : null}
     {api?.pickProvider ? <Button className="agent-tools-button" disabled={busy || locked} onClick={() => void act(async () => {
       const epoch = generation.current;

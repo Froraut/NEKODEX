@@ -197,8 +197,13 @@ function createAgentOAuthService({ coreHome, getAuthority, openExternal, approve
           providerCount: current.configs.length, reason: ready ? undefined : 'Protected credential helper is unavailable' } };
     } catch {
       closeOwner();
+      // A signed-in Native account has no ready execution after every app restart until the user
+      // explicitly inspects it again; name that state so the UI can offer the one-click check.
+      let offline = false;
+      if (!closed && !uncertain) { try { offline = !getAuthority(); } catch { /* Generic unavailability. */ } }
       return { capabilities: { oauth: false, secrets: false }, oauthRegistry: { state: 'unavailable', providerCount: 0,
-        reason: 'Current account authority or reviewed OAuth registry is unavailable' } };
+        ...(offline ? { reasonCode: 'account_authority_offline', reason: 'The Native account has no ready execution; inspect account and models to restore it' }
+          : { reason: 'Current account authority or reviewed OAuth registry is unavailable' }) } };
     }
   }
   async function metadata(url) {
