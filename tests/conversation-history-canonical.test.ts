@@ -67,3 +67,31 @@ test('owned canonical RPC producer records selected partial text, edits/revision
   expect(launches).toHaveLength(1);expect(methods.filter(method=>!['initialize','initialized','thread/list','thread/read','thread/items/list'].includes(method))).toEqual([]);
  }finally{await client.destroy();store.close();rmSync(home,{recursive:true,force:true});}
 },10000);
+
+test('explicit full-history capture walks canonical pages with a fresh lease each page and stops at start, revoke or a repeated cursor',async()=>{
+ const pages:Record<string,{messages:any[];nextCursor:string|null}>={start:{messages:[{messageId:'m3',turnId:'t3',role:'assistant',text:'newest',timestampMs:3,compactionId:null,coverage:'complete'}],nextCursor:'p2'},p2:{messages:[{messageId:'m2',turnId:'t2',role:'user',text:'middle',timestampMs:2,compactionId:null,coverage:'complete'}],nextCursor:'p3'},p3:{messages:[{messageId:'m1',turnId:'t1',role:'user',text:'oldest',timestampMs:1,compactionId:null,coverage:'complete'}],nextCursor:null}};
+ const reads:Array<string|null>=[],leases:string[]=[];let revokeAfter=Infinity,repeat=false;
+ const client={readThreadConversation:async(threadId:string,{cursor,limit}:{cursor:string|null;limit:number})=>{expect(limit).toBe(100);reads.push(cursor);const page=repeat?{...pages.start,nextCursor:'loop'}:pages[cursor??'start'];return {threadId,observedAt:1,messages:page.messages,nextCursor:page.nextCursor,complete:false,excludedItems:0};}};
+ const requestHistory=async(body:any)=>{
+  if(body.action==='canonical-lease'){leases.push(body.threadId);return leases.length>revokeAfter?{lease:null,status:{quotaReached:false}}:{lease:{id:leases.length},status:{}};}
+  if(body.action==='canonical-record')return {outcome:'captured',recorded:body.page.messages.length,duplicates:0,rejected:0,sourceExcluded:0,received:body.page.messages.length,status:{enabled:true}};
+  throw new Error(`unexpected ${body.action}`);
+ };
+ const recorder=createCanonicalNativeHistoryRecorder({sourceId:SOURCE,getClient:()=>client,requestHistory});
+ const full=await recorder.backfill(THREAD);
+ expect(full).toMatchObject({outcome:'captured',stop:'reached-start',reachedStart:true,pages:3,recorded:3,nextCursor:null});
+ expect(reads).toEqual([null,'p2','p3']);expect(leases).toHaveLength(3);
+ reads.length=0;leases.length=0;revokeAfter=1;
+ const stopped=await recorder.backfill(THREAD);
+ expect(stopped).toMatchObject({outcome:'disabled',stop:'disabled',reachedStart:false,pages:1,recorded:1});expect(reads).toEqual([null]);
+ reads.length=0;leases.length=0;revokeAfter=Infinity;repeat=true;
+ expect(await recorder.backfill(THREAD)).toMatchObject({stop:'cursor-repeated',reachedStart:false,pages:2});
+ repeat=false;reads.length=0;
+ expect(await recorder.backfill(THREAD,{maxPages:1})).toMatchObject({stop:'page-limit',reachedStart:false,pages:1,nextCursor:'p2'});
+ reads.length=0;
+ expect(await recorder.backfill(THREAD,{cursor:'p2'})).toMatchObject({stop:'reached-start',reachedStart:true,pages:2,recorded:2});
+ expect(reads).toEqual(['p2','p3']);
+ await expect(recorder.backfill(THREAD,{cursor:''})).rejects.toThrow('bounds');
+ await expect(recorder.backfill(THREAD,{maxPages:0})).rejects.toThrow('bounds');
+ await expect(recorder.backfill('not-a-thread')).rejects.toThrow('UUID');
+});

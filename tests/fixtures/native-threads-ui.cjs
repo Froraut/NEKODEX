@@ -12,10 +12,14 @@ const screenshot = path.join(os.tmpdir(), 'nekodex-native-threads-ui-evidence.pn
 let browser, server;
 async function main() {
   try {
-    const build = spawnSync(path.join(repository, 'launcher/node_modules/esbuild/bin/esbuild'),
-      ['tests/fixtures/native-threads-ui.ts', '--bundle', '--format=esm', '--platform=browser',
+    // The launcher no longer ships esbuild (Vite uses Rolldown); Bun bundles the same entry.
+    const esbuild = path.join(repository, 'launcher/node_modules/esbuild/bin/esbuild');
+    const build = fs.existsSync(esbuild)
+      ? spawnSync(esbuild, ['tests/fixtures/native-threads-ui.ts', '--bundle', '--format=esm', '--platform=browser',
         '--tsconfig=launcher/tsconfig.json', `--outdir=${output}`, '--loader:.png=file'],
-      { cwd: repository, encoding: 'utf8', timeout: 15_000 });
+      { cwd: repository, encoding: 'utf8', timeout: 15_000 })
+      : spawnSync(process.env.BUN || 'bun', ['build', 'tests/fixtures/native-threads-ui.ts', '--target=browser',
+        '--format=esm', `--outdir=${output}`], { cwd: repository, encoding: 'utf8', timeout: 15_000 });
     assert.equal(build.status, 0, build.stderr || build.error?.message);
     assert(fs.existsSync(path.join(output, 'native-threads-ui.js')), 'Surface fixture bundle is missing');
     server = http.createServer((request, response) => {
@@ -43,15 +47,47 @@ async function main() {
     await page.getByText('codex-cli/0.163.0 · isolated UI fixture', { exact: false }).waitFor();
     await page.getByRole('button', { name: /Read metadata: Fixture worker/ }).click();
     await page.getByText('Waiting for native approval', { exact: true }).waitFor();
+    await page.getByText('Subagent threads stay with their parent conversation and cannot be handed off.', { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Fork history', exact: true }).click();
     await page.getByText('Fork created', { exact: true }).waitFor();
     await page.getByRole('heading', { name: 'Fork of fixture worker', exact: true }).waitFor();
+    await page.getByText('Stored thread attachments: Copied to the fork', { exact: false }).waitFor();
     assert.deepEqual(await page.evaluate(() => window.nativeThreadsFixture.calls), [
       'list', 'read:0199a001-0000-7000-8000-000000000002', 'fork:0199a001-0000-7000-8000-000000000002']);
     await page.screenshot({ path: screenshot, fullPage: true });
     await page.setViewportSize({ width: 640, height: 900 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     await page.getByRole('button', { name: /Read metadata: Fixture parent/ }).click();
+    // A draft belongs to its thread: another thread never shows it, its own thread keeps it.
+    await page.getByLabel('Message for this thread', { exact: true }).fill('Draft for the parent');
+    await page.getByRole('button', { name: /Read metadata: Fork of fixture worker/ }).click();
+    await page.getByRole('heading', { name: 'Fork of fixture worker', exact: true }).waitFor();
+    assert.equal(await page.getByLabel('Message for this thread', { exact: true }).inputValue(), '');
+    await page.getByRole('button', { name: /Read metadata: Fixture parent/ }).click();
+    await page.getByRole('heading', { name: 'Fixture parent', exact: true }).waitFor();
+    assert.equal(await page.getByLabel('Message for this thread', { exact: true }).inputValue(), 'Draft for the parent');
+    await page.getByLabel('Message for this thread', { exact: true }).fill('Fixture follow-up');
+    // Switch threads while the handoff is in flight: the reply must land on its own thread only.
+    await page.evaluate(() => { window.nativeThreadsFixture.continueDelayMs = 800; });
+    await page.getByRole('button', { name: 'Take over and send', exact: true }).click();
+    await page.getByRole('button', { name: /Read metadata: Fork of fixture worker/ }).click();
+    await page.getByRole('heading', { name: 'Fork of fixture worker', exact: true }).waitFor();
+    assert.equal(await page.getByLabel('Message for this thread', { exact: true }).isDisabled(), true);
+    await page.waitForFunction(() => !document.querySelector('.native-threads__handoff textarea')?.disabled);
+    assert.equal(await page.getByText('Fixture final reply', { exact: true }).count(), 0);
+    await page.evaluate(() => { window.nativeThreadsFixture.continueDelayMs = 0; });
+    await page.getByRole('button', { name: /Read metadata: Fixture parent/ }).click();
+    await page.getByRole('heading', { name: 'Fixture parent', exact: true }).waitFor();
+    await page.getByText('Reply received; thread released to Codex', { exact: true }).waitFor();
+    await page.getByText('Fixture final reply', { exact: true }).waitFor();
+    await page.getByText('Approval or input requests declined: 1', { exact: true }).waitFor();
+    await page.evaluate(() => { window.nativeThreadsFixture.ownerActive = true; });
+    await page.getByLabel('Message for this thread', { exact: true }).fill('Second try');
+    await page.getByRole('button', { name: 'Take over and send', exact: true }).click();
+    await page.getByText(/Another Codex client still owns this thread/).waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    assert.deepEqual((await page.evaluate(() => window.nativeThreadsFixture.calls)).filter(call => call.startsWith('continue:')), [
+      'continue:0199a001-0000-7000-8000-000000000001:Fixture follow-up', 'continue:0199a001-0000-7000-8000-000000000001:Second try']);
     await page.evaluate(() => { window.nativeThreadsFixture.unknownFork = true; });
     await page.getByRole('button', { name: 'Fork history', exact: true }).click();
     await page.getByText('Fork outcome requires inspection', { exact: true }).waitFor();
@@ -63,7 +99,7 @@ async function main() {
     await page.getByText('This installed Codex version does not support this action.', { exact: true }).waitFor();
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ initialRequests: 0, metadataTreeRead: 'passed', explicitFork: 'passed',
-      unknownForkBlocked: 'passed', explicitInspectionAcknowledgment: 'passed', unsupportedVersion: 'passed', narrowOverflow: false, screenshot }));
+      unknownForkBlocked: 'passed', explicitInspectionAcknowledgment: 'passed', exclusiveHandoff: 'passed', ownerActiveRefusal: 'passed', forkAttachmentParity: 'passed', unsupportedVersion: 'passed', narrowOverflow: false, screenshot }));
   } finally {
     if (browser) await browser.close();
     if (server) await new Promise(resolve => server.close(resolve));
