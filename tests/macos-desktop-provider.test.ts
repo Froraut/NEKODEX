@@ -171,6 +171,22 @@ test('permission settings control is explicit, fixed to three permissions and pa
   await f.provider.close();
 });
 
+test.skipIf(process.platform !== 'darwin')('enable waits for the helper-owned user confirmation without the request deadline', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'nekodex-enable-wait-')));
+  try {
+    // Inert stand-in for a helper whose confirmation alert is still open: it reads and never answers.
+    const executable = join(root, 'helper'); writeFileSync(executable, '#!/bin/sh\nexec /bin/cat >/dev/null\n', { mode: 0o755 });
+    const client = new NativeDesktopHelperClient({ executable, sha256: digest(readFileSync(executable)), requestTimeoutMs: 50 });
+    let settled = false;
+    const enabling = client.request('enable', { enabled: true }).then(() => { settled = true; }, () => { settled = true; });
+    await new Promise(resolve => setTimeout(resolve, 300));
+    expect(settled).toBe(false);
+    await client.close(); await enabling;
+    const listing = new NativeDesktopHelperClient({ executable, sha256: digest(readFileSync(executable)), requestTimeoutMs: 50 });
+    await expect(listing.request('listWindows')).rejects.toThrow('timed out'); await listing.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('oversized native protocol payload is refused before resolving or launching any helper', async () => {
   const client = new NativeDesktopHelperClient({ executable: '/nonexistent-no-helper-launch', sha256: 'a'.repeat(64) });
   await expect(client.request('properties', { selection: { windowId: '1'.repeat(70 * 1024) } })).rejects.toThrow('request exceeds');

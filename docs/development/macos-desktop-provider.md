@@ -89,6 +89,21 @@ inline with inherited attribution; `status` reports this through
 `permissionClient.selfResponsible: false` and the UI warns not to grant the
 parent app.
 
+Because the grant now belongs to the helper rather than to whoever spawned it,
+speaking the helper's stdio protocol must not be enough to use it: any
+same-user process could exec the bundle. So every `enable` shows a system alert
+from the helper itself (`CFUserNotificationDisplayAlert`, "Allow NEKODEX
+desktop control?"). The default button refuses, a 120-second timeout refuses,
+and only **Allow** enables the provider (otherwise `enable-not-confirmed`). A
+caller without its own Accessibility or post-event rights cannot answer that
+alert, and before a confirmed enable the helper cannot capture, select or input.
+`listWindows` before a confirmed enable returns owner names and identities with
+empty titles, because titles depend on the helper's screen recording grant.
+The Bun owner waits for this answer without its 12-second request deadline;
+abort and close still stop the exact helper. `openPermissionSettings` stays
+available without confirmation: it can only make macOS show its own prompt for
+the helper, and the user still decides.
+
 **One-time re-grant.** Grants made before this change belong to NEKODEX.app or
 a terminal and no longer apply. After updating to the first release with the
 bundled helper, grant "NEKODEX Desktop Helper" once; later updates keep it.

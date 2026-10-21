@@ -366,6 +366,8 @@ System Settings opens at Privacy & Security; turn on **NEKODEX Desktop Helper**
 under Screen & System Audio Recording and under Accessibility. Then choose
 **Disable and release desktop access** and inspect again, because a new screen
 recording grant applies only to a fresh helper process.
+Enabling the provider shows a macOS alert from NEKODEX Desktop Helper; choose
+**Allow**. Any other answer, or no answer within two minutes, leaves it off.
 
 The grant survives updates. Releases before the bundled helper were judged as
 NEKODEX or as the terminal that started it, so after updating to the first

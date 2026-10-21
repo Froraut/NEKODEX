@@ -50,6 +50,19 @@ func ownedHelperBundle() -> Bundle? {
           let executable = ownExecutable(), let declared = bundle.executablePath, canonicalPath(declared) == executable else { return nil }
     return bundle
 }
+/// The TCC grant now belongs to this helper, so speaking its stdio protocol must not be enough
+/// to use it: any same-user process could spawn the bundle. Every enable therefore needs the
+/// user's answer to a system alert this process shows; a caller without its own input rights
+/// cannot answer it. The default button refuses, and a timeout or failure refuses.
+func userConfirmedEnable() -> Bool {
+    var response: CFOptionFlags = 0
+    let shown = CFUserNotificationDisplayAlert(120, CFOptionFlags(kCFUserNotificationCautionAlertLevel), nil, nil, nil,
+        "Allow NEKODEX desktop control?" as CFString,
+        ("NEKODEX Desktop Helper will capture the window you attach and send the clicks and text you approve to it, until desktop access is disabled or "
+         + "NEKODEX restarts. Allow only if you just chose Enable desktop provider in NEKODEX.") as CFString,
+        "Don't Allow" as CFString, "Allow" as CFString, nil, &response)
+    return shown == 0 && response & 0x3 == CFOptionFlags(kCFUserNotificationAlternateResponse)
+}
 func selfResponsible() -> Bool { responsibleProcess(getpid()) == getpid() }
 func permissionClient() -> [String: Any] {
     let bundle = ownedHelperBundle()
@@ -520,7 +533,9 @@ func lastInputTime() -> TimeInterval {
             state["inputWindowBound"] = current.flatMap { try? boundWindow($0) } != nil; return state
         case "listWindows":
             guard exact(request, base) else { try reject("invalid-request") }
-            return ["windows": windows().map(\.json)]
+            // Titles need the helper's own screen recording grant; before the user confirms
+            // enablement, only the owner names and identities needed to choose a window are listed.
+            return ["windows": windows().map { enabled ? $0.json : $0.json.merging(["title": ""]) { $1 } }]
         case "openPermissionSettings":
             // Explicit user control only. Registration targets this helper's own identity, never a
             // responsible parent app or terminal, and grants nothing: the user still decides in the pane.
@@ -540,7 +555,9 @@ func lastInputTime() -> TimeInterval {
             return state
         case "enable":
             guard exact(request, base + ["enabled"]), let value = request["enabled"] as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() else { try reject("invalid-request") }
-            enabled = value.boolValue; selected = nil; selectedAX = nil; captured = nil; image = nil; propertyElements = []
+            enabled = false; selected = nil; selectedAX = nil; captured = nil; image = nil; propertyElements = []
+            if value.boolValue, !userConfirmedEnable() { try reject("enable-not-confirmed") }
+            enabled = value.boolValue
             return ["enabled": enabled]
         case "select":
             guard exact(request, base + ["selection"]), enabled, !uncertain,

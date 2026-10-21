@@ -127,10 +127,12 @@ export class NativeDesktopHelperClient implements NativeDesktopTransport {
     const child = this.start();
     return new Promise((resolve, reject) => {
       const abort = () => this.fail(new Error('Native desktop request aborted; owned helper is stopping'));
-      // Human foreground handoff has no consent deadline. Abort/close still stops its exact child.
-      const waitsForForeground = (command === 'observe' && body.waitForForeground === true)
-        || (command === 'act' && desktopActionSchema.parse(body.action).waitForForeground === true);
-      const timeout = waitsForForeground ? undefined : setTimeout(() => {
+      // Human foreground handoff and the helper's own enable confirmation have no consent
+      // deadline here (the helper's alert has its own). Abort/close still stops its exact child.
+      const waitsForHuman = (command === 'observe' && body.waitForForeground === true)
+        || (command === 'act' && desktopActionSchema.parse(body.action).waitForForeground === true)
+        || (command === 'enable' && body.enabled === true);
+      const timeout = waitsForHuman ? undefined : setTimeout(() => {
         if (operationId) reject(new Error('Native input wait elapsed; exact owner and late receipt remain retained'));
         else this.fail(new Error('Native desktop observation timed out; owned helper is stopping'));
       }, this.options.requestTimeoutMs ?? 12000);
