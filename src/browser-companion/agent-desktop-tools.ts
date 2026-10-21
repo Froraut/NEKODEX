@@ -181,10 +181,16 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
         reason = null;
       } catch (error) { enabled = false; reason = error instanceof Error ? error.message.slice(0, 240) : "Desktop provider could not be enabled"; throw error; }
       // The helper lists titles only after its confirmed enable, so re-read a list taken before it.
-      // Best effort and outside the enable: a failed refresh keeps the earlier rows and the enabled owner.
+      // A failed refresh may have stopped the helper (no automatic restart), so it releases the
+      // owner exactly like Disable instead of reporting an enabled provider that cannot work.
       if (windows.length) {
         try { await run(undefined, async signal => { windows = await resource().listWindows(signal); }); }
-        catch { /* The earlier untitled rows remain valid identities; List window metadata retries. */ }
+        catch (error) {
+          invalidate(); enabled = false; cached = null; windows = [];
+          await native?.setEnabled(false, true).catch(() => {});
+          reason = `Desktop access was released because the window list could not be refreshed after enabling: ${error instanceof Error ? error.message : "unknown failure"}`.slice(0, 240);
+          throw error;
+        }
       }
       return status();
     },

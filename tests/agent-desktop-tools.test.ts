@@ -78,8 +78,12 @@ test("desktop controller is passive/off until explicit controls and binds bounde
     await controller.setEnabled(true, true);
     // A list taken before the confirmed enable is refreshed, since titles appear only after it.
     expect(calls.slice(beforeEnable)).toEqual(["enable", "status", "listWindows"]);
-    // A failed refresh never undoes the confirmed enable or drops the earlier rows.
-    failNextList = true; await controller.setEnabled(true, true);
+    // A failed refresh releases the owner like Disable (one extra close) and says why, never a silently dead "enabled".
+    failNextList = true; const closedBefore = closed;
+    await expect(controller.setEnabled(true, true)).rejects.toThrow("synthetic window refresh failure");
+    expect(controller.status()).toMatchObject({ enabled: false, state: "unavailable", windows: [] });
+    expect(controller.status().reason).toContain("could not be refreshed after enabling"); expect(closed).toBe(closedBefore + 1);
+    await controller.listWindows(true); await controller.setEnabled(true, true);
     expect(controller.status()).toMatchObject({ enabled: true, reason: null }); expect(controller.status().windows).toHaveLength(1);
     await expect(controller.selectAndBind(scope, { ...selection, processId: "999:999" }, true)).rejects.toThrow("exact row");
     await controller.selectAndBind(scope, selection, true);
@@ -206,7 +210,7 @@ test("desktop controller is passive/off until explicit controls and binds bounde
     expect((await invoke("observe", { selection })).state).toBe("failed");
     expect(calls.filter(row => row === "observe")).toHaveLength(capturesBeforeFailedControl);
     activeGeneration = 2; expect((await controller.discover({ ...scope, generation: 2 })).every(row => !row.supported)).toBe(true);
-    await controller.close(); expect(closed).toBe(1); expect(controller.status()).toMatchObject({ state: "closed", enabled: false, activeCount: 0 });
+    await controller.close(); expect(closed).toBe(2); expect(controller.status()).toMatchObject({ state: "closed", enabled: false, activeCount: 0 });
     expect(creates).toBe(1);
   } finally { await controller.close(); }
 });
