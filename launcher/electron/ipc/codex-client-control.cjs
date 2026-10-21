@@ -28,6 +28,7 @@ const MESSAGES = {
   handoff_owner_active: 'Another Codex client still owns this thread. Close or switch away from it in Codex, wait for Codex to release it, then try again. Nothing was sent.',
   handoff_subagent_thread: 'Only a persisted root thread can be handed off. Subagent threads stay with their parent.',
   handoff_thread_not_idle: 'The thread was not idle after the exclusive handoff. Nothing was sent.',
+  handoff_settings_unconfirmed: 'Codex could not confirm that the thread keeps its own service tier. Nothing was sent.',
   handoff_resume_rejected: 'Codex rejected the handoff. Nothing was sent.',
   handoff_resume_unconfirmed: 'Codex did not confirm the handoff. Nothing was sent and the owned process was closed.',
   handoff_turn_rejected: 'Codex rejected the message. No turn was started; the thread was released.',

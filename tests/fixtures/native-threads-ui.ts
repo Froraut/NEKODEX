@@ -53,7 +53,7 @@ const api: NativeThreadsApi = {
       lastTurnId: lastTurnId ?? null, executionStarted: false, attachments: { state: 'matched', source: 1, fork: 1, missing: 0 } } };
   },
   nativeThreadHandoffSnapshot: async () => ({ ok: true, value: { available: true, transport: 'owned-stdio-server',
-    exclusivity: 'codex-thread-writer-lock', approvals: 'refused', active: null,
+    exclusivity: 'codex-thread-writer-lock', approvals: 'declined', active: null,
     uncertainHandoffs: [...fixture.uncertainHandoffs], errorCode: null } }),
   nativeThreadContinue: async ({ threadId, text }) => {
     fixture.calls.push(`continue:${threadId}:${text}`);

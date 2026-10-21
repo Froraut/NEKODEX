@@ -104,8 +104,9 @@ test('fork requires user action, preserves native policies and returns the new f
     expect(await promise).toMatchObject({ thread: { id: CHILD, forkedFromId: ROOT }, statusScope: 'configured-server' });
     expect(f.client.currentOperation()).toBeNull();
     expect(f.launches[0][1]).toEqual(['app-server', 'proxy', '--sock', '/fixture/control.sock']);
+    // The metadata client owns no turn: even a well-formed approval of a known thread is refused, not declined.
     f.child.stdout.write(`${JSON.stringify({ method: 'item/commandExecution/requestApproval', id: 900,
-      params: { command: 'private' } })}\n`);
+      params: { threadId: ROOT, turnId: 'turn-1', itemId: 'item-1', command: 'private' } })}\n`);
     expect(f.received.at(-1)).toEqual({ id: 900, error: { code: -32601,
       message: 'This client does not handle server requests' } });
   } finally { await f.client.destroy(); }
