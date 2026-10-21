@@ -25,6 +25,81 @@ const { ASYNC_CONNECTOR_NAME, ASYNC_DEV_CONNECTOR_NAME } = require("./connector-
 const { createCredentialProvider, isCredentialReference } = require('./tunnel-credentials.cjs');
 const { processIdentity } = require('./update-recovery.cjs');
 
+// Fixed daemon refusals the renderer needs verbatim: the semantic-review retry
+// rule and Verify's reasons. Only these exact strings pass; any other conflict,
+// including one with dynamic content, keeps the generic message.
+const AGENT_CONFLICT_PASSTHROUGH = Object.freeze([
+  'The workspace file changed after observation. Inspect its current revision and observe it again before verification.',
+  'Task semantic review requires an explicit user action',
+  'Task semantic reviewer is unavailable',
+  'Task semantic reviewer model is unavailable',
+  'Task semantic review is already in progress',
+  'Task semantic review requires a settled finite task awaiting review',
+  'Task semantic review attempt already exists for this action; inspect its receipt and start a new explicit review',
+  'Task semantic review attempt bound reached for this unchanged ledger; change the facts or inspect the attempt receipts',
+  'Task semantic review invalid-output bound reached for this unchanged ledger; change the facts or inspect the attempt receipts',
+  'Task semantic reviewer returned no valid verdict; inspect its attempt receipt before an explicit new review',
+  'Task semantic review outcome is unknown; inspect its attempt receipt before an explicit new review',
+  'Stale task semantic review: the task ledger changed during review; its result receipt is retained',
+  'Stale task semantic review scope',
+  'Current complete outcome review required',
+  'Requirement outcome is not verified',
+  'Current independent semantic review required',
+  'Requirement outcome is not semantically verified',
+  'Application property evidence is no longer the latest approved observation; approve a fresh verification',
+]);
+// Fixed browser-companion owner refusals (enable, pairing, tab selection and
+// ChatGPT binding). Page- or extension-supplied reasons never match exactly
+// and keep the bare HTTP status.
+const BROWSER_COMPANION_REFUSALS = Object.freeze([
+  'Invalid companion control request',
+  'Unknown companion control action',
+  'Companion runtime is closed',
+  'Companion listener transition is already in progress',
+  'Disable the current listener before changing extension identity',
+  'The owned listener did not confirm shutdown. Retry Disable; no replacement listener will be started.',
+  'An exact companion extension ID is required',
+  'Chrome extension origin does not match its exact extension ID',
+  'Enter the exact Chrome extension ID, or the Firefox companion ID and its pinned moz-extension UUID origin',
+  'Enable the local companion listener first',
+  'Companion host is closed',
+  'Reconcile the active operation before pairing another session',
+  'The browser companion listener is not enabled',
+  'Companion is not paired',
+  'Pair the companion and select the ChatGPT tab first',
+  'Select a https://chatgpt.com tab in the companion first',
+  'Stale or foreign observation; select or observe the exact tab again',
+  'A companion operation is active or has an uncertain outcome; reconcile its receipt first',
+  'The selected companion extension does not support ChatGPT send; update it and select the tab again',
+  'A ChatGPT companion binding or turn is already in progress',
+  'Release the held ChatGPT companion outcome before binding again',
+  'The selected ChatGPT tab could not be identified',
+  'The selected ChatGPT tab is signed in to a different account',
+  'The ChatGPT tab shows more than one model control; leave one composer visible',
+  'Pairing or selected scope was revoked',
+  'Caller cancelled; a dispatched input may already have occurred',
+  'No held ChatGPT companion outcome has that operation ID',
+]);
+const AGENT_CONFLICT_PASSTHROUGH_SET = new Set(AGENT_CONFLICT_PASSTHROUGH);
+const BROWSER_COMPANION_REFUSAL_SET = new Set(BROWSER_COMPANION_REFUSALS);
+
+/** A small JSON error receipt, or undefined when absent, malformed or over its byte limit. */
+async function readBoundedErrorReceipt(response, limit) {
+  const reader = response.body?.getReader();
+  if (!reader) return undefined;
+  const chunks = []; let size = 0;
+  try {
+    while (true) {
+      const part = await reader.read();
+      if (part.done) break;
+      size += part.value.byteLength;
+      if (size > limit) { await reader.cancel(); return undefined; }
+      chunks.push(Buffer.from(part.value));
+    }
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch { return undefined; } finally { reader.releaseLock(); }
+}
+
 const NATIVE_BACKGROUND_ROUTE_KEY = "CODEX_CHATGPT_WEB_NATIVE_BACKGROUND_ROUTE";
 const RESTART_WINDOW_MS = 60_000;
 const MAX_RESTARTS_PER_WINDOW = 5;
@@ -2269,35 +2344,28 @@ class RuntimeSupervisor {
         // callers keep their existing HTTP-error contract. Never forward an
         // arbitrary daemon message, response body, path, or credential.
         if (action === 'agent-mode' && options.returnErrorReceipt === true) {
-          const reader = response.body?.getReader();
-          if (reader) {
-            const chunks = []; let size = 0;
-            try {
-              while (true) {
-                const part = await reader.read();
-                if (part.done) break;
-                size += part.value.byteLength;
-                if (size > 8192) { await reader.cancel(); throw new Error('Agent error receipt exceeds limit'); }
-                chunks.push(Buffer.from(part.value));
-              }
-              const receipt = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-              const messages = {
-                unauthorized: 'Agent mode administrative authorization is unavailable.',
-                method_not_allowed: 'The Agent mode request method is unsupported.',
-                invalid_request: 'The Agent action does not match its bounded schema.',
-                explicit_action_required: 'An explicit user action is required.',
-                workspace_observer_unavailable: 'Trusted workspace artifact observation is unavailable.',
-                observed_evidence_unavailable: 'A trusted outcome observer is not configured.',
-                agent_action_conflict: 'The Agent action could not be completed; inspect its current durable state before retrying.',
-              };
-              if (receipt?.ok === false && typeof receipt.error === 'string' && Object.prototype.hasOwnProperty.call(messages, receipt.error)) {
-                const staleFile = 'The workspace file changed after observation. Inspect its current revision and observe it again before verification.';
-                const message = receipt.error === 'agent_action_conflict' && receipt.message === staleFile ? staleFile : messages[receipt.error];
-                return { ok: false, error: receipt.error, message };
-              }
-            } catch { /* Preserve the existing generic HTTP error for malformed or oversized bodies. */ }
-            finally { reader.releaseLock(); }
+          // Malformed or oversized bodies keep the existing generic HTTP error.
+          const receipt = await readBoundedErrorReceipt(response, 8192);
+          const messages = {
+            unauthorized: 'Agent mode administrative authorization is unavailable.',
+            method_not_allowed: 'The Agent mode request method is unsupported.',
+            invalid_request: 'The Agent action does not match its bounded schema.',
+            explicit_action_required: 'An explicit user action is required.',
+            workspace_observer_unavailable: 'Trusted workspace artifact observation is unavailable.',
+            observed_evidence_unavailable: 'A trusted outcome observer is not configured.',
+            agent_action_conflict: 'The Agent action could not be completed; inspect its current durable state before retrying.',
+          };
+          if (receipt?.ok === false && typeof receipt.error === 'string' && Object.prototype.hasOwnProperty.call(messages, receipt.error)) {
+            const message = receipt.error === 'agent_action_conflict' && AGENT_CONFLICT_PASSTHROUGH_SET.has(receipt.message) ? receipt.message : messages[receipt.error];
+            return { ok: false, error: receipt.error, message };
           }
+        }
+        // A companion refusal keeps the existing throwing contract, with its
+        // exact fixed reason instead of the bare status when it is known.
+        if (action === 'browser-companion' && response.status === 400) {
+          const receipt = await readBoundedErrorReceipt(response, 4096);
+          if (receipt && typeof receipt === 'object' && Object.keys(receipt).sort().join(',') === 'error,ok' && receipt.ok === false
+            && BROWSER_COMPANION_REFUSAL_SET.has(receipt.error)) throw new Error(receipt.error);
         }
         throw new Error(`HTTP ${response.status}`);
       }
@@ -3284,6 +3352,8 @@ class RuntimeSupervisor {
 }
 
 module.exports = {
+  AGENT_CONFLICT_PASSTHROUGH,
+  BROWSER_COMPANION_REFUSALS,
   MAX_RESTARTS_PER_WINDOW,
   RESTART_WINDOW_MS,
   TUNNEL_HEALTH_POLL_INTERVAL_MS,

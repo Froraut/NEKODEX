@@ -2,8 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AgentModeRuntime, AgentModeStore, createAgentModeRoutes, createResponsesSemanticReviewPort, normalizeSemanticReview, SEMANTIC_REVIEW_PROTOCOL, SemanticReviewOutputError } from "../src/agent-mode";
-import type { AgentToolRequest, SemanticReviewPacket, SemanticReviewRequest } from "../src/agent-mode";
+import { AgentModeRuntime, AgentModeStore, createAgentModeRoutes, createResponsesSemanticReviewPort, extractSemanticReviewObject, normalizeSemanticReview, SEMANTIC_REVIEW_PROTOCOL, SemanticReviewOutputError } from "../src/agent-mode";
+import type { AgentToolRequest, SemanticReviewInvalidEvidence, SemanticReviewPacket, SemanticReviewPort, SemanticReviewRequest } from "../src/agent-mode";
+import { emitTextDeltas } from "../src/adapters/chatgpt-web/turn-round-delivery";
+import { buildResponseJSON } from "../src/responses/json-output";
+import type { AdapterEvent } from "../src/types";
 
 const homes: string[] = [];
 const stores: AgentModeStore[] = [];
@@ -22,8 +25,31 @@ function reply(rows: Verdict[], deliverable: "pass" | "fail" | "unknown" = "pass
 }
 const selection = { windowId: "4242", processId: "77:1792570820369482", windowEpoch: "a".repeat(64) };
 
+/** The non-streaming Web reviewer reply exactly as the ChatGPT Web adapter emits it for a turn
+ * without local tools: the read-only notice and a reasoning-trace draft on the commentary
+ * channel, then the fenced verdict on the final channel, split by a later trace event. */
+const LOCAL_TOOLS_NOTICE = "> **Local tools unavailable**\n>\n> `ChatGPT Web 5.6 Sol` cannot access the local Codex computer in this turn. The accumulated context does not contain local tool results yet: it will see instructions and attachments, but not workspace contents.";
+function webReviewerResponse(verdict: string): Record<string, unknown> {
+  const events: AdapterEvent[] = []; const emit = (event: AdapterEvent) => { events.push(event); };
+  const fenced = "```json\n" + JSON.stringify(JSON.parse(verdict), null, 2) + "\n```";
+  const cut = fenced.indexOf("Synthetic") + 4; // inside a JSON string literal
+  emit({ type: "assistant_boundary" }); emit({ type: "text_delta", text: LOCAL_TOOLS_NOTICE, phase: "commentary" }); emit({ type: "assistant_boundary" });
+  emit({ type: "assistant_boundary" }); emit({ type: "text_delta", text: `Drafting {"protocol":"${SEMANTIC_REVIEW_PROTOCOL}","deliverable":{"verdict":"fail"}} before checking receipts.`, phase: "commentary" });
+  emit({ type: "assistant_boundary" }); emit({ type: "thinking_delta", thinking: "Comparing the receipts with each requirement." });
+  emitTextDeltas([fenced.slice(0, cut)], emit);
+  emit({ type: "assistant_boundary" }); emit({ type: "thinking_delta", thinking: "Checking the cited receipt identities." });
+  emitTextDeltas([fenced.slice(cut)], emit);
+  emit({ type: "done", stopReason: "stop", endTurn: true });
+  return buildResponseJSON(events, "chatgpt-web/gpt-5.6-sol-high");
+}
+function loopbackPort(body: () => Record<string, unknown>) {
+  return createResponsesSemanticReviewPort({ endpoint: () => "http://127.0.0.1:7777/v1/responses", fetch: (async () => Response.json(body())) as unknown as typeof fetch });
+}
+const resultEvidence = (store: AgentModeStore, taskId = "task") => store.listReceipts(taskId).filter(row => row.kind === "semantic_review_result")
+  .map(row => row.body as { state: string; receiptId?: string; invalid?: SemanticReviewInvalidEvidence });
+
 /** A synthetic P13-shaped Manual task: observe, one click and a separate AX property check. */
-function desktopFixture(reviewReply: (request: SemanticReviewRequest) => string | Promise<string>) {
+function desktopFixture(reviewReply: (request: SemanticReviewRequest) => string | Promise<string>, port?: SemanticReviewPort) {
   const store = storeAt();
   const calls: AgentToolRequest[] = [
     { toolCallId: "call-observe", tool: "desktop/observe", wireName: "agent_tool_0", arguments: { selection } },
@@ -38,7 +64,7 @@ function desktopFixture(reviewReply: (request: SemanticReviewRequest) => string 
         responseId: "synthetic-response", rootDispatchId: request.dispatch.id, input: [], output: [], tools: [], toolMap: calls.map(call => ({ wireName: call.wireName, tool: call.tool })), pending: calls } };
       return { receiptId: "synthetic-final", outcome: "completed", actualSpend: null, summary: "Counter before was 0. The click completed. verifyProperty reported Counter: 1." };
     } },
-    semanticReviewer: { async review(request) { reviews.push(request); return { receiptId: `response:review-${reviews.length}`, text: await reviewReply(request) }; } },
+    semanticReviewer: port ?? { async review(request) { reviews.push(request); return { receiptId: `response:review-${reviews.length}`, text: await reviewReply(request) }; } },
   });
   const scope = () => { const task = store.getTask("task"); return { familyId: task.familyId, generation: task.generation, revision: task.revision }; };
   const settle = async () => {
@@ -129,7 +155,7 @@ describe("DW9 independent semantic Goal review", () => {
     expect(f.reviews).toHaveLength(2);
   });
 
-  test("lost or invalid reviewer terminals are durable unknown attempts that are never replayed and are bounded", async () => {
+  test("lost or invalid reviewer terminals are durable attempts that are never replayed; lost terminals are bounded", async () => {
     let mode: "throw" | "invalid" | "slow" = "throw"; let release: () => void = () => {};
     let claimFirst = "", claimSecond = "";
     const f = desktopFixture(async request => {
@@ -155,10 +181,107 @@ describe("DW9 independent semantic Goal review", () => {
     expect([claimFirst, claimSecond]).toEqual(["claimed", "Semantic review transport already claimed"]);
     const attempt = f.store.listReceipts("task").find(row => row.kind === "semantic_review_attempt" && (row.body as { actionId: string }).actionId === "slow")!;
     expect(() => f.runtime.claimSemanticReviewTransport((attempt.body as { attemptId: string }).attemptId, "synthetic-reviewer", "c".repeat(64))).toThrow("Stale semantic review transport");
-    await expect(f.runtime.semanticReview("task", "fourth", f.scope(), reviewer, true)).rejects.toThrow("attempt bound reached");
-    expect(f.reviews).toHaveLength(3);
-    expect(f.store.listReceipts("task").filter(row => row.kind === "semantic_review_result").map(row => (row.body as { state: string }).state)).toEqual(["outcome_unknown", "invalid_output", "invalid_output"]);
+    // Two settled invalid outputs did not use up attempts; three lost terminals do.
+    mode = "throw";
+    await expect(f.runtime.semanticReview("task", "lost-2", f.scope(), reviewer, true)).rejects.toThrow("outcome is unknown");
+    await expect(f.runtime.semanticReview("task", "lost-3", f.scope(), reviewer, true)).rejects.toThrow("outcome is unknown");
+    await expect(f.runtime.semanticReview("task", "sixth", f.scope(), reviewer, true)).rejects.toThrow("attempt bound reached");
+    expect(f.reviews).toHaveLength(5);
+    expect(resultEvidence(f.store).map(row => row.state)).toEqual(["outcome_unknown", "invalid_output", "invalid_output", "outcome_unknown", "outcome_unknown"]);
+    expect(resultEvidence(f.store).map(row => row.invalid?.reason ?? null)).toEqual([null, "no_json_object", "no_json_object", null, null]);
     expect(f.store.getTask("task").semanticReview).toBeUndefined();
+  });
+
+  test("the live Web reply shape: commentary notice and a commentary draft object around a streamed fenced verdict; only the final channel is parsed", async () => {
+    let key: (id: string) => string = () => ""; const sent: unknown[] = [];
+    const verdict = () => reply([
+      { requirementId: "r1", verdict: "unknown", sufficiency: "partial", toolReceiptIds: [key("call-click")] },
+      { requirementId: "r2", verdict: "pass", sufficiency: "complete", toolReceiptIds: [key("call-verify")] },
+    ], "unknown");
+    const port = loopbackPort(() => { const body = webReviewerResponse(verdict()); sent.push(body); return body; });
+    const f = desktopFixture(() => "", port);
+    ({ key } = await f.settle());
+    const task = await f.runtime.semanticReview("task", "semantic-web", f.scope(), { provider: "local-responses", model: "synthetic-reviewer" }, true);
+    expect(task.semanticReview!.requirements.map(row => [row.requirementId, row.verdict])).toEqual([["r1", "unknown"], ["r2", "pass"]]);
+    expect(task.semanticReview!.reviewer.receiptId).toMatch(/^response:resp_/);
+    expect(resultEvidence(f.store).map(row => row.state)).toEqual(["recorded"]);
+    // The reply really carries both channels. Joining every assistant item with newlines, as the
+    // installed build did, leaves only the commentary draft parseable: the live invalid_output.
+    const output = (sent[0] as { output: { type: string; phase?: string; content?: { text: string }[] }[] }).output;
+    expect(output.map(item => [item.type, item.phase ?? null])).toEqual([["message", "commentary"], ["message", "commentary"], ["reasoning", null], ["message", "final_answer"], ["reasoning", null], ["message", "final_answer"]]);
+    const everyAssistantText = output.filter(item => item.type === "message").map(item => item.content!.map(part => part.text).join("")).join("\n");
+    expect(() => normalizeSemanticReview(f.store.semanticReviewInput("task").packet, everyAssistantText)).toThrow(SemanticReviewOutputError);
+    const direct = await port.review({ attemptId: "direct", taskId: "task", reviewer: { provider: "local-responses", model: "synthetic-reviewer" }, instructions: "Review only.", prompt: "{}", signal: new AbortController().signal });
+    expect(direct.text).toBe("```json\n" + JSON.stringify(JSON.parse(verdict()), null, 2) + "\n```");
+    expect(direct.text).not.toContain("Local tools unavailable");
+    expect(direct.reply!.commentary.text).toContain("Local tools unavailable");
+    expect(direct.reply!.items.map(row => row.phase)).toEqual(["commentary", "commentary", null, "final_answer", null, "final_answer"]);
+  });
+
+  test("exactly one JSON object is extracted from the final answer: bare, fenced or amid prose; several, unterminated or none are rejected", () => {
+    const object = { protocol: SEMANTIC_REVIEW_PROTOCOL, note: "braces } { and \"quotes\" inside a string" };
+    const json = JSON.stringify(object);
+    expect(extractSemanticReviewObject(json)).toEqual(object);
+    expect(extractSemanticReviewObject("```json\n" + JSON.stringify(object, null, 2) + "\n```")).toEqual(object);
+    expect(extractSemanticReviewObject(`Review of {r1, r2} below.\n\`\`\`json\n${json}\n\`\`\`\nThat is the verdict.`)).toEqual(object);
+    const reason = (text: string) => { try { extractSemanticReviewObject(text); return "accepted"; } catch (error) { expect(error).toBeInstanceOf(SemanticReviewOutputError); return (error as SemanticReviewOutputError).reason; } };
+    expect(reason(`${json}\n${json}`)).toBe("multiple_json_objects");
+    expect(reason("```json\n" + json + "\n```\nOr, alternatively:\n```json\n{\"protocol\":\"other\"}\n```")).toBe("multiple_json_objects");
+    expect(reason(json.slice(0, -1))).toBe("unterminated_json_object");
+    expect(reason("The deliverable looks complete.")).toBe("no_json_object");
+    expect(reason("[1, 2]")).toBe("no_json_object");
+    expect(reason(" \n ")).toBe("final_answer_empty");
+  });
+
+  test("an invalid output keeps bounded, redacted evidence and uses up no attempt; the same action is never resent", async () => {
+    let mode: "prose" | "schema" | "valid" = "prose"; let key: (id: string) => string = () => "";
+    const secrets = ["Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789", "token sk-proj-abcdefghijklmnopqrstuvwxyz012345",
+      "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5NXgL0n3I9PlFUP0THsR8U", "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----", "password=hunter2hunter2"];
+    const prose = `The deliverable looks fine.\n${secrets.join("\n")}\n${"x".repeat(20_000)}\nEnd of review.`;
+    const f = desktopFixture(() => mode === "prose" ? prose : mode === "schema"
+      ? reply([{ requirementId: "r1", verdict: "pass", sufficiency: "full" as "complete" }, { requirementId: "r2", verdict: "unknown", sufficiency: "none" }])
+      : reply([{ requirementId: "r1", verdict: "unknown", sufficiency: "partial" }, { requirementId: "r2", verdict: "pass", sufficiency: "complete", toolReceiptIds: [key("call-verify")] }], "unknown"));
+    ({ key } = await f.settle());
+    const reviewer = { provider: "local-responses" as const, model: "synthetic-reviewer" };
+    await expect(f.runtime.semanticReview("task", "first", f.scope(), reviewer, true)).rejects.toThrow("no valid verdict");
+    await expect(f.runtime.semanticReview("task", "first", f.scope(), reviewer, true)).rejects.toThrow("attempt already exists for this action");
+    mode = "schema";
+    await expect(f.runtime.semanticReview("task", "second", f.scope(), reviewer, true)).rejects.toThrow("no valid verdict");
+    await expect(f.runtime.semanticReview("task", "third", f.scope(), reviewer, true)).rejects.toThrow("no valid verdict");
+    const [first, second] = resultEvidence(f.store);
+    expect(first).toMatchObject({ state: "invalid_output", receiptId: "response:review-1", invalid: { reason: "no_json_object" } });
+    const final = first!.invalid!.reply!.final;
+    expect([final.bytes, final.truncated]).toEqual([Buffer.byteLength(prose), true]);
+    expect(final.text).toStartWith("The deliverable looks fine.");
+    expect(final.text).toEndWith("End of review.");
+    expect(Buffer.byteLength(final.text)).toBeLessThan(4100);
+    for (const secret of ["abcdefghijklmnopqrstuvwxyz0123456789", "sk-proj-", "eyJhbGci", "MIIEvQIBADANBg", "hunter2"]) expect(final.text).not.toContain(secret);
+    expect(Buffer.byteLength(JSON.stringify(first!.invalid))).toBeLessThan(16 * 1024);
+    expect(second).toMatchObject({ state: "invalid_output", receiptId: "response:review-2", invalid: { reason: "schema_mismatch", issues: [{ path: "requirements.0.sufficiency" }] } });
+    // Three settled invalid outputs used to exhaust the bound; a new explicit action still reviews.
+    mode = "valid";
+    const task = await f.runtime.semanticReview("task", "fourth", f.scope(), reviewer, true);
+    expect(task.semanticReview!.requirements.map(row => row.verdict)).toEqual(["unknown", "pass"]);
+    expect(f.reviews).toHaveLength(4);
+    expect(resultEvidence(f.store).map(row => row.state)).toEqual(["invalid_output", "invalid_output", "invalid_output", "recorded"]);
+  });
+
+  test("lost or unfinished attempts are bounded at three per unchanged ledger; settled invalid outputs have a separate backstop", () => {
+    const store = storeAt();
+    const create = (id: string) => store.createTask({ ownerMode: "agent", id, familyId: id, mode: "manual", originalRequest: "Synthetic bounded review.", requirements: [{ id: "r", text: "Synthetic." }],
+      stages: [{ id: "s", instruction: "Synthetic stage.", requirementIds: ["r"] }], bounds: { maxConcurrent: 1, maxTurns: 1, maxSpend: null } });
+    const attempt = (taskId: string, n: number) => { const task = store.getTask(taskId);
+      store.recordSemanticReviewAttempt(taskId, { attemptId: `${taskId}-${n}`, actionId: `${taskId}-action-${n}`, generation: task.generation, taskRevision: task.revision, evidenceRevision: task.evidenceRevision,
+        inputDigest: store.semanticReviewInput(taskId).digest, reviewer: { provider: "local-responses", model: "synthetic-reviewer" } }); };
+    create("invalid");
+    for (let n = 1; n <= 8; n++) { attempt("invalid", n); store.recordSemanticReviewResult("invalid", { attemptId: `invalid-${n}`, state: "invalid_output", invalid: { reason: "no_json_object" } }); }
+    expect(() => attempt("invalid", 9)).toThrow("invalid-output bound reached");
+    create("mixed");
+    for (let n = 1; n <= 2; n++) { attempt("mixed", n); store.recordSemanticReviewResult("mixed", { attemptId: `mixed-${n}`, state: "invalid_output" }); }
+    attempt("mixed", 3); store.recordSemanticReviewResult("mixed", { attemptId: "mixed-3", state: "outcome_unknown" });
+    attempt("mixed", 4); attempt("mixed", 5); // an unfinished attempt counts like a lost one
+    expect(() => attempt("mixed", 6)).toThrow("attempt bound reached");
+    expect(() => store.recordSemanticReviewResult("mixed", { attemptId: "mixed-4", state: "outcome_unknown", invalid: { reason: "no_json_object" } })).toThrow("Invalid semantic review result evidence");
   });
 
   test("reviewer selection is explicit, Web-only and limited to settled finite tasks; HTTP requires the exact schema", async () => {
@@ -226,12 +349,14 @@ describe("DW9 independent semantic Goal review", () => {
         return status === 200 ? Response.json({ id: "resp_review", status: "completed", output }) : new Response("upstream", { status });
       }) as unknown as typeof fetch });
     const request = { attemptId: "attempt-1", taskId: "task", reviewer: { provider: "local-responses" as const, model: "synthetic-reviewer" }, instructions: "Review only.", prompt: "{}", signal: new AbortController().signal };
-    expect(await port.review(request)).toEqual({ receiptId: "response:resp_review", text: "{\"verdict\":true}" });
+    expect(await port.review(request)).toMatchObject({ receiptId: "response:resp_review", text: "{\"verdict\":true}", reply: { items: [{ type: "message", phase: "none", bytes: 16 }], final: { text: "{\"verdict\":true}", truncated: false } } });
     expect(bodies[0]).toMatchObject({ model: "synthetic-reviewer", store: false, stream: false, tools: [], tool_choice: "none", instructions: "Review only." });
     expect(bodies[0].previous_response_id).toBeUndefined();
     expect(headers[0]).toBe("attempt-1");
     output = [{ type: "function_call", call_id: "x", name: "agent_tool_0", arguments: "{}" }];
-    await expect(port.review(request)).rejects.toThrow(SemanticReviewOutputError);
+    const tool = await port.review(request).catch(error => error);
+    expect(tool).toBeInstanceOf(SemanticReviewOutputError);
+    expect(tool).toMatchObject({ reason: "non_message_output", evidence: { receiptId: "response:resp_review", reply: { items: [{ type: "function_call", phase: null }] } } });
     status = 502;
     const failure = await port.review(request).catch(error => error);
     expect(failure).toBeInstanceOf(Error); expect(failure).not.toBeInstanceOf(SemanticReviewOutputError);

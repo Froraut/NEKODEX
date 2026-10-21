@@ -20,6 +20,10 @@ const stageRows = (text: string, requirementIds: string[], order: StageOrder = '
     : index && order === 'sequence' ? [`s${index}`] : [],
 }));
 const errorText = (error: unknown) => stripIpcErrorPrefix(error instanceof Error ? error.message : String(error));
+/** Fixed refusals for a semantic-review action whose attempt receipt is already durable. The
+ * supervisor passes these exact daemon messages through; a later deliberate click is then a
+ * new explicit review identity, while an ambiguous transport failure keeps its identity. */
+export const semanticAttemptTerminal = /^(?:Task semantic review (?:outcome is unknown|attempt already exists)|Task semantic reviewer returned no valid verdict|Stale task semantic review)/;
 const terminal = (task: AgentTask) => task.status === 'stopped' || task.status === 'verified_complete';
 type ModelRow = AgentModeStatus['models'][number];
 const modelChoice = (row: ModelRow) => row.provider === 'owned-native' ? JSON.stringify([row.provider, row.id, row.admissionId]) : row.id;
@@ -312,9 +316,7 @@ export function AgentModeSurface({ language, api, disabled = false }: {
     void act('semantic-review', async () => {
       try { await mutate({ action: 'semantic-review', taskId: task.id, reviewer: { provider: 'local-responses', model: reviewerModel }, explicitUserAction: true }); }
       catch (cause) {
-        // These terminals are durable attempt receipts. A later deliberate click is a new
-        // explicit review identity; an ambiguous transport failure keeps its identity.
-        if (/^(?:Task semantic review (?:outcome is unknown|attempt already exists)|Task semantic reviewer returned no valid verdict|Stale task semantic review)/.test(errorText(cause))) {
+        if (semanticAttemptTerminal.test(errorText(cause))) {
           for (const key of uncertain.current.keys()) {
             const command = JSON.parse(key) as { action: string; taskId?: string };
             if (command.action === 'semantic-review' && command.taskId === task.id) uncertain.current.delete(key);
