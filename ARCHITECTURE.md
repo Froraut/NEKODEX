@@ -208,10 +208,15 @@ retained-history anchors avoid mistaking older remounted rows for new submission
 Answer text, HTML and markdown segments share sanitized roots so hidden suggestion
 sizing labels cannot contaminate delivery or its fingerprint.
 The worker may mark a stable final paragraph streamable after the owned response stream
-stops and completed-turn actions render. Markdown retains its normal stability and
-mutable-reference guards; the completion tracker and broker fence still own terminal
-delivery and wait for tool work. Picker selection checks live state before closing, then
+stops and completed-turn actions render. That proof must persist across another observation
+(250 ms); the paragraph's content must still be unchanged for the full stability window, which
+for this tail runs from its last change. Blocks bounded by a following block keep the whole
+window after that boundary. Markdown retains its mutable-reference guards; the completion
+tracker and broker fence still own terminal delivery and wait for tool work. The response
+loop polls again when a buffered block is due or the owned stream opens or closes, within its
+regular interval. Picker selection checks live state before closing, then
 verifies persisted family/effort immediately before Send, without an intermediate reopening.
+A queued launcher start is re-polled after 50, 100, 200 and 400 ms, then every 500 ms.
 
 Connector approval cards remain owned by the user when automatic approval is disabled.
 Startup account authentication and connector checks stay sequential under their existing

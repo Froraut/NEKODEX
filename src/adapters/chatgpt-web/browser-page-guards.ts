@@ -134,6 +134,7 @@ export class ChatGptSubmissionRejectionObserver {
   private generation = 0;
   private readonly requests = new Set<Request>();
   private readonly streams = new Map<Request, Response>();
+  private readonly streamWaiters = new Set<() => void>();
   private checks: Array<Promise<ChatGptWebAdapterError | undefined>> = [];
 
   constructor(private readonly onRejected?: (error: ChatGptWebAdapterError) => void) {}
@@ -159,6 +160,7 @@ export class ChatGptSubmissionRejectionObserver {
     }
     if (response.status() === 200 && contentType?.includes("text/event-stream")) {
       this.streams.set(response.request(), response);
+      this.wakeStreamWaiters();
       return;
     }
     if (response.status() !== 413 || !contentType?.includes("application/json")) return;
@@ -170,6 +172,7 @@ export class ChatGptSubmissionRejectionObserver {
     this.streams.delete(request);
     this.requests.delete(request);
     if (!response) return;
+    this.wakeStreamWaiters();
     // Read only after the stream ends. A long-running successful response must not hold up
     // failure() or run into a response-body timeout while it is still generating.
     this.observeRejection(response.text().then(body => body.split(/\r?\n\r?\n/).some(block => {
@@ -191,8 +194,12 @@ export class ChatGptSubmissionRejectionObserver {
 
   private readonly onRequestFailed = (request: Request): void => {
     this.requests.delete(request);
-    this.streams.delete(request);
+    if (this.streams.delete(request)) this.wakeStreamWaiters();
   };
+
+  private wakeStreamWaiters(): void {
+    for (const wake of [...this.streamWaiters]) wake();
+  }
 
   private observeRejection(check: Promise<boolean>): void {
     const generation = this.generation;
@@ -230,7 +237,21 @@ export class ChatGptSubmissionRejectionObserver {
     return this.streams.size > 0 && this.page !== undefined && !this.page.isClosed();
   }
 
+  /** Pause for up to `timeoutMs`, ending early when an owned conversation stream opens or closes. */
+  waitForStreamChange(timeoutMs: number): Promise<void> {
+    return new Promise(resolveWait => {
+      const wake = () => {
+        clearTimeout(timer);
+        this.streamWaiters.delete(wake);
+        resolveWait();
+      };
+      const timer = setTimeout(wake, timeoutMs);
+      this.streamWaiters.add(wake);
+    });
+  }
+
   dispose(): void {
+    this.wakeStreamWaiters();
     this.generation += 1;
     this.page?.off("request", this.onRequest);
     this.page?.off("response", this.onResponse);

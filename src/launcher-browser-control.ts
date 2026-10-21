@@ -139,6 +139,18 @@ export const LAUNCHER_TURN_START_TIMEOUT_MS = 30_000;
 export const LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS = 10_000;
 export const LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS = 5_000;
 export const LAUNCHER_TURN_END_TIMEOUT_MS = 15_000;
+/**
+ * The launcher answers a new start with a queued receipt and admits it in the background, usually
+ * within about 100 ms. Poll soon after that, then settle into the steady cadence of a task that is
+ * genuinely waiting for capacity or an account.
+ */
+const LAUNCHER_QUEUED_START_POLL_DELAYS_MS = [50, 100, 200, 400] as const;
+const LAUNCHER_QUEUED_START_POLL_INTERVAL_MS = 500;
+
+/** The pause before re-polling a queued start; `poll` counts the queued receipts already received. */
+export function launcherQueuedStartPollDelayMs(poll: number): number {
+  return LAUNCHER_QUEUED_START_POLL_DELAYS_MS[poll] ?? LAUNCHER_QUEUED_START_POLL_INTERVAL_MS;
+}
 
 export interface LauncherManualTurnOwner {
   traceId: string;
@@ -389,6 +401,7 @@ export async function notifyLauncherTurn(
     ? activity
     : { ...activity, mutationId: randomUUID() };
   let ambiguousError: unknown;
+  let queuedPolls = 0;
   const attempts = activity.phase === "usage" ? 1 : 2;
   const cancelAdmission = async () => {
     if (activity.phase !== 'start' || activity.taskProgressVersion !== 1) return;
@@ -426,7 +439,8 @@ export async function notifyLauncherTurn(
         attempt = -1;
         await new Promise<void>((resolveWait, rejectWait) => {
           const abort = () => { clearTimeout(wait); abortSignal?.removeEventListener('abort', abort); rejectWait(abortSignal?.reason ?? new DOMException('Queued turn aborted', 'AbortError')); };
-          const wait = setTimeout(() => { abortSignal?.removeEventListener('abort', abort); resolveWait(); }, 500);
+          const wait = setTimeout(() => { abortSignal?.removeEventListener('abort', abort); resolveWait(); },
+            launcherQueuedStartPollDelayMs(queuedPolls++));
           abortSignal?.addEventListener('abort', abort, { once: true });
           if (abortSignal?.aborted) abort();
         });

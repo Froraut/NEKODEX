@@ -261,6 +261,8 @@ export interface ChatGptMarkdownSegment {
   sourceStart?: number;
   sourceEnd?: number;
   streamable: boolean;
+  /** A link has no target yet; ChatGPT can hydrate a citation after its text settles. */
+  pendingLinks?: boolean;
   /** File-reference controls can replace their label, spinner and download link until completion. */
   mutableReference?: boolean;
 }
@@ -268,6 +270,8 @@ export interface ChatGptMarkdownSegment {
 interface ChatGptMarkdownCandidate extends ChatGptMarkdownSegment {
   changedAt: number;
   streamableAt?: number;
+  /** Streamable only through the browser's completed-turn proof, not a following block. */
+  tailBoundary?: boolean;
 }
 
 interface CommittedChatGptMarkdownSegment {
@@ -303,6 +307,23 @@ export class ChatGptMarkdownConsistencyError extends Error {
 
 /** How long a streamable block must stay unchanged before it is committed to the stream. */
 const CHATGPT_MARKDOWN_STABILITY_MS = 750;
+/**
+ * How long the completed-turn proof alone must persist before it releases the final block. That
+ * block's content must still have stayed unchanged for the full stability window.
+ */
+const CHATGPT_MARKDOWN_TAIL_BOUNDARY_MS = 250;
+
+/**
+ * A following block is a structural boundary the renderer may still be settling, so the whole
+ * window runs after it appears. The completed-turn proof is checked from outside the renderer: it
+ * has to survive another observation, while the block it releases has usually been unchanged since
+ * the answer stopped streaming, often for longer than the window by the time the stream closes.
+ */
+function chatGptMarkdownReleaseAt(candidate: ChatGptMarkdownCandidate, streamableAt: number): number {
+  return candidate.tailBoundary
+    ? Math.max(candidate.changedAt + CHATGPT_MARKDOWN_STABILITY_MS, streamableAt + CHATGPT_MARKDOWN_TAIL_BOUNDARY_MS)
+    : Math.max(candidate.changedAt, streamableAt) + CHATGPT_MARKDOWN_STABILITY_MS;
+}
 
 /**
  * Converts structurally completed ChatGPT DOM blocks into an append-only Markdown stream.
@@ -352,7 +373,7 @@ export class ChatGptMarkdownBuffer {
     }
 
     const visibleCandidates = new Set<string>();
-    for (const segment of reconciled) {
+    for (const [index, segment] of reconciled.entries()) {
       const candidateId = this.candidateId(segment);
       visibleCandidates.add(candidateId);
       const previous = this.candidates.get(candidateId);
@@ -366,12 +387,16 @@ export class ChatGptMarkdownBuffer {
         && previous.sourceStart === segment.sourceStart
         && previous.sourceEnd === segment.sourceEnd;
       // A following block normally establishes the boundary. The owning browser may also
-      // prove that the stream stopped and completed-turn actions rendered. Keep the same
-      // stability window for that tail; this does not declare the whole turn complete.
+      // prove that the stream stopped and completed-turn actions rendered. The tail keeps the
+      // same content stability window; this does not declare the whole turn complete.
       const streamable = segment.streamable || options.tailReady === true;
       this.candidates.set(candidateId, {
         ...segment,
         streamable,
+        // Only the last block, with every link target present, is the tail. An earlier block
+        // waiting on a citation's target keeps the whole window after the proof.
+        ...(streamable && !segment.streamable && index === reconciled.length - 1 && !segment.pendingLinks
+          ? { tailBoundary: true } : {}),
         changedAt: unchanged ? previous.changedAt : now,
         ...(streamable ? {
           streamableAt: unchanged && previous.streamableAt !== undefined
@@ -394,7 +419,7 @@ export class ChatGptMarkdownBuffer {
       // already known to precede it may stream; finish() delivers the rest (upstream #769).
       if (this.referencePrefix && !this.referencePrefix.has(candidateId)) break;
       if (!candidate?.streamable || candidate.streamableAt === undefined) break;
-      if (now - Math.max(candidate.changedAt, candidate.streamableAt) < CHATGPT_MARKDOWN_STABILITY_MS) break;
+      if (now < chatGptMarkdownReleaseAt(candidate, candidate.streamableAt)) break;
       delta += this.commit(candidate);
       this.committed.push(this.committedSegment(candidate));
       this.candidates.delete(candidateId);
@@ -403,6 +428,20 @@ export class ChatGptMarkdownBuffer {
     this.latest = this.latest.slice(committedCount);
     this.snapshotBytes = 2 * this.latest.reduce((bytes, segment) => bytes + retainedRecordBytes(segment), 0);
     return delta;
+  }
+
+  /**
+   * When the next pending block becomes committable without any further DOM change, or undefined
+   * while it still waits for a boundary. The observer polls then instead of up to an interval late.
+   */
+  nextReleaseAt(): number | undefined {
+    const next = this.delivery === "stream" ? this.latest[0] : undefined;
+    if (!next) return undefined;
+    const candidateId = this.candidateId(next);
+    if (this.referencePrefix && !this.referencePrefix.has(candidateId)) return undefined;
+    const candidate = this.candidates.get(candidateId);
+    if (!candidate?.streamable || candidate.streamableAt === undefined) return undefined;
+    return chatGptMarkdownReleaseAt(candidate, candidate.streamableAt);
   }
 
   finish(): { markdown: string; delta: string } {

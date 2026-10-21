@@ -11,6 +11,14 @@ export const CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS = 180_000;
 export const CHATGPT_EMPTY_RESPONSE_GRACE_MS = 10_000;
 export const CHATGPT_COMPLETION_ACTION_GRACE_MS = 60_000;
 export const CHATGPT_COMPLETION_SETTLE_MS = 2_000;
+const CHATGPT_RESPONSE_POLL_MS = 250;
+const CHATGPT_RESPONSE_MIN_POLL_MS = 20;
+
+/** The pause before the next response observation: the regular interval, or until a buffered block is due. */
+export function chatGptResponsePollDelayMs(nextReleaseAt: number | undefined, now: number): number {
+  if (nextReleaseAt === undefined) return CHATGPT_RESPONSE_POLL_MS;
+  return Math.min(CHATGPT_RESPONSE_POLL_MS, Math.max(CHATGPT_RESPONSE_MIN_POLL_MS, nextReleaseAt - now));
+}
 export function chatGptTurnIsComplete(state: {
   responsePresent: boolean;
   running: boolean;

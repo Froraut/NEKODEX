@@ -11,7 +11,7 @@ import { submissionDomState, type ChatGptSubmissionDomCache, type ChatGptSubmiss
 import { absentResponseDomSnapshot, resetChatGptResponseDomCache, responseDomSnapshot, type ChatGptResponseDomCache, type ChatGptResponseDomSnapshot } from "./browser-response-dom";
 import { assertChatGptPromptAttachments, chatGptPromptFilePayloads } from "./attachment-payloads";
 import { ChatGptModelSelectionController } from "./browser-model-selection";
-import { CHATGPT_RESPONSE_DOM_GRACE_MS, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, CHATGPT_COMPLETION_ACTION_GRACE_MS, ChatGptCompletionTracker, ChatGptTurnDomHealthTracker, chatGptExternalProgressSuppressesDomHealth } from "./browser-response-policy";
+import { CHATGPT_RESPONSE_DOM_GRACE_MS, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, CHATGPT_COMPLETION_ACTION_GRACE_MS, ChatGptCompletionTracker, ChatGptTurnDomHealthTracker, chatGptExternalProgressSuppressesDomHealth, chatGptResponsePollDelayMs } from "./browser-response-policy";
 import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, throwIfPromptAttachmentAborted, withBrowserTurnAbort, browserStageAbortSignal } from "./browser-operation-support";
 import {
   ChatGptSubmissionRejectionObserver,
@@ -3526,7 +3526,11 @@ export class ChatGptBrowserWorker {
           });
           if (domError) throw new Error(domError);
         }
-        await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
+        // Observe again as soon as a buffered block becomes committable or this turn's own
+        // conversation stream closes, instead of up to a full interval later.
+        await submissionRejection.waitForStreamChange(
+          chatGptResponsePollDelayMs(markdownBuffer.nextReleaseAt(), Date.now()),
+        );
        } catch (error) {
         if (launcherSurfaceId && recoverableLauncherObservation(error)) {
           consecutiveObservationRebinds += 1;
