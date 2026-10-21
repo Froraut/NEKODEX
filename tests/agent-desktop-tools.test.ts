@@ -13,6 +13,7 @@ test("desktop controller is passive/off until explicit controls and binds bounde
   // False models review_required: same generation, no active input scope.
   let scopeActive = true;
   let observedForegroundMode: unknown, dispatchedAction: unknown;
+  let failNextList = false;
   let expire = false, failNextStatus = false, corruptNextImage = false, pendingOperation: { id: string; binding: unknown } | undefined, late: unknown;
   const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0, 8, 8, 0, 1, 0, 1, 0, 0xff, 0xd9]);
   const pngId = "c".repeat(64);
@@ -32,6 +33,7 @@ test("desktop controller is passive/off until explicit controls and binds bounde
       if (command === "status") return { providerId: "nekodex-macos-desktop-v1", enabled, uncertain: false, selected: selected ? window : null,
         selectionCurrent: selected, inputWindowBound: selected, screenCaptureGranted: screenGranted, accessibilityGranted: true, postEventGranted: false, permissionClient };
       if (command === "openPermissionSettings") return { screenCaptureGranted: screenGranted, accessibilityGranted: true, postEventGranted: false, permissionClient, pane: "Privacy_Accessibility", registered: true };
+      if (command === "listWindows" && failNextList) { failNextList = false; throw new Error("synthetic window refresh failure"); }
       if (command === "listWindows") return { windows: [window] };
       if (command === "enable") { enabled = true; return { enabled: true }; }
       if (command === "select") { selected = true; return { selected: window, inputWindowBound: true }; }
@@ -76,6 +78,9 @@ test("desktop controller is passive/off until explicit controls and binds bounde
     await controller.setEnabled(true, true);
     // A list taken before the confirmed enable is refreshed, since titles appear only after it.
     expect(calls.slice(beforeEnable)).toEqual(["enable", "status", "listWindows"]);
+    // A failed refresh never undoes the confirmed enable or drops the earlier rows.
+    failNextList = true; await controller.setEnabled(true, true);
+    expect(controller.status()).toMatchObject({ enabled: true, reason: null }); expect(controller.status().windows).toHaveLength(1);
     await expect(controller.selectAndBind(scope, { ...selection, processId: "999:999" }, true)).rejects.toThrow("exact row");
     await controller.selectAndBind(scope, selection, true);
     expect(controller.status(scope).bindings).toMatchObject([{ taskId: scope.taskId, generation: 1, selection, observed: false }]);

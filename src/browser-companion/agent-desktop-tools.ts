@@ -177,13 +177,15 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
         return status();
       }
       try {
-        await run(undefined, async signal => {
-          const provider = resource(); await provider.setEnabled(true, true); enabled = true; await inspect(provider, signal);
-          // The helper lists titles only after its confirmed enable; refresh a list taken before it.
-          if (windows.length) windows = await provider.listWindows(signal);
-        });
+        await run(undefined, async signal => { const provider = resource(); await provider.setEnabled(true, true); enabled = true; await inspect(provider, signal); });
         reason = null;
       } catch (error) { enabled = false; reason = error instanceof Error ? error.message.slice(0, 240) : "Desktop provider could not be enabled"; throw error; }
+      // The helper lists titles only after its confirmed enable, so re-read a list taken before it.
+      // Best effort and outside the enable: a failed refresh keeps the earlier rows and the enabled owner.
+      if (windows.length) {
+        try { await run(undefined, async signal => { windows = await resource().listWindows(signal); }); }
+        catch { /* The earlier untitled rows remain valid identities; List window metadata retries. */ }
+      }
       return status();
     },
     async selectAndBind(scope: ToolScope, expectedSelection: MacosWindowSelection, explicitUserAction: boolean) {
