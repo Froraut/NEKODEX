@@ -133,10 +133,12 @@ function createAgentOAuthMcpController({ coreHome, oauthService, validateTask, v
       fail();
     } finally { changing = false; }
   }
-  const unsubscribe = oauthService.subscribeMcpInvalidation?.(providerId => {
+  const unsubscribe = oauthService.subscribeMcpInvalidation?.((providerId, accountId) => {
     if (closed) return;
     if (providerId === undefined) { invalidate(); return; }
-    authorityRevision++; reviews.clear(); const bindings = new Set(state.pins.filter(pin => pin.providerId === providerId).map(pin => digest(pin)));
+    // An account-scoped retirement drops only that account's pins; otherwise every pin of the provider.
+    authorityRevision++; reviews.clear(); const bindings = new Set(state.pins.filter(pin => pin.providerId === providerId
+      && (accountId === undefined || pin.accountId === accountId)).map(pin => digest(pin)));
     for (const binding of bindings) providers.get(binding)?.invalidate();
     state = { ...state, bindings: state.bindings.filter(row => !bindings.has(row.binding)) };
     if (!uncertain && fs.existsSync(file)) save(state);

@@ -116,23 +116,24 @@ function createAgentOAuthService({ coreHome, getAuthority, openExternal, approve
   const directory = path.join(coreHome, 'agent-oauth'), registryPath = path.join(directory, 'providers.json');
   let owner = null, closed = false, uncertain = false, registrationBusy = false, activeActions = 0;
   const reviews = new Map(), mcpInvalidationListeners = new Set();
-  function notifyMcpInvalidation(providerId, strict = false) {
+  function notifyMcpInvalidation(providerId, strict = false, accountId) {
     // Consumers deny in memory before persistence. A failed consumer write must not block credential revocation,
     // but provider removal (strict) requires every consumer to acknowledge its durable binding removal.
     let failed = false;
-    for (const listener of mcpInvalidationListeners) { try { listener(providerId); } catch { failed = true; } }
+    for (const listener of mcpInvalidationListeners) { try { listener(providerId, accountId); } catch { failed = true; } }
     if (strict && failed) fail();
   }
-  /** Same lock, stamp check, revision increment and durable atomic write as registration. */
-  function commitRegistry(stamp, providers) {
+  /** Same lock, revision increment and durable atomic write as registration. `expected` is the current
+   * account stamp, or `{ revision }` for an account that no longer has a current authority. */
+  function commitRegistry(expected, providers) {
     const lockPath = `${registryPath}.lock`; let lock;
     try {
       fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
       const stat = fs.lstatSync(directory); if (!stat.isDirectory() || stat.isSymbolicLink()) fail();
       lock = fs.openSync(lockPath, 'wx', 0o600);
-      const current = context();
-      if (current.stamp !== stamp) fail();
-      const next = { version: 1, revision: current.registry.revision + 1, providers: providers(current.registry.providers) };
+      const registry = typeof expected === 'string' ? context().registry : readRegistry();
+      if (typeof expected === 'string' ? context().stamp !== expected : registry.revision !== expected?.revision) fail();
+      const next = { version: 1, revision: registry.revision + 1, providers: providers(registry.providers) };
       if (next.providers.length > 64 || Buffer.byteLength(JSON.stringify(next)) > 128 * 1024) fail();
       const receipt = writePrivateFileAtomic(registryPath, `${JSON.stringify(next, null, 2)}\n`, { durable: true });
       if (receipt.durability === 'uncertain') { uncertain = true; closeOwner(); fail(); }
@@ -339,6 +340,31 @@ function createAgentOAuthService({ coreHome, getAuthority, openExternal, approve
       if (!exact(scope, ['providerId', 'resource', 'accountId', 'epoch']) || current.current.accountId !== scope.accountId
         || current.stamp !== scope.epoch || protectedAvailable() !== true) fail();
       return current.broker.withAccessToken(scope.providerId, scope.resource, use);
+    },
+    /** Main-only, called by Native profile removal before the profile is erased. Revokes every held credential
+     * of that account's providers through a broker bound to the unchanged registry, requires durable MCP binding
+     * removal, then drops the rows. A failure leaves the rows and the profile in place. */
+    async retireAccount(accountId) {
+      if (closed || uncertain || typeof accountId !== 'string' || !ID.test(accountId) || registrationBusy || activeActions) fail();
+      const registry = readRegistry(), rows = registry.providers.filter(row => row.config.accountId === accountId);
+      if (!rows.length) return { accountId, removed: 0 };
+      if (owner?.current.accountId === accountId && owner.broker.hasOwner()) fail();
+      registrationBusy = true;
+      try {
+        const broker = createAgentOAuthBroker({ providers: rows.map(row => row.config), vault, transport: createOAuthTransport(approvedFetch),
+          authority: config => { try { return !closed && readRegistry().revision === registry.revision && config.accountId === accountId; } catch { return false; } } });
+        for (const { config } of rows) {
+          notifyMcpInvalidation(config.providerId, false, accountId);
+          let state = (await broker.status(config.providerId)).state;
+          if (!['disconnected', 'revoked'].includes(state)) state = (await broker.revoke({ providerId: config.providerId, explicitUserAction: true })).state;
+          if (!['disconnected', 'revoked'].includes(state)) fail();
+          notifyMcpInvalidation(config.providerId, true, accountId);
+        }
+        commitRegistry({ revision: registry.revision }, providers => providers.filter(row => row.config.accountId !== accountId));
+        for (const [id, review] of reviews) if (review.accountId === accountId) reviews.delete(id);
+        return { accountId, removed: rows.length };
+      } catch { throw new Error('OAuth providers of this account were not retired; inspect their status before retrying'); }
+      finally { registrationBusy = false; }
     },
     invalidate() { notifyMcpInvalidation(); reviews.clear(); closeOwner(); },
     currentOperation() { return registrationBusy ? 'OAuth provider metadata review or registration'

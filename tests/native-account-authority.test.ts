@@ -265,6 +265,10 @@ test.skipIf(process.platform !== 'darwin')('profile removal refuses a live login
   expect(f.service.inspectLogin(login.id).state).toBe('signed-in-checking');
   error = undefined; try { f.service.removeProfile({ actionId: randomUUID(), profileId: p.id, epoch: p.epoch }); } catch (cause) { error = cause; }
   expect(error?.code).toBe('profile_signed_in'); expect(error?.actionRecorded).toBe(false);
+  expect(() => f.service.checkRemovable({ profileId: p.id, epoch: p.epoch })).toThrow('explicit confirmation');
+  const registryBefore = readFileSync(join(f.authorityHome, 'registry.json'), 'utf8');
+  expect(f.service.checkRemovable({ profileId: p.id, epoch: p.epoch, confirmSignedIn: true })).toEqual({ signedIn: true });
+  expect(readFileSync(join(f.authorityHome, 'registry.json'), 'utf8')).toBe(registryBefore);
   expect(f.service.inspect().profiles).toHaveLength(1);
   // Auth content is never opened: removal unlinks it with the profile tree.
   f.service.removeProfile({ actionId: randomUUID(), profileId: p.id, epoch: p.epoch, confirmSignedIn: true });

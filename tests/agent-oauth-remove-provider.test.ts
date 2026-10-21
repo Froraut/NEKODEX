@@ -26,7 +26,8 @@ function fixture({ credential = false, revokeStatus = 200 } = {}) {
     },
     remove: async (_scope: unknown, revision: number) => { if (entry?.revision !== revision) throw new Error('revision conflict'); entry = null; },
   };
-  const service = createAgentOAuthService({ coreHome: home, getAuthority: () => ({ accountId: 'native:fixture-profile', epoch: 'epoch' }),
+  let account: string | null = 'native:fixture-profile';
+  const service = createAgentOAuthService({ coreHome: home, getAuthority: () => account && ({ accountId: account, epoch: 'epoch' }),
     protectedAvailable: () => true, openExternal: async () => {}, vault,
     approvedFetch: (async (url: string | URL | Request, init?: RequestInit) => {
       if (init?.method === 'POST') { posts.push(String(url)); return new Response(null, { status: revokeStatus }); }
@@ -37,10 +38,10 @@ function fixture({ credential = false, revokeStatus = 200 } = {}) {
           code_challenge_methods_supported: ['S256'], response_types_supported: ['code'],
           token_endpoint_auth_methods_supported: ['none'] }), { status: 200 });
     }) as typeof fetch });
-  const invalidations: (string | undefined)[] = [];
+  const invalidations: (string | undefined)[] = [], accounts: (string | undefined)[] = [];
   let failInvalidation = false;
-  service.subscribeMcpInvalidation((providerId: string | undefined) => {
-    invalidations.push(providerId);
+  service.subscribeMcpInvalidation((providerId: string | undefined, accountId?: string) => {
+    invalidations.push(providerId); accounts.push(accountId);
     if (failInvalidation) throw new Error('binding write not durable');
   });
   const registry = () => JSON.parse(readFileSync(join(home, 'agent-oauth', 'providers.json'), 'utf8'));
@@ -48,7 +49,8 @@ function fixture({ credential = false, revokeStatus = 200 } = {}) {
     const review = await service.reviewProviderFile(file);
     await service.request({ action: 'oauthRegisterProvider', reviewId: review.reviewId, reviewDigest: review.reviewDigest, explicitUserAction: true });
   };
-  return { service, posts, invalidations, registry, register, credential: () => entry, failBindings: () => { failInvalidation = true; },
+  return { service, posts, invalidations, accounts, registry, register, credential: () => entry, failBindings: () => { failInvalidation = true; },
+    useAccount: (value: string | null) => { account = value; },
     cleanup: () => { service.close(); rmSync(home, { recursive: true, force: true }); } };
 }
 const remove = { action: 'oauthRemoveProvider', providerId: 'fixture', explicitUserAction: true };
@@ -98,4 +100,31 @@ test('a failed revocation or binding invalidation keeps the reviewed registratio
     await expect(bindings.service.request(remove)).rejects.toThrow('removal not acknowledged');
     expect(bindings.registry().revision).toBe(1); expect(bindings.registry().providers).toHaveLength(1);
   } finally { bindings.cleanup(); }
+});
+
+test('retiring a removed Native account revokes and drops only its providers, without a current authority', async () => {
+  const f = fixture({ credential: true });
+  try {
+    await f.register();
+    f.useAccount('native:other-profile'); await f.register(); // Same provider ID, another account.
+    expect(f.registry().providers.map((row: any) => row.config.accountId)).toEqual(['native:fixture-profile', 'native:other-profile']);
+    f.useAccount(null); // The profile's execution is already closed.
+    await expect(f.service.retireAccount('native:fixture-profile')).resolves.toEqual({ accountId: 'native:fixture-profile', removed: 1 });
+    expect(f.posts).toEqual(['https://auth.example.test/revoke', 'https://auth.example.test/revoke']);
+    expect(f.invalidations).toEqual(['fixture', 'fixture']); expect(f.accounts).toEqual(['native:fixture-profile', 'native:fixture-profile']);
+    expect(f.registry().revision).toBe(3);
+    expect(f.registry().providers.map((row: any) => row.config.accountId)).toEqual(['native:other-profile']);
+    await expect(f.service.retireAccount('native:fixture-profile')).resolves.toEqual({ accountId: 'native:fixture-profile', removed: 0 });
+    await expect(f.service.retireAccount('../escape')).rejects.toThrow();
+  } finally { f.cleanup(); }
+});
+
+test('a failed account retirement keeps every provider row and its credential', async () => {
+  const f = fixture({ credential: true, revokeStatus: 500 });
+  try {
+    await f.register(); f.useAccount(null);
+    await expect(f.service.retireAccount('native:fixture-profile')).rejects.toThrow('not retired');
+    expect(f.registry()).toMatchObject({ revision: 1, providers: [{ config: { accountId: 'native:fixture-profile' } }] });
+    expect(f.credential()).not.toBeNull();
+  } finally { f.cleanup(); }
 });

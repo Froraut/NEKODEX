@@ -447,14 +447,21 @@ function createNativeAccountAuthority({ authorityHome, executable, executableSha
     try { fs.lstatSync(path.join(paths(profile).codex, 'auth.json')); return true; }
     catch (error) { if (error.code === 'ENOENT') return false; return true; }
   }
-  function removeProfile({ profileId, epoch, actionId, confirmSignedIn = false } = {}) {
-    uuid(profileId); uuid(epoch); uuid(actionId);
+  /** Every removal refusal, with no intent or erase. Returns whether the profile may hold a credential. */
+  function checkRemovable({ profileId, epoch, confirmSignedIn = false } = {}) {
+    uuid(profileId); uuid(epoch);
     if (typeof confirmSignedIn !== 'boolean') throw fail('invalid_profile_removal', 'Native profile removal confirmation must be explicit');
     acquire(); const value = read(), profile = value.profiles.find(row => row.id === profileId && row.epoch === epoch);
     if (!profile) throw fail('unknown_profile', 'This Native profile epoch does not exist');
     if (profile.login && live.has(profile.login.id)) throw fail('native_login_busy', 'Cancel the Native device login before removing its profile');
     if (profileOwners.has(`${profileId}:${epoch}`)) throw fail('profile_owner_busy', 'Close the Native profile execution or inventory before removing it');
-    if (profileSignedIn(profile) && !confirmSignedIn) throw fail('profile_signed_in', 'This Native profile is signed in; removal requires explicit confirmation');
+    const signedIn = profileSignedIn(profile);
+    if (signedIn && !confirmSignedIn) throw fail('profile_signed_in', 'This Native profile is signed in; removal requires explicit confirmation');
+    return { value, signedIn };
+  }
+  function removeProfile({ profileId, epoch, actionId, confirmSignedIn = false } = {}) {
+    uuid(actionId);
+    const { value } = checkRemovable({ profileId, epoch, confirmSignedIn });
     intent(value, actionId, { kind: 'remove-profile', profileId, epoch, state: 'prepared' });
     // One atomic registry write retires the row, its earlier receipts and records the intent.
     value.profiles = value.profiles.filter(row => row.id !== profileId);
@@ -496,7 +503,8 @@ function createNativeAccountAuthority({ authorityHome, executable, executableSha
     };
   }
   return Object.freeze({ inspect, snapshot: inspect, prepareProfile: guardedMutation(prepareProfile),
-    beginDeviceLogin: guardedMutation(beginDeviceLogin), inspectLogin, removeProfile: guardedMutation(removeProfile), cancelLogin: guardedMutation(cancelLogin), resolveProfile,
+    beginDeviceLogin: guardedMutation(beginDeviceLogin), inspectLogin, removeProfile: guardedMutation(removeProfile),
+    checkRemovable: input => { try { return { signedIn: checkRemovable(input).signedIn }; } catch (error) { error.actionRecorded = false; throw error; } }, cancelLogin: guardedMutation(cancelLogin), resolveProfile,
     publishProfileConfig: guardedMutation(publishProfileConfig), acquireProfileOwner, releaseProfileOwner,
     previewRecovery: () => recoveryOwner ? recoveryOwner.previewRecovery() : Promise.resolve({ state: 'blocked', reasonCode: 'recovery_unavailable', observedAt: Date.now(), markers: [], unsettledActionCount: 0 }),
     recoverOwner: input => { if (!recoveryOwner) { const error = fail('recovery_unavailable', 'Native owner recovery is unavailable'); error.actionRecorded = false; throw error; } return recoveryOwner.recoverOwner(input); },

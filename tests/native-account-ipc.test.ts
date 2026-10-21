@@ -89,3 +89,28 @@ test('Native profile removal closes only the exact owned execution after explici
   expect([beforeClosed, destroyed, closed]).toEqual([1, 1, 1]);
   expect(removed.at(-1)).toEqual({ actionId, profileId, epoch, confirmSignedIn: true });
 });
+
+test('Native profile removal refuses before side effects and retires account state only for a signed-in profile', async () => {
+  const handlers = new Map<string, Function>(), order: string[] = [], profileId = randomUUID(), epoch = randomUUID();
+  let signedIn = false, retireFails = false, refuse = false;
+  const authority = { inspect: () => ({ available: true, profiles: [], receipts: [] }),
+    checkRemovable: () => { order.push('check'); if (refuse) throw Object.assign(new Error('refused'), { actionRecorded: false }); return { signedIn }; },
+    removeProfile: () => order.push('remove') };
+  registerNativeAccounts({ handle: (name: string, handler: Function) => handlers.set(name, handler), getAuthority: () => authority,
+    beforeProfileRemoved: async (scope: any) => { expect(scope).toEqual({ profileId, epoch }); order.push('retire'); if (retireFails) throw new Error('OAuth revocation failed'); },
+    openExternal: async () => {}, clipboard: { writeText() {} } });
+  const request = (body: any) => handlers.get('launcher:native-accounts')!(null, body);
+  await request({ action: 'remove-profile', actionId: randomUUID(), profileId, epoch });
+  expect(order).toEqual(['check', 'remove']);
+  order.length = 0; refuse = true;
+  const refusedId = randomUUID();
+  expect((await request({ action: 'remove-profile', actionId: refusedId, profileId, epoch, confirmSignedIn: true })).rejectedAction).toEqual({ actionId: refusedId, knownNotStarted: true });
+  expect(order).toEqual(['check']);
+  order.length = 0; refuse = false; signedIn = true; retireFails = true;
+  const failedId = randomUUID();
+  expect((await request({ action: 'remove-profile', actionId: failedId, profileId, epoch, confirmSignedIn: true })).rejectedAction).toEqual({ actionId: failedId, knownNotStarted: true });
+  expect(order).toEqual(['check', 'retire']);
+  order.length = 0; retireFails = false;
+  await request({ action: 'remove-profile', actionId: randomUUID(), profileId, epoch, confirmSignedIn: true });
+  expect(order).toEqual(['check', 'retire', 'remove']);
+});

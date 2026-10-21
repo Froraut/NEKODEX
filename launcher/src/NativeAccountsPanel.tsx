@@ -252,7 +252,7 @@ export function NativeAccountsPanel({ language, api, disabled = false, onChange 
           const target = removing; setRemoving(null);
           void mutate({ action: 'remove-profile', actionId: crypto.randomUUID(), profileId: target.id, epoch: target.epoch, ...(confirmSignedIn ? { confirmSignedIn: true } : {}) });
         }}>
-        <p>{ru ? 'Профиль, его каталог Codex и приватные данные будут удалены с этого Mac. Журнал сохранит запись об удалении. Сеанс входа на стороне OpenAI этим не отзывается.' : 'The profile, its Codex home and private data are deleted from this Mac. The journal keeps a removal receipt. This does not revoke the sign-in session on the OpenAI side.'}</p>
+        <p>{ru ? 'Профиль, его каталог Codex и приватные данные будут удалены с этого Mac. Сначала будут отозваны и удалены OAuth-провайдеры, зарегистрированные для этого аккаунта. Журнал сохранит запись об удалении. Сеанс входа на стороне OpenAI этим не отзывается.' : 'The profile, its Codex home and private data are deleted from this Mac. OAuth providers registered for this account are revoked and removed first. The journal keeps a removal receipt. This does not revoke the sign-in session on the OpenAI side.'}</p>
         {owned ? <p>{ru ? 'Сначала будет закрыто выполнение этого профиля; текущие Native-задачи и беседы на нём остановятся.' : 'Its execution is closed first; running Native tasks and conversations on it stop.'}</p> : null}
       </RemovalConfirmation>;
     })() : null}

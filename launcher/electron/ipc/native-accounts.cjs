@@ -13,7 +13,7 @@ const ACTION_KEYS = {
   'remove-profile': ['action', 'actionId', 'profileId', 'epoch', 'confirmSignedIn'],
 };
 /** The guarded main handle owns login. Renderer supplies only opaque IDs and intent. */
-function registerNativeAccounts({ handle, getAuthority, getInventory, getExecution, beforeExecutionClosed, onExecutionClosed, openExternal, clipboard }) {
+function registerNativeAccounts({ handle, getAuthority, getInventory, getExecution, beforeExecutionClosed, onExecutionClosed, beforeProfileRemoved, openExternal, clipboard }) {
   // Known pre-intent refusals are observations, not a command retry. Retain them
   // in this main instance so a lost refusal response can be read back by action ID.
   const rejected = new Map();
@@ -60,16 +60,23 @@ function registerNativeAccounts({ handle, getAuthority, getInventory, getExecuti
       onExecutionClosed?.(execution);
     } else if (body.action === 'remove-profile') {
       if (!UUID.test(body.profileId) || !UUID.test(body.epoch) || body.confirmSignedIn !== undefined && typeof body.confirmSignedIn !== 'boolean' || !authority.removeProfile) throw new Error('Invalid Native profile removal');
-      const confirmSignedIn = body.confirmSignedIn === true;
+      const confirmSignedIn = body.confirmSignedIn === true, scope = { profileId: body.profileId, epoch: body.epoch };
       const execution = getExecution?.(), current = execution?.inspect();
-      if (current?.ownerHeld && current.profileId === body.profileId && current.epoch === body.epoch) {
+      const owned = current?.ownerHeld && current.profileId === body.profileId && current.epoch === body.epoch;
+      if (owned && !confirmSignedIn) throw Object.assign(new Error('This Native profile owns execution; removal requires explicit confirmation'), { actionRecorded: false });
+      if (owned) {
         // The authority refuses a held profile; main closes its exact execution first.
-        if (!confirmSignedIn) throw Object.assign(new Error('This Native profile owns execution; removal requires explicit confirmation'), { actionRecorded: false });
         await beforeExecutionClosed?.(execution);
         await execution.destroy();
         onExecutionClosed?.(execution);
       }
-      authority.removeProfile({ actionId: body.actionId, profileId: body.profileId, epoch: body.epoch, confirmSignedIn });
+      // Refuse before any account-scoped side effect; a signed-in profile retires its OAuth providers first.
+      const { signedIn } = authority.checkRemovable ? authority.checkRemovable({ ...scope, confirmSignedIn }) : { signedIn: confirmSignedIn };
+      if (signedIn && beforeProfileRemoved) {
+        try { await beforeProfileRemoved(scope); }
+        catch (error) { throw Object.assign(error instanceof Error ? error : new Error('Native profile account state could not be retired'), { actionRecorded: false }); }
+      }
+      authority.removeProfile({ actionId: body.actionId, ...scope, confirmSignedIn });
     } else if (body.action === 'cancel-login') {
       if (!UUID.test(body.loginAttemptId)) throw new Error('Invalid Native login identity');
       await authority.cancelLogin({ actionId: body.actionId, loginAttemptId: body.loginAttemptId });
