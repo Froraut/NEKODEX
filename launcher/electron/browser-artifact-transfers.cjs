@@ -18,7 +18,7 @@ class BrowserArtifactTransfers {
     const tab = [...this.tabs.values()].find(candidate => candidate.traceId === traceId);
     if (!tab || tab.interactionMode !== 'automatic' || tab.status !== 'running'
       || tab.helperPid !== helperPid || tab.surfaceId !== surfaceId
-      || tab.view.webContents.isDestroyed()) {
+      || !tab.view.webContents || tab.view.webContents.isDestroyed()) {
       throw new Error('Artifact download owner does not match an active browser turn surface');
     }
     return tab;

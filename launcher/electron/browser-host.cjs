@@ -977,7 +977,20 @@ class BrowserHost {
 
   disposeTurnView(tab) {
     try { this.window.contentView.removeChildView(tab.view); } catch {}
-    if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
+    // Electron clears webContents once the page is destroyed outside closeTab().
+    const contents = tab.view.webContents;
+    if (contents && !contents.isDestroyed()) contents.close();
+  }
+
+  // A renderer can be destroyed outside closeTab() (crash cleanup, account teardown). Retire the
+  // exact tab so later cleanup never reaches a destroyed page (upstream 6.1.11).
+  bindTurnContentsDestruction(tab, contents) {
+    contents.once("destroyed", () => {
+      if (this.destroyed || this.turnTabs.get(tab.id) !== tab) return;
+      this.logger.warn("browser.tab_closed_externally", { tabId: tab.id, traceId: tab.traceId });
+      if (tab.interactionMode === "manual") this.signalManualTerminal(tab, "failed");
+      this.removeTurnTab(tab, true);
+    });
   }
 
   disposeManualTurn(tab, shutdown = false) {
@@ -1163,6 +1176,7 @@ class BrowserHost {
 
   bindTurnContents(tab) {
     const contents = tab.view.webContents;
+    this.bindTurnContentsDestruction(tab, contents);
     this.permissionPolicy?.register(contents);
     this.externalLinkBroker?.register(contents);
     contents.setWindowOpenHandler(({ url }) => {
@@ -1331,6 +1345,7 @@ class BrowserHost {
 
   bindManualTurnContents(tab) {
     const contents = tab.view.webContents;
+    this.bindTurnContentsDestruction(tab, contents);
     this.permissionPolicy?.register(contents);
     this.externalLinkBroker?.register(contents);
     const invalidateConversation = (url, inPlace) => {
