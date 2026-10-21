@@ -4,7 +4,7 @@ const { spawnSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
 const { isDeepStrictEqual } = require("node:util");
 const { CHROME_COMPANION_ID } = require("../electron/ipc/browser-companion.cjs");
-const { DESKTOP_HELPER_IDENTIFIER, DESKTOP_HELPER_EXECUTABLE_PATH, DESKTOP_HELPER_INFO_PLIST_PATH } = require("../../scripts/build-desktop-helper.cjs");
+const { DESKTOP_HELPER_IDENTIFIER, DESKTOP_HELPER_DEVELOPMENT_IDENTIFIER, DESKTOP_HELPER_EXECUTABLE_PATH, DESKTOP_HELPER_INFO_PLIST_PATH, desktopHelperInfoPlist } = require("../../scripts/build-desktop-helper.cjs");
 
 /** Chrome derives an unpacked extension's ID from its manifest key: SHA-256 of the DER SPKI, a-p digits. */
 function chromeExtensionIdFromKey(key) {
@@ -188,15 +188,32 @@ function signCredentialHelper(target, platform = process.platform, env = process
   if (!development) throw new Error("Protected credential helper requires an explicit publisher identity outside development");
   run("codesign", ["--force", "--identifier", identifier, "--sign", "-", target], { env });
 }
+/** The Developer ID identity the desktop helper will be signed with, or undefined for ad hoc. */
+function desktopHelperPublisherIdentity(platform = process.platform, env = process.env) {
+  if (platform !== "darwin") return undefined;
+  return (signingConfiguration(platform, env).release ? env.CSC_NAME : env.NEKODEX_LOCAL_APP_SIGNING_IDENTITY) || undefined;
+}
+/** A Developer ID helper carries exactly the release Info.plist and an ad-hoc one exactly the
+ * development Info.plist. TCC records the code requirement of whichever build first creates its
+ * row for a bundle identifier, so an ad-hoc build must never claim the release identifier. */
+function desktopHelperIdentifierFor(target, publisher) {
+  const plist = fs.readFileSync(path.join(target, "Contents", "Info.plist"), "utf8");
+  if (plist !== desktopHelperInfoPlist({ development: !publisher })) {
+    throw new Error(publisher ? "A Developer ID desktop helper must carry the release identity"
+      : "An ad-hoc desktop helper must carry the development identity, never the release one");
+  }
+  return publisher ? DESKTOP_HELPER_IDENTIFIER : DESKTOP_HELPER_DEVELOPMENT_IDENTIFIER;
+}
 // Desktop TCC identity is distinct from the vault helper and needs no Bun/JIT entitlements.
 // The target is the whole app bundle: TCC keys the self-responsible helper by its bundle
 // identifier and this designated requirement, which stay equal across releases.
 function signDesktopHelper(target, platform = process.platform, env = process.env, { development = false } = {}) {
   if (platform !== "darwin") return;
   if (path.extname(target) !== ".app") throw new Error("Desktop helper signing target must be its app bundle");
-  const identifier = DESKTOP_HELPER_IDENTIFIER;
   const release = signingConfiguration(platform, env).release;
   const identity = release ? env.CSC_NAME : env.NEKODEX_LOCAL_APP_SIGNING_IDENTITY;
+  if (!identity && !development) throw new Error("Desktop helper requires an explicit publisher identity outside development");
+  const identifier = desktopHelperIdentifierFor(target, Boolean(identity));
   const keychain = release ? env.CODEX_WEB_GPT_SIGNING_KEYCHAIN : env.NEKODEX_LOCAL_APP_SIGNING_KEYCHAIN;
   if (identity) {
     if (!identity.startsWith("Developer ID Application:")) throw new Error("Desktop helper requires a Developer ID Application identity");
@@ -234,4 +251,4 @@ function verifyWindowsTree(directory, env = process.env) {
     else if (entry.isFile() && /\.exe$/i.test(entry.name)) verifyWindowsPublisher(file, env);
   }
 }
-module.exports = { BROWSER_COMPANION_RESOURCES, stapler, staplerValidate, notarytoolCredentials, notarizeAndStaple, chromeExtensionIdFromKey, validatePackagedRuntimeAssets, validateOwnedNativePackagedAssets, signingConfiguration, assertMacPublisher, verifyMacPublisher, verifyWindowsPublisher, verifyWindowsTree, signEmbeddedRuntime, signOwnedNativeWorker, signCredentialHelper, signDesktopHelper, signSkillPdfHelper };
+module.exports = { BROWSER_COMPANION_RESOURCES, stapler, staplerValidate, notarytoolCredentials, notarizeAndStaple, chromeExtensionIdFromKey, validatePackagedRuntimeAssets, validateOwnedNativePackagedAssets, signingConfiguration, assertMacPublisher, verifyMacPublisher, verifyWindowsPublisher, verifyWindowsTree, signEmbeddedRuntime, signOwnedNativeWorker, signCredentialHelper, signDesktopHelper, desktopHelperPublisherIdentity, desktopHelperIdentifierFor, signSkillPdfHelper };

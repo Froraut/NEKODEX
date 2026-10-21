@@ -22,7 +22,7 @@ import { createAgentDesktopToolsProvider, type AgentDesktopToolsProvider } from 
 import { assertSemanticDesktopCitationsCurrent, resolveDesktopPropertyEvidence } from "./browser-companion/desktop-outcome";
 import { resolveBrowserTextTransitionEvidence } from "./browser-companion/outcome-observer";
 import { createMacosDesktopProvider } from "./browser-companion/macos-desktop";
-import { resolveDesktopHelper, type PinnedDesktopHelper } from "./browser-companion/desktop-helper-path";
+import { ensureStableDesktopHelper, resolveDesktopHelper, type PinnedDesktopHelper } from "./browser-companion/desktop-helper-path";
 import { resolveSkillPdfHelper, type PinnedSkillPdfHelper } from "./agent-tools/skill-pdf-helper-path";
 import { createLauncherPythonBuildSelectionBridge } from "./execution-environments/launcher-python-build-selection";
 import type { PythonBuildSelection } from "./execution-environments/python-build";
@@ -1232,8 +1232,13 @@ export function startServer(
       if (process.platform !== 'darwin' || Number(osRelease().split('.')[0]) < 23) throw new Error('Native desktop tools require macOS 14 or newer');
       const helper = resolveDesktopHelper({ explicit: dependencies.desktopHelper });
       if (!helper) throw new Error('The native desktop helper is unavailable in this runtime layout');
-      return createMacosDesktopProvider({ helperExecutable: helper.executable, helperSha256: helper.sha256,
-        isScopeActive: isAgentScopeActive });
+      // An installed runtime runs its helper from the one stable per-user copy (refreshed from its
+      // own sibling bundle before each start), so System Settings always lists a path that survives
+      // updates. An explicit DEV pin keeps its own checkout path and development identity.
+      const stable = dependencies.desktopHelper ? undefined : () => ensureStableDesktopHelper(helper);
+      const pinned = stable ? stable() : helper;
+      return createMacosDesktopProvider({ helperExecutable: pinned.executable, helperSha256: pinned.sha256,
+        ...(stable ? { prepareHelper: () => { stable(); } } : {}), isScopeActive: isAgentScopeActive });
     },
   });
   const getAgentRemoteTools = () => agentRemoteTools ??= createAgentRemoteToolsProvider({

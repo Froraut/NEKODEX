@@ -755,7 +755,7 @@
   {"path":"src/browser-companion/agent-desktop-tools.ts","dependencies":["node:crypto","src/agent-tools/journal.ts","src/browser-companion/desktop-outcome.ts","src/browser-companion/macos-desktop.ts","src/browser-companion/providers.ts","zod"]},
   {"path":"src/browser-companion/agent-tools.ts","dependencies":["node:crypto","src/agent-tools/journal.ts","src/browser-companion/protocol.ts","zod"]},
   {"path":"src/browser-companion/chatgpt-transport.ts","dependencies":["node:crypto","src/adapters/chatgpt-web/adapter-error.ts","src/adapters/chatgpt-web/markdown.ts","src/adapters/chatgpt-web/model.ts","src/browser-companion/protocol.ts","zod"]},
-  {"path":"src/browser-companion/desktop-helper-path.ts","dependencies":["node:crypto","node:fs","node:path","node:url"]},
+  {"path":"src/browser-companion/desktop-helper-path.ts","dependencies":["node:crypto","node:fs","node:os","node:path","node:url"]},
   {"path":"src/browser-companion/desktop-outcome.ts","dependencies":["node:crypto","zod"]},
   {"path":"src/browser-companion/firefox-identity.ts","dependencies":[]},
   {"path":"src/browser-companion/host.ts","dependencies":["node:crypto","src/browser-companion/firefox-identity.ts","src/browser-companion/protocol.ts","src/http-body.ts"]},

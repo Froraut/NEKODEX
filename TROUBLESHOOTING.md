@@ -366,14 +366,21 @@ System Settings opens at Privacy & Security; turn on **NEKODEX Desktop Helper**
 under Screen & System Audio Recording and under Accessibility. Then choose
 **Disable and release desktop access** and inspect again, because a new screen
 recording grant applies only to a fresh helper process.
-Enabling the provider shows a macOS alert from NEKODEX Desktop Helper; choose
-**Allow**. Any other answer, or no answer within two minutes, leaves it off.
+Enabling the provider shows an alert from NEKODEX Desktop Helper itself,
+"Allow NEKODEX desktop control?"; choose **Allow**. Any other answer, or no
+answer within two minutes, leaves it off. It is NEKODEX's own confirmation, not
+a macOS permission prompt, and it appears once for each helper process.
 
-The grant survives updates. Releases before the bundled helper were judged as
-NEKODEX or as the terminal that started it, so after updating to the first
-release with NEKODEX Desktop Helper, grant it once more. Old NEKODEX or
-terminal entries are no longer used. Details:
-[macOS desktop provider](docs/development/macos-desktop-provider.md#permission-identity-across-updates).
+If **NEKODEX Desktop Helper** is already switched on but the permission still
+reads unavailable, macOS holds an entry recorded for a different build of the
+helper, and switching it off and on does not fix it. Remove the entry with
+**–**, then add it again with **+** (Command-Shift-G) from the fixed path
+`~/Library/Application Support/NEKODEX/Desktop Helper/NEKODEX Desktop Helper.app`.
+NEKODEX runs the helper from that path in every version, and the grant follows
+the helper's signature, so it survives updates. Old NEKODEX, terminal or
+"NEKODEX Desktop Helper (Development)" entries are not used by releases.
+Details:
+[TCC grants across updates](docs/development/macos-desktop-tcc-updates.md).
 
 ## Update, repair, and remove
 

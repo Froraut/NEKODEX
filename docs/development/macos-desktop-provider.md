@@ -18,7 +18,12 @@ fixed output is the app bundle
 `launcher/electron/desktop-helper/darwin-<arch>/NEKODEX Desktop Helper.app`
 (executable `Contents/MacOS/nekodex-desktop-helper`, fixed `Info.plist` with
 `CFBundleIdentifier` `dev.nekodex.desktop-provider.v1` and `LSUIElement`); a
-leftover bare executable from earlier builds is removed. The runtime bundle
+leftover bare executable from earlier builds is removed. Only a Developer ID
+build carries that release identifier. An ad-hoc build (every `--development`
+build, and a runtime bundle built without a publisher identity) carries
+`dev.nekodex.desktop-provider.development.v1`, named "NEKODEX Desktop Helper
+(Development)", and `signDesktopHelper` refuses either mix; see
+[TCC grants across updates](macos-desktop-tcc-updates.md). The runtime bundle
 copies the whole signed bundle, the packaged asset contract requires its
 executable and `Info.plist`, and release signing and installed verification
 sign and check the bundle, so its seal covers `Info.plist`. Distribution signing
@@ -90,21 +95,45 @@ check had skipped the disclaim. The helper reads the record with
 TCC then keys the client as the bundle identifier
 `dev.nekodex.desktop-provider.v1` with the designated requirement
 `identifier "dev.nekodex.desktop-provider.v1" and anchor apple generic and …
-certificate leaf[subject.OU] = CNMWGJF2CG`. Neither depends on the
-per-version path under `~/.codex-chatgpt-web/versions/`, so one grant survives
-every signed update and covers nothing but this helper. Local DEV builds are
-ad-hoc signed; their designated requirement is a cdhash, so each rebuild needs
-its own grant. If the call is unavailable or the spawn fails, the helper serves
-inline with inherited attribution; `status` reports this through
-`permissionClient.selfResponsible: false` and the UI warns not to grant the
-parent app.
+certificate leaf[subject.OU] = CNMWGJF2CG`. Neither depends on the bundle's
+path, so one grant survives every signed update and covers nothing but this
+helper. Each row keeps the code requirement of the build that created it, and
+toggling never rewrites it: on 6.1.33-nekodex.10 the Accessibility row held an
+ad-hoc DEV cdhash, because DEV builds then shared the release identifier, so no
+release matched it. DEV builds now carry their own identifier
+(`dev.nekodex.desktop-provider.development.v1`); being ad hoc, their
+requirement is a cdhash and each rebuild needs its own grant. If the call is
+unavailable or the spawn fails, the helper serves inline with inherited
+attribution; `status` reports this through `permissionClient.selfResponsible:
+false` and the UI warns not to grant the parent app.
+
+**Stable location.** An installed runtime does not run the helper from its
+per-version directory. `ensureStableDesktopHelper` copies the runtime's own
+verified sibling bundle byte for byte to
+`~/Library/Application Support/NEKODEX/Desktop Helper/NEKODEX Desktop Helper.app`
+(directory mode 0700, owned by the user, never a symlink) and the provider is
+pinned to that copy's SHA-256. The transport re-runs the same check before
+every helper start: an equal copy is left untouched; a different one (another
+runtime version, damage or tampering) is replaced through a staging directory
+and an atomic rename, and the pin is verified afterwards. So System Settings
+always lists one path that survives updates and pruning. The location must not
+be inside another `.app`: a probe of the signed helper inside
+`NEKODEX.app/Contents/` was judged as `dev.codexwebgpt.launcher` for Screen
+Recording although it was self-responsible. An explicit DEV pin (source CLI)
+keeps its checkout path. Details and the evidence are in
+[TCC grants across updates](macos-desktop-tcc-updates.md).
 
 Because the grant now belongs to the helper rather than to whoever spawned it,
 speaking the helper's stdio protocol must not be enough to use it: any
-same-user process could exec the bundle. So every `enable` shows a system alert
-from the helper itself (`CFUserNotificationDisplayAlert`, "Allow NEKODEX
-desktop control?"). The default button refuses, a 120-second timeout refuses,
-and only **Allow** enables the provider (otherwise `enable-not-confirmed`). A
+same-user process could exec the bundle. So the first `enable` of each helper
+process shows a system alert from the helper itself
+(`CFUserNotificationDisplayAlert`, "Allow NEKODEX desktop control?"). It is not
+a TCC prompt and changes no TCC state. The default button refuses, a
+120-second timeout refuses, and only **Allow** enables the provider (otherwise
+`enable-not-confirmed`). The answer is kept only in that process, whose stdio
+belongs to the owner that started it; it is never persisted, because a stored
+answer would serve whoever starts the helper next. "Disable and release desktop
+access" and a restart end the process, so the next enable asks again. A
 caller without its own Accessibility or post-event rights cannot answer that
 alert, and before a confirmed enable the helper cannot capture, select or input.
 `listWindows` before a confirmed enable returns owner names and identities with
@@ -114,10 +143,13 @@ abort and close still stop the exact helper. `openPermissionSettings` stays
 available without confirmation: it can only make macOS show its own prompt for
 the helper, and the user still decides.
 
-**One-time re-grant.** Grants made before this change belong to NEKODEX.app or
-a terminal and no longer apply. After updating to the first release with the
-bundled helper, grant "NEKODEX Desktop Helper" once; later updates keep it.
-Older entries for NEKODEX or a terminal can be turned off.
+**One-time re-grant.** Grants made before the bundled helper belong to
+NEKODEX.app or a terminal and no longer apply. An Accessibility row created by
+an earlier DEV build must be removed with **–** and added again; a toggle does
+not repair it. The exact steps are in
+[TCC grants across updates](macos-desktop-tcc-updates.md#one-time-repair-after-installing-this-change).
+Later signed updates keep the rows. Older entries for NEKODEX or a terminal can
+be turned off.
 
 ## Permissions and selected window
 
