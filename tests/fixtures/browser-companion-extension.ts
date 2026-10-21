@@ -1,9 +1,23 @@
 import { chromium } from "playwright-core";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createBrowserCompanionRuntime } from "../../src/browser-companion/runtime";
 import { CHROME_COMPANION_ID } from "../../src/browser-companion/firefox-identity";
+
+/**
+ * Loading an unpacked MV3 extension needs Playwright's full Chromium build; the
+ * headless shell used by the other DOM tests cannot. Local machines without it skip
+ * with this reason. CI installs it and never skips, so a missing build fails loudly.
+ */
+export const companionChromiumMissing: string | undefined = (() => {
+  if (process.env.CI) return undefined;
+  const executablePath = process.env.NEKODEX_COMPANION_TEST_CHROMIUM || chromium.executablePath();
+  if (existsSync(executablePath)) return undefined;
+  const reason = `MV3 companion browser test skipped: Chromium is missing at ${executablePath}. Run \`bun x --no-install playwright-core install chromium\` or set NEKODEX_COMPANION_TEST_CHROMIUM.`;
+  console.warn(reason);
+  return reason;
+})();
 
 /** Inert stand-in for an exact HTTPS site, served only through this disposable context's routes. */
 export interface CompanionFixtureSite { url: string; routes: Record<string, { body: string; contentType: string }> }

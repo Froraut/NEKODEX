@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
-import { startBrowserCompanionExtensionFixture } from "./fixtures/browser-companion-extension";
+import { companionChromiumMissing, startBrowserCompanionExtensionFixture } from "./fixtures/browser-companion-extension";
 
 /** Inert ChatGPT-shaped document using the adapter's reviewed DOM markers; no OpenAI network. */
 const chatgpt = `<!doctype html><title>ChatGPT</title><main id="thread"></main>
@@ -28,7 +28,7 @@ send.addEventListener("click", () => {
 });
 </script>`;
 
-test("actual MV3 extension binds a ChatGPT-shaped document, sends once and reads the tied answer", async () => {
+test.skipIf(Boolean(companionChromiumMissing))("actual MV3 extension binds a ChatGPT-shaped document, sends once and reads the tied answer", async () => {
   const fixture = await startBrowserCompanionExtensionFixture({ url: "https://chatgpt.com/", routes: {
     "/": { body: chatgpt, contentType: "text/html" },
     "/api/auth/session": { body: JSON.stringify({ user: { id: "user-fixture", email: "fixture@example.invalid" }, accessToken: "never-leaves-page" }), contentType: "application/json" },

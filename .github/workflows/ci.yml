@@ -56,9 +56,9 @@ jobs:
       - name: Check README downloads and version pins
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun run check-version
-      - name: Install the headless browser for DOM regression tests
+      - name: Install the headless browser for DOM regression tests and Chromium for the MV3 companion fixture
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
-        run: bun x --no-install playwright-core install --with-deps chromium-headless-shell
+        run: bun x --no-install playwright-core install --with-deps chromium-headless-shell chromium
       - name: Run focused Web regression tests
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun run test:regressions
@@ -98,6 +98,9 @@ jobs:
       - name: Run passive dependency, OAuth and selected-page contracts
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun test tests/skill-python-requirements.test.ts tests/agent-oauth.test.ts tests/browser-companion.test.ts tests/browser-companion-dispatch.test.ts tests/browser-companion-firefox.test.ts tests/browser-companion-identity.test.ts tests/browser-companion-runtime.test.ts tests/browser-companion-ipc-identity.test.ts tests/browser-companion-chatgpt.test.ts tests/browser-companion-chatgpt-page.test.ts tests/browser-companion-store-package.test.ts --timeout 10000
+      - name: Run Agent tool approval, IPC and companion browser regressions
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun test tests/agent-tools-ipc.test.ts tests/agent-mode-server.test.ts tests/browser-companion-page.test.ts tests/browser-companion-extension.test.ts tests/browser-companion-chatgpt-extension.test.ts tests/agent-browser-composition.test.ts --timeout 10000
       - name: Run scoped local API consumer regressions
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun test tests/local-control-api-client.test.ts tests/local-api.test.ts --timeout 10000
