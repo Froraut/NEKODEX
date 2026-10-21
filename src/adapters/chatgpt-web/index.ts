@@ -11,6 +11,7 @@ import type { ProviderAdapter } from "../base";
 import { chatGptSubmittedProviderFailure, ChatGptWebAdapterError } from "./adapter-error";
 import { brokerToolResult, currentToolResults } from "./broker-tool-result";
 import { ChatGptBrowserWorker } from "./browser-worker";
+import { suspensionAwareDeadline } from "./browser-stage-budget";
 import {
   assertStructuredCompactionNotInterrupted,
   canonicalizeCompactionHandoff,
@@ -368,15 +369,14 @@ export function createChatGptWebAdapter(
                       retryable: false,
                     },
                   );
-                  let handoffTimer: ReturnType<typeof setTimeout> | undefined;
+                  // System sleep does not consume the handoff budget (upstream #863).
+                  const handoffTimer = suspensionAwareDeadline(
+                    handoffTimeoutMs,
+                    () => handoffDeadline.abort(handoffTimeoutError),
+                  );
                   const armHandoffDeadline = (): void => {
                     if (handoffDeadline.signal.aborted) return;
-                    if (handoffTimer) clearTimeout(handoffTimer);
-                    handoffTimer = setTimeout(
-                      () => handoffDeadline.abort(handoffTimeoutError),
-                      handoffTimeoutMs,
-                    );
-                    handoffTimer.unref?.();
+                    handoffTimer.arm();
                   };
                   armHandoffDeadline();
                   const operationSignal = AbortSignal.any([operatorSignal, handoffDeadline.signal]);
@@ -548,7 +548,7 @@ export function createChatGptWebAdapter(
                     }
                     throw handoffError;
                   } finally {
-                    if (handoffTimer) clearTimeout(handoffTimer);
+                    handoffTimer.clear();
                   }
                 },
               );

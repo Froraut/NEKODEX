@@ -27,6 +27,8 @@ export class ChatGptSuspensionClock {
   }
 
   suspendedMs(): number {
+    // A deadline timer can fire right after wake-up, before the next tick records the gap.
+    if (this.timer) this.tick(Date.now());
     return this.suspendedTotalMs;
   }
 }
@@ -45,6 +47,53 @@ export function remainingStageBudgetMs(
   const awakeMs = elapsedMs - suspendedMs;
   if (awakeMs >= timeoutMs) return 0;
   return Math.max(250, timeoutMs - awakeMs);
+}
+
+export interface SuspensionAwareDeadline {
+  /** Starts, or restarts after progress, a full awake budget. */
+  arm(): void;
+  clear(): void;
+}
+
+/**
+ * A resettable deadline that refunds system sleep like runBrowserStage does. Used where a plain
+ * setTimeout would expire a long handoff merely because the laptop slept (upstream #863).
+ */
+export function suspensionAwareDeadline(
+  timeoutMs: number,
+  onExpire: () => void,
+  clock: Pick<ChatGptSuspensionClock, "start" | "suspendedMs"> = chatGptSuspensionClock,
+  now: () => number = () => performance.now(),
+): SuspensionAwareDeadline {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let expired = false;
+  const clear = (): void => {
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+  };
+  return {
+    arm(): void {
+      if (expired) return;
+      clear();
+      clock.start();
+      const startedAt = now();
+      const suspendedAtStart = clock.suspendedMs();
+      const fireOrRearm = (): void => {
+        const remaining = remainingStageBudgetMs(timeoutMs, now() - startedAt, clock.suspendedMs() - suspendedAtStart);
+        if (remaining > 0) {
+          timer = setTimeout(fireOrRearm, remaining);
+          timer.unref?.();
+          return;
+        }
+        timer = undefined;
+        expired = true;
+        onExpire();
+      };
+      timer = setTimeout(fireOrRearm, timeoutMs);
+      timer.unref?.();
+    },
+    clear,
+  };
 }
 
 export async function runBrowserStage<T>(
