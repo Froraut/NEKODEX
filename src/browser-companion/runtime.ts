@@ -5,6 +5,7 @@ import { createBrowserCompanionHost, type BrowserCompanionHost } from "./host";
 import { COMPANION_ORIGIN } from "./protocol";
 import { createCompanionBrowserProvider } from "./providers";
 import { companionExtensionOrigin } from "./firefox-identity";
+import { createCompanionChatGptTransport } from "./chatgpt-transport";
 
 export interface CompanionListener { stop(closeActiveConnections?: boolean): void | Promise<void> }
 export interface BrowserCompanionRuntimeOptions {
@@ -40,6 +41,8 @@ export function createBrowserCompanionRuntime(options: BrowserCompanionRuntimeOp
   let closed = false;
   let stopping: Promise<ReturnType<typeof status>> | undefined;
   let lastReceipt: { operationId: string; outcome: string; cancelRequested: boolean; reason?: string } | null = null;
+  // Outlives listener restarts so a held unknown send survives Disable/Enable in this process.
+  const chatgpt = createCompanionChatGptTransport({ host: () => host && listener ? host : undefined });
 
   function status() {
     return {
@@ -47,7 +50,8 @@ export function createBrowserCompanionRuntime(options: BrowserCompanionRuntimeOp
       origin: COMPANION_ORIGIN, extensionId, extensionOrigin, reason: unavailableReason, restartPolicy: "off" as const,
       extensionArtifact: { directory, manifestPath, available: existsSync(manifestPath) },
       companion: host?.status() ?? null,
-      lastReceipt: lastReceipt ? structuredClone(lastReceipt) : null, chatGptSendSupported: false as const,
+      lastReceipt: lastReceipt ? structuredClone(lastReceipt) : null, chatGptSendSupported: true as const,
+      chatGpt: chatgpt.status(),
     };
   }
   async function enable(selectedId: unknown, selectedOrigin?: unknown) {
@@ -81,6 +85,7 @@ export function createBrowserCompanionRuntime(options: BrowserCompanionRuntimeOp
     transitioning = true;
     const ownedHost = host, ownedListener = listener;
     const operation = ownedHost?.status().operation;
+    chatgpt.unbind();
     stopping = (async () => { try {
       // Revoke and settle the logical owner before closing its transports. A browser action
       // already dispatched can still finish, so its cancellation receipt remains unknown.
@@ -103,12 +108,14 @@ export function createBrowserCompanionRuntime(options: BrowserCompanionRuntimeOp
     createPairing() {
       if (closed || transitioning || !host || !listener) throw new Error("Enable the local companion listener first");
       const pairing = host.createPairing();
+      chatgpt.unbind();
       return { status: status(), pairing };
     },
     revoke() {
       if (transitioning) throw new Error("Companion listener transition is already in progress");
       const operation = host?.status().operation;
       host?.revoke();
+      chatgpt.unbind();
       if (operation) {
         const receipt = host?.receipt(operation.operationId);
         if (receipt) lastReceipt = { operationId: receipt.operationId, outcome: receipt.outcome, cancelRequested: receipt.cancelRequested, ...(receipt.reason ? { reason: receipt.reason } : {}) };
@@ -117,6 +124,15 @@ export function createBrowserCompanionRuntime(options: BrowserCompanionRuntimeOp
     },
     /** Trusted tool-owner port only; no execution method is exposed by the admin HTTP surface. */
     browserProvider: () => host && listener ? createCompanionBrowserProvider(host) : undefined,
+    /** Composition-root port for the existing ChatGPT worker; never exposed over HTTP. */
+    chatGptTransport: () => chatgpt.port,
+    async bindChatGpt(input: unknown) {
+      if (closed || transitioning || !host || !listener) throw new Error("Enable the local companion listener first");
+      await chatgpt.bind(input);
+      return status();
+    },
+    unbindChatGpt() { chatgpt.unbind(); return status(); },
+    releaseChatGptHeld(operationId: unknown) { chatgpt.release(operationId); return status(); },
     async close() { if (closed) return; await disable(); closed = true; },
   };
 }

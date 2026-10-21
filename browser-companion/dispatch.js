@@ -1,4 +1,5 @@
 import { pageOperation } from "./page.js";
+import { chatGptOperation } from "./chatgpt.js";
 
 const bindingKeys = ["sessionId", "scopeId", "tabId", "windowId", "frameId", "documentId", "documentEpoch", "observationId"];
 export function sameBinding(a, b) { return !!a && !!b && bindingKeys.every(key => a[key] === b[key]); }
@@ -6,10 +7,10 @@ export function sameBinding(a, b) { return !!a && !!b && bindingKeys.every(key =
 /** Explicit selected-tab authority only. No tab lookup can silently replace this owner. */
 export function createCompanionDispatcher(api, { capture = false } = {}) {
   let binding;
-  async function inject(request, initial = false) {
+  async function inject(request, initial = false, func = pageOperation) {
     const tabId = initial ? request.tabId : binding.tabId;
     const target = initial ? { tabId, frameIds: [0] } : { tabId, documentIds: [binding.documentId] };
-    const rows = await api.scripting.executeScript({ target, world: "ISOLATED", func: pageOperation, args: [request] });
+    const rows = await api.scripting.executeScript({ target, world: "ISOLATED", func, args: [request] });
     if (rows.length !== 1 || rows[0].frameId !== 0) throw new Error("No exact main-frame document receipt");
     const row = rows[0];
     const documentId = row.documentId;
@@ -48,12 +49,30 @@ export function createCompanionDispatcher(api, { capture = false } = {}) {
         sha256: Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("") };
     } finally { bitmap.close(); }
   }
+  /** Bundled ChatGPT operation on the exact bound document; only `send` can click. */
+  async function executeChatGpt(command) {
+    const operation = command.chatgpt;
+    const send = operation?.op === "send";
+    if (!operation || !["identify", "send", "read"].includes(operation.op)) return { outcome: "rejected", executed: false, reason: "Unsupported ChatGPT operation" };
+    let injected = false;
+    try {
+      // Reading a response may continue while the user looks at another tab; input may not.
+      if (send && !(await selectedActive())) return { outcome: "rejected", executed: false, reason: "Selected ChatGPT tab is no longer active in its window" };
+      injected = true;
+      const row = await inject({ ...operation, scopeId: binding.scopeId, documentEpoch: binding.documentEpoch }, false, chatGptOperation);
+      const result = row.result;
+      if (!result || !["completed", "rejected", "unknown"].includes(result.outcome)) throw new Error("Missing terminal document receipt");
+      return { outcome: result.outcome, executed: send && result.executed === true, ...(result.reason ? { reason: String(result.reason).slice(0, 240) } : {}),
+        ...(result.outcome === "completed" && result.chatgpt ? { chatgpt: result.chatgpt } : {}) };
+    } catch { return { outcome: injected && send ? "unknown" : "rejected", executed: injected && send, reason: "No exact terminal ChatGPT document receipt; the send is never retried" }; }
+  }
   return {
     select,
     binding: () => binding ? { ...binding } : undefined,
     restore(value) { if (binding) throw new Error("Dispatcher already owns a selection"); binding = { ...value }; },
     async execute(command) {
-      if (!sameBinding(binding, command.binding) || !["observe", "act"].includes(command.kind)) return { outcome: "rejected", executed: false, reason: "Selected tab, document or observation changed" };
+      if (!sameBinding(binding, command.binding) || !["observe", "act", "chatgpt"].includes(command.kind)) return { outcome: "rejected", executed: false, reason: "Selected tab, document or observation changed" };
+      if (command.kind === "chatgpt") return executeChatGpt(command);
       let injected = false;
       try {
         if (!(await selectedActive())) return { outcome: "rejected", executed: false, reason: "Selected tab is no longer active in its window" };

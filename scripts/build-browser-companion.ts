@@ -4,7 +4,10 @@ import { fileURLToPath } from "node:url";
 import { zipSync } from "fflate";
 
 const sourceDirectory = fileURLToPath(new URL("../browser-companion/", import.meta.url));
-const sourceFiles = ["popup.html", "popup.css", "popup.js", "page.js", "dispatch.js", "transport.js", "session.html", "session.js"] as const;
+/** Every shipped file; the archive is uploadable as-is (manifest.json at the root, no dev files). */
+export const BROWSER_COMPANION_FILES = ["popup.html", "popup.css", "popup.js", "page.js", "chatgpt.js", "dispatch.js", "transport.js", "session.html", "session.js",
+  "icons/icon-16.png", "icons/icon-32.png", "icons/icon-48.png", "icons/icon-128.png"] as const;
+const sourceFiles = BROWSER_COMPANION_FILES;
 
 /** Prepare reviewed development artifacts only; never install, sign, launch or publish. */
 export function buildBrowserCompanion(browser: "chrome" | "firefox", outputDirectory: string) {
@@ -26,7 +29,7 @@ export function buildBrowserCompanion(browser: "chrome" | "firefox", outputDirec
   const temporary = mkdtempSync(join(dirname(target), ".nekodex-companion-"));
   try {
     const unpacked = join(temporary, browser); mkdirSync(unpacked);
-    for (const [file, content] of Object.entries(bytes)) writeFileSync(join(unpacked, file), content);
+    for (const [file, content] of Object.entries(bytes)) { mkdirSync(dirname(join(unpacked, file)), { recursive: true }); writeFileSync(join(unpacked, file), content); }
     // Fixed ZIP timestamps make the artifact identity reproducible for unchanged input.
     const entries = Object.fromEntries(Object.entries(bytes).map(([file, content]) => [file, [content, { mtime: new Date(1980, 0, 1) }]])) as Parameters<typeof zipSync>[0];
     const archiveName = `nekodex-browser-companion-${browser}-${manifest.version}.zip`;

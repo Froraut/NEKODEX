@@ -31,6 +31,32 @@ export const browserActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("click"), ref: id }).strict(),
   z.object({ kind: z.literal("type"), ref: id, text: z.string().max(8000) }).strict(),
 ]);
+/** Bundled ChatGPT document operations (extension `chatgpt.js`). The host never sends selectors
+ * or script; each operation runs only on the exact selected https://chatgpt.com document. */
+export const COMPANION_CHATGPT_FEATURE = "chatgpt-v1" as const;
+export const CHATGPT_COMPANION_MAX_PROMPT_CHARS = 200_000;
+export const CHATGPT_COMPANION_MAX_ANSWER_HTML_CHARS = 400_000;
+const digest = z.string().regex(/^[a-f0-9]{64}$/);
+const modelLabel = z.string().min(1).max(120);
+export const chatGptCompanionRequestSchema = z.discriminatedUnion("op", [
+  z.object({ op: z.literal("identify") }).strict(),
+  z.object({ op: z.literal("send"), text: z.string().min(1).max(CHATGPT_COMPANION_MAX_PROMPT_CHARS),
+    expectedAccount: digest, expectedModelLabel: modelLabel }).strict(),
+  z.object({ op: z.literal("read"), userMessageId: id, verifyAccount: z.boolean().optional(),
+    /** SHA-256 of the whitespace-normalized sent text; the matched user turn must carry it. */
+    textDigest: digest.optional() }).strict(),
+]);
+export const chatGptCompanionResultSchema = z.discriminatedUnion("op", [
+  z.object({ op: z.literal("identify"), account: digest, modelLabel, path: z.string().max(2048),
+    newChat: z.boolean(), composerReady: z.boolean(), generating: z.boolean() }).strict(),
+  z.object({ op: z.literal("send"), userMessageId: id, path: z.string().max(2048) }).strict(),
+  z.object({ op: z.literal("read"), path: z.string().max(2048), userTurnFound: z.boolean(), generating: z.boolean(),
+    account: digest.optional(),
+    assistant: z.object({ messageId: id.optional(), html: z.string().max(CHATGPT_COMPANION_MAX_ANSWER_HTML_CHARS),
+      truncated: z.boolean(), completionAction: z.boolean() }).strict().optional() }).strict(),
+]);
+export type ChatGptCompanionRequest = z.infer<typeof chatGptCompanionRequestSchema>;
+export type ChatGptCompanionResult = z.infer<typeof chatGptCompanionResultSchema>;
 export type BrowserBinding = z.infer<typeof browserBindingSchema>;
 export type BrowserObservation = z.infer<typeof browserObservationSchema>;
 export type BrowserAction = z.infer<typeof browserActionSchema>;
@@ -45,12 +71,16 @@ export interface CompanionReceipt {
   binding?: BrowserBinding;
   reason?: string;
   observation?: BrowserObservation;
+  /** Bundled ChatGPT document receipt; present only for a delivered `chatgpt` command. */
+  chatgpt?: ChatGptCompanionResult;
 }
 export interface CompanionCommand {
   operationId: string;
-  kind: "observe" | "act";
+  kind: "observe" | "act" | "chatgpt";
   binding: BrowserBinding;
   action?: BrowserAction;
+  /** `chatgpt` only: one bundled operation; only `send` can produce input. */
+  chatgpt?: ChatGptCompanionRequest;
   /** Observe only. False/absent keeps the existing text-only disclosure boundary. */
   includeImage?: boolean;
 }
@@ -64,4 +94,5 @@ export const resultSchema = z.object({
   operationId: id,
   outcome: z.enum(["completed", "rejected", "unknown"]),
   executed: z.boolean(), reason: z.string().max(240).optional(), observation: browserObservationSchema.optional(),
+  chatgpt: chatGptCompanionResultSchema.optional(),
 }).strict();

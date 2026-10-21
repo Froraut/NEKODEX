@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { unzipSync, strFromU8 } from "fflate";
@@ -59,7 +59,8 @@ test("Firefox development package preserves exact-document API floor, scoped per
     expect(manifest.permissions).toEqual(["activeTab", "scripting", "storage"]);
     expect(manifest.host_permissions).toEqual(["http://127.0.0.1:17843/*"]);
     expect(manifest.background).toBeUndefined();
-    expect(Object.keys(files).sort()).toEqual(readdirSync(first.directory).sort());
+    const unpacked = (readdirSync(first.directory, { recursive: true }) as string[]).filter(name => statSync(join(first.directory, name)).isFile());
+    expect(Object.keys(files).sort()).toEqual(unpacked.sort());
     // Every shipped relative module import resolves inside the artifact.
     for (const [name, content] of Object.entries(files)) {
       if (!name.endsWith(".js")) continue;

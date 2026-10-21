@@ -67,3 +67,51 @@ test("unknown injection gets a terminal uncertain receipt and stops without retr
   expect(polls).toBe(1); expect(fixture.calls).toHaveLength(1);
   expect(delivered[0].result).toMatchObject({ operationId: "uncertain-1", outcome: "unknown", executed: true });
 });
+
+test("ChatGPT send needs the selected active document; reads do not, and uncertain sends are unknown", async () => {
+  const calls: any[] = [];
+  let activeTab = 7, mode: "ok" | "throw" = "ok";
+  const api = {
+    tabs: { query: async () => [{ id: activeTab }] },
+    scripting: { executeScript: async (request: any) => {
+      calls.push(request);
+      if (mode === "throw") throw new Error("Tab closed while the send was in flight");
+      const op = request.args[0].op;
+      return [{ frameId: 0, documentId: "document", result: op === "send"
+        ? { outcome: "completed", executed: true, chatgpt: { op: "send", userMessageId: "message:u", path: "/c/1" } }
+        : { outcome: "completed", executed: false, chatgpt: { op: "read", path: "/c/1", userTurnFound: true, generating: true } } }];
+    } },
+  };
+  const dispatcher = createCompanionDispatcher(api);
+  dispatcher.restore(binding);
+  const send = { operationId: "send-1", kind: "chatgpt", binding, chatgpt: { op: "send", text: "Hi", expectedAccount: "a".repeat(64), expectedModelLabel: "Pro" } };
+  const read = { operationId: "read-1", kind: "chatgpt", binding, chatgpt: { op: "read", userMessageId: "message:u" } };
+  activeTab = 8;
+  expect(await dispatcher.execute(send)).toMatchObject({ outcome: "rejected", executed: false });
+  expect(calls).toHaveLength(0);
+  expect(await dispatcher.execute(read)).toMatchObject({ outcome: "completed", executed: false, chatgpt: { op: "read" } });
+  // The bundled function receives only data plus the selected scope/epoch, on the exact document.
+  expect(calls[0].target).toEqual({ tabId: 7, documentIds: ["document"] });
+  expect(calls[0].args[0]).toEqual({ op: "read", userMessageId: "message:u", scopeId: "scope", documentEpoch: "epoch" });
+  expect(calls[0].func.name).toBe("chatGptOperation");
+  activeTab = 7;
+  expect(await dispatcher.execute(send)).toMatchObject({ outcome: "completed", executed: true, chatgpt: { op: "send", userMessageId: "message:u" } });
+  mode = "throw";
+  expect(await dispatcher.execute({ ...send, operationId: "send-2" })).toMatchObject({ outcome: "unknown", executed: true });
+  expect(await dispatcher.execute({ ...read, operationId: "read-2" })).toMatchObject({ outcome: "rejected", executed: false });
+  expect(await dispatcher.execute({ ...read, chatgpt: { op: "evaluate" } })).toMatchObject({ outcome: "rejected", executed: false });
+});
+
+test("session survives a refused ChatGPT operation but stops after an unknown send", async () => {
+  const replies = [{ outcome: "rejected", executed: false, reason: "Open a new chat in the selected ChatGPT tab before sending" },
+    { outcome: "unknown", executed: true, reason: "ChatGPT did not show the sent message" }];
+  const dispatcher = { execute: async () => replies.shift() };
+  const delivered: any[] = []; let polls = 0;
+  const request = async (_credentials: unknown, route: string, payload: any) => {
+    if (route === "poll") { polls++; return { commands: [{ operationId: `send-${polls}`, kind: "chatgpt", binding, chatgpt: { op: "send" } }] }; }
+    delivered.push(payload.result); return { accepted: true };
+  };
+  await runCompanionSession({ credentials: {}, dispatcher, signal: new AbortController().signal, say() {}, request });
+  expect(polls).toBe(2);
+  expect(delivered.map(row => row.outcome)).toEqual(["rejected", "unknown"]);
+});

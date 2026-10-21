@@ -45,6 +45,7 @@ import { ClaudeMessagesGateway } from "./messages";
 import { claudeGatewayModelsResponse, isClaudeGatewayModelsRequest } from "./messages/models";
 import { MAX_CHATGPT_BROWSER_TABS } from "./adapters/chatgpt-web/concurrency";
 import { chatGptWebTraceId, chatGptWebExecutionNamespace, createChatGptWebAdapter } from "./adapters/chatgpt-web";
+import { installChatGptCompanionTransport } from "./adapters/chatgpt-web/companion-transport-port";
 import { normalizeNativeDelegation } from "./adapters/chatgpt-web/native-delegation";
 import { validateChatGptWebInputImage } from "./adapters/chatgpt-web/input-image-validation";
 import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worker";
@@ -933,6 +934,15 @@ export function startServer(
   }) : undefined;
   let agentTools: AgentToolsComposition | undefined;
   let browserCompanion: BrowserCompanionRuntime | undefined;
+  let uninstallChatGptCompanion: (() => void) | undefined;
+  // The companion runtime lends the existing ChatGPT worker a transport port; the worker stays
+  // the only ChatGPT sender. Installed once with the lazily created runtime, removed on close.
+  const getBrowserCompanion = (): BrowserCompanionRuntime => {
+    if (browserCompanion) return browserCompanion;
+    const runtime = createBrowserCompanionRuntime();
+    uninstallChatGptCompanion = installChatGptCompanionTransport(runtime.chatGptTransport());
+    return browserCompanion = runtime;
+  };
   let agentBrowserTools: AgentBrowserToolsProvider | undefined;
   let agentDesktopTools: AgentDesktopToolsProvider | undefined;
   let agentRemoteTools: AgentRemoteToolsProvider | undefined;
@@ -1310,7 +1320,7 @@ export function startServer(
       }
       if (url.pathname === "/admin/browser-companion") {
         if (!controlAuthorized(req)) return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
-        return browserCompanionRequest(req, () => browserCompanion ??= createBrowserCompanionRuntime());
+        return browserCompanionRequest(req, getBrowserCompanion);
       }
       if (url.pathname === "/admin/agent-tools") {
         if (!controlAuthorized(req)) return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
@@ -1831,6 +1841,7 @@ export function startServer(
       shutdownStage = "resource_cleanup";
       historyStore?.close();
       await browserCompanion?.close();
+      uninstallChatGptCompanion?.();
       await agentTools?.close();
       if (!agentRuntime) { agentSnapshots?.close(); agentEvidence?.close(); return; }
       // Abort-aware transports normally settle at once. A misbehaving injected port must not

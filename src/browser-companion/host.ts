@@ -2,8 +2,8 @@ import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { readRequestBodyBytes } from "../http-body";
 import { companionExtensionOrigin } from "./firefox-identity";
 import {
-  COMPANION_ORIGIN, COMPANION_PATH, COMPANION_VERSION, browserActionSchema, browserBindingSchema,
-  browserObservationSchema, resultSchema, sameBrowserBinding, browserBindingOf,
+  COMPANION_CHATGPT_FEATURE, COMPANION_ORIGIN, COMPANION_PATH, COMPANION_VERSION, browserActionSchema, browserBindingSchema,
+  browserObservationSchema, chatGptCompanionRequestSchema, resultSchema, sameBrowserBinding, browserBindingOf,
   type BrowserBinding, type BrowserObservation, type CompanionCommand, type CompanionReceipt,
 } from "./protocol";
 
@@ -33,6 +33,9 @@ export function createBrowserCompanionHost(options: BrowserCompanionHostOptions)
   let sessionId: string | undefined;
   let observation: BrowserObservation | undefined;
   let selected: BrowserBinding | undefined;
+  /** Bundled operation families advertised by the explicitly selecting extension build. */
+  let features: string[] = [];
+  let selectedUrl: string | undefined;
   let pending: Pending | undefined;
   let polling = false;
   let wake: (() => void) | undefined;
@@ -57,7 +60,7 @@ export function createBrowserCompanionHost(options: BrowserCompanionHostOptions)
   function revoke() {
     uncertain("Pairing or selected scope was revoked");
     // Preserve uncertain receipts, but the retired session can no longer execute or reconcile.
-    pending = undefined; token = undefined; sessionId = undefined; pairingCode = undefined; observation = undefined; selected = undefined; wake?.();
+    pending = undefined; token = undefined; sessionId = undefined; pairingCode = undefined; observation = undefined; selected = undefined; selectedUrl = undefined; features = []; wake?.();
   }
   function response(body: unknown, status = 200): Response {
     return Response.json(body, { status, headers: {
@@ -68,7 +71,9 @@ export function createBrowserCompanionHost(options: BrowserCompanionHostOptions)
   }
   function assertBinding(value: unknown, kind: CompanionCommand["kind"]) {
     const binding = browserBindingSchema.parse(value);
-    const anchor = kind === "observe" ? selected : observation;
+    // Reads and bundled ChatGPT operations use the selected document anchor; generic input
+    // still needs the current unconsumed observation and its refs.
+    const anchor = kind === "act" ? observation : selected;
     if (!anchor || !sameBrowserBinding(anchor, binding) || binding.sessionId !== sessionId) throw new Error("Stale or foreign observation; select or observe the exact tab again");
     return binding;
   }
@@ -77,13 +82,17 @@ export function createBrowserCompanionHost(options: BrowserCompanionHostOptions)
     if (pending) throw new Error("A companion operation is active or has an uncertain outcome; reconcile its receipt first");
     const binding = assertBinding(bindingValue, kind);
     const action = kind === "act" ? browserActionSchema.parse(actionValue) : undefined;
+    const chatgpt = kind === "chatgpt" ? chatGptCompanionRequestSchema.parse(actionValue) : undefined;
+    // An older extension cannot run a bundled ChatGPT operation. Refuse before queueing so
+    // a protocol/version mismatch can never become a delivered (and possibly executed) send.
+    if (chatgpt && !features.includes(COMPANION_CHATGPT_FEATURE)) throw new Error("The selected companion extension does not support ChatGPT send; update it and select the tab again");
     if (action && !observation!.refs.some(row => row.ref === action.ref && (action.kind !== "type" || row.role === "textbox"))) throw new Error("Unknown or incompatible observation reference");
     signal?.throwIfAborted();
     const operationId = requestedOperationId ?? randomUUID();
     if (!/^[A-Za-z0-9:_-]{1,160}$/.test(operationId) || receipts.has(operationId)) throw new Error("Companion operation identity is invalid or already consumed; reconcile its receipt without replay");
     return new Promise(resolve => {
       const abort = () => uncertain("Caller cancelled; a dispatched input may already have occurred");
-      pending = { command: { operationId, kind, binding: structuredClone(binding), ...(action ? { action } : {}),
+      pending = { command: { operationId, kind, binding: structuredClone(binding), ...(action ? { action } : {}), ...(chatgpt ? { chatgpt } : {}),
         ...(kind === "observe" && observeOptions?.includeImage === true ? { includeImage: true } : {}) }, phase: "queued", resolve,
         detach: () => signal?.removeEventListener("abort", abort) };
       signal?.addEventListener("abort", abort, { once: true });
@@ -101,7 +110,8 @@ export function createBrowserCompanionHost(options: BrowserCompanionHostOptions)
     try {
       // A maximum bounded image plus escaped page text/refs needs more than the
       // small control envelope. Only results receive this larger finite budget.
-      const wire = await readRequestBodyBytes(request, route === `${COMPANION_PATH}/result` ? 512 * 1024 : 64 * 1024);
+      // Results also carry one bounded ChatGPT answer HTML snapshot.
+      const wire = await readRequestBodyBytes(request, route === `${COMPANION_PATH}/result` ? 1024 * 1024 : 64 * 1024);
       const body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(wire));
       if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("Invalid companion message");
       if (body.version !== COMPANION_VERSION || body.hostId !== hostId) return response({ error: "Companion protocol or host identity mismatch" }, 409);
@@ -117,9 +127,12 @@ export function createBrowserCompanionHost(options: BrowserCompanionHostOptions)
         // The extension sends this only following the explicit Select current tab button.
         const selected = browserObservationSchema.parse(body.observation);
         if (selected.sessionId !== sessionId) throw new Error("Selected tab has a foreign session");
+        const advertised = body.features === undefined ? [] : body.features;
+        if (!Array.isArray(advertised) || advertised.length > 8 || advertised.some(value => typeof value !== "string" || !/^[a-z0-9-]{1,32}$/.test(value))) throw new Error("Invalid companion feature list");
         if (pending) uncertain("User changed the selected tab or freshness scope");
         if (pending) throw new Error("An uncertain input must be reconciled before selecting another scope");
         observation = selected;
+        features = [...new Set(advertised as string[])];
         // Keep a document anchor after input; it can authorize a fresh read, never another input.
         setSelected(selected);
         return response({ selected: true, observationId: observation.observationId });
@@ -130,14 +143,19 @@ export function createBrowserCompanionHost(options: BrowserCompanionHostOptions)
         const current = pending;
         if (current.phase === "queued") throw new Error("Operation has not been delivered");
         if (result.observation?.screenshot && (current.command.kind !== "observe" || current.command.includeImage !== true || result.outcome !== "completed")) throw new Error("Screenshot was not requested by the exact approved observation");
-        if ((result.outcome === "rejected" && result.executed) || (result.outcome === "completed" && result.executed !== (current.command.kind === "act")) || (current.command.kind === "act" && result.observation)) throw new Error("Execution receipt does not match the delivered operation");
+        const command = current.command;
+        const inputCapable = command.kind === "act" || command.chatgpt?.op === "send";
+        if ((result.outcome === "rejected" && result.executed) || (result.outcome === "completed" && result.executed !== inputCapable)
+          || (result.executed && !inputCapable) || (command.kind !== "observe" && result.observation)) throw new Error("Execution receipt does not match the delivered operation");
+        if (command.kind !== "chatgpt" ? result.chatgpt !== undefined
+          : result.outcome === "completed" ? result.chatgpt?.op !== command.chatgpt!.op : result.chatgpt !== undefined) throw new Error("ChatGPT receipt does not match the delivered operation");
         if (result.outcome === "completed" && current.command.kind === "observe") {
           if (!result.observation) throw new Error("Observation receipt is missing");
           const candidate = result.observation;
           const previous = current.command.binding;
           if (candidate.sessionId !== previous.sessionId || candidate.scopeId !== previous.scopeId || candidate.tabId !== previous.tabId || candidate.windowId !== previous.windowId || candidate.frameId !== previous.frameId || candidate.documentId !== previous.documentId || candidate.documentEpoch !== previous.documentEpoch || candidate.observationId === previous.observationId) throw new Error("Observation changed owner or document");
           if (current.phase !== "unknown") { observation = candidate; setSelected(candidate); }
-        } else observation = undefined;
+        } else if (command.kind !== "chatgpt" || inputCapable) observation = undefined;
         const receipt = retain({ ...result, cancelRequested: current.phase === "unknown", binding: structuredClone(current.command.binding) });
         current.detach(); current.resolve(receipt);
         if (result.outcome === "unknown") current.phase = "unknown";
@@ -162,7 +180,7 @@ export function createBrowserCompanionHost(options: BrowserCompanionHostOptions)
       return response({ error: error instanceof Error && !error.name.includes("Zod") && !error.message.includes("JSON") ? error.message.slice(0, 240) : "Invalid companion protocol message" }, 400);
     }
   }
-  function setSelected(value: BrowserBinding) { selected = browserBindingOf(value); }
+  function setSelected(value: BrowserObservation) { selected = browserBindingOf(value); selectedUrl = value.url; }
   return {
     fetch: fetchRequest,
     /** Local-only bootstrap; never expose this through an unauthenticated HTTP endpoint or logs. */
@@ -174,11 +192,15 @@ export function createBrowserCompanionHost(options: BrowserCompanionHostOptions)
         ...(options.extensionOrigin ? { extensionOrigin } : {}) };
     },
     status: () => ({ version: COMPANION_VERSION, hostId, extensionId: options.extensionId, extensionOrigin, paired: !!token, connected: polling && !!token,
-      selected: selected ? structuredClone(selected) : null,
+      selected: selected ? structuredClone(selected) : null, features: [...features],
       operation: pending ? { operationId: pending.command.operationId, phase: pending.phase } : null }),
     observation: () => observation ? structuredClone(observation) : undefined,
     observe: (binding: BrowserBinding, signal?: AbortSignal, operationId?: string, observeOptions?: { includeImage?: boolean }) => dispatch("observe", binding, undefined, signal, operationId, observeOptions),
     act: (binding: BrowserBinding, action: unknown, signal?: AbortSignal, operationId?: string) => dispatch("act", binding, action, signal, operationId),
+    /** Trusted ChatGPT transport only. One bundled operation on the selected document anchor. */
+    chatgpt: (binding: BrowserBinding, request: unknown, signal?: AbortSignal, operationId?: string) => dispatch("chatgpt", binding, request, signal, operationId),
+    /** Current selected-page URL from the explicit selection/latest observation, never page-supplied later. */
+    selectedUrl: () => selectedUrl,
     receipt: (operationId: string) => receipts.has(operationId) ? structuredClone(receipts.get(operationId)) : undefined,
     revoke,
     close() { revoke(); pairingCode = undefined; closed = true; },

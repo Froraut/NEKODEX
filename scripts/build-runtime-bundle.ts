@@ -94,14 +94,17 @@ if (!browserHelperBuild.success) {
 // Copy only its shipped resources; session pairing data never belongs to this source tree.
 const companionDir = join(appDir, "browser-companion");
 mkdirSync(companionDir, { recursive: true });
-const companionResources = ["popup.html", "popup.css", "popup.js", "page.js", "dispatch.js", "transport.js", "session.html", "session.js"];
-for (const name of ["manifest.json", "manifest.firefox.json", ...companionResources, "README.md"]) {
+const companionResources = ["popup.html", "popup.css", "popup.js", "page.js", "chatgpt.js", "dispatch.js", "transport.js", "session.html", "session.js",
+  "icons/icon-16.png", "icons/icon-32.png", "icons/icon-48.png", "icons/icon-128.png"];
+mkdirSync(join(companionDir, "icons"), { recursive: true });
+for (const name of ["manifest.json", "manifest.firefox.json", ...companionResources, "README.md", "PRIVACY.md"]) {
   copyFileSync(join(root, "browser-companion", name), join(companionDir, name));
 }
 // Firefox requires its manifest as manifest.json. Keep Chrome's existing loader path intact.
 const firefoxCompanionDir = join(companionDir, "firefox");
 mkdirSync(firefoxCompanionDir, { recursive: true });
 copyFileSync(join(root, "browser-companion", "manifest.firefox.json"), join(firefoxCompanionDir, "manifest.json"));
+mkdirSync(join(firefoxCompanionDir, "icons"), { recursive: true });
 for (const name of companionResources) copyFileSync(join(root, "browser-companion", name), join(firefoxCompanionDir, name));
 
 copyFileSync(join(root, "package.json"), join(appDir, "package.json"));

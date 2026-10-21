@@ -118,6 +118,7 @@ import {
   type ChatGptWebModelFamily,
 } from "../../chatgpt-web-models";
 import { LauncherBrowserHelperClient } from "./launcher-helper-client";
+import { chatGptCompanionTransport } from "./companion-transport-port";
 import { acquireChatGptResponseArtifacts, chatGptArtifactMarkdown } from "./artifacts";
 import { MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_OUTSTANDING_TURNS } from "./concurrency";
 import {
@@ -598,13 +599,17 @@ export class ChatGptBrowserWorker {
         `ChatGPT Web has reached its ${outstandingLimit} active and waiting task limit; finish or cancel a task before submitting another`,
       ));
     }
-    const useHelper = this.config.browserHost === "launcher" && process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS !== "1";
+    // An explicitly bound browser-companion document is selected once, at admission. The
+    // companion leaf then submits at most once; it never falls back to the embedded page.
+    const companion = chatGptCompanionTransport();
+    const viaCompanion = companion?.engaged() === true;
+    const useHelper = !viaCompanion && this.config.browserHost === "launcher" && process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS !== "1";
     if (useHelper) {
       this.launcherHelper ??= new LauncherBrowserHelperClient(this.config);
     }
     // Capture the owner before deferring: close() may clear the field before this microtask.
     const helper = this.launcherHelper;
-    const run = Promise.resolve().then(() => useHelper ? helper!.run(turn) : this.runExclusive(turn));
+    const run = Promise.resolve().then(() => viaCompanion ? companion!.run(turn) : useHelper ? helper!.run(turn) : this.runExclusive(turn));
     this.activeRuns.set(turn.traceId, run);
     void run.finally(() => {
       if (this.activeRuns.get(turn.traceId) === run) this.activeRuns.delete(turn.traceId);

@@ -1,5 +1,7 @@
 export const ORIGIN = "http://127.0.0.1:17843";
 export const extensionApi = globalThis.browser ?? globalThis.chrome;
+/** Bundled operation families this build can execute; the host refuses others before queueing. */
+export const COMPANION_FEATURES = ["chatgpt-v1"];
 export async function companionRequest(credentials, route, payload = {}, signal) {
   const response = await fetch(`${ORIGIN}/v1/companion/${route}`, { method: "POST", redirect: "error", cache: "no-store",
     headers: { "content-type": "application/json", ...(credentials?.token ? { authorization: `Bearer ${credentials.token}` } : {}) },
@@ -20,8 +22,11 @@ export async function runCompanionSession({ credentials, dispatcher, signal, say
       const result = await dispatcher.execute(command);
       // Never let Stop cancel the receipt upload for an input that has already started.
       await request(credentials, "result", { result: { operationId: command.operationId, ...result } });
-      say(result.outcome === "completed" ? `${command.kind === "observe" ? "Fresh page observed" : "Input executed"}. Waiting for the next scoped operation.` : result.reason);
-      if (result.outcome !== "completed") return;
+      const done = command.kind === "observe" ? "Fresh page observed" : command.kind === "chatgpt" ? (command.chatgpt?.op === "send" ? "ChatGPT message sent" : "ChatGPT page read") : "Input executed";
+      say(result.outcome === "completed" ? `${done}. Waiting for the next scoped operation.` : result.reason);
+      // A refused bundled ChatGPT operation executed nothing; keep the session for a corrected
+      // next turn. Any unknown outcome, or a refused generic action, still ends the session.
+      if (result.outcome === "unknown" || (result.outcome !== "completed" && command.kind !== "chatgpt")) return;
     }
   }
 }

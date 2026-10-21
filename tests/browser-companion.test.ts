@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createBrowserCompanionHost } from "../src/browser-companion/host";
 import { browserBindingOf, COMPANION_ORIGIN, type BrowserObservation } from "../src/browser-companion/protocol";
-import { companionChatGptCapability, createMcpDesktopProvider, desktopBindingOf, toolSchemaDigest, type DesktopObservation } from "../src/browser-companion/providers";
+import { createMcpDesktopProvider, desktopBindingOf, toolSchemaDigest, type DesktopObservation } from "../src/browser-companion/providers";
 import type { StandaloneToolsPort, ToolInvocation, ToolScope } from "../src/agent-tools/types";
 
 const extensionId = "a".repeat(32);
@@ -99,7 +99,6 @@ test("navigation and fresh selection cannot silently rebind an in-flight observa
     abort.abort(); expect((await waiting).outcome).toBe("unknown");
     expect((await f.post("select", { observation: { ...f.observed, scopeId: "scope-3" } })).status).toBe(400);
     expect(f.host.status().operation?.phase).toBe("unknown");
-    expect(companionChatGptCapability(f.host, undefined).sendSupported).toBe(false);
   } finally { f.host.close(); }
 });
 

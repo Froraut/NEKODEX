@@ -2,10 +2,11 @@
   "manifest_version": 3,
   "name": "NEKODEX Browser Companion",
   "description": "Pair one selected page with your local NEKODEX task using an explicitly opened sharing session.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": ["http://127.0.0.1:17843/*"],
-  "action": {"default_popup": "popup.html", "default_title": "NEKODEX: share this tab"},
+  "icons": {"16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png"},
+  "action": {"default_popup": "popup.html", "default_title": "NEKODEX: share this tab", "default_icon": {"16": "icons/icon-16.png", "32": "icons/icon-32.png"}},
   "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'none'; connect-src http://127.0.0.1:17843"},
   "browser_specific_settings": {
     "gecko": {
