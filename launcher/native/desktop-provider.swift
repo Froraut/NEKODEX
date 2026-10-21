@@ -149,8 +149,11 @@ func lastInputTime() -> TimeInterval {
     // the selected window at the point. This stays immediately before dispatch.
     func pixelTarget(_ row: WindowRow, point: CGPoint) throws {
         guard AXIsProcessTrusted(), let window = selectedAX else { try reject("pixel-target-hit-test-unavailable") }
+        // On the system-wide element this timeout is process-global; bound only the hit test
+        // and restore the default (0) so later AXPress/value calls keep their normal timeout.
         let system = AXUIElementCreateSystemWide()
         _ = AXUIElementSetMessagingTimeout(system, 1.0)
+        defer { _ = AXUIElementSetMessagingTimeout(system, 0) }
         var hit: AXUIElement?
         guard AXUIElementCopyElementAtPosition(system, Float(point.x), Float(point.y), &hit) == .success, let hit = hit,
               hitWindow(hit, pid: row.pid).map({ CFEqual($0, window) }) == true else { try reject("pixel-target-hit-test-mismatch") }
