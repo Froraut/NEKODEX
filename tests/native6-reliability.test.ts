@@ -210,6 +210,16 @@ test("retired turns report why they stopped", async () => {
     /Codex turn trace_reason, which was stopped \(its MCP request abandoned a pending Codex Native call\)/);
 });
 
+test("an unknown turn token asks for the exact current value without echoing it", async () => {
+  const f = fixture();
+  await f.broker.register(f.env);
+  const unknown = opaqueId("turn");
+  const error = await claim(f.socket, unknown).then(() => undefined, (failure: unknown) => failure as Error);
+  expect(error?.message).toContain("turn token is invalid, expired, or revoked.");
+  expect(error?.message).toContain("Copy turn_token exactly from the current request");
+  expect(error?.message).not.toContain(unknown);
+});
+
 test("async capacity rejects the call without retiring the turn", async () => {
   const f = fixture();
   const token = await f.broker.register(f.env);
