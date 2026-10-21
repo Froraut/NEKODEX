@@ -70,7 +70,10 @@ export function NativeModelsOfflineBanner({ api, language, disabled = false, con
   };
   useEffect(() => { mounted.current = true; void read(); return () => { mounted.current = false; }; }, []);
   const target = nativeModelsOfflineTarget(snapshot);
-  const observing = Boolean(target?.checking || unknown);
+  // Admission holds its owner before preparation finishes (models still empty): keep observing until
+  // the execution is ready or failed, so a check started elsewhere still triggers the parent re-read.
+  const preparing = Boolean(snapshot?.execution?.ownerHeld && !snapshot.execution.models.length && !snapshot.execution.failed);
+  const observing = Boolean(target?.checking || unknown || preparing);
   useEffect(() => {
     if (!observing || disabled) return;
     const timer = window.setInterval(() => void read(), 2000);
