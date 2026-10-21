@@ -177,7 +177,11 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
         return status();
       }
       try {
-        await run(undefined, async signal => { const provider = resource(); await provider.setEnabled(true, true); enabled = true; await inspect(provider, signal); });
+        await run(undefined, async signal => {
+          const provider = resource(); await provider.setEnabled(true, true); enabled = true; await inspect(provider, signal);
+          // The helper lists titles only after its confirmed enable; refresh a list taken before it.
+          if (windows.length) windows = await provider.listWindows(signal);
+        });
         reason = null;
       } catch (error) { enabled = false; reason = error instanceof Error ? error.message.slice(0, 240) : "Desktop provider could not be enabled"; throw error; }
       return status();

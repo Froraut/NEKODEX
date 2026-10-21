@@ -72,7 +72,10 @@ test("desktop controller is passive/off until explicit controls and binds bounde
     // Opening the pane re-reads status but never enables, lists, selects, captures or inputs.
     await controller.openPermissionSettings("accessibility", true); expect(calls).toEqual(["status", "openPermissionSettings", "status"]);
     expect(controller.status()).toMatchObject({ enabled: false, reason: null });
-    await controller.setEnabled(true, true); await controller.listWindows(true);
+    await controller.listWindows(true); const beforeEnable = calls.length;
+    await controller.setEnabled(true, true);
+    // A list taken before the confirmed enable is refreshed, since titles appear only after it.
+    expect(calls.slice(beforeEnable)).toEqual(["enable", "status", "listWindows"]);
     await expect(controller.selectAndBind(scope, { ...selection, processId: "999:999" }, true)).rejects.toThrow("exact row");
     await controller.selectAndBind(scope, selection, true);
     expect(controller.status(scope).bindings).toMatchObject([{ taskId: scope.taskId, generation: 1, selection, observed: false }]);
