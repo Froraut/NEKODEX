@@ -36,6 +36,10 @@ export async function chatGptOperation(request) {
     return controls.length === 1 ? (normalize(controls[0].innerText).slice(0, 120) || "none") : controls.length ? "ambiguous" : "none";
   };
   const composer = () => { const rows = all(S.composer).filter(visible); return rows.length === 1 ? rows[0] : undefined; };
+  async function sha256(value) {
+    const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+    return Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, "0")).join("");
+  }
   async function account() {
     // Firefox content scripts use content.fetch for page-context requests; Chrome's fetch is already page-relative.
     const pageFetch = typeof content !== "undefined" && typeof content?.fetch === "function" ? content.fetch.bind(content) : fetch;
@@ -72,8 +76,10 @@ export async function chatGptOperation(request) {
     // A message ID may hydrate after send returned `ordinal:N`; that ordinal stays authoritative
     // because send required an empty new chat. A hydrated ID must still match exactly.
     const ordinal = /^ordinal:(\d+)$/.exec(request.userMessageId);
-    const index = ordinal ? Number(ordinal[1]) - 1 < turns.length ? Number(ordinal[1]) - 1 : -1
+    let index = ordinal ? Number(ordinal[1]) - 1 < turns.length ? Number(ordinal[1]) - 1 : -1
       : turns.findIndex((turn, position) => userMessageId(turn, position + 1) === request.userMessageId);
+    // Position alone is not identity: the matched turn must still carry exactly the sent text.
+    if (index >= 0 && request.textDigest && await sha256(normalize(userMessageElement(turns[index]).innerText)) !== request.textDigest) index = -1;
     const result = { op: "read", path: location.pathname.slice(0, 2048), userTurnFound: index >= 0, generating: generating() };
     if (request.verifyAccount) { const digest = await account(); if (digest) result.account = digest; }
     if (index < 0) return { outcome: "completed", executed: false, chatgpt: result };

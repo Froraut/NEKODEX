@@ -42,7 +42,9 @@ export const chatGptCompanionRequestSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("identify") }).strict(),
   z.object({ op: z.literal("send"), text: z.string().min(1).max(CHATGPT_COMPANION_MAX_PROMPT_CHARS),
     expectedAccount: digest, expectedModelLabel: modelLabel }).strict(),
-  z.object({ op: z.literal("read"), userMessageId: id, verifyAccount: z.boolean().optional() }).strict(),
+  z.object({ op: z.literal("read"), userMessageId: id, verifyAccount: z.boolean().optional(),
+    /** SHA-256 of the whitespace-normalized sent text; the matched user turn must carry it. */
+    textDigest: digest.optional() }).strict(),
 ]);
 export const chatGptCompanionResultSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("identify"), account: digest, modelLabel, path: z.string().max(2048),

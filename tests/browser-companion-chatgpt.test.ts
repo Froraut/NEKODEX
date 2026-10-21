@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { createBrowserCompanionHost } from "../src/browser-companion/host";
 import { createCompanionChatGptTransport } from "../src/browser-companion/chatgpt-transport";
 import { COMPANION_ORIGIN, type BrowserObservation, type CompanionCommand } from "../src/browser-companion/protocol";
@@ -29,7 +30,7 @@ async function companion(options: { features?: string[]; url?: string } = {}) {
     expect((await post("select", { observation: observation(scope, documentId), features })).status).toBe(200);
   await select();
   // Page model: one account, one visible model label, one new chat, one possible send.
-  const page = { account: ACCOUNT, label: "Pro", sends: 0, reads: 0, answerAfterReads: 2, html: "<p>Hello from <strong>ChatGPT</strong></p>", userTurnFound: true };
+  const page = { account: ACCOUNT, label: "Pro", sends: 0, reads: 0, answerAfterReads: 2, html: "<p>Hello from <strong>ChatGPT</strong></p>", userTurnFound: true, path: "/c/conversation-1" };
   const commands: CompanionCommand[] = [];
   let handler = (command: CompanionCommand): Reply => {
     const op = command.chatgpt!;
@@ -41,7 +42,7 @@ async function companion(options: { features?: string[]; url?: string } = {}) {
     }
     page.reads++;
     const ready = page.reads > page.answerAfterReads;
-    return { outcome: "completed", executed: false, chatgpt: { op: "read", path: "/c/conversation-1", userTurnFound: page.userTurnFound, generating: !ready,
+    return { outcome: "completed", executed: false, chatgpt: { op: "read", path: page.path, userTurnFound: page.userTurnFound, generating: !ready,
       ...(op.verifyAccount ? { account: page.account } : {}),
       ...(ready ? { assistant: { messageId: "message:assistant-1", html: page.html, truncated: false, completionAction: true } } : {}) } };
   };
@@ -92,7 +93,7 @@ test("bound ChatGPT document sends once and settles with the observed answer tie
     expect(send!.binding.documentId).toBe("document-1");
     const reads = f.commands.filter(command => command.chatgpt?.op === "read");
     expect(reads.every(command => command.chatgpt!.op === "read" && command.chatgpt!.userMessageId === "message:user-1")).toBe(true);
-    expect(reads.at(-1)!.chatgpt).toMatchObject({ verifyAccount: true });
+    expect(reads.at(-1)!.chatgpt).toMatchObject({ verifyAccount: true, textDigest: createHash("sha256").update("Say hello").digest("hex") });
     expect(transport.status().lastTurn).toMatchObject({ traceId: request.traceId, userMessageId: "message:user-1", assistantMessageId: "message:assistant-1", path: "/c/conversation-1" });
     expect(transport.status().lastTurn!.answerSha256).toMatch(/^[a-f0-9]{64}$/);
   } finally { await f.close(); }
@@ -155,6 +156,23 @@ test("an answer that becomes unobservable after the send is held, not resent", a
     await expect(waiting).rejects.toMatchObject({ code: "companion_response_unobserved" });
     expect(transport.status().held).toMatchObject({ stage: "response", userMessageId: "message:user-1" });
     expect(sends(f.commands)).toHaveLength(1);
+    expect(f.page.sends).toBe(1);
+  } finally { await f.close(); }
+});
+
+test("same-document navigation to another conversation during settlement is held, never rebound", async () => {
+  const f = await companion();
+  try {
+    const transport = createCompanionChatGptTransport({ host: () => f.host, timing: fast });
+    await transport.bind({ modelId: "gpt-5.6-sol", reasoning: "max" });
+    f.page.answerAfterReads = 3;
+    const previous = f.setHandler(command => {
+      // The user opens another chat in the bound tab after the first read.
+      if (command.chatgpt?.op === "read" && f.page.reads >= 1) f.page.path = "/c/another-conversation";
+      return previous(command);
+    });
+    await expect(transport.port.run(turn().turn)).rejects.toMatchObject({ code: "companion_response_unobserved" });
+    expect(transport.status().held).toMatchObject({ stage: "response", reason: "the bound tab navigated to another conversation" });
     expect(f.page.sends).toBe(1);
   } finally { await f.close(); }
 });

@@ -321,7 +321,10 @@ composer readback, waits for exactly one enabled send control and clicks it once
 It then waits for exactly one user turn whose text matches the prompt and returns
 its message ID, waiting briefly for it to hydrate, or `ordinal:1`. Because send
 required an empty new chat, reads keep matching that ordinal after a later ID
-hydration. Failures before the click are `rejected`, executed false, and remove the
+hydration, but only while that turn still carries the SHA-256 of the sent
+(whitespace-normalized) text. The leaf also pins the first `/c/<id>` path it sees;
+navigation to another conversation during settlement holds the answer as
+unobserved instead of rebinding. Failures before the click are `rejected`, executed false, and remove the
 extension's own draft (the session tab stays alive for a corrected turn); anything
 after the click without that proof is `unknown`.
 

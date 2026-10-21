@@ -185,7 +185,8 @@ export function createCompanionChatGptTransport(options: ChatGptCompanionTranspo
         throw heldError(`The companion send has no confirmed outcome (${held.reason}). It is held and will not be retried; inspect the ChatGPT tab.`);
       }
       await turn.onSubmitted?.();
-      const answer = await awaitAnswer(host, current, sent.userMessageId, operationId, turn);
+      const textDigest = createHash("sha256").update(text.replace(/\s+/g, " ").trim()).digest("hex");
+      const answer = await awaitAnswer(host, current, sent.userMessageId, operationId, turn, textDigest, sent.path);
       turn.onTextDelta(answer.markdown);
       lastReceipt = { operationId, traceId, userMessageId: sent.userMessageId, ...(answer.assistantMessageId ? { assistantMessageId: answer.assistantMessageId } : {}),
         path: answer.path, identityEpoch: current.identityEpoch, answerSha256: createHash("sha256").update(answer.markdown).digest("hex"), completedAt: now() };
@@ -193,8 +194,11 @@ export function createCompanionChatGptTransport(options: ChatGptCompanionTranspo
     } finally { if (active === traceId) active = undefined; }
   }
 
-  async function awaitAnswer(host: BrowserCompanionHost, current: Bound, userMessageId: string, operationId: string, turn: BrowserTurn) {
+  async function awaitAnswer(host: BrowserCompanionHost, current: Bound, userMessageId: string, operationId: string, turn: BrowserTurn, textDigest: string, sentPath: string) {
     const deadline = now() + timing.responseMs;
+    // The first saved-conversation path observed for this send is pinned; any later change
+    // (same-document navigation to another chat) makes the answer unobservable, never rebound.
+    let conversationPath = sentPath.startsWith("/c/") ? sentPath : undefined;
     let previous: string | undefined, stable = 0;
     const hold = (reason: string): never => {
       held = { operationId, stage: "response", reason, heldAt: now(), userMessageId };
@@ -212,7 +216,7 @@ export function createCompanionChatGptTransport(options: ChatGptCompanionTranspo
       const verifyAccount = previous !== undefined;
       let receipt: CompanionReceipt;
       try {
-        receipt = await operate(host, currentAnchor(host, current.document), { op: "read", userMessageId, ...(verifyAccount ? { verifyAccount: true } : {}) },
+        receipt = await operate(host, currentAnchor(host, current.document), { op: "read", userMessageId, textDigest, ...(verifyAccount ? { verifyAccount: true } : {}) },
           AbortSignal.any([AbortSignal.timeout(timing.readMs), ...(turn.abortSignal ? [turn.abortSignal] : [])]));
       } catch (error) {
         if (turn.abortSignal?.aborted) throw aborted();
@@ -225,6 +229,9 @@ export function createCompanionChatGptTransport(options: ChatGptCompanionTranspo
       const read = result(receipt, "read");
       if (!read) return hold(receipt.reason ?? `read ${receipt.outcome}`);
       if (!read.userTurnFound) return hold("the sent message is no longer in the bound conversation");
+      if (conversationPath && read.path !== conversationPath) return hold("the bound tab navigated to another conversation");
+      if (!conversationPath && read.path.startsWith("/c/")) conversationPath = read.path;
+      else if (!conversationPath && read.path !== "/") return hold("the bound tab left the new conversation");
       turn.onHeartbeat?.();
       const assistant = read.assistant;
       if (assistant?.truncated) return hold("the answer exceeds the companion transport size limit");
