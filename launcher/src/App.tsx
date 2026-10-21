@@ -903,7 +903,7 @@ function LauncherShell({
         {/* One nav landmark for every destination: the groups scroll, the footer items stay pinned below them. */}
         <nav className="nk-sidebar__navigation">
           <div className="nk-sidebar__nav">
-          <SidebarGroup label={copy.workspace}>
+          <SidebarGroup hideLabel label={copy.workspace}>
             <SidebarItem active={surface === "overview"} icon="overview" label={copy.overview} onClick={() => navigateSurface("overview")} />
             <SidebarItem active={surface === "accounts"} icon="accounts" label={copy.accountsNav} onClick={() => navigateSurface("accounts")} />
             <SidebarItem

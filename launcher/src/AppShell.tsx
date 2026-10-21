@@ -180,12 +180,13 @@ function useStatusPillFit(header: RefObject<HTMLElement | null>, content: string
   }, [content]);
 }
 
-/** A group of nav items. The label is not a heading (the page's h1 comes first in the outline); it names the group. */
-export function SidebarGroup({ children, label }: { children: ReactNode; label: string }) {
+/** A group of nav items. The label is not a heading (the page's h1 comes first in the outline); it names the group.
+ * `hideLabel` keeps the accessible name without repeating text the sidebar header already shows. */
+export function SidebarGroup({ children, hideLabel = false, label }: { children: ReactNode; hideLabel?: boolean; label: string }) {
   const labelId = useId();
   return (
     <div aria-labelledby={labelId} className="nk-nav-group" role="group">
-      <span className="nk-nav-group__label" id={labelId}>{label}</span>
+      <span className={hideLabel ? "nk-visually-hidden" : "nk-nav-group__label"} id={labelId}>{label}</span>
       <div>{children}</div>
     </div>
   );
