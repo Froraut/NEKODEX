@@ -151,19 +151,29 @@ export function createCompanionChatGptTransport(options: ChatGptCompanionTranspo
         if (prepared.text.length > CHATGPT_COMPANION_MAX_PROMPT_CHARS) throw refused("The prompt is too large for the browser companion. Nothing was sent.", "companion_prompt_too_large");
         text = prepared.text;
       } finally { prepared.release(); }
-      if (turn.abortSignal?.aborted) throw aborted();
+      // Every refusal that can be known before dispatch happens before the send fence.
+      const preflight = () => {
+        if (turn.abortSignal?.aborted) throw aborted();
+        if (options.host() !== host) throw refused("The browser companion listener changed; bind the ChatGPT tab again", "companion_unavailable");
+        if (host.status().operation) throw refused("Another companion operation owns the selected tab; nothing was sent", "companion_busy");
+        // A concurrent approved observation may have advanced the anchor's observation ID.
+        return currentAnchor(host, current.document);
+      };
+      preflight();
       // Dispatching the command is the ambiguity boundary: from here the prompt is never replayed.
       await turn.onSendActivated?.();
       const operationId = `chatgpt_send:${randomUUID()}`;
       const signal = AbortSignal.any([AbortSignal.timeout(timing.sendReceiptMs), ...(turn.abortSignal ? [turn.abortSignal] : [])]);
-      let receipt: CompanionReceipt;
+      let pendingReceipt: Promise<CompanionReceipt>;
       try {
-        // Re-read the anchor: a concurrent approved observation may have advanced its observation ID.
-        receipt = await operate(host, currentAnchor(host, current.document), { op: "send", text, expectedAccount: current.account, expectedModelLabel: current.modelLabel }, signal, operationId);
+        // Re-checked synchronously with the queueing call; nothing can be delivered in between.
+        pendingReceipt = host.chatgpt(preflight(), { op: "send", text, expectedAccount: current.account, expectedModelLabel: current.modelLabel }, signal, operationId);
       } catch (error) {
-        // Refused before queueing (pairing gone, outdated extension, stale anchor): nothing was offered.
+        if (error instanceof ChatGptWebAdapterError || (error instanceof DOMException && error.name === "AbortError")) throw error;
+        // Refused before queueing (pairing gone, outdated extension): nothing was offered.
         throw refused(`Companion send was refused before dispatch: ${error instanceof Error ? error.message : String(error)}`, "companion_send_refused");
       }
+      const receipt = await pendingReceipt;
       if (receipt.outcome === "not_sent") {
         if (turn.abortSignal?.aborted) throw aborted();
         throw refused(`Companion send was not delivered: ${receipt.reason ?? "no extension owner"}. Nothing was sent.`, "companion_send_refused");
@@ -204,7 +214,13 @@ export function createCompanionChatGptTransport(options: ChatGptCompanionTranspo
       try {
         receipt = await operate(host, currentAnchor(host, current.document), { op: "read", userMessageId, ...(verifyAccount ? { verifyAccount: true } : {}) },
           AbortSignal.any([AbortSignal.timeout(timing.readMs), ...(turn.abortSignal ? [turn.abortSignal] : [])]));
-      } catch (error) { if (turn.abortSignal?.aborted) throw aborted(); return hold(error instanceof Error ? error.message : "companion read unavailable"); }
+      } catch (error) {
+        if (turn.abortSignal?.aborted) throw aborted();
+        // Lost the single slot to another approved operation between the check and dispatch: retry the read.
+        const owner = host.status().operation;
+        if (owner && owner.phase !== "unknown" && options.host() === host) { await new Promise(resolve => setTimeout(resolve, timing.pollMs)); continue; }
+        return hold(error instanceof Error ? error.message : "companion read unavailable");
+      }
       if (turn.abortSignal?.aborted) throw aborted();
       const read = result(receipt, "read");
       if (!read) return hold(receipt.reason ?? `read ${receipt.outcome}`);
@@ -237,7 +253,9 @@ export function createCompanionChatGptTransport(options: ChatGptCompanionTranspo
     };
   }
 
-  const port: ChatGptCompanionTransportPort = { engaged: () => !!bound || !!held, run };
+  // An in-flight companion turn keeps the port engaged even if Unbind/Disable runs meanwhile,
+  // so no later admission can start the embedded sender beside it.
+  const port: ChatGptCompanionTransportPort = { engaged: () => !!bound || !!held || !!active, run };
   return { port, bind, unbind, release, status };
 }
 export type CompanionChatGptTransport = ReturnType<typeof createCompanionChatGptTransport>;

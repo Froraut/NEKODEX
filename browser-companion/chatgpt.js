@@ -69,7 +69,11 @@ export async function chatGptOperation(request) {
 
   if (request.op === "read") {
     const turns = userTurns();
-    const index = turns.findIndex((turn, position) => userMessageId(turn, position + 1) === request.userMessageId);
+    // A message ID may hydrate after send returned `ordinal:N`; that ordinal stays authoritative
+    // because send required an empty new chat. A hydrated ID must still match exactly.
+    const ordinal = /^ordinal:(\d+)$/.exec(request.userMessageId);
+    const index = ordinal ? Number(ordinal[1]) - 1 < turns.length ? Number(ordinal[1]) - 1 : -1
+      : turns.findIndex((turn, position) => userMessageId(turn, position + 1) === request.userMessageId);
     const result = { op: "read", path: location.pathname.slice(0, 2048), userTurnFound: index >= 0, generating: generating() };
     if (request.verifyAccount) { const digest = await account(); if (digest) result.account = digest; }
     if (index < 0) return { outcome: "completed", executed: false, chatgpt: result };
@@ -102,21 +106,21 @@ export async function chatGptOperation(request) {
   if (document.activeElement !== field || !selection) return refuse("The ChatGPT composer did not accept focus");
   const range = document.createRange(); range.selectNodeContents(field); range.collapse(false);
   selection.removeAllRanges(); selection.addRange(range);
-  const inserted = document.execCommand("insertText", false, request.text);
-  if (!inserted || normalize(field.innerText) !== normalize(request.text)) {
-    // Nothing was submitted. Remove only our own partial draft before refusing.
+  const clearDraft = () => {
+    // Nothing was submitted. Remove only our own draft so the composer is empty again.
     try { range.selectNodeContents(field); selection.removeAllRanges(); selection.addRange(range); document.execCommand("delete"); } catch { /* still not sent */ }
-    return refuse("ChatGPT composer readback did not match the prompt; nothing was sent");
-  }
+  };
+  const inserted = document.execCommand("insertText", false, request.text);
+  if (!inserted || normalize(field.innerText) !== normalize(request.text)) { clearDraft(); return refuse("ChatGPT composer readback did not match the prompt; nothing was sent"); }
   const form = field.closest("form");
   let button;
   for (let waited = 0; waited <= 5000; waited += 100) {
     const buttons = form ? [...form.querySelectorAll(S.send)].filter(visible) : [];
-    if (buttons.length > 1) return refuse("ChatGPT shows more than one send control; nothing was sent");
+    if (buttons.length > 1) { clearDraft(); return refuse("ChatGPT shows more than one send control; nothing was sent"); }
     if (buttons[0] && !buttons[0].disabled && buttons[0].getAttribute("aria-disabled") !== "true") { button = buttons[0]; break; }
     await delay(100);
   }
-  if (!button) return refuse("The ChatGPT send control did not become available; nothing was sent");
+  if (!button) { clearDraft(); return refuse("The ChatGPT send control did not become available; nothing was sent"); }
   // The click is the one input boundary. Everything after it is evidence, never a retry.
   try { button.click(); } catch { return { outcome: "unknown", executed: true, reason: "Send click began without a terminal receipt" }; }
   for (let waited = 0; waited <= 20_000; waited += 200) {
@@ -124,7 +128,10 @@ export async function chatGptOperation(request) {
     if (turns.length > 1) return { outcome: "unknown", executed: true, reason: "More than one user message appeared after send" };
     if (turns.length === 1) {
       if (normalize(userMessageElement(turns[0]).innerText) !== normalize(request.text)) return { outcome: "unknown", executed: true, reason: "The observed ChatGPT user message does not match the prompt" };
-      return { outcome: "completed", executed: true, chatgpt: { op: "send", userMessageId: userMessageId(turns[0], 1), path: location.pathname.slice(0, 2048) } };
+      // Prefer a hydrated message ID; reads also accept the ordinal if it appears later.
+      const sent = () => userTurns()[0] ?? turns[0];
+      for (let hydrate = 0; hydrate < 5 && userMessageId(sent(), 1).startsWith("ordinal:"); hydrate++) await delay(200);
+      return { outcome: "completed", executed: true, chatgpt: { op: "send", userMessageId: userMessageId(sent(), 1), path: location.pathname.slice(0, 2048) } };
     }
     await delay(200);
   }

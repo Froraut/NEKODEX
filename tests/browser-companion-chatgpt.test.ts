@@ -159,6 +159,35 @@ test("an answer that becomes unobservable after the send is held, not resent", a
   } finally { await f.close(); }
 });
 
+test("an in-flight companion turn stays engaged through Unbind, and a busy slot refuses before the send fence", async () => {
+  const f = await companion();
+  try {
+    const transport = createCompanionChatGptTransport({ host: () => f.host, timing: fast });
+    await transport.bind({ modelId: "gpt-5.6-sol", reasoning: "max" });
+    f.page.answerAfterReads = 5;
+    const running = transport.port.run(turn().turn);
+    while (!f.commands.some(command => command.chatgpt?.op === "read")) await new Promise(resolve => setTimeout(resolve, 5));
+    transport.unbind();
+    // No later admission may pick the embedded sender while this send is still settling.
+    expect(transport.port.engaged()).toBe(true);
+    expect(transport.status().state).toBe("sending");
+    await expect(transport.port.run(turn().turn)).rejects.toMatchObject({ code: "companion_busy" });
+    expect(await running).toBe("Hello from **ChatGPT**");
+    expect(transport.port.engaged()).toBe(false);
+    // Another approved operation owns the host slot: refused before onSendActivated.
+    await transport.bind({ modelId: "gpt-5.6-sol", reasoning: "max" });
+    const previous = f.setHandler(command => command.kind === "observe" ? "drop" : previous(command));
+    const observing = new AbortController();
+    const observe = f.host.observe(f.host.status().selected!, observing.signal);
+    while (!f.commands.some(command => command.kind === "observe")) await new Promise(resolve => setTimeout(resolve, 5));
+    const busy = turn();
+    await expect(transport.port.run(busy.turn)).rejects.toMatchObject({ code: "companion_busy" });
+    expect(busy.calls.activated).toBe(0);
+    observing.abort(); expect((await observe).outcome).toBe("unknown");
+    expect(f.page.sends).toBe(1);
+  } finally { await f.close(); }
+});
+
 test("account, tab, model and turn mismatches are refused before anything is sent", async () => {
   const f = await companion();
   try {

@@ -307,16 +307,23 @@ account tunnel, retained or resumed conversations, compaction, Luna checkpoints.
 After `prepare()`, images, files, skill files, multipart context and prompts over
 200,000 characters are refused. These are `409` non-retryable adapter errors.
 
-**Send.** `onSendActivated` runs before the command is queued, so the existing turn
-runtime treats the prompt as never replayable from that point. The page function
+**Send.** Abort, listener, busy-slot and exact-anchor checks run before
+`onSendActivated`; the anchor is checked again synchronously with queueing, and
+pre-dispatch refusals keep their own codes. `onSendActivated` runs before the
+command is queued, so the existing turn runtime treats the prompt as never
+replayable from that point. An in-flight companion turn keeps the port engaged even
+if Unbind, revoke or Disable runs meanwhile, so no later admission can start the
+embedded sender beside it. The page function
 re-checks the account digest and visible model label, requires a visible tab, an
 empty new chat at `/` with no turns and no active generation, inserts the text with
 the same editing command the embedded worker uses, requires whitespace-normalized
 composer readback, waits for exactly one enabled send control and clicks it once.
 It then waits for exactly one user turn whose text matches the prompt and returns
-its message ID (or `ordinal:1` when the renderer exposes none). Failures before the
-click are `rejected`, executed false (the session tab stays alive for a corrected
-turn); anything after the click without that proof is `unknown`.
+its message ID, waiting briefly for it to hydrate, or `ordinal:1`. Because send
+required an empty new chat, reads keep matching that ordinal after a later ID
+hydration. Failures before the click are `rejected`, executed false, and remove the
+extension's own draft (the session tab stays alive for a corrected turn); anything
+after the click without that proof is `unknown`.
 
 **Settlement.** `read` operations never click and may run while the tab is in the
 background. The leaf polls the answer root that follows the sent user message and

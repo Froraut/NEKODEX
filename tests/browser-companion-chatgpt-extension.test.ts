@@ -15,14 +15,16 @@ send.addEventListener("click", () => {
   window.fixtureSends++;
   const text = field.innerText; field.textContent = ""; send.disabled = true;
   history.pushState(null, "", "/c/fixture-conversation");
-  thread.insertAdjacentHTML("beforeend", '<article data-testid="conversation-turn-1" data-turn="user"><div data-message-author-role="user" data-message-id="user-1"></div></article>');
-  thread.querySelector('[data-message-id="user-1"]').textContent = text;
+  // The message ID hydrates only after send has returned: reads must keep the ordinal identity.
+  thread.insertAdjacentHTML("beforeend", '<article data-testid="conversation-turn-1" data-turn="user"><div data-message-author-role="user"></div></article>');
+  const user = thread.querySelector('[data-message-author-role="user"]'); user.textContent = text;
+  setTimeout(() => user.setAttribute("data-message-id", "user-1"), 1500);
   const stop = document.createElement("button"); stop.type = "button"; stop.dataset.testid = "stop-button"; stop.textContent = "Stop";
   document.querySelector("form").append(stop);
   setTimeout(() => {
     thread.insertAdjacentHTML("beforeend", '<article data-testid="conversation-turn-2" data-turn="assistant"><div data-message-author-role="assistant" data-message-id="assistant-1"><div class="markdown"><p>Fixture <strong>answer</strong></p></div></div><button data-testid="copy-turn-action-button">Copy</button></article>');
     stop.remove();
-  }, 400);
+  }, 2000);
 });
 </script>`;
 
@@ -45,7 +47,7 @@ test("actual MV3 extension binds a ChatGPT-shaped document, sends once and reads
     expect(deltas).toEqual(["Fixture **answer**"]);
     expect(await page.evaluate(() => (window as unknown as { fixtureSends: number }).fixtureSends)).toBe(1);
     expect(await page.locator('[data-message-author-role="user"]').allInnerTexts()).toEqual(["Reply with the fixture answer"]);
-    expect(runtime.status().chatGpt.lastTurn).toMatchObject({ userMessageId: "message:user-1", assistantMessageId: "message:assistant-1", path: "/c/fixture-conversation" });
+    expect(runtime.status().chatGpt.lastTurn).toMatchObject({ userMessageId: "ordinal:1", assistantMessageId: "message:assistant-1", path: "/c/fixture-conversation" });
     // The conversation is no longer a new chat: a further turn is refused by the page, never typed.
     await expect(runtime.chatGptTransport().run({ ...turn, traceId: "trace-mv3-chatgpt-2" })).rejects.toMatchObject({ code: "companion_send_refused" });
     expect(await page.evaluate(() => (window as unknown as { fixtureSends: number }).fixtureSends)).toBe(1);
