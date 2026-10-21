@@ -33,6 +33,7 @@ import {
   chatGptNewTurnIdentity,
   chatGptReboundTurnIdentity,
   chatGptStagedBaselineIdentities,
+  chatGptExchangeIdentities,
   chatGptSubmissionEvidence,
   promptEquivalentPrefixLength,
   promptTextEquivalent,
@@ -394,6 +395,8 @@ export function readChatGptUserMessage(
 
 interface ChatGptSubmissionBaseline {
   initialTurnIdentities: readonly string[];
+  /** Earlier acknowledged exchanges that may be unmounted now; see chatGptNewTurnIdentity. */
+  historicalTurnIdentities?: readonly string[];
   initialGenerationRunning?: boolean;
   acknowledgedStages?: readonly string[];
   domCache: ChatGptSubmissionDomCache;
@@ -1002,16 +1005,17 @@ export class ChatGptBrowserWorker {
     signal?: AbortSignal,
   ): Promise<ChatGptSubmissionEvidence | undefined> {
     const state = await submissionDomState(page, baseline.domCache, signal);
-    baseline.initialTurnIdentities = chatGptStagedBaselineIdentities(baseline.initialTurnIdentities, baseline.acknowledgedStages, state.acknowledgementTurns);
+    baseline.historicalTurnIdentities = chatGptStagedBaselineIdentities(baseline.historicalTurnIdentities ?? [], baseline.acknowledgedStages, state.acknowledgementTurns);
     const evidence = chatGptSubmissionEvidence({
       initialTurnIdentities: baseline.initialTurnIdentities,
+      historicalTurnIdentities: baseline.historicalTurnIdentities,
       userIdentities: state.userIdentities,
       responseIdentities: state.responseIdentities,
       // A pre-existing Stop control belongs to earlier work, not this send.
       generationRunning: state.visibleStopButtonCount > 0 && !baseline.initialGenerationRunning,
     });
     if (evidence === "user_turn") {
-      const identity = chatGptNewTurnIdentity(baseline.initialTurnIdentities, state.userIdentities)!;
+      const identity = chatGptNewTurnIdentity(baseline.initialTurnIdentities, state.userIdentities, baseline.historicalTurnIdentities)!;
       if (baseline.acceptedUserIdentity && baseline.acceptedUserIdentity !== identity) {
         throw new Error("ChatGPT changed the user turn that acknowledged the submission");
       }
@@ -1026,10 +1030,11 @@ export class ChatGptBrowserWorker {
     signal?: AbortSignal,
   ): Promise<string> {
     const state = await submissionDomState(page, baseline.domCache, signal);
-    baseline.initialTurnIdentities = chatGptStagedBaselineIdentities(baseline.initialTurnIdentities, baseline.acknowledgedStages, state.acknowledgementTurns);
+    baseline.historicalTurnIdentities = chatGptStagedBaselineIdentities(baseline.historicalTurnIdentities ?? [], baseline.acknowledgedStages, state.acknowledgementTurns);
     const identity = chatGptNewTurnIdentity(
       baseline.initialTurnIdentities,
       state.responseIdentities,
+      baseline.historicalTurnIdentities,
     );
     if (!identity) return "";
     const locator = chatGptTurnLocator(page, identity);
@@ -1139,7 +1144,7 @@ export class ChatGptBrowserWorker {
       }
       recoveryAttempts = 0;
       liveProbeWaits = 0;
-      observationBaseline.initialTurnIdentities = chatGptStagedBaselineIdentities(observationBaseline.initialTurnIdentities, observationBaseline.acknowledgedStages, state.acknowledgementTurns);
+      observationBaseline.historicalTurnIdentities = chatGptStagedBaselineIdentities(observationBaseline.historicalTurnIdentities ?? [], observationBaseline.acknowledgedStages, state.acknowledgementTurns);
       // A tool batch can arrive while the DOM probe is in flight. Read progress again before
       // acknowledging its boundary; the pre-probe snapshot can otherwise leave the broker waiting
       // despite this exact iteration having successfully observed the page.
@@ -1147,6 +1152,7 @@ export class ChatGptBrowserWorker {
       const identity = chatGptNewTurnIdentity(
         observationBaseline.initialTurnIdentities,
         state.responseIdentities,
+        observationBaseline.historicalTurnIdentities,
       );
       if (progress
         && externalProgress
@@ -1204,13 +1210,15 @@ export class ChatGptBrowserWorker {
       throw new Error(`ChatGPT exposed ${boundCount} DOM nodes for the bound assistant turn`);
     }
     const state = await submissionDomState(page, baseline.domCache, signal);
-    baseline.initialTurnIdentities = chatGptStagedBaselineIdentities(baseline.initialTurnIdentities, baseline.acknowledgedStages, state.acknowledgementTurns);
-    const acceptedTurns = new Set(binding.acceptedTurnIdentities);
+    baseline.historicalTurnIdentities = chatGptStagedBaselineIdentities(baseline.historicalTurnIdentities ?? [], baseline.acknowledgedStages, state.acknowledgementTurns);
+    // A remounted earlier context stage is not another user turn.
+    const acceptedTurns = new Set([...binding.acceptedTurnIdentities, ...(baseline.historicalTurnIdentities ?? [])]);
     const hasNewUserTurn = state.userIdentities.some(identity => !acceptedTurns.has(identity));
     const identity = chatGptReboundTurnIdentity(
       baseline.initialTurnIdentities,
       binding.identity,
       state.responseIdentities,
+      baseline.historicalTurnIdentities,
     );
     if (hasNewUserTurn && !allowMcpContinuationUserTurn) {
       const newUsers = state.userIdentities.filter(user => !acceptedTurns.has(user));
@@ -2855,6 +2863,9 @@ export class ChatGptBrowserWorker {
       await diagnostics.capture(page, "effort-selection-complete");
 
       let finalPrompt = prepared.text;
+      // Exchanges proven when each earlier stage was acknowledged. A saved-chat virtualizer can
+      // unmount and remount them, so later baselines must not depend on them being mounted.
+      const acknowledgedStageIdentities = new Set<string>();
       if (prepared.multipart && multipartStages && multipartTransactionId && multipartFinalPrompt) {
         for (let index = 0; index < multipartStages.length; index += 1) {
           // ChatGPT may rewrite or reset the effort control after accepting a staged message. Reopen
@@ -2889,6 +2900,8 @@ export class ChatGptBrowserWorker {
           }
           const stage = multipartStages[index]!;
           let stageBaseline = await this.captureSubmissionBaseline(page, stage.text, turn.abortSignal);
+          stageBaseline.historicalTurnIdentities = [...acknowledgedStageIdentities];
+          stageBaseline.acknowledgedStages = multipartStages.slice(0, index).map(earlier => earlier.acknowledgement);
           await runBrowserStage(
             turn.traceId,
             `multipart_stage_${index + 1}_attachment`,
@@ -2971,6 +2984,7 @@ export class ChatGptBrowserWorker {
                 acknowledgementSignal,
                 turn.externalProgress,
               );
+              for (const identity of chatGptExchangeIdentities(responseTurn.identity)) acknowledgedStageIdentities.add(identity);
             },
           );
           const stageRejection = await submissionRejection.failure();
@@ -3006,6 +3020,7 @@ export class ChatGptBrowserWorker {
 
       let submissionBaseline = await this.captureSubmissionBaseline(page, finalPrompt, turn.abortSignal, prepared.turnToken);
       submissionBaseline.acknowledgedStages = multipartStages?.map(stage => stage.acknowledgement);
+      if (acknowledgedStageIdentities.size) submissionBaseline.historicalTurnIdentities = [...acknowledgedStageIdentities];
       let catalogRefreshAvailable = mode.localTools && !reuseConversation && !prepared.multipart;
       const connectorAttemptBudget: ChatGptConnectorAttemptBudget = { triggerAttempts: 0 };
       for (;;) {
