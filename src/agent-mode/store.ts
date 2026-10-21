@@ -269,7 +269,7 @@ export class AgentModeStore {
     });
   }
   listDispatchDispositions(taskId: string): AgentDispatchDisposition[] {
-    return this.listReceipts(taskId).filter(row => row.kind === "dispatch_disposition").map(row => row.body as AgentDispatchDisposition);
+    return (this.db.query("SELECT body FROM agent_receipts WHERE taskId=? AND kind='dispatch_disposition' ORDER BY rowid").all(taskId) as { body: string }[]).map(row => JSON.parse(row.body) as AgentDispatchDisposition);
   }
   /**
    * Records the user's outcome for one unknown send of a stopped task with no owner or Loop run. It sends and
