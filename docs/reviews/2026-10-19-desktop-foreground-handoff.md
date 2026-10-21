@@ -27,6 +27,32 @@ A separate compiled Cocoa fixture has a mouse-only purple NSView with AXImage ro
 
 Local raw evidence is under `/Users/alex/Documents/ChatGPT/Nekodex/reviews/evidence/native-integrated-20261019/`: `foreground-permissions-preflight.json`, `foreground-ui-fixture/owner.json` and events, retained Cocoa source, `foreground-observe-completion.json` and successful `foreground-driver-evidence/6fad17ec-26e3-4e08-8951-fbddd2bac1e8/`. The driver uses the real StandaloneMcpHost and ToolJournal with a synthetic exact QA task,0model offers, no service socket and no automatic subsequent call.
 
+## P13 live acceptance finding (2026-10-21, macOS 27.2)
+
+Two defects blocked the generic CG pixel click in the live P13 run. Raw evidence is under `/Users/alex/Documents/ChatGPT/Nekodex/reviews/evidence/native-integrated-20261019/p13-cg-click-20261021/`.
+
+**Stacking check refused every pixel click.** `pixelTarget` accepted only when the first on-screen CG window containing the point with alpha > 0 was the selected window. On macOS 27 the Dock always owns a full-screen layer-20 window (0,0,1728,1117, alpha 1) that does not intercept input. While its toolbar is open, screencaptureui adds a full-screen layer-24 "Screenshot" window too. In attempt 3 (task `354c7709`), observe with `waitForForeground` passed. The click was then refused with `pixel-target-occluded-or-changed`, although the fixture was frontmost and visibly unobstructed. At the click point (708,374), the stack was Screenshot (24), Dock (20), then the fixture (0). CG has no public key that marks a window as not intercepting input, so CG ordering alone cannot tell these overlays from a real covering surface.
+
+The fix makes real Accessibility hit-testing the authority. `AXUIElementCopyElementAtPosition` on the system-wide element, with a 1-second messaging timeout, must return an element of the selected PID. Its parent chain must reach the exact retained AX window (`CFEqual` with the selected AX reference), and its `AXWindow` attribute must agree when the element reports one. The chain must not pass through a sheet, menu, menu bar or menu bar item, drawer, popover or the application element. CG remains a second, conservative check. Any layer-0 window stacked above the selected window at the point is still refused, and so is any window of the selected PID at any layer. The selected window must contain the point. Other processes' non-zero-layer overlays are left to AX. The held-mouse-button check is unchanged. The whole check still runs immediately before dispatch, after the final `inputOwner`; the CG and button reads come last because they are cheaper and change faster. A failed or timed-out hit test refuses with `pixel-target-hit-test-mismatch` or `pixel-target-hit-test-unavailable`. One consequence is conservative: a click over a cross-process remote view embedded in the window, which reports another PID, is refused rather than allowed.
+
+Local hit-test-only validation on 2026-10-21 ran the helper's actual `pixelTarget` code, compiled with a harness, against the running fixture window (PID 24365, frame 584,206,560,312). The Screenshot (24) and Dock (20) overlays were present. No click or other input was sent to the fixture or NEKODEX. The development helper compiled with `scripts/build-desktop-helper.cjs --development` has SHA-256 `026079521ba576ff166721a4036a6856234174f54e61cc1109fcabd9a5653bb6`. Focused desktop controller and native transport tests passed: 19 tests, 232 assertions, Bun 1.4.3, including the compiled helper's passive status case.
+
+| Point / condition | Previous CG-first result | New result |
+| --- | --- | --- |
+| Purple view (708,374), Dock + Screenshot overlays only | `pixel-target-occluded-or-changed` | pass (AX: fixture `AXImage`, window equal) |
+| Title bar (700,215) | `pixel-target-occluded-or-changed` | pass (AX hit is the selected `AXWindow` itself) |
+| Outside the window (500,600), ChatGPT beneath | refused | `pixel-target-hit-test-mismatch` |
+| Menu bar (100,10), fixture's own menu bar item | refused | `pixel-target-hit-test-mismatch` |
+| Dock item (864,1105) | refused | `pixel-target-hit-test-mismatch` |
+| Separate-process 40x40 overlay at layer 0, accepting mouse | refused | `pixel-target-hit-test-mismatch` |
+| Same overlay at layer 3, accepting mouse (CG would skip it) | refused | `pixel-target-hit-test-mismatch` |
+| Same overlay at layer 3 or 20 with `ignoresMouseEvents` | refused | pass |
+| Same overlay at layer 0 with `ignoresMouseEvents` | refused | `pixel-target-occluded-or-changed` (conservative CG rule) |
+
+Synthetic CG stacks gave the expected results: overlays only → unobstructed; another app's layer-0 window → refused; a same-PID layer-101 window → refused; selected window missing or with another PID → refused. This is hit-test evidence only. A positive live CG dispatch and counter change still need a new P13 run.
+
+**Background observe followed by foreground input could never pass.** In attempt 1 (`acceptance-attempt1.json`), observe ran without `waitForForeground` while the fixture was inactive, and click then ran with it. After the handoff, the fresh capture shows active window chrome, so its PNG SHA can never equal the inactive-chrome binding. The click was refused late with `screen-or-frame-changed`, after the human had already returned the window. The tool layer now records whether each observation was itself a foreground observation. A `waitForForeground` click or type after an observe without it fails at argument validation with `observe-with-foreground-required`, before any wait, capture or native request. The observe, click and type tool descriptions name the requirement and the code. The native helper enforces the same rule as a backstop and returns a rejected receipt with that reason. It consumes the observation and does not wait.
+
 ## Delivery boundary
 
 This source batch is not the earlier installed `.9` artifact. No installer or public release asset has been produced for it. Native sign-in remains postponed by the user, and active production core work is preserved. Actual installed acceptance and the remaining desktop calls require their own evidence.

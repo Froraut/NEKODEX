@@ -77,7 +77,14 @@ window in the background and does not activate it.
 
 Generic pixel-click fallback requires the exact selected window/process already
 frontmost and focused, post-event permission, unchanged focused element and no
-intervening global input/modifier state. There are no global shortcut, keyboard
+intervening global input/modifier state. Immediately before dispatch, real AX hit-testing at
+the point must resolve to the exact retained selected AX window, not through a
+sheet, menu or popover, and without passing through another process. CG stacking
+also refuses any layer-0 window, or any selected-PID window at any layer, above the
+selected window there. Non-intercepting system overlays, such as the macOS 27
+full-screen Dock and screencaptureui layers, are left to AX. Foreground handoff
+input requires a foreground observation; otherwise it is refused as
+`observe-with-foreground-required`. There are no global shortcut, keyboard
 fallback, pasteboard, arbitrary AX attribute or arbitrary process-command APIs.
 Successful receipts establish dispatch/AX acceptance, never a clicked business
 property or verified inserted result. OS input is not an atomic transaction;

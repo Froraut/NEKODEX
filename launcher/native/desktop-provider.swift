@@ -52,6 +52,10 @@ struct Captured {
     let binding: [String: Any]; let png: Data; let resource: String; let frame: CGRect
     let lastInput: TimeInterval; let focusedElement: AXUIElement?
     let targets: [AXTarget]
+    // Set only by an observe that itself waited for the exact foreground window. Active and
+    // inactive window chrome differ, so a background screenshot can never match a fresh
+    // post-handoff capture.
+    var foregroundObserved = false
 }
 struct AXTarget {
     let element: AXUIElement; let frame: CGRect; let signature: String; let press: Bool
@@ -133,21 +137,63 @@ func lastInputTime() -> TimeInterval {
               CFGetTypeID(element) == AXUIElementGetTypeID() else { return nil }
         return (element as! AXUIElement)
     }
-    // CG's complete stacking order includes menus, sheets and nonstandard layers that
-    // the selectable normal-window inventory intentionally omits. Never send a pixel
-    // click through one of those surfaces, even when it belongs to the same PID.
+    // The selected window must own the point both by real Accessibility hit-testing and
+    // by the CG stacking order. Never send a pixel click through a menu, sheet, popover,
+    // another application's window or a nonstandard surface, even one owned by this PID.
+    //
+    // AX is the authority for system overlays: on macOS 27 the Dock keeps a full-screen
+    // layer-20 window and screencaptureui adds a layer-24 one while its toolbar is open.
+    // Neither intercepts input, and CG publishes no public "ignores mouse events" key, so
+    // a CG-only first-hit test refuses every pixel click. CG still refuses any normal
+    // layer-0 window, and any window of the selected process at any layer, stacked above
+    // the selected window at the point. This stays immediately before dispatch.
     func pixelTarget(_ row: WindowRow, point: CGPoint) throws {
+        guard AXIsProcessTrusted(), let window = selectedAX else { try reject("pixel-target-hit-test-unavailable") }
+        let system = AXUIElementCreateSystemWide()
+        _ = AXUIElementSetMessagingTimeout(system, 1.0)
+        var hit: AXUIElement?
+        guard AXUIElementCopyElementAtPosition(system, Float(point.x), Float(point.y), &hit) == .success, let hit = hit,
+              hitWindow(hit, pid: row.pid).map({ CFEqual($0, window) }) == true else { try reject("pixel-target-hit-test-mismatch") }
         guard let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]],
-              let hit = rows.first(where: { value in
-                  guard (number(value[kCGWindowAlpha as String]) ?? 1) > 0,
-                        let bounds = value[kCGWindowBounds as String] as? NSDictionary,
-                        let frame = CGRect(dictionaryRepresentation: bounds) else { return false }
-                  return frame.contains(point)
-              }), number(hit[kCGWindowNumber as String]) == Double(row.id),
-              number(hit[kCGWindowOwnerPID as String]) == Double(row.pid) else { try reject("pixel-target-occluded-or-changed") }
+              stackedAbove(rows, row: row, point: point) == false else { try reject("pixel-target-occluded-or-changed") }
         guard !CGEventSource.buttonState(.combinedSessionState, button: .left),
               !CGEventSource.buttonState(.combinedSessionState, button: .right),
               !CGEventSource.buttonState(.combinedSessionState, button: .center) else { try reject("human-mouse-button-held") }
+    }
+    // The AX window that owns a hit element, or nil when the hit is not inside a plain
+    // window of the selected process (menus, menu bar, sheets, popovers, other apps).
+    func hitWindow(_ hit: AXUIElement, pid: pid_t) -> AXUIElement? {
+        var hitPID: pid_t = 0
+        guard AXUIElementGetPid(hit, &hitPID) == .success, hitPID == pid else { return nil }
+        let refused: Set<String> = [kAXSheetRole as String, kAXMenuRole as String, kAXMenuBarRole as String, kAXMenuBarItemRole as String,
+            kAXMenuItemRole as String, kAXDrawerRole as String, kAXApplicationRole as String, "AXPopover"]
+        let declared = attribute(hit, kAXWindowAttribute as CFString)
+        var element = hit
+        for _ in 0..<64 {
+            var elementPID: pid_t = 0
+            guard AXUIElementGetPid(element, &elementPID) == .success, elementPID == pid,
+                  let role = attribute(element, kAXRoleAttribute as CFString) as? String, !refused.contains(role) else { return nil }
+            if role == (kAXWindowRole as String) {
+                if let declared = declared { guard CFGetTypeID(declared) == AXUIElementGetTypeID(), CFEqual(declared, element) else { return nil } }
+                return element
+            }
+            guard let parent = attribute(element, kAXParentAttribute as CFString), CFGetTypeID(parent) == AXUIElementGetTypeID() else { return nil }
+            element = parent as! AXUIElement
+        }
+        return nil
+    }
+    // CG rows are front-to-back. Returns nil when the selected window does not contain the
+    // point, true when a refused surface is above it there, false when it is unobstructed.
+    func stackedAbove(_ rows: [[String: Any]], row: WindowRow, point: CGPoint) -> Bool? {
+        for value in rows {
+            guard (number(value[kCGWindowAlpha as String]) ?? 1) > 0,
+                  let bounds = value[kCGWindowBounds as String] as? NSDictionary,
+                  let frame = CGRect(dictionaryRepresentation: bounds), frame.contains(point) else { continue }
+            let owner = number(value[kCGWindowOwnerPID as String])
+            if number(value[kCGWindowNumber as String]) == Double(row.id) { return owner == Double(row.pid) ? false : nil }
+            if (number(value[kCGWindowLayer as String]) ?? 0) == 0 || owner == Double(row.pid) { return true }
+        }
+        return nil
     }
     // An exact approved call may explicitly wait for a human to return this window.
     // This loop never captures, activates, accepts a caller clock or expires consent.
@@ -352,7 +398,8 @@ func lastInputTime() -> TimeInterval {
             let row = try currentWindow()
             if waits { try await waitForForeground(row) }
             let foregroundBaseline = lastInputTime()
-            let value = try await capture(try currentWindow(), scope: scope)
+            var value = try await capture(try currentWindow(), scope: scope)
+            value.foregroundObserved = waits
             if waits {
                 try inputOwner(try currentWindow(), expectedFocus: value.focusedElement, requirePostEvent: false)
                 guard value.lastInput <= foregroundBaseline + 0.005, lastInputTime() <= foregroundBaseline + 0.005 else { try reject("human-input-changed") }
@@ -382,6 +429,7 @@ func lastInputTime() -> TimeInterval {
             captured = nil // One attempt owns this observation even if later validation refuses input.
             let row = try currentWindow()
             let waits = try foregroundMode(action)
+            if waits && !original.foregroundObserved { return receipt("rejected", false, "observe-with-foreground-required") }
             if waits && !sameFrame(row.frame, original.frame) { return receipt("rejected", false, "owner-or-frame-changed") }
             if waits { try await waitForForeground(row, expectedFocus: original.focusedElement, enforceFocus: true) }
             let foregroundBaseline = lastInputTime()
