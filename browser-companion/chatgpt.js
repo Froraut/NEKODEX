@@ -80,7 +80,9 @@ export async function chatGptOperation(request) {
       : turns.findIndex((turn, position) => userMessageId(turn, position + 1) === request.userMessageId);
     // Position alone is not identity: the matched turn must still carry exactly the sent text.
     if (index >= 0 && request.textDigest && await sha256(normalize(userMessageElement(turns[index]).innerText)) !== request.textDigest) index = -1;
-    const result = { op: "read", path: location.pathname.slice(0, 2048), userTurnFound: index >= 0, generating: generating() };
+    // The user-turn count lets the host accept ChatGPT's own new-chat URL transition only while the
+    // conversation still holds exactly the one sent message.
+    const result = { op: "read", path: location.pathname.slice(0, 2048), userTurnFound: index >= 0, userTurnCount: Math.min(turns.length, 10_000), generating: generating() };
     if (request.verifyAccount) { const digest = await account(); if (digest) result.account = digest; }
     if (index < 0) return { outcome: "completed", executed: false, chatgpt: result };
     const anchor = userMessageElement(turns[index]);

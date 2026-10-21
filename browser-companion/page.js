@@ -13,7 +13,12 @@ export function pageOperation(request) {
     for (const event of events) addEventListener(event, human, true);
     const observer = new MutationObserver(invalidate);
     observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
-    state.dispose = () => { observer.disconnect(); for (const event of events) removeEventListener(event, human, true); };
+    // When the document last became hidden. Hiding (occlusion, tab switch, minimize) never
+    // invalidates an observation by itself; the act-time check below decides what it means.
+    state.hiddenAt = document.visibilityState === "visible" ? null : Date.now();
+    const visibility = () => { state.hiddenAt = document.visibilityState === "visible" ? null : Date.now(); };
+    document.addEventListener("visibilitychange", visibility, true);
+    state.dispose = () => { observer.disconnect(); document.removeEventListener("visibilitychange", visibility, true); for (const event of events) removeEventListener(event, human, true); };
     state.observer = observer;
     globalThis[key] = state;
   }
@@ -23,13 +28,20 @@ export function pageOperation(request) {
   // authority on the new URL: another action requires an explicit Select there.
   // MutationObserver callbacks run after this task; inspect queued records before input too.
   if (state.observer.takeRecords().length) state.revision++;
+  // macOS Chrome reports a fully occluded window (for example behind NEKODEX while the human
+  // approves the exact call) as `hidden`. The dispatcher passes `shownAt` only after it confirmed
+  // this tab is still the active tab of its non-minimized window; hiddenness that began before
+  // that check is occlusion. Hiding after it (a tab switch racing the call) still refuses.
+  const visible = document.visibilityState === "visible";
+  const shown = visible || (Number.isFinite(request.shownAt) && state.hiddenAt !== null && state.hiddenAt < request.shownAt);
   if (request.kind === "validate") {
     return request.observationId === state.observationId && state.observationRevision === state.revision && document.visibilityState === "visible"
       ? { outcome: "completed", executed: false }
       : { outcome: "rejected", executed: false, reason: "Observation changed during capture" };
   }
   if (request.kind === "act") {
-    if (request.observationId !== state.observationId || state.observationRevision !== state.revision || document.visibilityState !== "visible") return { outcome: "rejected", executed: false, reason: "Observation is stale or the tab is hidden; obtain a fresh observation" };
+    if (request.observationId !== state.observationId || state.observationRevision !== state.revision) return { outcome: "rejected", executed: false, reason: "Observation is stale; obtain a fresh observation" };
+    if (!shown) return { outcome: "rejected", executed: false, reason: "Selected tab is hidden or was switched away from; show it and obtain a fresh observation" };
     const element = state.refs.get(request.action?.ref);
     if (!element?.isConnected || element.disabled || element.readOnly || element.matches('input[type="password"], input[type="file"], input[type="hidden"], [aria-disabled="true"]')) return { outcome: "rejected", executed: false, reason: "Observed element is unavailable" };
     const rect = element.getBoundingClientRect();
@@ -67,7 +79,7 @@ export function pageOperation(request) {
     } catch { return { outcome: "unknown", executed: true, reason: "Input began but no terminal execution receipt is available" }; }
   }
   if (!["observe", "select"].includes(request.kind)) return { outcome: "rejected", executed: false, reason: "Unsupported operation" };
-  if (document.visibilityState !== "visible") return { outcome: "rejected", executed: false, reason: "Selected tab must be visible" };
+  if (!shown) return { outcome: "rejected", executed: false, reason: "Selected tab must be visible" };
   state.refs.clear();
   const refs = [];
   for (const element of document.querySelectorAll('button,a[href],input:not([type="password"]):not([type="file"]):not([type="hidden"]),textarea,[contenteditable="true"],[contenteditable="plaintext-only"],[role="button"]')) {
@@ -80,7 +92,7 @@ export function pageOperation(request) {
     state.refs.set(ref, element); refs.push({ ref, role, label });
   }
   state.observationId = crypto.randomUUID(); state.observationRevision = state.revision;
-  return { outcome: "completed", executed: false, snapshot: {
+  return { outcome: "completed", executed: false, ...(visible ? {} : { occluded: true }), snapshot: {
     documentEpoch: state.epoch, observationId: state.observationId, url: location.href,
     title: document.title.slice(0, 512), text: (document.body?.innerText || "").slice(0, 16_000), refs,
   } };

@@ -1,7 +1,7 @@
 export const ORIGIN = "http://127.0.0.1:17843";
 export const extensionApi = globalThis.browser ?? globalThis.chrome;
 /** Bundled operation families this build can execute; the host refuses others before queueing. */
-export const COMPANION_FEATURES = ["chatgpt-v1"];
+export const COMPANION_FEATURES = ["chatgpt-v1", "chatgpt-turns-v1"];
 export async function companionRequest(credentials, route, payload = {}, signal) {
   const response = await fetch(`${ORIGIN}/v1/companion/${route}`, { method: "POST", redirect: "error", cache: "no-store",
     headers: { "content-type": "application/json", ...(credentials?.token ? { authorization: `Bearer ${credentials.token}` } : {}) },

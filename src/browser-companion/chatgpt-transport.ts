@@ -7,7 +7,7 @@ import { chatGptHtmlToMarkdown } from "../adapters/chatgpt-web/markdown";
 import { CHATGPT_WEB_LUNA_MODEL_ID, CHATGPT_WEB_MODEL_ID } from "../adapters/chatgpt-web/model";
 import type { BrowserCompanionHost } from "./host";
 import {
-  CHATGPT_COMPANION_MAX_PROMPT_CHARS, COMPANION_CHATGPT_FEATURE, browserBindingOf,
+  CHATGPT_COMPANION_MAX_PROMPT_CHARS, COMPANION_CHATGPT_FEATURE, COMPANION_CHATGPT_TURNS_FEATURE, browserBindingOf,
   type BrowserBinding, type ChatGptCompanionResult, type CompanionReceipt,
 } from "./protocol";
 
@@ -55,6 +55,9 @@ function heldError(message: string, code = "companion_outcome_unknown"): ChatGpt
   return new ChatGptWebAdapterError(message, { status: 502, errorType: "api_error", code, retryable: false });
 }
 const aborted = () => new DOMException("ChatGPT web turn aborted", "AbortError");
+/** ChatGPT's client-side id for a conversation it is still creating (`/c/local-chatgpt:<uuid>`). */
+const PROVISIONAL_CONVERSATION = /^\/c\/local-chatgpt(?::|%3A)[A-Za-z0-9_-]{1,120}$/i;
+const SAVED_CONVERSATION = /^\/c\/[A-Za-z0-9_-]{1,120}$/;
 
 /**
  * Companion ChatGPT transport leaf. `ChatGptBrowserWorker.run` admits each turn and keeps its
@@ -167,7 +170,10 @@ export function createCompanionChatGptTransport(options: ChatGptCompanionTranspo
         if (options.host() !== host) throw refused("The browser companion listener changed; bind the ChatGPT tab again", "companion_unavailable");
         if (host.status().operation) throw refused("Another companion operation owns the selected tab; nothing was sent", "companion_busy");
         // A concurrent approved observation may have advanced the anchor's observation ID.
-        return currentAnchor(host, current.document);
+        const anchor = currentAnchor(host, current.document);
+        // Settlement follows the new chat to its own URL only with the page's user-turn count.
+        if (!host.status().features.includes(COMPANION_CHATGPT_TURNS_FEATURE)) throw refused("The selected companion extension cannot follow a new ChatGPT conversation; update it and select the tab again. Nothing was sent.", "companion_extension_outdated");
+        return anchor;
       };
       preflight();
       // Dispatching the command is the ambiguity boundary: from here the prompt is never replayed.
@@ -206,14 +212,19 @@ export function createCompanionChatGptTransport(options: ChatGptCompanionTranspo
 
   async function awaitAnswer(host: BrowserCompanionHost, current: Bound, userMessageId: string, operationId: string, turn: BrowserTurn, textDigest: string, sentPath: string) {
     const deadline = now() + timing.responseMs;
-    // The first saved-conversation path observed for this send is pinned; any later change
-    // (same-document navigation to another chat) makes the answer unobservable, never rebound.
-    let conversationPath = sentPath.startsWith("/c/") ? sentPath : undefined;
+    // Send ran in an empty new chat ("/"). ChatGPT then moves that same document to the
+    // conversation it creates: "/" -> optionally "/c/local-chatgpt:<uuid>" -> "/c/<id>". Each step
+    // forward is accepted once, and only while the page shows exactly the one sent user turn. The
+    // first saved-conversation path is then pinned; any other change (another chat, a project, back
+    // to a new chat) makes the answer unobservable, never rebound.
+    let conversationPath = SAVED_CONVERSATION.test(sentPath) && !PROVISIONAL_CONVERSATION.test(sentPath) ? sentPath : undefined;
+    let creatingPath = conversationPath ? undefined : sentPath === "/" || PROVISIONAL_CONVERSATION.test(sentPath) ? sentPath : undefined;
     let previous: string | undefined, stable = 0;
     const hold = (reason: string): never => {
       held = { operationId, stage: "response", reason, heldAt: now(), userMessageId };
       throw heldError(`ChatGPT accepted the companion message, but its answer could not be observed: ${reason}. The message is not resent.`, "companion_response_unobserved");
     };
+    if (!conversationPath && !creatingPath) return hold("the bound tab left the new conversation");
     while (true) {
       if (turn.abortSignal?.aborted) throw aborted();
       if (now() > deadline) hold("response deadline elapsed");
@@ -239,9 +250,17 @@ export function createCompanionChatGptTransport(options: ChatGptCompanionTranspo
       const read = result(receipt, "read");
       if (!read) return hold(receipt.reason ?? `read ${receipt.outcome}`);
       if (!read.userTurnFound) return hold("the sent message is no longer in the bound conversation");
-      if (conversationPath && read.path !== conversationPath) return hold("the bound tab navigated to another conversation");
-      if (!conversationPath && read.path.startsWith("/c/")) conversationPath = read.path;
-      else if (!conversationPath && read.path !== "/") return hold("the bound tab left the new conversation");
+      if (conversationPath) {
+        if (read.path !== conversationPath) return hold("the bound tab navigated to another conversation");
+      } else if (read.path !== creatingPath) {
+        const provisional = PROVISIONAL_CONVERSATION.test(read.path);
+        const forward = provisional ? creatingPath === "/" : SAVED_CONVERSATION.test(read.path);
+        if (!forward) return hold(read.path.startsWith("/c/") ? "the bound tab navigated to another conversation" : "the bound tab left the new conversation");
+        // Its own new conversation holds exactly the sent user turn (matched above by digest).
+        if (read.userTurnCount !== 1) return hold("the bound tab navigated to another conversation");
+        if (provisional) creatingPath = read.path;
+        else { conversationPath = read.path; creatingPath = undefined; }
+      }
       turn.onHeartbeat?.();
       const assistant = read.assistant;
       if (assistant?.truncated) return hold("the answer exceeds the companion transport size limit");

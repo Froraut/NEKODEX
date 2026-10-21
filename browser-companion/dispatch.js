@@ -29,6 +29,14 @@ export function createCompanionDispatcher(api, { capture = false } = {}) {
     const tabs = await api.tabs.query({ active: true, windowId: binding.windowId });
     return tabs.length === 1 && tabs[0].id === binding.tabId;
   }
+  /** Active-tab proof for observe/input. `shownAt` (taken before the check) lets the page treat
+   * hiddenness that already existed as window occlusion; never for a minimized/unknown window. */
+  async function foreground() {
+    const shownAt = Date.now();
+    const [active, window] = await Promise.all([selectedActive(), api.windows?.get ? api.windows.get(binding.windowId).catch(() => undefined) : undefined]);
+    if (!active) return undefined;
+    return window && window.id === binding.windowId && window.state !== "minimized" ? { shownAt } : {};
+  }
   async function screenshot(snapshot, includeImage) {
     if (!includeImage || !capture || !api.tabs.captureVisibleTab) return undefined;
     if (!(await selectedActive())) throw new Error("Selected tab changed before capture");
@@ -75,13 +83,16 @@ export function createCompanionDispatcher(api, { capture = false } = {}) {
       if (command.kind === "chatgpt") return executeChatGpt(command);
       let injected = false;
       try {
-        if (!(await selectedActive())) return { outcome: "rejected", executed: false, reason: "Selected tab is no longer active in its window" };
+        const shown = await foreground();
+        if (!shown) return { outcome: "rejected", executed: false, reason: "Selected tab is no longer active in its window" };
         injected = true;
-        const row = await inject({ kind: command.kind, ...binding, action: command.action, operationId: command.operationId });
+        const row = await inject({ kind: command.kind, ...binding, action: command.action, operationId: command.operationId, ...shown });
         const result = row.result;
         if (!result || !["completed", "rejected", "unknown"].includes(result.outcome)) throw new Error("Missing terminal document receipt");
+        const occluded = result.occluded === true; delete result.occluded;
         if (result.snapshot) {
-          const image = await screenshot(result.snapshot, command.includeImage === true);
+          // An occluded window has no trustworthy visible pixels: return the text observation only.
+          const image = occluded ? undefined : await screenshot(result.snapshot, command.includeImage === true);
           result.observation = { kind: "browser", ...binding, ...result.snapshot, ...(image ? { screenshot: image } : {}) };
           delete result.snapshot;
           binding.observationId = result.observation.observationId;
