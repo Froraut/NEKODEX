@@ -77,6 +77,16 @@ grants nothing. The disclaimed helper:
   supervisor's original parent (the Bun owner), failing closed if either
   changed or cannot be read.
 
+"Self-responsible" means the full responsibility record: the responsible pid
+*and* the responsible path must be the helper's own canonical executable. On
+6.1.33-nekodex.8 under macOS 27 the record for the Bun daemon and the helper
+named their own pid but `/Applications/NEKODEX.app/Contents/MacOS/NEKODEX` as
+path; tccd judges that path, so screen capture was evaluated for
+`dev.codexwebgpt.launcher` and stayed false while the helper's Accessibility and
+post-event grants (evaluated for the accessing helper) read true. A pid-only
+check had skipped the disclaim. The helper reads the record with
+`responsibility_get_responsible_for_pid` and disclaims unless both match.
+
 TCC then keys the client as the bundle identifier
 `dev.nekodex.desktop-provider.v1` with the designated requirement
 `identifier "dev.nekodex.desktop-provider.v1" and anchor apple generic and …

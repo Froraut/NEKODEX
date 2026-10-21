@@ -18,7 +18,7 @@ let maximumImageBytes = 8 * 1024 * 1024
 let helperBundleIdentifier = "dev.nekodex.desktop-provider.v1"
 let helperStageKey = "NEKODEX_DESKTOP_HELPER_STAGE"
 let disclaimedStage = ProcessInfo.processInfo.environment[helperStageKey] == "disclaimed"
-typealias ResponsibleForPid = @convention(c) (pid_t) -> pid_t
+typealias ResponsibleForPid = @convention(c) (pid_t, UnsafeMutablePointer<pid_t>, UnsafeMutablePointer<UInt64>, UnsafeMutablePointer<Int>, UnsafeMutablePointer<CChar>) -> Int32
 typealias SpawnAttributesSetDisclaim = @convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>, Int32) -> Int32
 // libsystem's responsibility calls have no public header; resolve them without linking so a
 // missing symbol leaves inherited attribution, which status reports, instead of failing to load.
@@ -26,7 +26,17 @@ func systemSymbol<T>(_ name: String, as type: T.Type) -> T? {
     guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), name) else { return nil }
     return unsafeBitCast(symbol, to: type)
 }
-func responsibleProcess(_ pid: pid_t) -> pid_t? { systemSymbol("responsibility_get_pid_responsible_for_pid", as: ResponsibleForPid.self).map { $0(pid) } }
+/// The full responsibility record. TCC judges the responsible *path*, which can name another
+/// app while the responsible pid is the process itself (observed for the Bun runtime and the
+/// helper under NEKODEX 6.1.33-nekodex.8 on macOS 27), so the pid alone proves nothing.
+func responsibleProcess(_ pid: pid_t) -> (pid: pid_t, path: String)? {
+    guard let query = systemSymbol("responsibility_get_responsible_for_pid", as: ResponsibleForPid.self) else { return nil }
+    var responsible: pid_t = 0; var unique: UInt64 = 0
+    var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN)); var length = buffer.count
+    guard query(pid, &responsible, &unique, &length, &buffer) == 0, responsible > 0, length > 0, length <= buffer.count else { return nil }
+    buffer[buffer.count - 1] = 0
+    return (responsible, String(cString: buffer))
+}
 func parentProcess(_ pid: pid_t) -> pid_t? {
     guard pid > 0 else { return nil }
     var info = proc_bsdinfo(); let expected = Int32(MemoryLayout<proc_bsdinfo>.size)
@@ -63,7 +73,10 @@ func userConfirmedEnable() -> Bool {
         "Don't Allow" as CFString, "Allow" as CFString, nil, &response)
     return shown == 0 && response & 0x3 == CFOptionFlags(kCFUserNotificationAlternateResponse)
 }
-func selfResponsible() -> Bool { responsibleProcess(getpid()) == getpid() }
+func selfResponsible() -> Bool {
+    guard let record = responsibleProcess(getpid()), record.pid == getpid(), let own = ownExecutable() else { return false }
+    return canonicalPath(record.path) == own
+}
 func permissionClient() -> [String: Any] {
     let bundle = ownedHelperBundle()
     return ["selfResponsible": selfResponsible(), "bundleIdentifier": bundle?.bundleIdentifier ?? NSNull(),
