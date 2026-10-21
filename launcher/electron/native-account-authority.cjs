@@ -448,20 +448,22 @@ function createNativeAccountAuthority({ authorityHome, executable, executableSha
     catch (error) { if (error.code === 'ENOENT') return false; return true; }
   }
   /** Every removal refusal, with no intent or erase. Returns whether the profile may hold a credential. */
-  function checkRemovable({ profileId, epoch, confirmSignedIn = false } = {}) {
+  function checkRemovable({ profileId, epoch, confirmSignedIn = false, executionHeld = false } = {}) {
     uuid(profileId); uuid(epoch);
-    if (typeof confirmSignedIn !== 'boolean') throw fail('invalid_profile_removal', 'Native profile removal confirmation must be explicit');
+    if (typeof confirmSignedIn !== 'boolean' || typeof executionHeld !== 'boolean') throw fail('invalid_profile_removal', 'Native profile removal confirmation must be explicit');
     acquire(); const value = read(), profile = value.profiles.find(row => row.id === profileId && row.epoch === epoch);
     if (!profile) throw fail('unknown_profile', 'This Native profile epoch does not exist');
     if (profile.login && live.has(profile.login.id)) throw fail('native_login_busy', 'Cancel the Native device login before removing its profile');
-    if (profileOwners.has(`${profileId}:${epoch}`)) throw fail('profile_owner_busy', 'Close the Native profile execution or inventory before removing it');
+    // A precheck may tolerate only the execution lease that main closes next; inventory always refuses.
+    const lease = profileOwners.get(`${profileId}:${epoch}`);
+    if (lease && !(executionHeld && lease.kind === 'execution')) throw fail('profile_owner_busy', 'Close the Native profile execution or inventory before removing it');
     const signedIn = profileSignedIn(profile);
     if (signedIn && !confirmSignedIn) throw fail('profile_signed_in', 'This Native profile is signed in; removal requires explicit confirmation');
     return { value, signedIn };
   }
   function removeProfile({ profileId, epoch, actionId, confirmSignedIn = false } = {}) {
     uuid(actionId);
-    const { value } = checkRemovable({ profileId, epoch, confirmSignedIn });
+    const { value } = checkRemovable({ profileId, epoch, confirmSignedIn }); // Never tolerates a held lease.
     intent(value, actionId, { kind: 'remove-profile', profileId, epoch, state: 'prepared' });
     // One atomic registry write retires the row, its earlier receipts and records the intent.
     value.profiles = value.profiles.filter(row => row.id !== profileId);

@@ -284,7 +284,13 @@ test.skipIf(process.platform !== 'darwin')('profile removal refuses a held profi
   const holder = f.service.acquireProfileOwner({ ...lease, actionId: randomUUID(), kind: 'execution' });
   let error: any; try { f.service.removeProfile({ actionId: randomUUID(), ...lease, confirmSignedIn: true }); } catch (cause) { error = cause; }
   expect(error?.code).toBe('profile_owner_busy'); expect(error?.actionRecorded).toBe(false);
+  // The precheck tolerates only the execution lease main is about to close.
+  expect(() => f.service.checkRemovable({ ...lease, confirmSignedIn: true })).toThrow('Close the Native profile');
+  expect(f.service.checkRemovable({ ...lease, confirmSignedIn: true, executionHeld: true })).toEqual({ signedIn: true });
   f.service.releaseProfileOwner(holder);
+  const inventory = f.service.acquireProfileOwner({ ...lease, actionId: randomUUID(), kind: 'inventory' });
+  expect(() => f.service.checkRemovable({ ...lease, confirmSignedIn: true, executionHeld: true })).toThrow('Close the Native profile');
+  f.service.releaseProfileOwner(inventory);
   await f.service.destroy();
   let interrupted = false;
   const failing = createNativeAccountAuthorityFor(f, () => { interrupted = true; throw new Error('simulated crash after intent'); });

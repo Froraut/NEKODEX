@@ -8,8 +8,9 @@ import './surfaces/native-accounts.css';
 
 const verificationUrl = 'https://auth.openai.com/codex/device';
 const pendingStates = new Set(['prepared', 'running', 'pending', 'cancel-requested']);
-// Only these states prove no persisted CLI credential; every other removal is confirmed explicitly.
-const unsignedStates = new Set(['fresh', 'login-failed']);
+// Only an untouched fresh epoch proves no persisted CLI credential (a failed login can leave one behind);
+// every other removal is acknowledged explicitly, matching the authority's credential check.
+const unsignedStates = new Set(['fresh']);
 type Mutation = Exclude<NativeAccountsRequest, { action: 'status' | 'preview-owner-recovery' }> | NativeInventoryRequest | NativeExecutionCloseRequest;
 const recoveryPlanKey = (preview: NativeOwnerRecoveryPreview) => JSON.stringify({
   state: preview.state, reviewDigest: preview.reviewDigest, reasonCode: preview.reasonCode,

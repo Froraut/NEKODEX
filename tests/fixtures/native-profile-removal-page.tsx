@@ -5,8 +5,8 @@ import { NativeAccountsPanel } from '../../launcher/src/NativeAccountsPanel';
 import type { NativeAccountsApi, NativeAccountsSnapshot } from '../../launcher/src/native-accounts-types';
 
 const state = { requests: [] as any[], profiles: [
-  { id: '11111111-1111-4111-8111-111111111111', epoch: '22222222-2222-4222-8222-222222222222', label: 'Failed test profile', state: 'login-failed' },
-  { id: '33333333-3333-4333-8333-333333333333', epoch: '44444444-4444-4444-8444-444444444444', label: 'Signed-in profile', state: 'signed-in-checking' },
+  { id: '11111111-1111-4111-8111-111111111111', epoch: '22222222-2222-4222-8222-222222222222', label: 'Fresh test profile', state: 'fresh' },
+  { id: '33333333-3333-4333-8333-333333333333', epoch: '44444444-4444-4444-8444-444444444444', label: 'Failed login profile', state: 'login-failed' },
 ] as NativeAccountsSnapshot['profiles'], receipts: [] as NativeAccountsSnapshot['receipts'] };
 (window as any).fixture = state;
 const snapshot = (): NativeAccountsSnapshot => ({ available: true, reasonCode: null, profiles: state.profiles, activeCount: 0, executionAvailable: false, receipts: state.receipts });

@@ -114,3 +114,22 @@ test('Native profile removal refuses before side effects and retires account sta
   await request({ action: 'remove-profile', actionId: randomUUID(), profileId, epoch, confirmSignedIn: true });
   expect(order).toEqual(['check', 'retire', 'remove']);
 });
+
+test('an owned execution stays open until every refusal and the OAuth retirement have passed', async () => {
+  const handlers = new Map<string, Function>(), order: string[] = [], profileId = randomUUID(), epoch = randomUUID();
+  let held = true, retireFails = true;
+  const authority = { inspect: () => ({ available: true, profiles: [], receipts: [] }),
+    checkRemovable: (input: any) => { order.push(`check:${input.executionHeld}`); return { signedIn: true }; },
+    removeProfile: () => order.push('remove') };
+  const execution = { inspect: () => ({ profileId, epoch, ownerHeld: held, models: [] }), async destroy() { order.push('close'); held = false; } };
+  registerNativeAccounts({ handle: (name: string, handler: Function) => handlers.set(name, handler), getAuthority: () => authority, getExecution: () => execution,
+    beforeProfileRemoved: async () => { order.push('retire'); if (retireFails) throw new Error('A pending OAuth authorization owns the provider'); },
+    openExternal: async () => {}, clipboard: { writeText() {} } });
+  const request = (body: any) => handlers.get('launcher:native-accounts')!(null, body);
+  const failed = randomUUID();
+  expect((await request({ action: 'remove-profile', actionId: failed, profileId, epoch, confirmSignedIn: true })).rejectedAction).toEqual({ actionId: failed, knownNotStarted: true });
+  expect(order).toEqual(['check:true', 'retire']); expect(held).toBe(true);
+  order.length = 0; retireFails = false;
+  await request({ action: 'remove-profile', actionId: randomUUID(), profileId, epoch, confirmSignedIn: true });
+  expect(order).toEqual(['check:true', 'retire', 'close', 'remove']);
+});

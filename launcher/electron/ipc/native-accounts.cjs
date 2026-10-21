@@ -64,17 +64,18 @@ function registerNativeAccounts({ handle, getAuthority, getInventory, getExecuti
       const execution = getExecution?.(), current = execution?.inspect();
       const owned = current?.ownerHeld && current.profileId === body.profileId && current.epoch === body.epoch;
       if (owned && !confirmSignedIn) throw Object.assign(new Error('This Native profile owns execution; removal requires explicit confirmation'), { actionRecorded: false });
-      if (owned) {
-        // The authority refuses a held profile; main closes its exact execution first.
-        await beforeExecutionClosed?.(execution);
-        await execution.destroy();
-        onExecutionClosed?.(execution);
-      }
-      // Refuse before any account-scoped side effect; a signed-in profile retires its OAuth providers first.
-      const { signedIn } = authority.checkRemovable ? authority.checkRemovable({ ...scope, confirmSignedIn }) : { signedIn: confirmSignedIn };
+      // Every refusal and the OAuth retirement run while the execution is still open, so a refused or failed
+      // retirement leaves the account usable and its OAuth panel able to settle a pending operation.
+      const { signedIn } = authority.checkRemovable ? authority.checkRemovable({ ...scope, confirmSignedIn, executionHeld: Boolean(owned) }) : { signedIn: confirmSignedIn };
       if (signedIn && beforeProfileRemoved) {
         try { await beforeProfileRemoved(scope); }
         catch (error) { throw Object.assign(error instanceof Error ? error : new Error('Native profile account state could not be retired'), { actionRecorded: false }); }
+      }
+      if (owned) {
+        // The authority refuses a held profile; main closes its exact execution last.
+        await beforeExecutionClosed?.(execution);
+        await execution.destroy();
+        onExecutionClosed?.(execution);
       }
       authority.removeProfile({ actionId: body.actionId, ...scope, confirmSignedIn });
     } else if (body.action === 'cancel-login') {

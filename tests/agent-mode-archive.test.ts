@@ -53,6 +53,20 @@ describe("Agent task archive", () => {
     expect(() => store.recordEvidence(verified.id, { id: "late", taskRevision: 1, requirementId: "artifact", sourceEventId: "late-event", subject: "synthetic-artifact", subjectRevision: "sha256:late", property: "exact contents", outcome: "failed", observer: "synthetic-fixture-observer" })).toThrow("archived");
   });
 
+  test("late usage accounting still lands on an archived stopped task; nothing else does", async () => {
+    const { store } = open();
+    const task = store.createTask(input("unpriced-task"));
+    const port: AgentExecutionPort = { async execute(_request, ack) { ack("accept-unpriced"); return { receiptId: "finish-unpriced", outcome: "completed", summary: "Synthetic port completed.", actualSpend: null }; } };
+    const dispatch = (await new AgentModeRunner(store, port, "owner").runNext(task.id, { reservedSpend: 3 }))!;
+    store.control(task.id, { action: "stop" });
+    const archived = store.archiveTask(task.id);
+    expect(archived).toMatchObject({ reserved: 3, unpricedTurns: 1 });
+    store.reconcileUsage(dispatch.id, { id: "usage-receipt", actualSpend: 2 });
+    expect(store.getTask(task.id)).toMatchObject({ archivedAt: archived.archivedAt, reserved: 0, spent: 2, unpricedTurns: 0, status: "stopped" });
+    expect(store.listReceipts(task.id).some(row => row.kind === "usage")).toBe(true);
+    expect(() => store.control(task.id, { action: "stop" })).toThrow("archived");
+  });
+
   test("HTTP archive is scoped and idempotent, hides the task from listings and counts it", async () => {
     const { store } = open();
     const models = () => [{ id: model }];
