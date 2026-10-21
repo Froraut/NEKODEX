@@ -77,12 +77,20 @@ window in the background and does not activate it.
 
 Generic pixel-click fallback requires the exact selected window/process already
 frontmost and focused, post-event permission, unchanged focused element and no
-intervening global input/modifier state. Immediately before dispatch, real AX hit-testing at
+intervening global input/modifier state. Immediately before dispatch, the window must
+still have the observed frame, and real AX hit-testing at
 the point must resolve to the exact retained selected AX window, not through a
 sheet, menu or popover, and without passing through another process. CG stacking
 also refuses any layer-0 window, or any selected-PID window at any layer, above the
 selected window there. Non-intercepting system overlays, such as the macOS 27
-full-screen Dock and screencaptureui layers, are left to AX. Foreground handoff
+full-screen Dock and screencaptureui layers, are left to AX. The click is a
+mouse-moved, down and up sequence posted only to the selected process and addressed
+to the selected window at the window-relative point, so it cannot reach another
+application and does not move the pointer. AppKit drops a PID-posted event without
+a window number and window-relative point, and the public window-under-pointer
+fields do not supply them. The events are therefore built with the public NSEvent
+mouse-event constructor and checked before dispatch; a record that differs from the
+expected one is refused as `event-unavailable`. Foreground handoff
 input requires a foreground observation; otherwise it is refused as
 `observe-with-foreground-required`. There are no global shortcut, keyboard
 fallback, pasteboard, arbitrary AX attribute or arbitrary process-command APIs.
@@ -135,12 +143,14 @@ isolated inert AppKit fixture. MCP remained disabled during this check.
 This evidence covers the selected fixture's native capture, visible JPEG
 delivery, literal text result, approved screenshot-coordinate-to-AX target
 mapping and actual AXPress/counter change after the transport fix. Generic
-foreground CG pixel-click fallback and other applications remain unverified.
+foreground pixel-click delivery to a fixture through the development helper is
+recorded separately in `docs/reviews/2026-10-19-desktop-foreground-handoff.md`;
+installed acceptance and other applications remain unverified.
 The final task correctly remained `review_required`; this is DEV evidence,
 not verified task completion or an installed-app, packaged-release or production
 result.
 
 Primary API grounding is the selected Apple SDK's ScreenCaptureKit headers
 (`SCStream.h`, `SCShareableContent.h`, `SCScreenshotManager.h`), CoreGraphics
-`CGWindow.h`/`CGEvent.h`, and HIServices public AX headers. No private window-ID
-lookup or permission-control symbol is used.
+`CGWindow.h`/`CGEvent.h`, AppKit `NSEvent.h` and HIServices public AX headers. No
+private window-ID lookup, event field or permission-control symbol is used.
