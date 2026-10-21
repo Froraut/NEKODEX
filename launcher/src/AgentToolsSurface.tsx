@@ -143,7 +143,9 @@ export function AgentToolsSurface({ api, language, disabled = false, oauthMcpReq
   // A Native check settling while another Tools action runs must not be lost: re-read OAuth status once idle.
   // The idle check and act() run in one synchronous turn, so busy cannot flip in between; a disabled
   // surface (screen transition) also defers instead of dropping the one-time re-read.
-  const refreshWhenIdle = () => { if (!mounted.current) return; if (busy.current || disabledRef.current) { window.setTimeout(refreshWhenIdle, 500); return; } void act(refresh); };
+  // A deferred retry must use the current render's act/refresh, not the closures it was scheduled with.
+  const latestRefresh = useRef(() => {}); latestRefresh.current = () => void act(refresh);
+  const refreshWhenIdle = () => { if (!mounted.current) return; if (busy.current || disabledRef.current) { window.setTimeout(refreshWhenIdle, 500); return; } latestRefresh.current(); };
   useEffect(() => { mounted.current = true; if (!disabled) void act(refresh); return () => { mounted.current = false; taskLoadRevision.current++; }; }, []);
   useEffect(() => { if (!disabled && !status && !busy.current) void act(refresh); }, [disabled]);
   const loadTask = async (value: string) => {
