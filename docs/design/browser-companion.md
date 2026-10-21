@@ -1,10 +1,11 @@
 # Browser companion and observation-bound providers (P11–P14)
 
-`browser-companion/` is a reviewable Chrome Manifest V3 extension. It has no
-static content scripts, background browsing monitor, browsing-history permission,
-account login, cookie reader, native messaging host, arbitrary evaluation or URL
-execution endpoint. The first supported browser artifact is Chrome; Firefox is
-not advertised as tested or supported.
+`browser-companion/` is a reviewable Manifest V3 extension for Chrome and, through
+`manifest.firefox.json`, Firefox 153+. It has no static content scripts, background
+browsing monitor, browsing-history permission, account login, cookie reader, native
+messaging host, arbitrary evaluation or URL execution endpoint. Chrome has actual
+MV3 fixture evidence; the Firefox artifact shares every script but its live
+load/pair/send acceptance is still separate.
 
 `src/browser-companion/host.ts` owns private pairing, the selected main-frame
 document, one queued/dispatched operation and bounded receipts. Its HTTP handler
@@ -63,11 +64,13 @@ browser input. The root owns registration, navigation and lifecycle wiring.
    grant from the action invocation permits a bundled isolated-world function on
    that tab's main frame. Only then does it read visible page text and control
    labels. The extension does not enumerate other page URLs or infer an account.
-4. The popup sends the observation and polls its paired host while it remains
-   open. This simple first transport intentionally has no service worker, alarms
-   or automatic reconnect. Closing the popup stops receiving work. Reopening
-   requires selecting a tab again. **Stop sharing** revokes the host session and
-   forgets the local token.
+4. The popup sends the observation (with the bundled feature list, currently
+   `chatgpt-v1`) and hands the selection to an inactive extension **session tab**
+   through a one-time session-storage nonce. That session tab owns the single poll
+   loop under a Web Lock, so the toolbar popup may close. There is no service
+   worker, alarm or automatic reconnect: closing or reloading the session tab
+   stops receiving work and cannot resume the consumed handoff. **Stop sharing**
+   revokes the host session and forgets the local token.
 5. The trusted caller uses `browserBindingOf(observation)` with `host.act(...)` or
    `host.observe(...)`; refs and coordinates cannot be supplied without a binding.
    Successful input consumes the current action observation. A document anchor
@@ -101,7 +104,7 @@ protocol version and session ID. Tokens never appear in URLs or sanitized status
 | --- | --- |
 | `pair` | Consume the human-provided one-time bootstrap; return one session |
 | `select` | Admit the popup's explicitly selected observation; changed scope cancels queued work |
-| `poll` | One popup owner; deliver at most one command, marking it dispatched before responding |
+| `poll` | One session-tab owner; deliver at most one command, marking it dispatched before responding |
 | `result` | Reconcile only that operation ID and exact document owner |
 | `revoke` | Retire the pairing and selected scope without replaying dispatched work |
 
@@ -255,20 +258,102 @@ Missing receipt after runtime loss remains unknown. A terminal click/type result
 is explicitly browser-input execution proof, with no website acceptance or
 model-send claim.
 
-## ChatGPT transport boundary
+## ChatGPT send through the companion (P11)
 
-`companionChatGptCapability` describes an observed exact ChatGPT document only
-when the trusted existing account owner supplies a matching tab/document binding.
-An extension tab does not establish its account identity or tunnel ownership.
-`sendSupported` remains false: the current browser worker/turn registry retains
-send, account admission, cancellation, receipt and settlement ownership. There is
-no fallback that turns failed companion delivery into a second embedded send.
+The existing ChatGPT turn owner can use the companion as its page transport for an
+exact, explicitly bound chatgpt.com document. Ownership stays where it was:
 
-Turning this into a selectable ChatGPT transport requires the real composition
-root to bind the existing account identity epoch and turn owner, implement its
-submission/response protocol, and collect an actual provider turn receipt. Generic
-DOM click receipts cannot satisfy that contract. This remaining integration is
-visible capability state, not a claim that P11 live ChatGPT transport is complete.
+- `ChatGptBrowserWorker.run` remains the only ChatGPT admission point, duplicate/
+  capacity registry and settlement owner for Responses, Chat Completions and every
+  other consumer. At admission it asks the process-local
+  `adapters/chatgpt-web/companion-transport-port.ts` whether a companion transport
+  is **engaged**. If so, that one turn runs through the companion leaf instead of the
+  launcher helper/embedded page; the choice is final for the turn. A refused
+  companion turn never falls back to the embedded browser, and an embedded turn
+  never moves to the companion.
+- `src/browser-companion/chatgpt-transport.ts` is the leaf. The runtime creates one
+  per process (it survives listener Disable/Enable) and the server composition root
+  installs its port with the lazily created runtime and removes it on shutdown.
+- `host.ts` gains one command kind, `chatgpt`, with three bundled operations:
+  `identify`, `send` and `read`. Only `send` may report execution. The host refuses
+  the command before queueing unless the selecting extension advertised
+  `chatgpt-v1`, so an older extension (protocol/version mismatch) can never receive
+  a send. The host still has one operation slot, never re-delivers a dispatched
+  command and refuses consumed operation IDs.
+- `browser-companion/chatgpt.js` is the bundled page function. It runs only in the
+  selected main-frame document, checks the isolated-world scope/document epoch and
+  `location.origin === "https://chatgpt.com"`, and uses selectors that a focused
+  test keeps identical to `src/chatgpt-session.ts`. The host sends data only, never
+  selectors or script. Firefox uses `content.fetch` for the page-context session
+  read; Chrome uses the content script's page-relative fetch.
+
+**Binding.** The user pairs, selects a chatgpt.com tab, and chooses **Bind ChatGPT
+tab** in NEKODEX, stating the model/effort (and optional pinned version) that the
+tab visibly has selected. `identify` reads `/api/auth/session` inside the page and
+returns only `sha256("chatgpt-user:" + user.id)`; tokens and email never leave the
+page. The binding pins that account digest, a fresh identity epoch, the visible
+model-control label and the exact session/scope/tab/window/frame/document/epoch
+anchor. An optional trusted-owner `account` digest must match. Pairing, revoke,
+disable and a new pairing unbind. NEKODEX does not operate ChatGPT's model picker
+through the companion: the user attests the mode at binding time, and each send
+refuses if the visible label changed.
+
+**Admission (nothing sent).** A turn is refused before any prompt is prepared when
+a held outcome exists, another companion turn is active, the selected anchor is no
+longer the bound document (tab/document mismatch), the extension lacks
+`chatgpt-v1`, the requested model/effort/version differs from the binding, or the
+turn needs features this transport does not provide: local tools/MCP connector,
+account tunnel, retained or resumed conversations, compaction, Luna checkpoints.
+After `prepare()`, images, files, skill files, multipart context and prompts over
+200,000 characters are refused. These are `409` non-retryable adapter errors.
+
+**Send.** `onSendActivated` runs before the command is queued, so the existing turn
+runtime treats the prompt as never replayable from that point. The page function
+re-checks the account digest and visible model label, requires a visible tab, an
+empty new chat at `/` with no turns and no active generation, inserts the text with
+the same editing command the embedded worker uses, requires whitespace-normalized
+composer readback, waits for exactly one enabled send control and clicks it once.
+It then waits for exactly one user turn whose text matches the prompt and returns
+its message ID (or `ordinal:1` when the renderer exposes none). Failures before the
+click are `rejected`, executed false (the session tab stays alive for a corrected
+turn); anything after the click without that proof is `unknown`.
+
+**Settlement.** `read` operations never click and may run while the tab is in the
+background. The leaf polls the answer root that follows the sent user message and
+precedes any later user message. It settles only when generation has stopped and
+two consecutive reads return the same answer HTML, with the second read also
+re-checking the account digest. `chatGptHtmlToMarkdown` converts the answer, the
+turn receives it through `onTextDelta`, and the transport retains a turn receipt:
+operation ID, trace ID, user and assistant message IDs, path, identity epoch and
+the answer SHA-256. Answers above 400,000 HTML characters are not truncated into a
+false success.
+
+**No replay.** A send that is queued but never delivered settles `not_sent`. A send
+delivered without a terminal receipt (lost ACK, session/tab closed, timeout,
+cancellation) or reported `unknown` is **held**: the leaf records the operation,
+throws a non-retryable `502 companion_outcome_unknown`, keeps the port engaged even
+after Unbind, and refuses every later ChatGPT turn with
+`companion_outcome_held` until the user inspects the tab and explicitly releases
+that exact operation ID. The host also keeps its own unknown slot until a late
+receipt or revoke. A late ACK reconciles the host receipt but does not release the
+hold or trigger another send. A failure to observe the answer after a confirmed
+send is held as `companion_response_unobserved`. Holds live in process memory: an
+application restart discards the pairing and selected page authority, so a new
+binding is again an explicit user action, and the existing turn runtime still
+never replays a send-activated prompt.
+
+Each sent turn leaves the tab on `/c/<id>`; the next send is refused until the user
+opens a new chat in that tab. The transport is a Browser-only text transport; it is
+not a replacement for the tool-capable embedded flow.
+
+## Store packaging and privacy
+
+`scripts/build-browser-companion.ts <chrome|firefox> <new-dir>` writes a
+reproducible ZIP with `manifest.json` at its root and exactly the shipped files,
+including 16/32/48/128 px icons resized from the application icon. Permissions
+remain `activeTab`, `scripting` and `storage` plus the fixed loopback host.
+[PRIVACY.md](../../browser-companion/PRIVACY.md) is the linkable store privacy
+policy and is linked from the popup. Nothing is signed or published by the build.
 
 ## Focused evidence and limits
 
@@ -313,8 +398,20 @@ bounded standard model image, consumed and out-of-bounds input, physical owner
 retention/late action-specific reconciliation, and post-selection read failure.
 It creates no native child and captures or inputs nothing on the actual OS.
 
+`tests/browser-companion-chatgpt.test.ts` drives the real host protocol and
+transport with an inert extension protocol fixture: one send settled by the tied
+answer, lost ACK/unknown/unobservable answers held without a second send, late ACK,
+account/tab/model/turn mismatch and outdated-extension refusals, exact receipt
+validation, and routing through the existing worker `run` registry.
+`tests/browser-companion-chatgpt-extension.test.ts` loads the actual MV3 artifact in
+disposable Chromium, serves an inert ChatGPT-shaped document at
+`https://chatgpt.com/` only through the context's local routes (no OpenAI network),
+then binds, sends once, reads the tied answer and refuses a second send on the
+non-new chat. `tests/browser-companion-store-package.test.ts` checks both store
+archives. These do not prove a live chatgpt.com account send.
+
 Actual user-profile extension installation, visible toolbar-popup UX, composed app pairing UI,
-selected account/turn integration and native desktop providers still require
+a live chatgpt.com send and native desktop providers still require
 separate connected-flow evidence. No extension is installed into a real Chrome
 profile by these tests. No release artifact or App Store/Web Store submission is
 produced.

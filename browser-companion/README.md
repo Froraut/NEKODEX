@@ -1,6 +1,6 @@
 # NEKODEX Browser Companion (development artifact)
 
-This Manifest V3 Chrome extension shares one explicitly selected page with the
+This Manifest V3 extension for Chrome and Firefox 153+ shares one explicitly selected page with the
 fixed local NEKODEX host while its dedicated selected-tab session remains open. It is a source artifact;
 it has not been published, installed in your browser, or verified against a real
 account by the fixture tests.
@@ -27,3 +27,16 @@ and minimal selected binding live only in browser session storage. Images are
 captured only for an explicit includeImage observation, with selected active tab
 and document checks on both sides of capture; oversized images are omitted.
 DOM click success confirms input execution, not website acceptance.
+
+**ChatGPT send.** After the selected tab is a `https://chatgpt.com` new chat and you
+click **Bind ChatGPT tab** in NEKODEX (stating the model that tab visibly has selected),
+the existing NEKODEX ChatGPT turn owner may send Browser-only text turns through this
+tab. Each send re-checks the signed-in account digest, the visible model label and an
+empty new chat, types the prompt once, clicks Send once, and returns the message ID.
+NEKODEX then only reads the answer that follows that message. A send without a
+terminal receipt is held in NEKODEX and never resent. Open a new chat in the tab
+before each further message.
+
+See [PRIVACY.md](PRIVACY.md). Store packages are produced by
+`bun run scripts/build-browser-companion.ts <chrome|firefox> <new-output-directory>`;
+the archive has `manifest.json` at its root and contains only shipped files.

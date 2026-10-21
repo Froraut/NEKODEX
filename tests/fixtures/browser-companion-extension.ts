@@ -4,8 +4,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createBrowserCompanionRuntime } from "../../src/browser-companion/runtime";
 
+/** Inert stand-in for an exact HTTPS site, served only through this disposable context's routes. */
+export interface CompanionFixtureSite { url: string; routes: Record<string, { body: string; contentType: string }> }
+
 /** Real MV3 fixture, serial use only: owns fixed loopback 17843 and an inert disposable profile. */
-export async function startBrowserCompanionExtensionFixture() {
+export async function startBrowserCompanionExtensionFixture(site?: CompanionFixtureSite) {
   const profile = realpathSync(mkdtempSync(join(tmpdir(), "nekodex-companion-mv3-")));
   const extensionPath = resolve(import.meta.dir, "../../browser-companion");
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response('<!doctype html><title>MV3 fixture</title><label>Name<input name="Name"></label><button>Save</button><output></output><script>document.querySelector("button").onclick=()=>document.querySelector("output").textContent="Saved";</script>', { headers: { "content-type": "text/html" } }) });
@@ -18,11 +21,21 @@ export async function startBrowserCompanionExtensionFixture() {
     finally { try { await context?.close(); } finally { server.stop(true); rmSync(profile, { recursive: true, force: true }); } }
   }
   try {
-    context = await chromium.launchPersistentContext(profile, { channel: "chromium", headless: true,
+    // Optional local seam for a machine whose cached Playwright Chromium build differs.
+    const executablePath = process.env.NEKODEX_COMPANION_TEST_CHROMIUM;
+    context = await chromium.launchPersistentContext(profile, { ...(executablePath ? { executablePath } : { channel: "chromium" }), headless: true,
       ignoreDefaultArgs: ["--disable-extensions"], args: ["--enable-unsafe-extension-debugging"] });
     context.setDefaultTimeout(5000);
+    if (site) {
+      // No network: every request to the stand-in origin is answered locally or refused.
+      const origin = new URL(site.url).origin;
+      await context.route(`${origin}/**`, route => {
+        const response = site.routes[new URL(route.request().url()).pathname];
+        return response ? route.fulfill({ status: 200, contentType: response.contentType, body: response.body }) : route.fulfill({ status: 404, body: "" });
+      });
+    }
     const page = context.pages()[0] ?? await context.newPage();
-    await page.goto(`http://127.0.0.1:${server.port}/fixture`);
+    await page.goto(site?.url ?? `http://127.0.0.1:${server.port}/fixture`);
     const browserCdp = await context.browser()!.newBrowserCDPSession();
     const installed = await browserCdp.send("Extensions.loadUnpacked", { path: extensionPath });
     if (!/^[a-p]{32}$/.test(installed.id)) throw new Error("Invalid extension fixture identity");

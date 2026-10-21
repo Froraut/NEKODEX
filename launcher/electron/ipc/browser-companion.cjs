@@ -1,4 +1,16 @@
-const ACTIONS = new Set(['status', 'enable', 'disable', 'create-pairing', 'revoke']);
+const ACTIONS = new Set(['status', 'enable', 'disable', 'create-pairing', 'revoke', 'bind-chatgpt', 'unbind-chatgpt', 'release-chatgpt-held']);
+const CHATGPT_BIND_KEYS = ['modelId', 'reasoning', 'modelFamily', 'account'];
+/** Shape-only gate; the Bun owner validates exact values again and performs the binding. */
+function validChatGptRequest(body) {
+  if (body.action === 'bind-chatgpt') {
+    const value = body.chatgpt;
+    return !!value && typeof value === 'object' && !Array.isArray(value)
+      && Object.keys(value).every(key => CHATGPT_BIND_KEYS.includes(key) && typeof value[key] === 'string' && value[key].length <= 80)
+      && typeof value.modelId === 'string' && typeof value.reasoning === 'string' && body.operationId === undefined;
+  }
+  if (body.action === 'release-chatgpt-held') return typeof body.operationId === 'string' && /^[A-Za-z0-9:_-]{1,160}$/.test(body.operationId) && body.chatgpt === undefined;
+  return body.chatgpt === undefined && body.operationId === undefined;
+}
 /** Main-process projection of src/browser-companion/firefox-identity.ts. These inputs
  * come from the explicit local-user pin, never a request's network Origin header. */
 function companionExtensionOrigin(extensionId, pinnedOrigin) {
@@ -17,7 +29,8 @@ function companionExtensionOrigin(extensionId, pinnedOrigin) {
 function registerBrowserCompanion({ handle, runtimeHost, clipboard }) {
   handle('launcher:browser-companion', async (_event, body) => {
     if (!body || typeof body !== 'object' || Array.isArray(body) || !ACTIONS.has(body.action)
-      || Object.keys(body).some(key => !['action', 'extensionId', 'extensionOrigin'].includes(key))
+      || Object.keys(body).some(key => !['action', 'extensionId', 'extensionOrigin', 'chatgpt', 'operationId'].includes(key))
+      || !validChatGptRequest(body)
       || Buffer.byteLength(JSON.stringify(body), 'utf8') > 4096) throw new Error('Invalid browser companion request');
     if (body.action === 'enable') {
       try { companionExtensionOrigin(body.extensionId, body.extensionOrigin); } catch { throw new Error('Invalid browser companion request'); }

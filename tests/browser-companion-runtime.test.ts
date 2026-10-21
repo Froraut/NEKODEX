@@ -10,7 +10,7 @@ test("companion runtime is off by default, explicitly owns one listener, and lea
   let starts = 0, stops = 0;
   const runtime = createBrowserCompanionRuntime({ startListener: () => { starts++; return { stop: async () => { stops++; } }; } });
   try {
-    expect(runtime.status()).toMatchObject({ enabled: false, state: "disabled", restartPolicy: "off", chatGptSendSupported: false });
+    expect(runtime.status()).toMatchObject({ enabled: false, state: "disabled", restartPolicy: "off", chatGptSendSupported: true, chatGpt: { state: "unbound", bound: null, held: null } });
     expect(starts).toBe(0);
     await expect(runtime.enable("not-an-extension")).rejects.toThrow("extension ID");
     expect((await runtime.enable(extensionId)).enabled).toBe(true);
@@ -109,4 +109,41 @@ test("browser companion IPC uses current owned runtime and validates pairing cli
   await expect(handlers.get("launcher:browser-companion-copy")!(null, "private arbitrary text")).rejects.toThrow("Invalid");
   const text = JSON.stringify({ version: 1, origin: COMPANION_ORIGIN, hostId: "fixture", extensionId, pairingCode: "e".repeat(43) });
   expect(await handlers.get("launcher:browser-companion-copy")!(null, text)).toEqual({ copied: true }); expect(copied).toBe(text);
+});
+
+test("ChatGPT binding controls are explicit, bounded and never send through the admin or IPC surface", async () => {
+  const runtime = createBrowserCompanionRuntime({ startListener: () => ({ stop() {} }) });
+  const request = async (body: unknown) => {
+    const response = await browserCompanionRequest(new Request("http://127.0.0.1:17841/admin/browser-companion", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), () => runtime);
+    return { status: response.status, body: await response.json() as any };
+  };
+  try {
+    const bind = { action: "bind-chatgpt", chatgpt: { modelId: "gpt-5.6-sol", reasoning: "high" } };
+    expect((await request(bind)).body.error).toContain("Enable");
+    await runtime.enable(extensionId);
+    expect((await request(bind)).body.error).toContain("select the ChatGPT tab");
+    expect((await request({ ...bind, chatgpt: { ...bind.chatgpt, text: "send this" } })).status).toBe(400);
+    expect((await request({ action: "send-chatgpt", text: "x" })).status).toBe(400);
+    expect((await request({ action: "release-chatgpt-held", operationId: "chatgpt_send:none" })).body.error).toContain("No held");
+    expect((await request({ action: "unbind-chatgpt" })).body.value.chatGpt).toMatchObject({ state: "unbound", bound: null });
+    expect(runtime.chatGptTransport().engaged()).toBe(false);
+  } finally { await runtime.close(); }
+
+  const require = createRequire(import.meta.url);
+  const { registerBrowserCompanion } = require("../launcher/electron/ipc/browser-companion.cjs");
+  const handlers = new Map<string, (...args: any[]) => Promise<any>>();
+  const forwarded: unknown[] = [];
+  registerBrowserCompanion({ handle: (channel: string, fn: (...args: any[]) => Promise<any>) => handlers.set(channel, fn), runtimeHost: { supervisor: {
+    readConfig: () => ({}), ownedRuntimeReady: async () => true,
+    control: async (_config: unknown, _route: string, body: unknown) => { forwarded.push(body); return { ok: true, value: {} }; },
+  } } });
+  const ipc = (body: object) => handlers.get("launcher:browser-companion")!(null, body);
+  await ipc({ action: "bind-chatgpt", chatgpt: { modelId: "gpt-5.6-sol", reasoning: "max", modelFamily: "5.6" } });
+  await ipc({ action: "release-chatgpt-held", operationId: "chatgpt_send:fixture" });
+  await ipc({ action: "unbind-chatgpt" });
+  for (const invalid of [{ action: "bind-chatgpt" }, { action: "bind-chatgpt", chatgpt: { modelId: "gpt-5.6-sol", reasoning: "max", text: "x" } },
+    { action: "release-chatgpt-held" }, { action: "release-chatgpt-held", operationId: "../x" }, { action: "unbind-chatgpt", operationId: "x" }, { action: "send-chatgpt" }]) {
+    await expect(ipc(invalid)).rejects.toThrow("Invalid browser companion request");
+  }
+  expect(forwarded).toHaveLength(3);
 });

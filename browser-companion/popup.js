@@ -1,5 +1,5 @@
 import { createCompanionDispatcher } from "./dispatch.js";
-import { ORIGIN, extensionApi as api, companionRequest } from "./transport.js";
+import { ORIGIN, COMPANION_FEATURES, extensionApi as api, companionRequest } from "./transport.js";
 
 const say = text => { document.querySelector("#status").textContent = text; };
 const selectButton = document.querySelector("#select"), stopButton = document.querySelector("#stop"), revokeButton = document.querySelector("#revoke");
@@ -32,7 +32,7 @@ selectButton.addEventListener("click", async () => {
     const [tab] = await api.tabs.query({ active: true, currentWindow: true });
     const dispatcher = createCompanionDispatcher(api);
     const observation = await dispatcher.select(tab, pairing.sessionId, crypto.randomUUID());
-    await companionRequest(pairing, "select", { observation });
+    await companionRequest(pairing, "select", { observation, features: COMPANION_FEATURES });
     const nonce = crypto.randomUUID(); handoffKey = `companionHandoff:${nonce}`;
     await api.storage.session.set({ [handoffKey]: { pairing, binding: dispatcher.binding() } });
     const session = await api.tabs.create({ url: api.runtime.getURL(`session.html#${nonce}`), active: false });

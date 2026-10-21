@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { StandaloneToolsPort, ToolScope } from "../agent-tools/types";
 import type { BrowserCompanionHost } from "./host";
-import { browserBindingOf, type BrowserAction, type BrowserBinding, type BrowserObservation, type CompanionReceipt } from "./protocol";
+import { type BrowserAction, type BrowserBinding, type BrowserObservation, type CompanionReceipt } from "./protocol";
 
 export interface BrowserProviderPort {
   capabilities(): { providerId: string; available: boolean; actions: readonly string[]; reason?: string };
@@ -150,14 +150,4 @@ export function createMcpDesktopProvider(options: McpDesktopProviderOptions): De
     },
     invalidate() { generation++; latest = undefined; scopeKey = undefined; },
   };
-}
-
-/** Capability-only adapter: binding an extension tab does not admit an alternate ChatGPT sender.
- * The existing account/tunnel/turn owner must authorize and execute the actual send. */
-export function companionChatGptCapability(host: BrowserCompanionHost, account: { accountId: string; identityEpoch: string; tabId: number; documentId: string } | undefined) {
-  const observed = host.observation();
-  const exact = !!account && !!observed && new URL(observed.url).origin === "https://chatgpt.com" && observed.tabId === account.tabId && observed.documentId === account.documentId;
-  return { transport: "chrome-companion" as const, paired: host.status().paired, observedChatGptDocument: exact,
-    sendSupported: false as const, reason: exact ? "Companion observation is available; existing turn/account owner has not admitted a companion send" : "Select and bind the exact ChatGPT account document first",
-    ...(exact ? { accountId: account!.accountId, identityEpoch: account!.identityEpoch, binding: browserBindingOf(observed!) } : {}) };
 }
