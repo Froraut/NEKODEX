@@ -86,6 +86,19 @@ function run(command, args, { env = process.env, capture = false } = {}) {
   if (result.error || result.status !== 0) throw new Error(`Publisher signature command ${path.basename(command)} failed`);
   return `${result.stdout || ""}\n${result.stderr || ""}`;
 }
+// `stapler validate` asks Apple's CloudKit ticket service; a dropped connection there
+// (exit 68, "The network connection was lost") says nothing about the stapled ticket.
+// Retry only that transient failure; any other result still fails the release.
+function staplerValidate(target, env, { attempts = 4, sleep = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms) } = {}) {
+  for (let attempt = 1; ; attempt++) {
+    const result = spawnSync("xcrun", ["stapler", "validate", target], { env, encoding: "utf8", stdio: "pipe", shell: false });
+    process.stdout.write(result.stdout || ""); process.stderr.write(result.stderr || "");
+    if (!result.error && result.status === 0) return;
+    const transient = !result.error && result.status === 68 && /network connection was lost|NSURLErrorDomain/i.test(`${result.stdout}\n${result.stderr}`);
+    if (!transient || attempt >= attempts) throw new Error("Publisher signature command xcrun failed");
+    sleep(15_000 * attempt);
+  }
+}
 function assertMacPublisher(details, expectedTeam) {
   if (!/^Authority=Developer ID Application:/m.test(details) || !details.includes(`TeamIdentifier=${expectedTeam}\n`)
     || !/^Timestamp=/m.test(details) || /^Signature=adhoc$/m.test(details)) throw new Error("macOS signature is not a timestamped Developer ID signature from the configured team");
@@ -94,7 +107,7 @@ function verifyMacPublisher(target, env = process.env, { notarized = false } = {
   run("codesign", ["--verify", "--deep", "--strict", target], { env });
   assertMacPublisher(run("codesign", ["--display", "--verbose=4", target], { env, capture: true }), env.APPLE_TEAM_ID);
   if (notarized) {
-    run("xcrun", ["stapler", "validate", target], { env });
+    staplerValidate(target, env);
     run("spctl", ["--assess", "--type", "execute", "--verbose=2", target], { env });
   }
 }
@@ -200,4 +213,4 @@ function verifyWindowsTree(directory, env = process.env) {
     else if (entry.isFile() && /\.exe$/i.test(entry.name)) verifyWindowsPublisher(file, env);
   }
 }
-module.exports = { BROWSER_COMPANION_RESOURCES, chromeExtensionIdFromKey, validatePackagedRuntimeAssets, validateOwnedNativePackagedAssets, signingConfiguration, assertMacPublisher, verifyMacPublisher, verifyWindowsPublisher, verifyWindowsTree, signEmbeddedRuntime, signOwnedNativeWorker, signCredentialHelper, signDesktopHelper, signSkillPdfHelper };
+module.exports = { BROWSER_COMPANION_RESOURCES, staplerValidate, chromeExtensionIdFromKey, validatePackagedRuntimeAssets, validateOwnedNativePackagedAssets, signingConfiguration, assertMacPublisher, verifyMacPublisher, verifyWindowsPublisher, verifyWindowsTree, signEmbeddedRuntime, signOwnedNativeWorker, signCredentialHelper, signDesktopHelper, signSkillPdfHelper };
