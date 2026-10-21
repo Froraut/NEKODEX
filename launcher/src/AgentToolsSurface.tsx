@@ -139,6 +139,8 @@ export function AgentToolsSurface({ api, language, disabled = false, oauthMcpReq
     try { await operation(); } catch (cause) { if (mounted.current) setError(stripIpcErrorPrefix(cause instanceof Error ? cause.message : String(cause))); }
     finally { busy.current = false; if (mounted.current) setPending(false); }
   };
+  // A Native check settling while another Tools action runs must not be lost: re-read OAuth status once idle.
+  const refreshWhenIdle = () => { if (!mounted.current) return; if (busy.current) { window.setTimeout(refreshWhenIdle, 500); return; } void act(refresh); };
   useEffect(() => { mounted.current = true; if (!disabled) void act(refresh); return () => { mounted.current = false; taskLoadRevision.current++; }; }, []);
   useEffect(() => { if (!disabled && !status && !busy.current) void act(refresh); }, [disabled]);
   const loadTask = async (value: string) => {
@@ -156,7 +158,7 @@ export function AgentToolsSurface({ api, language, disabled = false, oauthMcpReq
       accountOffline={status?.oauthRegistry?.reasonCode === 'account_authority_offline'}
       offlineBanner={nativeAccounts ? fallback => <NativeModelsOfflineBanner api={nativeAccounts} language={language} disabled={locked} fallback={fallback}
         consequence={choose('Until then provider authorization and OAuth MCP tools are unavailable.', 'До этого авторизация провайдеров и OAuth MCP-инструменты недоступны.')}
-        onRestored={() => void act(refresh)} /> : undefined} />
+        onRestored={refreshWhenIdle} /> : undefined} />
     <AgentOAuthMcpPanel request={oauthMcpRequest} accountScopeKey={oauthScopeKey} refreshRevision={oauthMcpRefreshRevision} scope={remoteScope && actionableTask ? { taskId: remoteScope.taskId, generation: remoteScope.generation, toolCallId: 'oauth-mcp-control' } : undefined} language={language} disabled={locked} onConnectionChange={setOAuthMcpConnection} />
     <AgentToolsInstaller api={api} status={status} locked={locked} choose={choose} act={act} refresh={refresh} onReview={candidate => { setReview(candidate); setTrusted(false); }} />
     <Panel title={choose('Host state', 'Состояние host')} actions={<Button className="agent-tools-button" disabled={locked || !status} onClick={() => void act(async () => { await transport.current.request({ action: 'setEnabled', enabled: !status?.config.enabled, explicitUserAction: true }); await refresh(); })}>{status?.config.enabled ? choose('Disable and close owned servers', 'Выключить и закрыть свои серверы') : choose('Enable configured servers', 'Включить настроенные серверы')}</Button>}>

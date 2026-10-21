@@ -42,14 +42,21 @@ export function NativeModelsOfflineBanner({ api, language, disabled = false, con
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const [unknown, setUnknown] = useState(false);
+  const reported = useRef(false);
+  const online = (result: NativeAccountsSnapshot) => Boolean(result.execution?.ownerHeld && result.execution.models.length);
+  // Whoever started the check (this banner, or Agent mode while this surface polls a running
+  // inventory), the parent re-reads its own status once models are observed online.
+  const accept = (result: NativeAccountsSnapshot) => {
+    setSnapshot(result);
+    if (online(result) && !reported.current) { reported.current = true; restored.current?.(); }
+  };
   // Clears the retained request once its receipt (or a known pre-intent refusal) is visible.
   const settle = (result: NativeAccountsSnapshot) => {
     const request = outstanding.current; if (!request) return;
     const receipt = result.inventory?.receipts.find(row => row.actionId === request.actionId);
     if (result.rejectedAction?.actionId === request.actionId || receipt && !receipt.ownerHeld && ['completed', 'unknown'].includes(receipt.state)) {
       outstanding.current = null; setUnknown(false);
-      if (receipt?.state === 'completed' && result.execution?.ownerHeld && result.execution.models.length) restored.current?.();
-      else setFailed(true);
+      if (!online(result)) setFailed(true);
     }
   };
   const read = async () => {
@@ -57,7 +64,7 @@ export function NativeModelsOfflineBanner({ api, language, disabled = false, con
     try {
       const request = outstanding.current;
       const result = await transport.current.request({ action: 'status', ...(request ? { actionId: request.actionId } : {}) });
-      if (!mounted.current) return; setSnapshot(result); settle(result);
+      if (!mounted.current) return; accept(result); settle(result);
     } catch { /* Passive status only; the banner stays hidden without a confirmed snapshot. */ }
     finally { inFlight.current = false; }
   };
@@ -77,8 +84,8 @@ export function NativeModelsOfflineBanner({ api, language, disabled = false, con
     try {
       const result = await transport.current.request(body);
       if (!mounted.current) return;
-      setSnapshot(result); outstanding.current = null;
-      if (result.execution?.ownerHeld && result.execution.models.length) restored.current?.(); else setFailed(true);
+      outstanding.current = null; accept(result);
+      if (!online(result)) setFailed(true);
     } catch {
       // The request may have started: keep its identity and observe its receipt instead of resending.
       if (mounted.current) { setFailed(true); setUnknown(true); }
