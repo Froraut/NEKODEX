@@ -30,9 +30,11 @@ function ensureWorkspaceTerminal({ root = path.resolve(__dirname, ".."), force =
     const terminal = p.spawn(windows ? (process.env.ComSpec || 'cmd.exe') : '/bin/sh',
       windows ? ['/c', 'exit 0'] : ['-c', 'exit 0'], { cwd: process.cwd(), env: process.env });
     terminal.onExit(({ exitCode }) => {
-      if (exitCode !== 0) { process.exitCode = 1; return; }
-      console.log(JSON.stringify({ electron: process.versions.electron, abi: process.versions.modules,
-        platform: process.platform, arch: process.arch }));
+      if (exitCode !== 0) { process.exit(1); }
+      // The shell has physically exited. Flush the receipt, then close this
+      // disposable probe even if the native provider retains an idle handle.
+      process.stdout.write(JSON.stringify({ electron: process.versions.electron, abi: process.versions.modules,
+        platform: process.platform, arch: process.arch }) + '\\n', () => process.exit(0));
     });`;
   const probe = () => {
     const result = run(electron, ["-e", probeSource], { cwd: root, encoding: "utf8", windowsHide: true,
