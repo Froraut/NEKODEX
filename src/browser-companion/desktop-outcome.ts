@@ -79,9 +79,10 @@ export function resolveDesktopPropertyEvidence(task: AgentTask, reference: Agent
 export function assertSemanticDesktopCitationsCurrent(task: AgentTask, input: { currentDigest: string; lookup: (receiptKey: string) => ToolOutcome | undefined; assertCurrent: (evidence: OutcomeEvidence) => void }): void {
   const review = task.semanticReview;
   if (!review || review.inputDigest !== input.currentDigest || review.generation !== task.generation || review.taskRevision !== task.revision) return;
-  for (const verdict of review.requirements) for (const key of verdict.toolReceiptIds) {
+  // Only a passing verdict can carry Verify, and only a completed receipt can be its basis.
+  for (const verdict of review.requirements) if (verdict.verdict === "pass") for (const key of verdict.toolReceiptIds) {
     const outcome = input.lookup(key);
-    if (!outcome || outcome.tool !== "desktop/verifyProperty") continue;
+    if (!outcome || outcome.tool !== "desktop/verifyProperty" || outcome.state !== "completed") continue;
     const reference = desktopPropertyReference(outcome, verdict.requirementId);
     input.assertCurrent({ ...reference, id: `semantic-desktop-citation:${hash(key)}`, taskRevision: task.revision, outcome: "passed", observer: "selected-macos-application-property-v1" });
   }

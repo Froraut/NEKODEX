@@ -1150,7 +1150,7 @@ export function startServer(
         }
         assertSemanticDesktopCitationsCurrent(task, { currentDigest: store.semanticReviewInput(task.id).digest,
           lookup: key => {
-            if (!store.effectiveToolOutcomes(task.id).some(row => row.idempotencyKey === key && row.tool === "desktop/verifyProperty")) return undefined;
+            if (!store.effectiveToolOutcomes(task.id).some(row => row.idempotencyKey === key && row.tool === "desktop/verifyProperty" && row.state === "completed")) return undefined;
             // A cited AX receipt without its canonical journal record is never accepted.
             const canonical = canonicalTaskToolOutcome(task, key);
             if (!canonical) throw new Error("Application property evidence is no longer the latest approved observation; approve a fresh verification");

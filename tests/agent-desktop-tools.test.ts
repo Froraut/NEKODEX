@@ -106,8 +106,10 @@ test("desktop controller is passive/off until explicit controls and binds bounde
     expect(() => controller.assertPropertyEvidenceCurrent({ ...task, generation: task.generation + 1 }, evidence)).toThrow("latest approved observation");
     // A current semantic review citing the exact receipt for a prose requirement gets the same re-check.
     const reviewed = { ...task, requirements: [{ id: "prose", text: "The counter reads the expected value." }], semanticReview: { inputDigest: "digest", generation: task.generation, taskRevision: 1,
-      requirements: [{ requirementId: "prose", toolReceiptIds: [verified.idempotencyKey] }] } } as unknown as AgentTask;
-    const citations = (digest: string) => assertSemanticDesktopCitationsCurrent(reviewed, { currentDigest: digest, lookup: key => key === verified.idempotencyKey ? verified : undefined,
+      requirements: [{ requirementId: "prose", verdict: "pass", toolReceiptIds: [verified.idempotencyKey, "failed-receipt"] }, { requirementId: "other", verdict: "unknown", toolReceiptIds: ["unknown-receipt"] }] } } as unknown as AgentTask;
+    const other = (key: string, state: "failed" | "outcome_unknown") => ({ ...structuredClone(verified), idempotencyKey: key, state, result: undefined });
+    const citations = (digest: string) => assertSemanticDesktopCitationsCurrent(reviewed, { currentDigest: digest,
+      lookup: key => key === verified.idempotencyKey ? verified : key === "failed-receipt" ? other(key, "failed") : key === "unknown-receipt" ? other(key, "outcome_unknown") : undefined,
       assertCurrent: fact => controller.assertPropertyEvidenceCurrent(reviewed, fact) });
     expect(() => citations("digest")).not.toThrow();
     scopeActive = true;
