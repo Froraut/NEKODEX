@@ -48,9 +48,10 @@ test.serial("local tools inventory remains offline while Web offers and drained 
     expect(blockedOffer.status).toBe(409);
     expect((await post("/admin/drain", {})).status).toBe(200);
     expect((await post("/admin/agent-tools", { action: "discover", scope, explicitUserAction: true })).status).toBe(409);
-    for (const action of ["inspectDesktopPermissions", "listDesktopWindows", "setDesktopEnabled", "selectDesktopWindow"]) {
+    for (const action of ["inspectDesktopPermissions", "openDesktopPermissionSettings", "listDesktopWindows", "setDesktopEnabled", "selectDesktopWindow"]) {
       const denied = await post("/admin/agent-tools", { action, explicitUserAction: true,
         ...(action === "setDesktopEnabled" ? { enabled: true } : {}),
+        ...(action === "openDesktopPermissionSettings" ? { permission: "accessibility" } : {}),
         ...(action === "selectDesktopWindow" ? { scope, expectedSelection: { windowId: "1", processId: "1:1", windowEpoch: "0".repeat(64) } } : {}),
       });
       expect(denied.status).toBe(409);

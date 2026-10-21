@@ -1,6 +1,6 @@
-import type { MacosDesktopStatus, MacosWindowMetadata, MacosWindowSelection } from '../../src/browser-companion/macos-desktop';
+import type { DesktopPermission, DesktopPermissionClient, MacosDesktopStatus, MacosWindowMetadata, MacosWindowSelection } from '../../src/browser-companion/macos-desktop';
 import type { ToolScope } from '../../src/agent-tools/types';
-export type { MacosWindowMetadata, MacosWindowSelection, ToolScope };
+export type { DesktopPermission, DesktopPermissionClient, MacosWindowMetadata, MacosWindowSelection, ToolScope };
 
 /** Cached controller metadata only. No screenshot bytes or arbitrary native commands. */
 export interface AgentDesktopStatus {
@@ -11,6 +11,8 @@ export interface AgentDesktopStatus {
   created: boolean;
   activeCount: number;
   permissions: null | { screenCaptureGranted: boolean; accessibilityGranted: boolean; postEventGranted: boolean };
+  /** The identity macOS judged at the last explicit inspection; null before one. */
+  permissionClient: DesktopPermissionClient | null;
   nativeStatus: MacosDesktopStatus | null;
   windows: MacosWindowMetadata[];
   selected: MacosWindowSelection | null;

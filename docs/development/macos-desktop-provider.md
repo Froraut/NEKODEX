@@ -13,9 +13,16 @@ helper.
 
 `bun scripts/build-desktop-helper.cjs --development` performs ordinary Swift
 compilation and development signing without launching the helper. It emits the
-exact generated executable path and SHA-256. The fixed output is under
-`launcher/electron/desktop-helper/darwin-<arch>/`; distribution signing requires
-an explicit signing-owner port. This source change does not add a release or
+exact generated bundle and executable paths and the executable SHA-256. The
+fixed output is the app bundle
+`launcher/electron/desktop-helper/darwin-<arch>/NEKODEX Desktop Helper.app`
+(executable `Contents/MacOS/nekodex-desktop-helper`, fixed `Info.plist` with
+`CFBundleIdentifier` `dev.nekodex.desktop-provider.v1` and `LSUIElement`); a
+leftover bare executable from earlier builds is removed. The runtime bundle
+copies the whole signed bundle, the packaged asset contract requires its
+executable and `Info.plist`, and release signing and installed verification
+sign and check the bundle, so its seal covers `Info.plist`. Distribution signing
+requires an explicit signing-owner port. This source change does not add a release or
 package entry. The native deployment target is macOS 14; the main application's
 minimum OS version is unchanged. No Windows/Linux native implementation is
 claimed.
@@ -27,14 +34,92 @@ helper also checks parent identity immediately before input. Explicit disable,
 abort and close stop the exact owned helper and wait for its exit. No other app
 is launched, activated, restarted or terminated by this provider.
 
+## Permission identity across updates
+
+macOS TCC does not judge the process that calls a permission API; it judges
+that process's *responsible* process, which a spawned child inherits. Before
+this change the helper ran inside the runtime's process tree, so TCC judged
+whichever app or terminal had started that runtime. Live diagnosis on
+6.1.33-nekodex.6 (2026-10-21, read-only: `log stream`/`log show` with
+`subsystem == "com.apple.TCC"`, plus the libsystem responsibility query that
+`launchctl procinfo` prints) showed:
+
+- Under NEKODEX.app, the bun daemon and the helper are both attributed to
+  `dev.codexwebgpt.launcher` (NEKODEX.app, pid of the app). That client had no
+  Screen Recording, Accessibility or post-event entry, so all three read false.
+- The earlier 6.1.33-nekodex.3, .4 and .5 checks that read all three as granted
+  were attributed to `com.anthropic.claude-code`: the helper had been started
+  from a terminal session, and the grants were that terminal's, not NEKODEX's.
+
+So the grant was never NEKODEX's own, and which grant applied depended on who
+started the runtime: a terminal, NEKODEX.app, or a daemon that outlived the app
+instance that spawned it. Granting NEKODEX.app instead would hand Screen
+Recording and Accessibility to every process NEKODEX starts, including model
+tool shells.
+
+The helper now ships as the bundle above and becomes its own responsible
+process. When it starts without being self-responsible, it spawns its own
+canonical bundle executable once with `posix_spawn` and
+`responsibility_spawnattrs_setdisclaim`, then only supervises it. This
+libsystem call has no public header; it is resolved with `dlsym`, and it is the
+same mechanism Chromium and LLDB use for their helpers. It is a process
+attribution call, not a permission-control symbol: it changes no TCC state and
+grants nothing. The disclaimed helper:
+
+- inherits exactly the owner's three stdio ports (`POSIX_SPAWN_CLOEXEC_DEFAULT`)
+  and the same fixed `PATH`/`LANG`/`LC_ALL` environment the Bun owner already
+  uses, plus a stage marker that forbids a second hop;
+- is supervised by the first process, which keeps no copy of the ports (stdin
+  EOF and closure reach the helper directly), forwards SIGTERM/SIGINT/SIGHUP,
+  kills the helper when its own owner disappears, and exits with the helper's
+  status;
+- requires before input both its own parent (the supervisor) and the
+  supervisor's original parent (the Bun owner), failing closed if either
+  changed or cannot be read.
+
+TCC then keys the client as the bundle identifier
+`dev.nekodex.desktop-provider.v1` with the designated requirement
+`identifier "dev.nekodex.desktop-provider.v1" and anchor apple generic and …
+certificate leaf[subject.OU] = CNMWGJF2CG`. Neither depends on the
+per-version path under `~/.codex-chatgpt-web/versions/`, so one grant survives
+every signed update and covers nothing but this helper. Local DEV builds are
+ad-hoc signed; their designated requirement is a cdhash, so each rebuild needs
+its own grant. If the call is unavailable or the spawn fails, the helper serves
+inline with inherited attribution; `status` reports this through
+`permissionClient.selfResponsible: false` and the UI warns not to grant the
+parent app.
+
+**One-time re-grant.** Grants made before this change belong to NEKODEX.app or
+a terminal and no longer apply. After updating to the first release with the
+bundled helper, grant "NEKODEX Desktop Helper" once; later updates keep it.
+Older entries for NEKODEX or a terminal can be turned off.
+
 ## Permissions and selected window
 
 Status reads only `CGPreflightScreenCaptureAccess`, `AXIsProcessTrusted` and
-`CGPreflightPostEventAccess`. There is no permission-request API or TCC/global
-policy change. Screen capture, Accessibility and event-posting flags remain
-separate; background AX operations do not require event-posting permission.
-Missing permission or a missing exact window binding yields unavailable/refused
-operations, not a synthetic successful observation.
+`CGPreflightPostEventAccess`, and reports `permissionClient`: whether the helper
+is self-responsible, its bundle identifier, name (`NEKODEX Desktop Helper`) and
+bundle path. Status never prompts or changes TCC state. Screen capture,
+Accessibility and event-posting flags remain separate; background AX operations
+do not require event-posting permission. Missing permission or a missing exact
+window binding yields unavailable/refused operations, not a synthetic
+successful observation.
+
+The only request path is the explicit `openDesktopPermissionSettings` admin
+action (`permission`: `screenCapture`, `accessibility` or `postEvent`), behind a
+per-permission "Open …" button that appears when that permission is missing.
+Only when the helper is self-responsible does it call the matching public
+request API (`CGRequestScreenCaptureAccess`,
+`AXIsProcessTrustedWithOptions` with the prompt option, or
+`CGRequestPostEventAccess`) so that macOS lists "NEKODEX Desktop Helper",
+possibly with its own prompt; it never registers a parent app. It then opens
+`x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture`
+or `?Privacy_Accessibility` (post-event access is granted in Accessibility) and
+re-reads status. It never grants access, enables the provider, selects a
+window, captures or inputs; the user decides in System Settings. A new Screen
+Recording grant applies to a fresh helper process, so after granting choose
+Disable and release desktop access, then inspect again. If the entry is not
+listed, add the bundle path shown in the UI with + and Command-Shift-G.
 
 Window inventory uses bounded on-screen window/process metadata. Selection binds
 CG window ID, PID plus kernel process-start seconds/microseconds and a metadata

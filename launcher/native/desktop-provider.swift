@@ -1,4 +1,5 @@
-// Fixed, owned stdio port. No shell, network, arbitrary path or permission-request API.
+// Fixed, owned stdio port. No shell, network or arbitrary path. The only permission-request
+// calls are behind the explicit openPermissionSettings user control, for this helper's own identity.
 import AppKit
 import ApplicationServices
 import CryptoKit
@@ -8,7 +9,115 @@ import ScreenCaptureKit
 let providerID = "nekodex-macos-desktop-v1"
 let maximumRequestBytes = 64 * 1024
 let maximumImageBytes = 8 * 1024 * 1024
+// TCC judges a process by its "responsible" process, which a spawned child inherits. Started
+// by the Bun runtime, this helper would be judged as whichever app or terminal started that
+// runtime: a grant either far too broad (every NEKODEX child) or one that moves with the
+// launcher. The fixed bundle therefore re-executes itself once with responsibility disclaimed.
+// TCC then keys the grant to this bundle's identifier and designated requirement, which every
+// signed release keeps, so one grant survives updates and covers nothing but this helper.
+let helperBundleIdentifier = "dev.nekodex.desktop-provider.v1"
+let helperStageKey = "NEKODEX_DESKTOP_HELPER_STAGE"
+let disclaimedStage = ProcessInfo.processInfo.environment[helperStageKey] == "disclaimed"
+typealias ResponsibleForPid = @convention(c) (pid_t) -> pid_t
+typealias SpawnAttributesSetDisclaim = @convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>, Int32) -> Int32
+// libsystem's responsibility calls have no public header; resolve them without linking so a
+// missing symbol leaves inherited attribution, which status reports, instead of failing to load.
+func systemSymbol<T>(_ name: String, as type: T.Type) -> T? {
+    guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), name) else { return nil }
+    return unsafeBitCast(symbol, to: type)
+}
+func responsibleProcess(_ pid: pid_t) -> pid_t? { systemSymbol("responsibility_get_pid_responsible_for_pid", as: ResponsibleForPid.self).map { $0(pid) } }
+func parentProcess(_ pid: pid_t) -> pid_t? {
+    guard pid > 0 else { return nil }
+    var info = proc_bsdinfo(); let expected = Int32(MemoryLayout<proc_bsdinfo>.size)
+    let count = withUnsafeMutablePointer(to: &info) { proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, UnsafeMutableRawPointer($0), expected) }
+    guard count == expected, info.pbi_pid == UInt32(pid) else { return nil }
+    return pid_t(info.pbi_ppid)
+}
+func canonicalPath(_ path: String) -> String? {
+    guard let resolved = Darwin.realpath(path, nil) else { return nil }
+    defer { free(resolved) }; return String(cString: resolved)
+}
+func ownExecutable() -> String? {
+    var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+    guard proc_pidpath(getpid(), &buffer, UInt32(buffer.count)) > 0 else { return nil }
+    return canonicalPath(String(cString: buffer))
+}
+/// The fixed bundle only: the running image must be this bundle's own canonical executable.
+func ownedHelperBundle() -> Bundle? {
+    let bundle = Bundle.main
+    guard bundle.bundleIdentifier == helperBundleIdentifier, bundle.bundleURL.pathExtension == "app",
+          let executable = ownExecutable(), let declared = bundle.executablePath, canonicalPath(declared) == executable else { return nil }
+    return bundle
+}
+func selfResponsible() -> Bool { responsibleProcess(getpid()) == getpid() }
+func permissionClient() -> [String: Any] {
+    let bundle = ownedHelperBundle()
+    return ["selfResponsible": selfResponsible(), "bundleIdentifier": bundle?.bundleIdentifier ?? NSNull(),
+            "name": (bundle?.object(forInfoDictionaryKey: "CFBundleName") as? String) ?? NSNull(), "bundlePath": bundle?.bundlePath ?? NSNull()]
+}
+func withCStrings<R>(_ values: [String], _ body: ([UnsafeMutablePointer<CChar>?]) -> R) -> R {
+    let pointers = values.map { strdup($0) } + [nil]
+    defer { for pointer in pointers { free(pointer) } }
+    return body(pointers)
+}
+/// Returns in the helper that serves requests. When this process is not its own responsible
+/// process, it spawns the same executable disclaimed and only supervises it; that never returns.
+/// A failed disclaim falls back to serving inline, with inherited attribution reported by status.
+func becomeOwnPermissionClient() {
+    guard !disclaimedStage, !selfResponsible(), ownedHelperBundle() != nil, let executable = ownExecutable(),
+          let disclaim = systemSymbol("responsibility_spawnattrs_setdisclaim", as: SpawnAttributesSetDisclaim.self) else { return }
+    var attributes: posix_spawnattr_t?; var actions: posix_spawn_file_actions_t?
+    guard posix_spawnattr_init(&attributes) == 0 else { return }
+    defer { posix_spawnattr_destroy(&attributes) }
+    guard posix_spawn_file_actions_init(&actions) == 0 else { return }
+    defer { posix_spawn_file_actions_destroy(&actions) }
+    var defaults = sigset_t(); sigemptyset(&defaults)
+    for signal in [SIGPIPE, SIGTERM, SIGINT, SIGHUP] { sigaddset(&defaults, signal) }
+    var mask = sigset_t(); sigemptyset(&mask)
+    // Close-on-exec by default: the disclaimed helper inherits exactly the owner's three stdio ports.
+    guard posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK)) == 0,
+          posix_spawnattr_setsigdefault(&attributes, &defaults) == 0, posix_spawnattr_setsigmask(&attributes, &mask) == 0,
+          [STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO].allSatisfy({ posix_spawn_file_actions_addinherit_np(&actions, $0) == 0 }),
+          disclaim(&attributes, 1) == 0 else { return }
+    var child: pid_t = 0
+    // The fixed environment the Bun owner already uses, plus the stage marker that forbids a second hop.
+    let spawned = withCStrings([executable]) { argv in
+        withCStrings(["PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "\(helperStageKey)=disclaimed"]) { environment in
+            posix_spawn(&child, executable, &actions, &attributes, argv, environment)
+        }
+    }
+    guard spawned == 0, child > 0 else { return }
+    superviseDisclaimedHelper(child)
+}
+/// Keeps no copy of the owner's ports, so EOF and closure reach the helper directly. Owner
+/// termination signals are forwarded; an owner that disappears takes the helper with it.
+func superviseDisclaimedHelper(_ child: pid_t) -> Never {
+    let owner = getppid()
+    let null = open("/dev/null", O_RDWR)
+    if null >= 0 { for descriptor in [STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO] { dup2(null, descriptor) }; if null > STDERR_FILENO { close(null) } }
+    let queue = DispatchQueue(label: "dev.nekodex.desktop-provider.supervisor")
+    let sources: [DispatchSourceProtocol] = [SIGTERM, SIGINT, SIGHUP].map { value in
+        signal(value, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: value, queue: queue)
+        source.setEventHandler { kill(child, SIGTERM) }; source.resume(); return source
+    } + [{
+        let watch = DispatchSource.makeTimerSource(queue: queue)
+        watch.schedule(deadline: .now() + 1, repeating: 1)
+        watch.setEventHandler { if getppid() != owner { kill(child, SIGKILL) } }
+        watch.resume(); return watch
+    }()]
+    var status: Int32 = 0
+    while waitpid(child, &status, 0) < 0 { if errno != EINTR { kill(child, SIGKILL); Darwin._exit(1) } }
+    withExtendedLifetime(sources) {}
+    let signalled = status & 0x7f
+    Darwin._exit(signalled == 0 ? (status >> 8) & 0xff : 128 + signalled)
+}
 let initialParent = getppid()
+// The disclaimed helper's parent is its supervisor; input also requires that supervisor's own
+// original owner. An unreadable owner fails closed.
+let initialOwner: pid_t? = disclaimedStage ? (parentProcess(initialParent) ?? -1) : nil
+func ownerIntact() -> Bool { getppid() == initialParent && (initialOwner.map { $0 > 1 && parentProcess(initialParent) == $0 } ?? true) }
 func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 func token(_ value: Any) -> String { digest((try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])) ?? Data()) }
 func exact(_ value: [String: Any], _ keys: [String]) -> Bool { Set(value.keys) == Set(keys) }
@@ -204,7 +313,7 @@ func lastInputTime() -> TimeInterval {
     func waitForForeground(_ original: WindowRow, expectedFocus: AXUIElement? = nil, enforceFocus: Bool = false) async throws {
         while true {
             try Task.checkCancellation()
-            guard getppid() == initialParent, enabled, !uncertain else { try reject("foreground-owner-unavailable") }
+            guard ownerIntact(), enabled, !uncertain else { try reject("foreground-owner-unavailable") }
             var input = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
             guard Darwin.poll(&input, 1, 0) >= 0,
                   input.revents & Int16(POLLHUP | POLLERR | POLLNVAL) == 0 else { try reject("foreground-parent-port-closed") }
@@ -405,12 +514,30 @@ func lastInputTime() -> TimeInterval {
         case "status":
             guard exact(request, base) else { try reject("invalid-request") }
             var state = permissions(); state["enabled"] = enabled; state["providerId"] = providerID; state["uncertain"] = uncertain
+            state["permissionClient"] = permissionClient()
             let current = try? currentWindow()
             state["selected"] = selected?.json ?? NSNull(); state["selectionCurrent"] = current != nil
             state["inputWindowBound"] = current.flatMap { try? boundWindow($0) } != nil; return state
         case "listWindows":
             guard exact(request, base) else { try reject("invalid-request") }
             return ["windows": windows().map(\.json)]
+        case "openPermissionSettings":
+            // Explicit user control only. Registration targets this helper's own identity, never a
+            // responsible parent app or terminal, and grants nothing: the user still decides in the pane.
+            guard exact(request, base + ["permission"]), let permission = string(request["permission"], max: 32),
+                  let pane = ["screenCapture": "Privacy_ScreenCapture", "accessibility": "Privacy_Accessibility", "postEvent": "Privacy_Accessibility"][permission],
+                  let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") else { try reject("invalid-request") }
+            let registered = selfResponsible() && ownedHelperBundle() != nil
+            if registered {
+                switch permission {
+                case "screenCapture": _ = CGRequestScreenCaptureAccess()
+                case "accessibility": _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
+                default: _ = CGRequestPostEventAccess()
+                }
+            }
+            guard NSWorkspace.shared.open(url) else { try reject("settings-unavailable") }
+            var state = permissions(); state["permissionClient"] = permissionClient(); state["pane"] = pane; state["registered"] = registered
+            return state
         case "enable":
             guard exact(request, base + ["enabled"]), let value = request["enabled"] as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() else { try reject("invalid-request") }
             enabled = value.boolValue; selected = nil; selectedAX = nil; captured = nil; image = nil; propertyElements = []
@@ -471,7 +598,7 @@ func lastInputTime() -> TimeInterval {
             func receipt(_ outcome: String, _ executed: Bool, _ reason: String) -> [String: Any] {
                 ["operationId": operationID, "outcome": outcome, "executed": executed, "reason": reason]
             }
-            guard getppid() == initialParent, enabled, !uncertain, let original = captured, NSDictionary(dictionary: binding).isEqual(to: original.binding) else { return receipt("rejected", false, "stale-observation") }
+            guard ownerIntact(), enabled, !uncertain, let original = captured, NSDictionary(dictionary: binding).isEqual(to: original.binding) else { return receipt("rejected", false, "stale-observation") }
             captured = nil // One attempt owns this observation even if later validation refuses input.
             let row = try currentWindow()
             let waits = try foregroundMode(action)
@@ -508,7 +635,7 @@ func lastInputTime() -> TimeInterval {
                           let nowTarget = fresh.targets.first(where: { CFEqual($0.element, target.element) }), nowTarget.signature == target.signature else { return receipt("rejected", false, "ambiguous-or-changed-ax-target") }
                     _ = try boundWindow(current)
                     guard let last = controls(current).first(where: { CFEqual($0.element, target.element) }), last.signature == target.signature else { return receipt("rejected", false, "ax-target-changed-before-input") }
-                    guard getppid() == initialParent else { return receipt("rejected", false, "parent-owner-exited") }
+                    guard ownerIntact() else { return receipt("rejected", false, "parent-owner-exited") }
                     if waits {
                         try inputOwner(try currentWindow(), expectedFocus: original.focusedElement, requirePostEvent: false)
                         guard lastInputTime() <= inputBaseline + 0.005 else { return receipt("rejected", false, "human-input-changed") }
@@ -521,7 +648,7 @@ func lastInputTime() -> TimeInterval {
                 try inputOwner(current, expectedFocus: original.focusedElement)
                 guard fresh.lastInput <= inputBaseline + 0.005, lastInputTime() <= inputBaseline + 0.005 else { return receipt("rejected", false, "human-input-changed") }
                 guard let events = pixelClickEvents(window: row.id, local: local) else { return receipt("rejected", false, "event-unavailable") }
-                guard getppid() == initialParent else { return receipt("rejected", false, "parent-owner-exited") }
+                guard ownerIntact() else { return receipt("rejected", false, "parent-owner-exited") }
                 // Recheck owner, frame, focus, point stacking and physical button/modifier state
                 // as close to dispatch as possible; no activation or click-through. The events
                 // carry the window-relative point, so the window must still have the observed
@@ -542,7 +669,7 @@ func lastInputTime() -> TimeInterval {
                     guard let focusedWindow = attribute(AXUIElementCreateApplication(row.pid), kAXFocusedWindowAttribute as CFString), CFEqual(window, focusedWindow),
                           let last = controls(current).first(where: { CFEqual($0.element, target.element) }), last.signature == target.signature else { return receipt("rejected", false, "text-target-changed-before-input") }
                     let status: AXError
-                    guard getppid() == initialParent else { return receipt("rejected", false, "parent-owner-exited") }
+                    guard ownerIntact() else { return receipt("rejected", false, "parent-owner-exited") }
                     if waits {
                         try inputOwner(try currentWindow(), expectedFocus: original.focusedElement, requirePostEvent: false)
                         guard lastInputTime() <= inputBaseline + 0.005 else { return receipt("rejected", false, "human-input-changed") }
@@ -591,10 +718,12 @@ final class Lines: @unchecked Sendable {
 #if !NEKODEX_DESKTOP_HELPER_HARNESS
 @main struct Main {
     @MainActor static func main() async {
+        becomeOwnPermissionClient()
+        _ = (initialParent, initialOwner) // Globals are lazy: pin the owner chain at start, not at first use.
         let port = DesktopPort(); let lines = Lines()
         let ownerWatch = DispatchSource.makeTimerSource(queue: .global(qos: .background))
         ownerWatch.schedule(deadline: .now() + 1, repeating: 1)
-        ownerWatch.setEventHandler { if getppid() != initialParent { Darwin._exit(0) } }
+        ownerWatch.setEventHandler { if !ownerIntact() { Darwin._exit(0) } }
         ownerWatch.resume()
         while true {
             var requestID = "invalid"

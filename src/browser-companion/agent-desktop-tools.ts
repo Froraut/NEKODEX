@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { validateToolScope } from "../agent-tools/journal";
 import type { ToolDescriptor, ToolInvocation, ToolOutcome, ToolScope } from "../agent-tools/types";
-import { macosWindowSelectionSchema, type MacosDesktopProvider, type MacosDesktopStatus, type MacosWindowMetadata, type MacosWindowSelection } from "./macos-desktop";
+import { desktopPermissionSchema, macosWindowSelectionSchema, type DesktopPermission, type MacosDesktopProvider, type MacosDesktopStatus, type MacosWindowMetadata, type MacosWindowSelection } from "./macos-desktop";
 import type { AgentTask, OutcomeEvidence } from "../agent-mode/types";
 import { desktopApplicationPropertiesSchema, desktopPropertyExpectationSchema, desktopPropertyReference, evaluateDesktopProperty } from "./desktop-outcome";
 import { desktopBindingOf, desktopBindingSchema, desktopObservationSchema, type DesktopObservation, type DesktopReceipt } from "./providers";
@@ -86,6 +86,7 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
       providerId: PROVIDER_ID, platform, state: closed ? "closed" as const : reason && !enabled ? "unavailable" as const : enabled ? "enabled" as const : "disabled" as const,
       enabled, created: !!native, activeCount: count, available: available(), reason,
       permissions: cached ? { screenCaptureGranted: cached.screenCaptureGranted, accessibilityGranted: cached.accessibilityGranted, postEventGranted: cached.postEventGranted } : null,
+      permissionClient: cached ? structuredClone(cached.permissionClient) : null,
       permissionInspectionAt: inspectedAt, nativeStatus: cached ? structuredClone(cached) : null,
       windows: structuredClone(windows), selected, restartPolicy: "off" as const,
       modelImage: { mimeType: "image/jpeg" as const, maxBytes: MAX_MODEL_IMAGE, coordinateSpace: "screenshot-pixels" as const },
@@ -152,6 +153,13 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
       explicit(explicitUserAction);
       try { await run(undefined, signal => inspect(resource(), signal)); reason = null; }
       catch (error) { reason = error instanceof Error ? error.message.slice(0, 240) : "Desktop permissions could not be inspected"; throw error; }
+      return status();
+    },
+    /** Registers only the helper's own identity, opens the exact pane, then re-reads status. */
+    async openPermissionSettings(permission: DesktopPermission, explicitUserAction: boolean) {
+      explicit(explicitUserAction); const value = desktopPermissionSchema.parse(permission);
+      try { await run(undefined, async signal => { const provider = resource(); await provider.openPermissionSettings(value, true, signal); await inspect(provider, signal); }); reason = null; }
+      catch (error) { reason = error instanceof Error ? error.message.slice(0, 240) : "System Settings could not be opened"; throw error; }
       return status();
     },
     async listWindows(explicitUserAction: boolean) {

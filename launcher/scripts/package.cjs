@@ -4,6 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { signingConfiguration, verifyMacPublisher, verifyWindowsTree, validatePackagedRuntimeAssets, validateOwnedNativePackagedAssets } = require("./release-signing.cjs");
 const { validateRuntimeBundle } = require("../electron/runtime-install.cjs");
+const { DESKTOP_HELPER_BUNDLE } = require("../../scripts/build-desktop-helper.cjs");
 
 const root = path.resolve(__dirname, "..");
 const launcherManifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
@@ -147,7 +148,7 @@ function verifySignedMacArchive() {
     if (publisherRequired) {
       if (process.arch === "arm64") verifyMacPublisher(path.join(runtime, "app", "owned-native", "build", "aarch64-apple-darwin", "nekodex-owned-native-worker"), publisherEnv);
       for (const [directory, executable] of [["credential-helper", "nekodex-credential-helper"], ["oauth-vault-helper", "nekodex-oauth-vault-helper"],
-        ["desktop-helper", "nekodex-desktop-helper"], ["skill-pdf-helper", "nekodex-skill-pdf-helper"],
+        ["desktop-helper", DESKTOP_HELPER_BUNDLE], ["skill-pdf-helper", "nekodex-skill-pdf-helper"],
         ...(process.arch === "arm64" ? [["execution-vm", "nekodex-execution-vm-helper"]] : [])]) {
         verifyMacPublisher(path.join(runtime, "app", directory, `darwin-${process.arch}`, executable), publisherEnv);
       }

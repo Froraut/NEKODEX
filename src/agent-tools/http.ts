@@ -2,7 +2,7 @@ import { z } from "zod";
 import { readJsonRequestBody } from "../http-body";
 import type { AgentToolsComposition } from "./composition";
 import { browserBindingSchema } from "../browser-companion/protocol";
-import { macosWindowSelectionSchema } from "../browser-companion/macos-desktop";
+import { desktopPermissionSchema, macosWindowSelectionSchema } from "../browser-companion/macos-desktop";
 import { remoteTaskScopeSchema } from "../remote-workspace/protocol";
 import { isPythonEnvironmentError, pythonEnvironmentPublicReason } from "./skill-python-environment";
 
@@ -38,6 +38,7 @@ const requestBody = z.discriminatedUnion("action", [
   z.object({ action: z.literal("bindBrowserTools"), scope, expectedBinding: browserBindingSchema, explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("revokeBrowserTools"), scope, explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("inspectDesktopPermissions"), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("openDesktopPermissionSettings"), permission: desktopPermissionSchema, explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("listDesktopWindows"), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("setDesktopEnabled"), enabled: z.boolean(), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("selectDesktopWindow"), scope, expectedSelection: macosWindowSelectionSchema, explicitUserAction: z.literal(true) }).strict(),
@@ -114,6 +115,7 @@ export function createAgentToolsRoutes(composition: AgentToolsComposition, path 
         case "bindBrowserTools": value = composition.bindBrowserTools(body.scope, body.expectedBinding, body.explicitUserAction); break;
         case "revokeBrowserTools": value = composition.revokeBrowserTools(body.scope, body.explicitUserAction); break;
         case "inspectDesktopPermissions": value = await composition.inspectDesktopPermissions(body.explicitUserAction); break;
+        case "openDesktopPermissionSettings": value = await composition.openDesktopPermissionSettings(body.permission, body.explicitUserAction); break;
         case "listDesktopWindows": value = await composition.listDesktopWindows(body.explicitUserAction); break;
         case "setDesktopEnabled": value = await composition.setDesktopEnabled(body.enabled, body.explicitUserAction); break;
         case "selectDesktopWindow": value = await composition.selectDesktopWindow(body.scope, body.expectedSelection, body.explicitUserAction); break;

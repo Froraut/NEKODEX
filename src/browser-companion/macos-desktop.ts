@@ -15,15 +15,27 @@ const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('h
 export const macosWindowSelectionSchema = z.object({ windowId: z.string().max(10).regex(/^\d+$/), processId: z.string().max(32).regex(/^\d+:\d+$/), windowEpoch: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 const windowSchema = macosWindowSelectionSchema.extend({ owner: z.string().max(160), title: z.string().max(512), foreground: z.boolean(),
   frame: z.object({ x: z.number().finite(), y: z.number().finite(), width: z.number().positive().finite(), height: z.number().positive().finite() }).strict() }).strict();
+/** The identity macOS judges permissions for. Self-responsible means the helper bundle itself
+ * (a stable bundle ID and designated requirement); otherwise TCC judges the app or terminal
+ * that started the runtime, and the UI must not direct the user to grant that. */
+const permissionClientSchema = z.object({ selfResponsible: z.boolean(), bundleIdentifier: z.string().max(160).nullable(),
+  name: z.string().max(160).nullable(), bundlePath: z.string().max(4096).nullable() }).strict();
+const permissionFlags = { screenCaptureGranted: z.boolean(), accessibilityGranted: z.boolean(), postEventGranted: z.boolean() };
 const statusSchema = z.object({ enabled: z.boolean(), providerId: z.literal(PROVIDER_ID), uncertain: z.boolean(), selected: windowSchema.nullable(),
-  selectionCurrent: z.boolean(), inputWindowBound: z.boolean(), screenCaptureGranted: z.boolean(), accessibilityGranted: z.boolean(), postEventGranted: z.boolean() }).strict();
+  selectionCurrent: z.boolean(), inputWindowBound: z.boolean(), ...permissionFlags, permissionClient: permissionClientSchema }).strict();
+export const desktopPermissionSchema = z.enum(['screenCapture', 'accessibility', 'postEvent']);
+const permissionSettingsSchema = z.object({ ...permissionFlags, permissionClient: permissionClientSchema,
+  pane: z.enum(['Privacy_ScreenCapture', 'Privacy_Accessibility']), registered: z.boolean() }).strict();
+export type DesktopPermission = z.infer<typeof desktopPermissionSchema>;
+export type DesktopPermissionClient = z.infer<typeof permissionClientSchema>;
+export type DesktopPermissionSettings = z.infer<typeof permissionSettingsSchema>;
 const receiptSchema = z.object({ operationId: z.string().uuid(), outcome: z.enum(['completed', 'rejected', 'unknown']), executed: z.boolean(), reason: z.string().max(240) }).strict();
 export type MacosWindowSelection = z.infer<typeof macosWindowSelectionSchema>;
 export type MacosWindowMetadata = z.infer<typeof windowSchema>;
 export type MacosDesktopStatus = z.infer<typeof statusSchema>;
 export interface NativeDesktopTransport {
   readonly activeCount?: number;
-  request(command: 'status' | 'listWindows' | 'enable' | 'select' | 'observe' | 'image' | 'act' | 'invalidate' | 'properties', body?: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
+  request(command: 'status' | 'listWindows' | 'openPermissionSettings' | 'enable' | 'select' | 'observe' | 'image' | 'act' | 'invalidate' | 'properties', body?: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
   close(): Promise<void>;
   readExistingReceipt?(operationId: string, binding: DesktopBinding): unknown | undefined;
   waitForIdle?(): Promise<void>;
@@ -153,6 +165,8 @@ export interface MacosDesktopProvider extends DesktopProviderPort {
   waitForIdle(): Promise<void>;
   status(signal?: AbortSignal): Promise<MacosDesktopStatus>;
   listWindows(signal?: AbortSignal): Promise<MacosWindowMetadata[]>;
+  /** Explicit user control: registers the helper's own identity for one permission and opens its exact pane. */
+  openPermissionSettings(permission: DesktopPermission, explicitUserAction: boolean, signal?: AbortSignal): Promise<DesktopPermissionSettings>;
   setEnabled(enabled: boolean, explicitUserAction: boolean): Promise<void>;
   selectWindow(selection: MacosWindowSelection, explicitUserAction: boolean): Promise<void>;
   image(scope: ToolScope, observation: DesktopObservation, signal?: AbortSignal): Promise<{ mimeType: 'image/png'; base64: string; sha256: string }>;
@@ -195,6 +209,10 @@ export function createMacosDesktopProvider(options: { helperExecutable: string; 
     },
     status,
     async listWindows(signal) { return z.object({ windows: z.array(windowSchema).max(128) }).strict().parse(await native().request('listWindows', {}, signal)).windows; },
+    async openPermissionSettings(permission, explicitUserAction, signal) {
+      if (!explicitUserAction) throw new Error('Explicit permission settings action required');
+      return permissionSettingsSchema.parse(await native().request('openPermissionSettings', { permission: desktopPermissionSchema.parse(permission) }, signal));
+    },
     async setEnabled(value, explicitUserAction) {
       if (!explicitUserAction || typeof value !== 'boolean' || closed) throw new Error('Explicit desktop capture/input preference required');
       if (value && (uncertain || busy)) throw new Error('Reconcile the current native operation before enabling another input owner');
@@ -227,7 +245,7 @@ export function createMacosDesktopProvider(options: { helperExecutable: string; 
       try {
         active(scope); const value = await status(signal);
         const available = value.enabled && value.screenCaptureGranted && value.accessibilityGranted && value.inputWindowBound && value.selectionCurrent && !value.uncertain;
-        return { available, platform: 'darwin', ...(!available ? { reason: 'Enable the provider, grant OS permissions externally and select the exact accessible window; post-event permission is needed only for foreground pixel fallback' } : {}) };
+        return { available, platform: 'darwin', ...(!available ? { reason: 'Enable the provider, grant OS permissions to NEKODEX Desktop Helper in System Settings and select the exact accessible window; post-event permission is needed only for foreground pixel fallback' } : {}) };
       } catch { return { available: false, platform: 'darwin', reason: 'Native macOS desktop owner or permissions are unavailable; no capture/input was sent' }; }
     },
     async observe(scope, signal, waitForForeground) {

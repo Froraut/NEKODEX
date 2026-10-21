@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createMacosDesktopProvider, NativeDesktopHelperClient, type NativeDesktopTransport } from '../src/browser-companion/macos-desktop';
 import { desktopBindingOf } from '../src/browser-companion/providers';
 import type { ToolScope } from '../src/agent-tools/types';
@@ -19,6 +19,7 @@ function fixture() {
   const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0, 8, 8, 0, 1, 0, 1, 0, 0xff, 0xd9]);
   const selection = { windowId: '1', processId: '1:100', windowEpoch: 'a'.repeat(64) };
   const window = { ...selection, owner: 'Owned fixture', title: 'Synthetic window', foreground: false, frame: { x: 10, y: 10, width: 1, height: 1 } };
+  const permissionClient = { selfResponsible: true, bundleIdentifier: 'dev.nekodex.desktop-provider.v1', name: 'NEKODEX Desktop Helper', bundlePath: '/fixture/NEKODEX Desktop Helper.app' };
   const transport: NativeDesktopTransport = {
     get activeCount() { return pendingOperation && !lateReceipt ? 1 : 0; },
     async request(command, body = {}, signal) {
@@ -30,8 +31,10 @@ function fixture() {
       if (command === 'enable') { enabled = body.enabled as boolean; return { enabled }; }
       if (command === 'status') return { providerId: 'nekodex-macos-desktop-v1', enabled, uncertain: false,
         selected: selected ? window : null, selectionCurrent: selected, inputWindowBound: selected,
-        screenCaptureGranted: true, accessibilityGranted: true, postEventGranted: false };
+        screenCaptureGranted: true, accessibilityGranted: true, postEventGranted: false, permissionClient };
       if (command === 'listWindows') return { windows: [window] };
+      if (command === 'openPermissionSettings') return { screenCaptureGranted: true, accessibilityGranted: true, postEventGranted: false, permissionClient,
+        pane: body.permission === 'screenCapture' ? 'Privacy_ScreenCapture' : 'Privacy_Accessibility', registered: true };
       if (command === 'select') { selected = true; return { selected: window, inputWindowBound: true }; }
       if (command === 'observe') return { kind: 'desktop', providerId: foreign ? 'foreign-provider' : 'nekodex-macos-desktop-v1',
         scopeId: body.scopeId, observationId: randomUUID(), platform: 'darwin', ...selection,
@@ -154,13 +157,27 @@ test('pre-dispatch native cancellation sends no input and does not create an unc
   await f.provider.close();
 });
 
+test('permission settings control is explicit, fixed to three permissions and parsed strictly', async () => {
+  const f = fixture();
+  await expect(f.provider.openPermissionSettings('accessibility', false)).rejects.toThrow('Explicit permission settings');
+  await expect(f.provider.openPermissionSettings('fullDiskAccess' as never, true)).rejects.toThrow();
+  expect(f.calls).not.toContain('openPermissionSettings');
+  const opened = await f.provider.openPermissionSettings('screenCapture', true);
+  expect(opened).toMatchObject({ pane: 'Privacy_ScreenCapture', registered: true, permissionClient: { selfResponsible: true, bundleIdentifier: 'dev.nekodex.desktop-provider.v1' } });
+  expect(f.requests.find(row => row.command === 'openPermissionSettings')?.body).toEqual({ permission: 'screenCapture' });
+  expect((await f.provider.status()).permissionClient.name).toBe('NEKODEX Desktop Helper');
+  // Settings never enables the provider, selects a window, captures or dispatches input.
+  expect(f.calls.filter(command => ['enable', 'select', 'observe', 'image', 'act'].includes(command))).toEqual([]);
+  await f.provider.close();
+});
+
 test('oversized native protocol payload is refused before resolving or launching any helper', async () => {
   const client = new NativeDesktopHelperClient({ executable: '/nonexistent-no-helper-launch', sha256: 'a'.repeat(64) });
   await expect(client.request('properties', { selection: { windowId: '1'.repeat(70 * 1024) } })).rejects.toThrow('request exceeds');
   expect(client.activeCount).toBe(0); await client.close();
 });
 
-const helper = join(import.meta.dir, '..', 'launcher', 'electron', 'desktop-helper', `darwin-${process.arch}`, 'nekodex-desktop-helper');
+const helper = join(import.meta.dir, '..', 'launcher', 'electron', 'desktop-helper', `darwin-${process.arch}`, 'NEKODEX Desktop Helper.app', 'Contents', 'MacOS', 'nekodex-desktop-helper');
 test.skipIf(process.platform !== 'darwin' || !existsSync(helper))('compiled native helper reports passive permissions/metadata and closes without capture or input', async () => {
   const executable = realpathSync(helper); const client = new NativeDesktopHelperClient({ executable, sha256: digest(readFileSync(executable)), requestTimeoutMs: 3000 });
   try {
@@ -168,6 +185,9 @@ test.skipIf(process.platform !== 'darwin' || !existsSync(helper))('compiled nati
     expect(state.enabled).toBe(false); expect(state.selected).toBeNull();
     expect(typeof state.screenCaptureGranted).toBe('boolean'); expect(typeof state.accessibilityGranted).toBe('boolean');
     expect(typeof state.postEventGranted).toBe('boolean'); expect(state.inputWindowBound).toBe(false);
+    // Permissions are judged for the helper bundle itself, never for the process that started it.
+    expect(state.permissionClient).toEqual({ selfResponsible: true, bundleIdentifier: 'dev.nekodex.desktop-provider.v1', name: 'NEKODEX Desktop Helper',
+      bundlePath: dirname(dirname(dirname(executable))) });
     const inventory = await client.request('listWindows') as { windows: unknown[] }; expect(Array.isArray(inventory.windows)).toBe(true);
     expect(inventory.windows.length).toBeLessThanOrEqual(128);
     await expect(client.request('status', { command: 'act' })).rejects.toThrow('protocol ownership');

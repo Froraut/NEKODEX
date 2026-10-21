@@ -18,7 +18,7 @@ import { createRequire } from "node:module";
 const { beginDirectoryBuild } = createRequire(import.meta.url)("./build-output.cjs");
 const { compileCredentialHelper } = createRequire(import.meta.url)("./build-credential-helper.cjs");
 const { compileOAuthVaultHelper } = createRequire(import.meta.url)("./build-oauth-vault-helper.cjs");
-const { compileDesktopHelper } = createRequire(import.meta.url)("./build-desktop-helper.cjs");
+const { compileDesktopHelper, DESKTOP_HELPER_BUNDLE } = createRequire(import.meta.url)("./build-desktop-helper.cjs");
 const { compileSkillPdfHelper } = createRequire(import.meta.url)("./build-skill-pdf-helper.cjs");
 const { prepareExecutionVmRuntime, prepareOwnedNativeRuntime } = createRequire(import.meta.url)("../launcher/scripts/prepare-runtime.cjs");
 const { signingConfiguration, signEmbeddedRuntime, signDesktopHelper, signSkillPdfHelper } = createRequire(import.meta.url)("../launcher/scripts/release-signing.cjs");
@@ -142,10 +142,10 @@ if (oauthVaultHelper.supported) {
 const desktopHelper = compileDesktopHelper({ repositoryRoot: root, development: true,
   sign: (candidate: string) => signDesktopHelper(candidate, process.platform, process.env, { development: true }) });
 if (desktopHelper.supported) {
+  // The whole signed bundle: its seal covers Info.plist, which carries the stable TCC identity.
   const helperDirectory = join(appDir, "desktop-helper", `${process.platform}-${process.arch}`);
   mkdirSync(helperDirectory, { recursive: true });
-  copyFileSync(desktopHelper.executable, join(helperDirectory, "nekodex-desktop-helper"));
-  chmodSync(join(helperDirectory, "nekodex-desktop-helper"), 0o755);
+  cpSync(desktopHelper.bundle, join(helperDirectory, DESKTOP_HELPER_BUNDLE), { recursive: true, errorOnExist: true, force: false, verbatimSymlinks: true });
 }
 const pdfPublisher = process.platform === "darwin" && (signingConfiguration(process.platform).release || Boolean(process.env.NEKODEX_LOCAL_APP_SIGNING_IDENTITY));
 const pdfHelper = compileSkillPdfHelper({ repositoryRoot: root, development: !pdfPublisher,

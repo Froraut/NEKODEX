@@ -2,7 +2,7 @@ const ACTIONS = new Set(['status', 'reviewServer', 'saveServer', 'setEnabled', '
 const { createPythonBuildPicker } = require('../python-build-picker.cjs');
 for (const action of ['reviewSkillImport', 'reviewSkillPackageImport', 'commitSkillImport', 'managedSkillAction', 'attachManagedSkill', 'detachManagedSkill', 'revokeManagedSkill']) ACTIONS.add(action);
 for (const action of ['browserStatus', 'bindBrowserTools', 'revokeBrowserTools']) ACTIONS.add(action);
-for (const action of ['inspectDesktopPermissions', 'listDesktopWindows', 'setDesktopEnabled', 'selectDesktopWindow', 'revokeDesktopTools']) ACTIONS.add(action);
+for (const action of ['inspectDesktopPermissions', 'openDesktopPermissionSettings', 'listDesktopWindows', 'setDesktopEnabled', 'selectDesktopWindow', 'revokeDesktopTools']) ACTIONS.add(action);
 for (const action of ['remoteStatus', 'bindRemoteTools', 'revokeRemoteTools']) ACTIONS.add(action);
 for (const action of ['scriptStatus', 'grantScriptWorkspace', 'revokeScriptWorkspace']) ACTIONS.add(action);
 for (const action of ['vmStatus', 'reviewVmEnvironment', 'prepareVmEnvironment', 'attachVmWorkspace', 'revokeVmWorkspace', 'cancelVmOperation', 'reconcileVmOperation']) ACTIONS.add(action);

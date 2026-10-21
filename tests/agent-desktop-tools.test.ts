@@ -19,6 +19,7 @@ test("desktop controller is passive/off until explicit controls and binds bounde
   const selection = { windowId: "7", processId: "123:456", windowEpoch: "a".repeat(64) };
   const window = { ...selection, owner: "Private owner", title: "Private title", foreground: true, frame: { x: 10, y: 20, width: 1, height: 1 } };
   let screenGranted = true;
+  const permissionClient = { selfResponsible: true, bundleIdentifier: "dev.nekodex.desktop-provider.v1", name: "NEKODEX Desktop Helper", bundlePath: "/fixture/NEKODEX Desktop Helper.app" };
   let propertyValue = "Saved in application";
   const expectation = { elementId: "element-1", property: "value" as const, equals: propertyValue };
   const transport: NativeDesktopTransport = {
@@ -29,7 +30,8 @@ test("desktop controller is passive/off until explicit controls and binds bounde
       if (command === "act") dispatchedAction = body.action;
       if (command === "status" && failNextStatus) { failNextStatus = false; throw new Error("synthetic post-selection status failure"); }
       if (command === "status") return { providerId: "nekodex-macos-desktop-v1", enabled, uncertain: false, selected: selected ? window : null,
-        selectionCurrent: selected, inputWindowBound: selected, screenCaptureGranted: screenGranted, accessibilityGranted: true, postEventGranted: false };
+        selectionCurrent: selected, inputWindowBound: selected, screenCaptureGranted: screenGranted, accessibilityGranted: true, postEventGranted: false, permissionClient };
+      if (command === "openPermissionSettings") return { screenCaptureGranted: screenGranted, accessibilityGranted: true, postEventGranted: false, permissionClient, pane: "Privacy_Accessibility", registered: true };
       if (command === "listWindows") return { windows: [window] };
       if (command === "enable") { enabled = true; return { enabled: true }; }
       if (command === "select") { selected = true; return { selected: window, inputWindowBound: true }; }
@@ -64,6 +66,12 @@ test("desktop controller is passive/off until explicit controls and binds bounde
     expect((await invoke("readProperties", { selection })).state).toBe("failed"); expect(calls).toEqual([]);
     await expect(controller.inspectPermissions(false)).rejects.toThrow("Explicit"); expect(creates).toBe(0);
     await controller.inspectPermissions(true); expect(creates).toBe(1); expect(calls).toEqual(["status"]);
+    expect(controller.status().permissionClient).toEqual(permissionClient);
+    await expect(controller.openPermissionSettings("accessibility", false)).rejects.toThrow("Explicit");
+    await expect(controller.openPermissionSettings("automation" as never, true)).rejects.toThrow();
+    // Opening the pane re-reads status but never enables, lists, selects, captures or inputs.
+    await controller.openPermissionSettings("accessibility", true); expect(calls).toEqual(["status", "openPermissionSettings", "status"]);
+    expect(controller.status()).toMatchObject({ enabled: false, reason: null });
     await controller.setEnabled(true, true); await controller.listWindows(true);
     await expect(controller.selectAndBind(scope, { ...selection, processId: "999:999" }, true)).rejects.toThrow("exact row");
     await controller.selectAndBind(scope, selection, true);

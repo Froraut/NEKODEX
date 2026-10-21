@@ -5,12 +5,34 @@ import { fileURLToPath } from 'node:url';
 
 export interface PinnedDesktopHelper { executable: string; sha256: string }
 
+/** Equal to scripts/build-desktop-helper.cjs (a test keeps them equal). macOS TCC keys the
+ * self-responsible helper by this bundle's identifier and designated requirement, so the
+ * executable is admitted only inside its fixed bundle. */
+export const DESKTOP_HELPER_BUNDLE = 'NEKODEX Desktop Helper.app';
+export const DESKTOP_HELPER_EXECUTABLE_PATH = `${DESKTOP_HELPER_BUNDLE}/Contents/MacOS/nekodex-desktop-helper`;
+const bundleExecutable = (directory: string) => join(directory, ...DESKTOP_HELPER_EXECUTABLE_PATH.split('/'));
+
+function realDirectory(path: string) {
+  const info = lstatSync(path); return info.isDirectory() && !info.isSymbolicLink() && realpathSync(path) === path;
+}
+/** The bundle, its Contents and MacOS directories are real directories and Info.plist a real file. */
+function inspectBundle(executable: string) {
+  const macos = dirname(executable), contents = dirname(macos), bundle = dirname(contents);
+  try {
+    const plist = lstatSync(join(contents, 'Info.plist'));
+    if (basename(bundle) === DESKTOP_HELPER_BUNDLE && basename(contents) === 'Contents' && basename(macos) === 'MacOS'
+      && [bundle, contents, macos].every(realDirectory) && plist.isFile() && !plist.isSymbolicLink() && plist.size <= 64 * 1024) return;
+  } catch {}
+  throw new Error('Desktop helper layout is invalid');
+}
+
 function inspectHelper(executable: string, expectedSha256?: string): PinnedDesktopHelper | undefined {
   let info;
   try { info = lstatSync(executable); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT' && !expectedSha256) return undefined; throw new Error('Desktop helper is unavailable'); }
   if (!info.isFile() || info.isSymbolicLink() || realpathSync(executable) !== executable || !(info.mode & 0o111)
     || (info.mode & 0o022) !== 0 || info.size > 16 * 1024 * 1024) throw new Error('Desktop helper layout is invalid');
+  inspectBundle(executable);
   const sha256 = createHash('sha256').update(readFileSync(executable)).digest('hex');
   if (expectedSha256 && sha256 !== expectedSha256) throw new Error('Trusted desktop helper bytes changed');
   return { executable, sha256 };
@@ -29,7 +51,7 @@ export function resolveDevelopmentDesktopHelper(sourceEntryUrl: string, options:
   const root = dirname(dirname(entry));
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
   if (manifest.name !== 'codex-chatgpt-web') throw new Error('Source CLI package identity changed');
-  return inspectHelper(join(root, 'launcher', 'electron', 'desktop-helper', `${platform}-${arch}`, 'nekodex-desktop-helper'));
+  return inspectHelper(bundleExecutable(join(root, 'launcher', 'electron', 'desktop-helper', `${platform}-${arch}`)));
 }
 
 /** A composition-root override is for an owned DEV harness. Installed code uses
@@ -50,7 +72,7 @@ export function resolveDesktopHelper(options: {
   } else {
     const entry = options.runtimeEntry ?? process.argv[1];
     if (!entry || !isAbsolute(entry) || basename(entry) !== 'cli.js') return undefined;
-    executable = join(dirname(resolve(entry)), 'desktop-helper', `${platform}-${arch}`, 'nekodex-desktop-helper');
+    executable = bundleExecutable(join(dirname(resolve(entry)), 'desktop-helper', `${platform}-${arch}`));
   }
   return inspectHelper(executable, options.explicit?.sha256);
 }
