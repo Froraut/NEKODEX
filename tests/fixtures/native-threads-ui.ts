@@ -19,7 +19,7 @@ const rows = [thread(ROOT, 'Fixture parent'), thread(CHILD, 'Fixture worker', { 
   agentNickname: 'Reader', agentRole: 'reviewer', source: 'subAgent',
   status: { type: 'active', activeFlags: ['waitingOnApproval'] } })];
 const fixture = { calls: [] as string[], failList: false, unknownFork: false, uncertain: [] as CodexForkAction[],
-  ownerActive: false, uncertainHandoffs: [] as CodexHandoffAction[] };
+  ownerActive: false, continueDelayMs: 0, uncertainHandoffs: [] as CodexHandoffAction[] };
 Object.assign(window, { nativeThreadsFixture: fixture });
 const api: NativeThreadsApi = {
   nativeThreadsSnapshot: async () => ({ ok: true, value: { state: 'ready', transport: 'owned-stdio-server',
@@ -57,6 +57,7 @@ const api: NativeThreadsApi = {
     uncertainHandoffs: [...fixture.uncertainHandoffs], errorCode: null } }),
   nativeThreadContinue: async ({ threadId, text }) => {
     fixture.calls.push(`continue:${threadId}:${text}`);
+    if (fixture.continueDelayMs) await new Promise(resolve => setTimeout(resolve, fixture.continueDelayMs));
     if (fixture.ownerActive) return { ok: false, error: { code: 'handoff_owner_active', rpcCode: -32600,
       message: 'Another Codex client still owns this thread. Close or switch away from it in Codex, wait for Codex to release it, then try again. Nothing was sent.' } };
     return { ok: true, value: { actionId: '0199a001-0000-7000-8000-000000000006', threadId, turnId: 'fixture-turn-1',

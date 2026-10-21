@@ -45,12 +45,17 @@ export function NativeThreadHandoffPanel({ language, disabled = false, api, thre
 }) {
   const text = language === 'ru' ? ru : en;
   const [snapshot, setSnapshot] = useState<CodexThreadHandoffSnapshot | null>(null);
-  const [message, setMessage] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<SafeError | null>(null);
-  const [receipt, setReceipt] = useState<CodexThreadHandoffReceipt | null>(null);
-  const locked = useRef(false), mounted = useRef(true);
+  // Drafts, errors and receipts are keyed by thread, so nothing typed or received for one
+  // thread is shown or sent for another, and a late result lands on its own thread.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [errors, setErrors] = useState<Record<string, SafeError>>({});
+  const [receipts, setReceipts] = useState<Record<string, CodexThreadHandoffReceipt>>({});
+  const [busyThread, setBusyThread] = useState<string | null>(null);
+  const locked = useRef(false), mounted = useRef(true), selectedThread = useRef(thread.id);
+  selectedThread.current = thread.id;
   const messageId = useId();
+  const message = drafts[thread.id] ?? '', error = errors[thread.id] ?? null, receipt = receipts[thread.id] ?? null;
+  const busy = busyThread !== null;
   const refresh = async () => {
     try {
       const result = await api.nativeThreadHandoffSnapshot?.();
@@ -58,56 +63,60 @@ export function NativeThreadHandoffPanel({ language, disabled = false, api, thre
     } catch { /* Passive receipt state only; errors stay with the action that caused them. */ }
   };
   useEffect(() => { mounted.current = true; void refresh(); return () => { mounted.current = false; }; }, [api]);
-  // The surface remounts this panel per thread (`key`), so drafts, receipts and busy state
-  // never carry over. This guard also covers a caller that reuses the instance.
-  const boundThread = useRef(thread.id);
+  // A handoff started by an earlier mount (or another window) is visible only through the
+  // main-owned snapshot. Re-read that local state while one is active; it starts no provider work.
+  const activeAction = snapshot?.active?.actionId ?? null;
   useEffect(() => {
-    if (boundThread.current === thread.id) return;
-    boundThread.current = thread.id; setReceipt(null); setError(null); setMessage('');
-  }, [thread.id]);
+    if (!activeAction || busy) return;
+    const timer = setInterval(() => { void refresh(); }, 2000);
+    return () => clearInterval(timer);
+  }, [activeAction, busy, api]);
+  const keyed = <T,>(setter: (update: (rows: Record<string, T>) => Record<string, T>) => void, id: string, value: T | null) =>
+    setter(rows => { const next = { ...rows }; if (value === null) delete next[id]; else next[id] = value; return next; });
   const unwrap = <T,>(result: NativeThreadsResult<T> | undefined): T => {
     if (!result || typeof result !== 'object' || !('ok' in result)) throw { code: 'handoff_unavailable', message: text.generic };
     if (!result.ok) throw result.error;
     return result.value;
   };
-  const perform = async (action: () => Promise<void>) => {
+  const perform = async (actionThread: string, action: () => Promise<void>) => {
     if (disabled || locked.current) return;
-    const actionThread = thread.id;
-    // A late result belongs to the thread it was sent for, never to a newly selected one.
-    const current = () => mounted.current && boundThread.current === actionThread;
-    locked.current = true; setBusy(true); setError(null);
+    locked.current = true; setBusyThread(actionThread); keyed(setErrors, actionThread, null);
     try { await action(); }
     catch (reason) {
       // Only the registrar's sanitized envelope may reach this view, never an IPC exception text.
       const safe = reason && typeof reason === 'object' && 'code' in reason && 'message' in reason
         && !(reason instanceof Error) ? reason as SafeError : { code: 'handoff_unavailable', message: text.generic };
-      if (current()) setError(safe);
+      if (mounted.current) keyed(setErrors, actionThread, safe);
     } finally {
       await refresh();
-      if (mounted.current) setBusy(false);
+      if (mounted.current) setBusyThread(null);
       locked.current = false;
-      if (current()) onSettled?.(actionThread);
+      // Refresh metadata only when the user is still looking at that thread.
+      if (mounted.current && selectedThread.current === actionThread) onSettled?.(actionThread);
     }
   };
   const uncertain = snapshot?.uncertainHandoffs || [];
   const blocked = uncertain.some(action => action.threadId === thread.id) || Boolean(snapshot?.active);
   const subagent = Boolean(thread.parentThreadId);
   const activeHere = thread.status.type === 'active';
+  const setMessage = (value: string) => keyed(setDrafts, thread.id, value || null);
   const send = () => {
-    const value = message;
+    const target = thread.id, value = message;
     if (!value.trim()) return;
-    void perform(async () => {
-      setReceipt(null);
-      const target = thread.id;
+    void perform(target, async () => {
+      keyed(setReceipts, target, null);
       const result = unwrap(await api.nativeThreadContinue?.({ threadId: target, text: value }));
-      if (!mounted.current || boundThread.current !== target) return;
-      setReceipt(result); setMessage('');
+      if (!mounted.current) return;
+      keyed(setReceipts, target, result); keyed(setDrafts, target, null);
     });
   };
-  const acknowledge = (actionId: string) => void perform(async () => {
-    const result = unwrap(await api.nativeThreadAcknowledgeHandoff?.({ actionId, threadId: thread.id, confirmedInspection: true }));
-    if (mounted.current) setSnapshot(result);
-  });
+  const acknowledge = (actionId: string) => {
+    const target = thread.id;
+    void perform(target, async () => {
+      const result = unwrap(await api.nativeThreadAcknowledgeHandoff?.({ actionId, threadId: target, confirmedInspection: true }));
+      if (mounted.current) setSnapshot(result);
+    });
+  };
   if (!api.nativeThreadContinue) return null;
   return <section className="native-threads__handoff" aria-labelledby={`${messageId}-title`}>
     <h4 id={`${messageId}-title`}>{text.title}</h4>
@@ -130,9 +139,9 @@ export function NativeThreadHandoffPanel({ language, disabled = false, api, thre
       <label htmlFor={messageId}>{text.message}</label>
       <textarea id={messageId} className="nk-input native-threads__prompt" value={message} maxLength={32768}
         disabled={disabled || busy || blocked} onChange={event => setMessage(event.target.value)} />
-      <div className="native-threads__actions"><Button variant="primary" busy={busy}
+      <div className="native-threads__actions"><Button variant="primary" busy={busyThread === thread.id}
         disabled={disabled || busy || blocked || !message.trim() || snapshot?.available === false}
-        onClick={send}>{busy ? text.sending : text.send}</Button></div>
+        onClick={send}>{busyThread === thread.id ? text.sending : text.send}</Button></div>
     </>}
   </section>;
 }

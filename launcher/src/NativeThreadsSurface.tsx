@@ -266,7 +266,7 @@ export function NativeThreadsSurface({ language, disabled = false, api, historyA
             || uncertainActions.some(action => action.threadId === selected.id)}
             busy={busy === 'fork'} onClick={fork}>{busy === 'fork' ? text.forkPending : text.fork}</Button></div>
           <p className="native-threads__hint">{text.permission}</p>
-          {api.nativeThreadContinue ? <NativeThreadHandoffPanel key={selected.id} language={language} disabled={disabled || busy !== null} api={api}
+          {api.nativeThreadContinue ? <NativeThreadHandoffPanel language={language} disabled={disabled || busy !== null} api={api}
             thread={selected} onSettled={id => { if (mounted.current) read(id); }} /> : null}
         </> : <p className="native-threads__hint">{text.read}</p>}
         </PanelStack>
