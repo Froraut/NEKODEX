@@ -9,7 +9,7 @@ import { activeTaskEvidence } from "./evidence";
 import { buildSemanticReviewPacket, semanticRequirementBasis, type SemanticReviewInput } from "./semantic-review";
 import { invocationFingerprint } from "../agent-tools/journal";
 import { AGENT_NATIVE_PROTOCOL, nativeDigest, nativeToolCallId } from "./native-protocol";
-import type { AgentControl, AgentDispatch, AgentExecutionConfig, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliation, AgentWorker, AgentWorkPacket, CreateAgentTask, ExecutionResult, MailMessage, OutcomeEvidence, OutcomeReview, Requirement, SemanticOutcomeReview, SemanticReviewInvalidEvidence, StageInput } from "./types";
+import type { AgentControl, AgentDispatch, AgentDispatchDisposition, AgentExecutionConfig, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliation, AgentWorker, AgentWorkPacket, CreateAgentTask, ExecutionResult, MailMessage, OutcomeEvidence, OutcomeReview, Requirement, SemanticOutcomeReview, SemanticReviewInvalidEvidence, StageInput } from "./types";
 
 function text(value: string, name: string, max = 16_384): void {
   if (typeof value !== "string" || !value.trim() || Buffer.byteLength(value) > max) throw new Error(`Invalid ${name}`);
@@ -256,8 +256,9 @@ export class AgentModeStore {
       const task = this.getTask(taskId);
       if (task.archivedAt !== undefined) return task;
       if (task.status !== "stopped" && task.status !== "verified_complete") throw new Error("Task archive requires a stopped or verified complete task");
-      const dispatches = this.listDispatches(taskId);
-      if (task.ownerId || task.loopRun || dispatches.some(row => unsettled.has(row.state))) throw new Error("Task archive requires settled execution");
+      const dispatches = this.listDispatches(taskId), closed = new Set(this.listDispatchDispositions(taskId).map(row => row.dispatchId));
+      // An unknown send stays unknown; only the user's explicit disposition receipt closes it for archive.
+      if (task.ownerId || task.loopRun || dispatches.some(row => unsettled.has(row.state) && !(row.state === "unknown" && closed.has(row.id)))) throw new Error("Task archive requires settled execution");
       // A stopped task never applies late tool outcomes to its row; a verified one could, so it must have none left.
       const outcomes = this.effectiveToolOutcomes(taskId), recorded = new Set(this.listToolOutcomes(taskId).map(row => row.idempotencyKey));
       if (task.status === "verified_complete" && (outcomes.some(row => row.state === "outcome_unknown") || dispatches.some(row => row.generation === task.generation
@@ -265,6 +266,35 @@ export class AgentModeStore {
       task.archivedAt = this.now(); task.updatedAt = task.archivedAt;
       this.db.query("UPDATE agent_tasks SET body=? WHERE id=?").run(JSON.stringify(task), task.id);
       return task;
+    });
+  }
+  listDispatchDispositions(taskId: string): AgentDispatchDisposition[] {
+    return this.listReceipts(taskId).filter(row => row.kind === "dispatch_disposition").map(row => row.body as AgentDispatchDisposition);
+  }
+  /**
+   * Records the user's outcome for one unknown send of a stopped task with no owner or Loop run. It sends and
+   * replays nothing and is not a terminal receipt: the dispatch row, its worker, stage, turn, reservation, mail,
+   * receipts and evidence are unchanged. One immutable receipt per dispatch; archive may then proceed.
+   */
+  recordDispatchDisposition(taskId: string, dispatchId: string, input: { kind: AgentDispatchDisposition["kind"]; note?: string; actionId: string; scope: AgentDispatchDisposition["scope"] }): AgentDispatchDisposition {
+    id(input.actionId);
+    if (!["abandoned", "confirmed_delivered"].includes(input.kind)) throw new Error("Unknown send reconciliation outcome is not supported");
+    if (input.note !== undefined && (typeof input.note !== "string" || !input.note.trim() || input.note.length > 2000)) throw new Error("Unknown send reconciliation note must be 1-2000 characters");
+    return this.atomic(() => {
+      const task = this.getTask(taskId), row = this.row<AgentDispatch>("agent_dispatches", dispatchId);
+      if (!row || row.taskId !== taskId) throw new Error("Unknown send reconciliation dispatch does not belong to this task");
+      if (task.archivedAt !== undefined) throw new Error("Task is archived; its ledger is read-only");
+      if (task.familyId !== input.scope.familyId || task.generation !== input.scope.generation || task.revision !== input.scope.revision) throw new Error("Stale task action scope");
+      if (task.status !== "stopped") throw new Error("Unknown send reconciliation requires a stopped task");
+      if (task.ownerId || task.loopRun) throw new Error("Unknown send reconciliation requires a task with no execution owner");
+      if (row.state !== "unknown") throw new Error("Unknown send reconciliation requires a dispatch whose outcome is unknown");
+      if (this.listDispatchDispositions(taskId).some(fact => fact.dispatchId === dispatchId)) throw new Error("Unknown send reconciliation is already recorded for this dispatch");
+      if (input.kind === "confirmed_delivered" && !row.acceptanceReceipt) throw new Error("Unknown send reconciliation cannot confirm delivery without the dispatch's acceptance receipt");
+      const fact: AgentDispatchDisposition = { dispatchId, kind: input.kind, ...(input.note !== undefined ? { note: input.note } : {}),
+        ...(input.kind === "confirmed_delivered" ? { acceptanceReceipt: row.acceptanceReceipt } : {}), actionId: input.actionId, scope: { ...input.scope },
+        dispatchGeneration: row.generation, dispatchTaskRevision: row.taskRevision, resent: false, recordedAt: this.now() };
+      this.receipt(`dispatch-disposition:${dispatchId}`, taskId, "dispatch_disposition", fact);
+      return fact;
     });
   }
   /** Host-resolved pins only. Completed work and immutable dispatch history survive rebinding. */

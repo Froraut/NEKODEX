@@ -1,5 +1,5 @@
 const path = require('node:path');
-const ACTIONS = new Set(['status', 'list', 'get', 'create', 'control', 'step', 'run', 'review', 'verify', 'evidence', 'workspace-grant', 'resume-continuation', 'enqueue-work', 'cycle', 'workspace-evidence', 'reconcile-tool', 'refresh-execution', 'archive', 'semantic-review']);
+const ACTIONS = new Set(['status', 'list', 'get', 'create', 'control', 'step', 'run', 'review', 'verify', 'evidence', 'workspace-grant', 'resume-continuation', 'enqueue-work', 'cycle', 'workspace-evidence', 'reconcile-tool', 'refresh-execution', 'archive', 'reconcile-dispatch', 'semantic-review']);
 const UUID = /^[a-f0-9-]{36}$/;
 const record = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 const owns = (value, name) => Object.prototype.hasOwnProperty.call(value, name);
@@ -21,6 +21,13 @@ function registerAgentMode({ handle, runtimeHost, workspaceService, workspaceEvi
     if (owns(body, 'proof') || owns(body, 'observation') || owns(body, 'outcome')) throw new Error(body.action === 'reconcile-tool' ? 'Retained tool outcomes must come from the owned tool journal' : 'Artifact evidence must be observed by the main process');
     if (body.action === 'reconcile-tool' && (Object.keys(body).some(key => !['action', 'taskId', 'actionId', 'scope', 'idempotencyKey'].includes(key))
         || typeof body.idempotencyKey !== 'string' || !body.idempotencyKey.trim() || body.idempotencyKey.length > 128)) throw new Error('Invalid retained tool outcome lookup');
+    // A user-recorded outcome for an unknown send: exact keys only, and nothing in it can carry a receipt or resend.
+    if (owns(body, 'disposition') !== (body.action === 'reconcile-dispatch')
+        || body.action === 'reconcile-dispatch' && (Object.keys(body).some(key => !['action', 'taskId', 'actionId', 'scope', 'dispatchId', 'disposition'].includes(key))
+          || typeof body.dispatchId !== 'string' || !body.dispatchId.trim() || body.dispatchId.length > 128 || !record(body.scope)
+          || !record(body.disposition) || Object.keys(body.disposition).some(key => !['kind', 'note'].includes(key))
+          || !['abandoned', 'confirmed_delivered'].includes(body.disposition.kind)
+          || (owns(body.disposition, 'note') && (typeof body.disposition.note !== 'string' || !body.disposition.note.trim() || body.disposition.note.length > 2000)))) throw new Error('Invalid unknown send reconciliation');
     if (owns(body, 'workspaceSelection') && !['create', 'workspace-grant'].includes(body.action)) throw new Error('Invalid Agent workspace action');
     if (owns(body, 'evidenceSelection') && body.action !== 'workspace-evidence') throw new Error('Invalid Agent evidence action');
     const supervisor = runtimeHost.supervisor;

@@ -193,6 +193,21 @@ success after host/human review, without sending anything. Unknown outcomes
 require a trusted external terminal or confirmed-not-sent receipt; a new action
 ID or renewed consent is not such a receipt.
 
+A stopped task can still be closed for archive. The explicit `reconcile-dispatch`
+action records the user's own disposition for one `unknown` dispatch of a
+stopped task with no owner or Loop run, scoped to the current
+`{familyId, generation, revision}` and command-receipted under its action ID.
+The disposition is `abandoned` (outcome unknown, not resent) or
+`confirmed_delivered`, which is accepted only when the dispatch already holds its
+own durable acceptance receipt and names it; an optional bounded note is kept.
+It is stored as one immutable `dispatch_disposition` receipt per dispatch, never
+as an edit of the dispatch row. It sends, replays and adopts nothing and is not a
+terminal or not-sent receipt: the dispatch and its worker stay `unknown`, the
+turn and reservation stay charged, the stage, mailbox, evidence and earlier
+receipts are unchanged and Step/Run still refuse to replay. Archive alone treats
+an `unknown` dispatch with such a disposition as closed. The runtime refuses it
+while any dispatch of the task is live in this process.
+
 Graceful service shutdown closes admission, prevents further automatic stages,
 aborts owned requests and waits for their promises before closing SQLite. The
 owned-resource finalizer is shared across concurrent and repeated stop calls;
@@ -297,7 +312,8 @@ separately from the explicit `verify` transition.
 
 `POST /admin/agent-mode` accepts `status`, `list`, `get`, `create`, `control`,
 `step`, `run`, `review`, `evidence`, `verify`, `workspace-grant`,
-`resume-continuation`, `reconcile-tool`, `enqueue-work`, `cycle` and `workspace-evidence`.
+`resume-continuation`, `reconcile-tool`, `enqueue-work`, `cycle`, `workspace-evidence`,
+`refresh-execution`, `archive`, `reconcile-dispatch` and `semantic-review`.
 Successful payloads use
 `{ ok: true, value }`; failures are sanitized `{ ok: false, error, message? }`.
 Reads and mutations both require the service control authority. Envelopes and
@@ -385,6 +401,14 @@ continuation, correction while a receipt read is in flight, one scope invalidati
 for a committed correction, late-result retention without reactivation, immutable
 unknown rows across reopen and no effect replay. It uses no real provider, app
 window or browser input.
+
+`tests/agent-mode-dispatch-reconciliation.test.ts` uses synthetic ports whose
+transport is lost before (and after) an ACK. It checks refusal before stop, for a
+stale scope, without an acceptance receipt and for a repeated record; an
+unchanged dispatch, worker, task row and earlier receipts; replay still refused;
+archive afterwards; reopen; and the HTTP command receipt with one physical send.
+`tests/agent-dispatch-reconciliation-view.test.ts` renders the confirmation
+dialog in a headless browser with an inert callback.
 
 `tests/agent-mode-tool-images.test.ts` exercises the canonical projection and
 production Responses parser without any real model request. Its connected injected
