@@ -28,6 +28,8 @@ export interface ChatCompletionInput {
   stream: boolean;
   maxTokens: number;
   validators: Map<string, ValidateFunction>;
+  /** From the X-NEKODEX-Companion-Account header only: explicit opt-in to the bound companion tab. */
+  companionAccount?: string;
 }
 export interface ChatCompletionResult {
   content: string | null;

@@ -7,6 +7,10 @@ import { startServer } from "../src/server";
 import { localApiKey, localApiStatePath, localApiStatus, setLocalApiAccess } from "../src/local-api-access";
 import { parseChatCompletion } from "../src/chat-completions/contract";
 import { NativeChatCompletionBridge } from "../src/chat-completions/native-bridge";
+import { COMPANION_ACCOUNT_HEADER, publicChatError } from "../src/chat-completions/http";
+import { createChatCompletionExecutor } from "../src/chat-completions/runtime";
+import { ChatGptWebAdapterError } from "../src/adapters/chatgpt-web/adapter-error";
+import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 
 const key = `sk-local-${"a".repeat(64)}`;
 const model = "chatgpt-web/gpt-5.6-sol";
@@ -119,5 +123,62 @@ test.serial("cancelling an API stream waits for its execution to settle", async 
     await server.stop(true);
     if (previous === undefined) delete process.env.CODEX_CHATGPT_WEB_HOME; else process.env.CODEX_CHATGPT_WEB_HOME = previous;
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test.serial("only Chat Completions requests naming the bound companion account opt in; the header is refused elsewhere", async () => {
+  const root = mkdtempSync(join(tmpdir(), "nekodex-api-companion-"));
+  const previous = process.env.CODEX_CHATGPT_WEB_HOME;
+  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  const seen: (string | undefined)[] = [];
+  const server = startServer({ ...defaultConfig(), port: 0 }, { apiKey: key,
+    chatCompletionExecutor: async input => { seen.push(input.companionAccount); return { answer: "Hello" }; } });
+  try {
+    const post = (path: string, body: unknown, headers: Record<string, string> = {}) => fetch(`http://127.0.0.1:${server.port}${path}`, { method: "POST",
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
+    const fingerprint = "0123456789ab", optIn = { [COMPANION_ACCOUNT_HEADER]: fingerprint };
+    expect((await post("/v1/chat/completions", message)).status).toBe(200);
+    expect((await post("/v1/chat/completions", message, optIn)).status).toBe(200);
+    expect(seen).toEqual([undefined, fingerprint]);
+    for (const invalid of ["0123456789AB", "0123456789a", "a".repeat(64), `${fingerprint}, ${fingerprint}`]) {
+      const response = await post("/v1/chat/completions", message, { [COMPANION_ACCOUNT_HEADER]: invalid });
+      expect(response.status).toBe(400);
+      expect((await response.json() as any).error).toMatchObject({ code: "invalid_request", param: COMPANION_ACCOUNT_HEADER });
+    }
+    const tools = [{ type: "function", function: { name: "echo", parameters: { type: "object", properties: {} } } }];
+    const withTools = await post("/v1/chat/completions", { ...message, tools }, optIn);
+    expect(withTools.status).toBe(400);
+    expect((await withTools.json() as any).error.code).toBe("companion_turn_unsupported");
+    // Elsewhere the opt-in would be silently ignored and run in the built-in browser: refuse it.
+    for (const path of ["/v1/messages", "/claude/v1/messages", "/v1/responses", "/hermes/v1/responses"]) {
+      const response = await post(path, { model, max_tokens: 10, messages: [{ role: "user", content: "Hello" }] }, optIn);
+      expect(response.status).toBe(400);
+      expect((await response.json() as any).error.code).toBe("companion_route_unsupported");
+    }
+    expect(seen).toHaveLength(2);
+  } finally {
+    await server.stop(true);
+    if (previous === undefined) delete process.env.CODEX_CHATGPT_WEB_HOME; else process.env.CODEX_CHATGPT_WEB_HOME = previous;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the executor forwards only the explicit opt-in, and companion API errors keep their code with fixed text", async () => {
+  const turns: BrowserTurn[] = [];
+  const execute = createChatCompletionExecutor({ worker: () => ({ run: async turn => { turns.push(turn); turn.onTextDelta("Hi"); return "Hi"; } }) });
+  const input = parseChatCompletion(message);
+  await execute(input, defaultConfig(), new AbortController().signal, () => {});
+  await execute({ ...input, companionAccount: "0123456789ab" }, defaultConfig(), new AbortController().signal, () => {});
+  expect(turns.map(turn => turn.companionAccount)).toEqual([undefined, "0123456789ab"]);
+  expect("companionAccount" in turns[0]!).toBe(false);
+  const adapter = (code: string, status: number) => new ChatGptWebAdapterError("raw extension reason", { status, errorType: "invalid_request_error", code, retryable: false });
+  for (const code of ["companion_account_mismatch", "companion_model_mismatch", "companion_unbound", "companion_outcome_held", "companion_send_refused"]) {
+    const { status, body } = publicChatError(adapter(code, code === "companion_outcome_held" ? 502 : 409));
+    expect(status).toBe(400);
+    expect(body.error).toMatchObject({ code, type: "invalid_request_error" });
+    expect(body.error.message).toContain("nothing was sent"); expect(body.error.message).not.toContain("raw");
+  }
+  for (const code of ["companion_outcome_unknown", "companion_response_unobserved"]) {
+    expect(publicChatError(adapter(code, 502))).toMatchObject({ status: 502, body: { error: { code, type: "server_error" } } });
   }
 });

@@ -11,8 +11,11 @@ host, pin the extension ID, and display its one-time pairing JSON. There is no
 public pairing-code endpoint and no automatic account sign-in.
 
 When that local owner is configured, load this directory as an unpacked extension
-in a development Chrome profile, give its exact ID to the owner, invoke its action
-on an ordinary web page, pair, and choose **Select current tab and connect**.
+in a development Chrome profile, invoke its action on an ordinary web page, pair,
+and choose **Select current tab and connect**. The manifest `key` fixes its Chrome
+ID to `bocnhdmjkjcoedkephdeoeipmmfbanpc` on every path and NEKODEX version, and NEKODEX
+accepts only that Chrome ID; after an update, load the new directory the same way.
+Firefox keeps its stable add-on ID `browser-companion@nekodex.local`.
 The local host is fixed to `http://127.0.0.1:17843`; changing it requires reviewing
 the manifest permission, CSP, popup code and backend validation together.
 
@@ -31,7 +34,9 @@ DOM click success confirms input execution, not website acceptance.
 **ChatGPT send.** After the selected tab is a `https://chatgpt.com` new chat and you
 click **Bind ChatGPT tab** in NEKODEX (stating the model that tab visibly has selected),
 the existing NEKODEX ChatGPT turn owner may send Browser-only text turns through this
-tab. Each send re-checks the signed-in account digest, the visible model label and an
+tab, but only those that opt in: Local API Chat Completions requests with the
+`X-NEKODEX-Companion-Account` header naming the bound account fingerprint. All
+other work keeps using the NEKODEX built-in browser. Each send re-checks the signed-in account digest, the visible model label and an
 empty new chat, types the prompt once, clicks Send once, and returns the message ID.
 NEKODEX then only reads the answer that follows that message. A send without a
 terminal receipt is held in NEKODEX and never resent. Open a new chat in the tab
@@ -39,4 +44,6 @@ before each further message.
 
 See [PRIVACY.md](PRIVACY.md). Store packages are produced by
 `bun run scripts/build-browser-companion.ts <chrome|firefox> <new-output-directory>`;
-the archive has `manifest.json` at its root and contains only shipped files.
+the archive has `manifest.json` at its root and contains only shipped files. The
+Chrome archive omits the development `key`: a Chrome Web Store listing (not
+published yet) would get its own store-assigned ID, different from the unpacked one.

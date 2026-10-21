@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { strFromU8, unzipSync } from "fflate";
 import { BROWSER_COMPANION_FILES, buildBrowserCompanion } from "../scripts/build-browser-companion";
+import { CHROME_COMPANION_ID } from "../src/browser-companion/firefox-identity";
 
 const pngSize = (bytes: Uint8Array) => {
   expect([...bytes.slice(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -34,6 +35,16 @@ for (const browser of ["chrome", "firefox"] as const) {
       }
       if (browser === "firefox") expect(manifest.browser_specific_settings.gecko).toMatchObject({ id: "browser-companion@nekodex.local", strict_min_version: "153.0" });
       else expect(manifest.minimum_chrome_version).toBe("106");
+      // The store upload carries no development key (a listing gets its own store ID); the unpacked
+      // directory keeps it, so loading that directory gives the pinned ID.
+      expect(manifest.key).toBeUndefined();
+      const unpacked = JSON.parse(readFileSync(built.manifestPath, "utf8"));
+      expect(unpacked).toEqual(browser === "chrome" ? { ...manifest, key: unpacked.key } : manifest);
+      const receipt = JSON.parse(readFileSync(join(temporary, "out", "development-artifact.json"), "utf8"));
+      if (browser === "chrome") {
+        expect(unpacked.key).toMatch(/^[A-Za-z0-9+/]{300,}={0,2}$/);
+        expect(receipt).toMatchObject({ unpackedExtensionId: CHROME_COMPANION_ID, archiveManifestKey: false });
+      } else expect(receipt.unpackedExtensionId).toBeUndefined();
       expect(strFromU8(files["popup.html"]!)).toContain("https://github.com/Froraut/NEKODEX/blob/main/browser-companion/PRIVACY.md");
     } finally { rmSync(temporary, { recursive: true, force: true }); }
   });

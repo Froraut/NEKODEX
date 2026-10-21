@@ -5,9 +5,10 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { validateProductionVmRuntimeManifest, VM_HELPER_SOURCE_SHA256 } from "../src/execution-environments/production-runtime";
+import { BROWSER_COMPANION_FILES } from "../scripts/build-browser-companion";
 
 const require = createRequire(import.meta.url);
-const { validatePackagedRuntimeAssets } = require("../launcher/scripts/release-signing.cjs");
+const { BROWSER_COMPANION_RESOURCES, validatePackagedRuntimeAssets } = require("../launcher/scripts/release-signing.cjs");
 const { assertIdentity, assertVmEntitlements, assertVaultEntitlements } = require("../launcher/scripts/verify-macos-install.cjs");
 const { createProductionVmRuntimeManifest } = require("../scripts/build-execution-vm-helper.cjs");
 const sha = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
@@ -20,8 +21,10 @@ function assetsFixture(root: string) {
   };
   write("cli.js"); write("browser-helper.cjs");
   for (const prefix of ["browser-companion", "browser-companion/firefox"]) {
-    for (const name of ["manifest.json", "popup.html", "popup.css", "popup.js", "page.js", "dispatch.js", "transport.js", "session.html", "session.js"]) write(`${prefix}/${name}`);
+    for (const name of ["manifest.json", ...BROWSER_COMPANION_FILES]) write(`${prefix}/${name}`);
   }
+  // The real reviewed Chrome manifest: its key must produce the pinned extension ID.
+  write("browser-companion/manifest.json", readFileSync(new URL("../browser-companion/manifest.json", import.meta.url)));
   write("browser-companion/manifest.firefox.json");
   for (const [folder, binary] of [["credential-helper", "nekodex-credential-helper"], ["desktop-helper", "nekodex-desktop-helper"], ["skill-pdf-helper", "nekodex-skill-pdf-helper"], ["oauth-vault-helper", "nekodex-oauth-vault-helper"]]) write(`${folder}/darwin-arm64/${binary}`);
   write("skill-pdf-helper/darwin-arm64/manifest.json", "{}");
@@ -69,6 +72,29 @@ test("delivery closure requires companion resources and rejects altered VM bytes
     chmodSync(executable, 0o755);
     rmSync(join(root, "app/browser-companion/firefox/session.js"));
     expect(() => validatePackagedRuntimeAssets(root, { platform: "darwin", arch: "arm64" })).toThrow();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("delivery closure requires the ChatGPT page function, icons and the pinned Chrome manifest key", () => {
+  // The gate and the store/runtime artifact list cannot drift apart.
+  expect([...BROWSER_COMPANION_RESOURCES].sort()).toEqual([...BROWSER_COMPANION_FILES].sort());
+  for (const missing of ["browser-companion/chatgpt.js", "browser-companion/firefox/chatgpt.js", "browser-companion/icons/icon-16.png", "browser-companion/firefox/icons/icon-128.png"]) {
+    const root = mkdtempSync(join(tmpdir(), "nekodex-delivery-companion-"));
+    try {
+      assetsFixture(root);
+      expect(validatePackagedRuntimeAssets(root, { platform: "darwin", arch: "arm64" })).toMatchObject({ browserCompanion: ["chrome", "firefox"] });
+      rmSync(join(root, "app", missing));
+      expect(() => validatePackagedRuntimeAssets(root, { platform: "darwin", arch: "arm64" })).toThrow(missing.split("/").at(-1));
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
+  const root = mkdtempSync(join(tmpdir(), "nekodex-delivery-companion-key-"));
+  try {
+    const f = assetsFixture(root);
+    const manifest = JSON.parse(readFileSync(new URL("../browser-companion/manifest.json", import.meta.url), "utf8"));
+    for (const changed of [{ ...manifest, key: undefined }, { ...manifest, key: Buffer.from("a".repeat(294)).toString("base64") }]) {
+      f.write("browser-companion/manifest.json", JSON.stringify(changed));
+      expect(() => validatePackagedRuntimeAssets(root, { platform: "darwin", arch: "arm64" })).toThrow("pinned extension ID");
+    }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

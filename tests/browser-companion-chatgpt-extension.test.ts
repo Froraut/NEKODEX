@@ -40,7 +40,8 @@ test("actual MV3 extension binds a ChatGPT-shaped document, sends once and reads
     expect(bound.bound).toMatchObject({ modelLabel: "Pro", accountFingerprint: createHash("sha256").update("chatgpt-user:user-fixture").digest("hex").slice(0, 12) });
     expect(JSON.stringify(runtime.status())).not.toContain("never-leaves-page");
     const deltas: string[] = [];
-    const turn: BrowserTurn = { traceId: "trace-mv3-chatgpt", modelId: "gpt-5.6-sol", reasoning: "max",
+    // The turn opts in by naming the bound account fingerprint, as a Local API request header does.
+    const turn: BrowserTurn = { traceId: "trace-mv3-chatgpt", modelId: "gpt-5.6-sol", reasoning: "max", companionAccount: bound.bound!.accountFingerprint,
       capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: true },
       prepare: async () => ({ text: "Reply with the fixture answer", images: [], release: () => {} }), onTextDelta: delta => { deltas.push(delta); } };
     expect(await runtime.chatGptTransport().run(turn)).toBe("Fixture **answer**");
