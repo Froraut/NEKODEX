@@ -17,8 +17,8 @@ const publicProvider = { providerId: 'controlled', label: 'Controlled fixture', 
 async function fixture(lostAck = false) {
   const home = mkdtempSync(join(realpathSync(tmpdir()), 'neko-oauth-mcp-feature-'));
   let epoch = publicProvider.epoch, active = true, calls = 0, tokenUses = 0, pending: any, composition: AgentToolsComposition;
-  const invalidationListeners = new Set<(providerId?: string) => void>();
-  const oauthService = { subscribeMcpInvalidation(listener: (providerId?: string) => void) { invalidationListeners.add(listener); return () => invalidationListeners.delete(listener); }, reviewedMcpProviders: () => [{ ...publicProvider, epoch }], async withAccessToken(input: any, use: any) {
+  const invalidationListeners = new Set<(providerId?: string, accountId?: string) => void>();
+  const oauthService = { subscribeMcpInvalidation(listener: (providerId?: string, accountId?: string) => void) { invalidationListeners.add(listener); return () => invalidationListeners.delete(listener); }, reviewedMcpProviders: () => [{ ...publicProvider, epoch }], async withAccessToken(input: any, use: any) {
     expect(input).toEqual({ providerId: publicProvider.providerId, resource: publicProvider.resource, accountId: publicProvider.accountId, epoch }); tokenUses++; return use(TOKEN);
   } };
   const routes = createAgentOAuthMcpControlRoutes({ runtime: () => ({ runner: { ownerId: 'fixture-owner' }, store: { getTask: () => ({ id: scope.taskId, generation: scope.generation, ownerMode: 'agent', ownerId: 'fixture-owner', status: active ? 'awaiting_input' : 'paused' }) } }) as any,
@@ -60,7 +60,7 @@ async function fixture(lostAck = false) {
   return { home, bridge, composition, get controller() { return controller; }, attach, calls: () => calls, tokenUses: () => tokenUses,
     setCall(tool: any) { pending = { tool: tool.id, arguments: { binding: tool.inputSchema.properties.binding.const, input: { text: 'exact approved input' } }, idempotencyKey: 'exact-once' }; return { scope, ...pending }; },
     holdValidation(action?: string) { let enter!: () => void, release!: () => void; const entered = new Promise<void>(resolve => { enter = resolve; }); const wait = new Promise<void>(resolve => { release = resolve; }); validationGate = { entered: enter, wait, action }; return { entered, release }; },
-    revokeProvider() { for (const listener of invalidationListeners) listener(publicProvider.providerId); },
+    revokeProvider(accountId?: string) { for (const listener of invalidationListeners) listener(publicProvider.providerId, accountId); },
     stale() { epoch = '3'.repeat(64); }, inactive() { active = false; },
     async reopen() { await controller.close(); controller = createAgentOAuthMcpController(controllerOptions); },
     async close() { await composition.close(); await controller.close(); await server.close(); rmSync(home, { recursive: true, force: true }); },
@@ -140,3 +140,12 @@ test('disconnect and explicit reattachment cannot revive an execute waiting on t
     gate.release(); expect((await invocation).state).toBe('outcome_unknown'); expect(f.calls()).toBe(0);
   } finally { await f.close(); }
 }, 8000);
+
+test('an account-scoped provider retirement drops only that account\'s bindings', async () => {
+  const f = await fixture();
+  try {
+    await f.attach(); expect(f.controller.status().bindings).toHaveLength(1);
+    f.revokeProvider('native:another-account'); expect(f.controller.status().bindings).toHaveLength(1);
+    f.revokeProvider(publicProvider.accountId); expect(f.controller.status().bindings).toHaveLength(0);
+  } finally { await f.close(); }
+});

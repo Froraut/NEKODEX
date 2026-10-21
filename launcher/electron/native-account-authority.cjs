@@ -140,7 +140,7 @@ function createNativeAccountAuthority({ authorityHome, executable, executableSha
         if (!LOGIN_STATES.has(profile.login.state) || profile.login.reasonCode !== undefined && !safeReason(profile.login.reasonCode)) throw fail('registry_unavailable', 'Native login metadata is invalid'); }
     }
     for (const receipt of value.receipts) { uuid(receipt.actionId); uuid(receipt.profileId); uuid(receipt.epoch);
-      if (!['prepare-profile', 'device-login', 'cancel-login', 'profile-config'].includes(receipt.kind) || typeof receipt.state !== 'string' || !safeReason(receipt.state.replaceAll('-', '_'))
+      if (!['prepare-profile', 'device-login', 'cancel-login', 'profile-config', 'remove-profile'].includes(receipt.kind) || typeof receipt.state !== 'string' || !safeReason(receipt.state.replaceAll('-', '_'))
         || receipt.reasonCode !== undefined && !safeReason(receipt.reasonCode)) throw fail('registry_unavailable', 'Native action metadata is invalid');
       if (receipt.loginAttemptId !== undefined) uuid(receipt.loginAttemptId);
       if (receipt.kind === 'profile-config' && ![receipt.beforeConfigSha256, receipt.candidateConfigSha256].every(value => /^[a-f0-9]{64}$/.test(value || ''))) throw fail('registry_unavailable', 'Native config transition metadata is invalid'); }
@@ -182,6 +182,7 @@ function createNativeAccountAuthority({ authorityHome, executable, executableSha
       changed = true;
     }
     if (changed) save(value);
+    settleRemovals();
   }
   function paths(profile) {
     const root = path.join(authorityHome, 'profiles', profile.id, 'epochs', profile.epoch);
@@ -419,6 +420,59 @@ function createNativeAccountAuthority({ authorityHome, executable, executableSha
     const terminal = read(), receipt = terminal.receipts.find(row => row.actionId === actionId);
     receipt.state = 'settled'; save(terminal); notify(); return inspectLogin(loginAttemptId);
   }
+  function profileRoot(profileId) { return path.join(authorityHome, 'profiles', profileId); }
+  function erasePrivateProfile(profileId) {
+    const root = profileRoot(profileId);
+    let stat;
+    try { stat = fs.lstatSync(root); } catch (error) { if (error.code === 'ENOENT') return; throw error; }
+    if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid()) throw fail('unsafe_profile_storage', 'Native profile storage is not an owned private directory');
+    // rmSync never follows links; the CLI auth file is unlinked without being opened.
+    fs.rmSync(root, { recursive: true, force: true });
+    const fd = fs.openSync(path.dirname(root), 'r'); try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  }
+  function settleRemovals() {
+    // The registry row leaves with the intent, so an interrupted erase is finished
+    // by the next owner. No other owner can hold markers under a removed profile.
+    const value = read(), pending = value.receipts.filter(row => row.kind === 'remove-profile' && row.state === 'prepared');
+    if (!pending.length) return;
+    for (const receipt of pending) {
+      if (value.profiles.some(row => row.id === receipt.profileId)) throw fail('profile_removal_unresolved', 'Native profile removal metadata contradicts the registry');
+      erasePrivateProfile(receipt.profileId); receipt.state = 'completed';
+    }
+    save(value); notify();
+  }
+  function profileSignedIn(profile) {
+    if (profile.state === 'signed-in-checking') return true;
+    // lstat only: a persisted CLI credential means the epoch may still be signed in.
+    try { fs.lstatSync(path.join(paths(profile).codex, 'auth.json')); return true; }
+    catch (error) { if (error.code === 'ENOENT') return false; return true; }
+  }
+  /** Every removal refusal, with no intent or erase. Returns whether the profile may hold a credential. */
+  function checkRemovable({ profileId, epoch, confirmSignedIn = false, executionHeld = false } = {}) {
+    uuid(profileId); uuid(epoch);
+    if (typeof confirmSignedIn !== 'boolean' || typeof executionHeld !== 'boolean') throw fail('invalid_profile_removal', 'Native profile removal confirmation must be explicit');
+    acquire(); const value = read(), profile = value.profiles.find(row => row.id === profileId && row.epoch === epoch);
+    if (!profile) throw fail('unknown_profile', 'This Native profile epoch does not exist');
+    if (profile.login && live.has(profile.login.id)) throw fail('native_login_busy', 'Cancel the Native device login before removing its profile');
+    // A precheck may tolerate only the execution lease that main closes next; inventory always refuses.
+    const lease = profileOwners.get(`${profileId}:${epoch}`);
+    if (lease && !(executionHeld && lease.kind === 'execution')) throw fail('profile_owner_busy', 'Close the Native profile execution or inventory before removing it');
+    const signedIn = profileSignedIn(profile);
+    if (signedIn && !confirmSignedIn) throw fail('profile_signed_in', 'This Native profile is signed in; removal requires explicit confirmation');
+    return { value, signedIn };
+  }
+  function removeProfile({ profileId, epoch, actionId, confirmSignedIn = false } = {}) {
+    uuid(actionId);
+    const { value } = checkRemovable({ profileId, epoch, confirmSignedIn }); // Never tolerates a held lease.
+    intent(value, actionId, { kind: 'remove-profile', profileId, epoch, state: 'prepared' });
+    // One atomic registry write retires the row, its earlier receipts and records the intent.
+    value.profiles = value.profiles.filter(row => row.id !== profileId);
+    value.receipts = value.receipts.filter(row => row.profileId !== profileId || row.actionId === actionId);
+    save(value); notify();
+    testHooks.afterRemovalIntent?.();
+    settleRemovals();
+    return Object.freeze({ actionId, profileId, epoch, state: 'completed' });
+  }
   async function destroy() {
     if (destroyed) return;
     if (destroying) return destroying;
@@ -451,7 +505,8 @@ function createNativeAccountAuthority({ authorityHome, executable, executableSha
     };
   }
   return Object.freeze({ inspect, snapshot: inspect, prepareProfile: guardedMutation(prepareProfile),
-    beginDeviceLogin: guardedMutation(beginDeviceLogin), inspectLogin, cancelLogin: guardedMutation(cancelLogin), resolveProfile,
+    beginDeviceLogin: guardedMutation(beginDeviceLogin), inspectLogin, removeProfile: guardedMutation(removeProfile),
+    checkRemovable: input => { try { return { signedIn: checkRemovable(input).signedIn }; } catch (error) { error.actionRecorded = false; throw error; } }, cancelLogin: guardedMutation(cancelLogin), resolveProfile,
     publishProfileConfig: guardedMutation(publishProfileConfig), acquireProfileOwner, releaseProfileOwner,
     previewRecovery: () => recoveryOwner ? recoveryOwner.previewRecovery() : Promise.resolve({ state: 'blocked', reasonCode: 'recovery_unavailable', observedAt: Date.now(), markers: [], unsettledActionCount: 0 }),
     recoverOwner: input => { if (!recoveryOwner) { const error = fail('recovery_unavailable', 'Native owner recovery is unavailable'); error.actionRecorded = false; throw error; } return recoveryOwner.recoverOwner(input); },

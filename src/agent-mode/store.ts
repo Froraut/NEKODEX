@@ -82,6 +82,12 @@ export class AgentModeStore {
     return rows.map(row => JSON.parse(row.body) as T);
   }
   private saveTask(task: AgentTask): void {
+    if (task.archivedAt !== undefined) {
+      // Late usage accounting still lands on an archived task; every other field is frozen.
+      const frozen = (row: AgentTask) => JSON.stringify({ ...row, spent: 0, reserved: 0, unpricedTurns: 0, updatedAt: 0 });
+      const stored = this.row<AgentTask>("agent_tasks", task.id);
+      if (!stored || frozen(stored) !== frozen(task)) throw new Error("Task is archived; its ledger is read-only");
+    }
     task.updatedAt = this.now();
     const body = JSON.stringify(task);
     if (Buffer.byteLength(body) > 512 * 1024) throw new Error("Agent task quota exceeded; preserve history and export before extending");
@@ -241,6 +247,23 @@ export class AgentModeStore {
         row.state = "cancelled"; task.reserved -= row.reservedSpend; this.saveDispatch(row); this.sleepWorker(row);
       }
       this.saveTask(task); return task;
+    });
+  }
+  /** Hides a settled stopped or verified task. Dispatches, receipts, mail, tool outcomes and evidence are kept unchanged. */
+  archiveTask(taskId: string): AgentTask {
+    return this.atomic(() => {
+      const task = this.getTask(taskId);
+      if (task.archivedAt !== undefined) return task;
+      if (task.status !== "stopped" && task.status !== "verified_complete") throw new Error("Task archive requires a stopped or verified complete task");
+      const dispatches = this.listDispatches(taskId);
+      if (task.ownerId || task.loopRun || dispatches.some(row => unsettled.has(row.state))) throw new Error("Task archive requires settled execution");
+      // A stopped task never applies late tool outcomes to its row; a verified one could, so it must have none left.
+      const outcomes = this.effectiveToolOutcomes(taskId), recorded = new Set(this.listToolOutcomes(taskId).map(row => row.idempotencyKey));
+      if (task.status === "verified_complete" && (outcomes.some(row => row.state === "outcome_unknown") || dispatches.some(row => row.generation === task.generation
+        && (row.result?.continuation?.pending ?? []).some(call => !recorded.has(this.toolKey(row.id, call.toolCallId)))))) throw new Error("Task archive requires settled tool outcomes");
+      task.archivedAt = this.now(); task.updatedAt = task.archivedAt;
+      this.db.query("UPDATE agent_tasks SET body=? WHERE id=?").run(JSON.stringify(task), task.id);
+      return task;
     });
   }
   /** Host-resolved pins only. Completed work and immutable dispatch history survive rebinding. */

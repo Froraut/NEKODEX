@@ -41,6 +41,8 @@ export interface AgentOAuthPanelPort {
   revoke(input: { providerId: string; explicitUserAction: true }): Promise<OAuthProviderStatus>;
   pickProvider?(): Promise<{ cancelled: boolean; review?: OAuthProviderRegistrationReview }>;
   registerProvider?(input: { reviewId: string; reviewDigest: string; explicitUserAction: true }): Promise<OAuthProviderRegistrationReview>;
+  /** Revokes any held credential, drops OAuth MCP bindings for the provider, then removes its registry row. */
+  removeProvider?(input: { providerId: string; explicitUserAction: true }): Promise<{ providerId: string; state: 'removed' }>;
 }
 export interface OAuthProviderRegistrationReview {
   reviewId: string; reviewDigest: string; scope: { accountId: string; epoch: string };

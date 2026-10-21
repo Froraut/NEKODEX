@@ -3,10 +3,14 @@ import { Button, Checkbox, Notice, Panel, PanelStack, TextField } from './design
 import type { Language } from './types';
 import type { NativeAccountsApi, NativeAccountsRequest, NativeInventoryRequest, NativeExecutionCloseRequest, NativeAccountsSnapshot, NativeAccountProfile } from './native-accounts-types';
 import type { NativeOwnerRecoveryPreview, NativeOwnerRecoveryReceipt } from '../electron/native-account-recovery.cjs';
+import { RemovalConfirmation } from './RemovalConfirmation';
 import './surfaces/native-accounts.css';
 
 const verificationUrl = 'https://auth.openai.com/codex/device';
 const pendingStates = new Set(['prepared', 'running', 'pending', 'cancel-requested']);
+// Only an untouched fresh epoch proves no persisted CLI credential (a failed login can leave one behind);
+// every other removal is acknowledged explicitly, matching the authority's credential check.
+const unsignedStates = new Set(['fresh']);
 type Mutation = Exclude<NativeAccountsRequest, { action: 'status' | 'preview-owner-recovery' }> | NativeInventoryRequest | NativeExecutionCloseRequest;
 const recoveryPlanKey = (preview: NativeOwnerRecoveryPreview) => JSON.stringify({
   state: preview.state, reviewDigest: preview.reviewDigest, reasonCode: preview.reasonCode,
@@ -34,6 +38,7 @@ export function NativeAccountsPanel({ language, api, disabled = false, onChange 
   const recoveryPlan = useRef<string | null>(null);
   const [recoveryAcknowledged, setRecoveryAcknowledged] = useState(false);
   const [recoveryReceipt, setRecoveryReceipt] = useState<NativeOwnerRecoveryReceipt | null>(null);
+  const [removing, setRemoving] = useState<NativeAccountProfile | null>(null);
 
   const acceptSnapshot = (result: NativeAccountsSnapshot) => {
     setSnapshot(result);
@@ -115,7 +120,9 @@ export function NativeAccountsPanel({ language, api, disabled = false, onChange 
       const result = await transport.current.request(body);
       if (!mounted.current) return;
       acceptSnapshot(result);
-      qualified = acceptQualification(result);
+      qualified = acceptQualification(result)
+        // A removal may have closed the profile's execution: Agent mode re-reads its models.
+        || body.action === 'remove-profile' && result.receipts.some(row => row.actionId === body.actionId && row.state === 'completed');
       if (body.action !== 'recover-owner' || reconciledRecovery(result, body)) {
         uncertainRequest.current = null; setUncertain(false);
       } else setUncertain(true);
@@ -232,9 +239,24 @@ export function NativeAccountsPanel({ language, api, disabled = false, onChange 
           {pending && login ? <Button disabled={locked || login.state === 'cancel-requested'} onClick={() => void mutate({ action: 'cancel-login', actionId: crypto.randomUUID(), loginAttemptId: login.id })}>{ru ? 'Отменить вход' : 'Cancel sign-in'}</Button> : null}
           {profile.state === 'signed-in-checking' && !execution ? <Button disabled={locked || Boolean(snapshot?.inventory?.activeCount)} onClick={() => void mutate({ action: 'inspect-models', actionId: crypto.randomUUID(), profileId: profile.id, epoch: profile.epoch })}>{ru ? 'Проверить аккаунт и модели' : 'Inspect account and models'}</Button> : null}
           {execution ? <Button disabled={locked} onClick={() => void mutate({ action: 'close-execution', actionId: crypto.randomUUID(), profileId: profile.id, epoch: profile.epoch })}>{ru ? 'Закрыть Native и всех его исполнителей' : 'Close Native and all its workers'}</Button> : null}
+          {!pending ? <Button variant="ghost" disabled={locked} onClick={() => setRemoving(profile)}>{ru ? 'Удалить профиль' : 'Remove profile'}</Button> : null}
         </div>
       </li>;
     })}</ul>
+    {removing ? (() => {
+      const owned = snapshot?.execution?.profileId === removing.id && snapshot.execution.epoch === removing.epoch && snapshot.execution.ownerHeld;
+      const confirmSignedIn = !unsignedStates.has(removing.state) || Boolean(owned);
+      return <RemovalConfirmation eyebrow={removing.label} title={ru ? 'Удалить этот профиль Native?' : 'Remove this Native profile?'}
+        keepLabel={ru ? 'Оставить профиль' : 'Keep profile'} confirmLabel={ru ? 'Удалить профиль' : 'Remove profile'} pending={busy}
+        acknowledge={confirmSignedIn ? (ru ? 'Я понимаю, что профиль может быть авторизован или выполнять задачи: NEKODEX закроет его выполнение и удалит локальные учётные данные.' : 'I understand this profile may be signed in or running tasks: NEKODEX closes its execution and deletes its local credentials.') : undefined}
+        onKeep={() => setRemoving(null)} onConfirm={() => {
+          const target = removing; setRemoving(null);
+          void mutate({ action: 'remove-profile', actionId: crypto.randomUUID(), profileId: target.id, epoch: target.epoch, ...(confirmSignedIn ? { confirmSignedIn: true } : {}) });
+        }}>
+        <p>{ru ? 'Профиль, его каталог Codex и приватные данные будут удалены с этого Mac. Сначала будут отозваны и удалены OAuth-провайдеры, зарегистрированные для этого аккаунта. Журнал сохранит запись об удалении. Сеанс входа на стороне OpenAI этим не отзывается.' : 'The profile, its Codex home and private data are deleted from this Mac. OAuth providers registered for this account are revoked and removed first. The journal keeps a removal receipt. This does not revoke the sign-in session on the OpenAI side.'}</p>
+        {owned ? <p>{ru ? 'Сначала будет закрыто выполнение этого профиля; текущие Native-задачи и беседы на нём остановятся.' : 'Its execution is closed first; running Native tasks and conversations on it stop.'}</p> : null}
+      </RemovalConfirmation>;
+    })() : null}
     </PanelStack>
   </Panel>;
 }

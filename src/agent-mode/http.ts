@@ -47,8 +47,9 @@ function boundedRows<T>(rows: T[], max = 100, byteLimit = 128 * 1024): { rows: T
   return { rows: selected.reverse(), total: rows.length, truncated: selected.length !== rows.length };
 }
 function listing(runtime: AgentModeRuntime) {
-  const result = boundedRows(runtime.store.listTasks(), 50, 512 * 1024);
-  return { tasks: result.rows, total: result.total, truncated: result.truncated };
+  const all = runtime.store.listTasks(), visible = all.filter(task => task.archivedAt === undefined);
+  const result = boundedRows(visible, 50, 512 * 1024);
+  return { tasks: result.rows, total: result.total, truncated: result.truncated, archived: all.length - visible.length };
 }
 /** Approval metadata must survive exclusion of large, immutable canonical history rows. */
 function pendingToolCalls(runtime: AgentModeRuntime, task: AgentTask, dispatches: AgentDispatch[]) {
@@ -78,7 +79,7 @@ export function createAgentModeRoutes(options: AgentModeRouteOptions): (request:
     if (!options.authorize(request)) return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
     if (request.method !== "POST") return Response.json({ ok: false, error: "method_not_allowed" }, { status: 405, headers: { allow: "POST" } });
     try {
-      const envelope = z.object({ action: z.enum(["status", "list", "get", "create", "control", "step", "run", "review", "evidence", "verify", "workspace-grant", "resume-continuation", "enqueue-work", "cycle", "workspace-evidence", "reconcile-tool", "refresh-execution"]), taskId: identity.optional(), actionId: identity.optional(), idempotencyKey: identity.optional(), dispatchId: identity.optional(), workId: identity.optional(), work: z.unknown().optional(), input: z.unknown().optional(), control: z.unknown().optional(), scope: taskScope.optional(), loopSourceRunId: identity.optional(), grant: z.unknown().optional(), proof: z.unknown().optional(), explicitUserAction: z.boolean().optional(), workerName: identity.optional(), reviewId: identity.optional(), evidence: z.unknown().optional() }).strict().parse(await readJsonRequestBody(request, 512 * 1024, 512 * 1024));
+      const envelope = z.object({ action: z.enum(["status", "list", "get", "create", "control", "step", "run", "review", "evidence", "verify", "workspace-grant", "resume-continuation", "enqueue-work", "cycle", "workspace-evidence", "reconcile-tool", "refresh-execution", "archive"]), taskId: identity.optional(), actionId: identity.optional(), idempotencyKey: identity.optional(), dispatchId: identity.optional(), workId: identity.optional(), work: z.unknown().optional(), input: z.unknown().optional(), control: z.unknown().optional(), scope: taskScope.optional(), loopSourceRunId: identity.optional(), grant: z.unknown().optional(), proof: z.unknown().optional(), explicitUserAction: z.boolean().optional(), workerName: identity.optional(), reviewId: identity.optional(), evidence: z.unknown().optional() }).strict().parse(await readJsonRequestBody(request, 512 * 1024, 512 * 1024));
       const runtime = options.runtime;
       if (envelope.action === "status") return success({ ...runtime.status(), ...listing(runtime), capabilities: { ...runtime.status().capabilities, observedEvidence: Boolean(options.resolveEvidence || options.observeWorkspaceEvidence) } });
       if (envelope.action === "list") return success(listing(runtime));
@@ -111,6 +112,7 @@ export function createAgentModeRoutes(options: AgentModeRouteOptions): (request:
         const refresh = z.object({ action: z.literal("refresh-execution"), taskId: identity, actionId: identity, scope: taskScope, explicitUserAction: z.boolean() }).strict().parse(envelope);
         return success({ task: runtime.refreshExecution(taskId, actionId, refresh.scope, refresh.explicitUserAction) });
       }
+      if (envelope.action === "archive") return success({ task: runtime.archive(taskId, actionId, taskScope.parse(envelope.scope)) });
       if (envelope.action === "reconcile-tool") return success(await runtime.reconcileTool(taskId, actionId, taskScope.parse(envelope.scope), identity.parse(envelope.idempotencyKey)));
       if (envelope.action === "workspace-evidence") {
         if (!options.observeWorkspaceEvidence) return Response.json({ ok: false, error: "workspace_observer_unavailable" }, { status: 503 });

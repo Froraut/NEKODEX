@@ -1378,6 +1378,8 @@ function registerIpc({ logger, stateStore }) {
     getExecution: getNativeAccountExecution,
     beforeExecutionClosed: execution => closeNativeConversationOwners(execution),
     onExecutionClosed: execution => { if (nativeAccountExecution === execution) nativeAccountExecution = null; publishNativeAccountModels(); },
+    // OAuth registrations are keyed by the Native account; retire them before the profile is erased.
+    beforeProfileRemoved: ({ profileId }) => agentOAuthService?.retireAccount(`native:${profileId}`),
     openExternal: url => shell.openExternal(url), clipboard });
   registerPersistentNativeConversations({ handle,
     getContext: () => nativeAccountExecution?.persistentContext() ?? null,

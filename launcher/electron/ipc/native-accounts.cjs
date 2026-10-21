@@ -10,9 +10,10 @@ const ACTION_KEYS = {
   'cancel-login': ['action', 'actionId', 'loginAttemptId'],
   'inspect-models': ['action', 'actionId', 'profileId', 'epoch'],
   'close-execution': ['action', 'actionId', 'profileId', 'epoch'],
+  'remove-profile': ['action', 'actionId', 'profileId', 'epoch', 'confirmSignedIn'],
 };
 /** The guarded main handle owns login. Renderer supplies only opaque IDs and intent. */
-function registerNativeAccounts({ handle, getAuthority, getInventory, getExecution, beforeExecutionClosed, onExecutionClosed, openExternal, clipboard }) {
+function registerNativeAccounts({ handle, getAuthority, getInventory, getExecution, beforeExecutionClosed, onExecutionClosed, beforeProfileRemoved, openExternal, clipboard }) {
   // Known pre-intent refusals are observations, not a command retry. Retain them
   // in this main instance so a lost refusal response can be read back by action ID.
   const rejected = new Map();
@@ -57,6 +58,26 @@ function registerNativeAccounts({ handle, getAuthority, getInventory, getExecuti
       if (closed.size >= 128) closed.delete(closed.keys().next().value);
       closed.set(body.actionId, { actionId: body.actionId, kind: 'close-execution', profileId: body.profileId, epoch: body.epoch, state: 'completed' });
       onExecutionClosed?.(execution);
+    } else if (body.action === 'remove-profile') {
+      if (!UUID.test(body.profileId) || !UUID.test(body.epoch) || body.confirmSignedIn !== undefined && typeof body.confirmSignedIn !== 'boolean' || !authority.removeProfile) throw new Error('Invalid Native profile removal');
+      const confirmSignedIn = body.confirmSignedIn === true, scope = { profileId: body.profileId, epoch: body.epoch };
+      const execution = getExecution?.(), current = execution?.inspect();
+      const owned = current?.ownerHeld && current.profileId === body.profileId && current.epoch === body.epoch;
+      if (owned && !confirmSignedIn) throw Object.assign(new Error('This Native profile owns execution; removal requires explicit confirmation'), { actionRecorded: false });
+      // Every refusal and the OAuth retirement run while the execution is still open, so a refused or failed
+      // retirement leaves the account usable and its OAuth panel able to settle a pending operation.
+      const { signedIn } = authority.checkRemovable ? authority.checkRemovable({ ...scope, confirmSignedIn, executionHeld: Boolean(owned) }) : { signedIn: confirmSignedIn };
+      if (signedIn && beforeProfileRemoved) {
+        try { await beforeProfileRemoved(scope); }
+        catch (error) { throw Object.assign(error instanceof Error ? error : new Error('Native profile account state could not be retired'), { actionRecorded: false }); }
+      }
+      if (owned) {
+        // The authority refuses a held profile; main closes its exact execution last.
+        await beforeExecutionClosed?.(execution);
+        await execution.destroy();
+        onExecutionClosed?.(execution);
+      }
+      authority.removeProfile({ actionId: body.actionId, ...scope, confirmSignedIn });
     } else if (body.action === 'cancel-login') {
       if (!UUID.test(body.loginAttemptId)) throw new Error('Invalid Native login identity');
       await authority.cancelLogin({ actionId: body.actionId, loginAttemptId: body.loginAttemptId });

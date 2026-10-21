@@ -84,6 +84,15 @@ export class AgentModeRuntime {
     if (!command.duplicate) { this.automaticRuns.delete(taskId); this.options.onTaskScopeInvalidated?.(taskId); }
     return command.result;
   }
+  archive(taskId: string, actionId: string, scope: AgentActionScope): AgentTask {
+    const command = this.store.command(taskId, actionId, "archive", { scope }, () => {
+      this.assertScope(taskId, scope);
+      if (this.store.listDispatches(taskId).some(row => this.runner.liveDispatchIds.includes(row.id) || this.pending.has(row.id))) throw new Error("Task still has live execution");
+      return this.store.archiveTask(taskId);
+    });
+    if (!command.duplicate) this.automaticRuns.delete(taskId);
+    return command.result;
+  }
   /** Explicitly refresh the same selected provider/model without offering any work. */
   refreshExecution(taskId: string, actionId: string, scope: AgentActionScope, explicitUserAction: boolean): AgentTask {
     if (explicitUserAction !== true) throw new Error("Task execution refresh requires an explicit user action");

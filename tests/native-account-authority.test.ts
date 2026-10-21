@@ -237,3 +237,79 @@ test.skipIf(process.platform !== 'darwin')('inventory lease excludes competing p
   f.service.releaseProfileOwner(lease); await f.service.destroy();
   expect(f.service.inspect().storageOwner).toBe('unclaimed');
 });
+test.skipIf(process.platform !== 'darwin')('profile removal drops an unsigned profile, its private data and earlier receipts, keeping one removal receipt', async () => {
+  const f = fixture(), kept = f.prepare(), failed = f.prepare(), login = f.login(failed), child = f.children[0];
+  child.emit('close', 1, null);
+  expect(f.service.inspect().profiles.find((row: any) => row.id === failed.id).state).toBe('login-failed');
+  const root = join(f.authorityHome, 'profiles', failed.id);
+  expect(lstatSync(root).isDirectory()).toBe(true);
+  const actionId = randomUUID();
+  expect(f.service.removeProfile({ actionId, profileId: failed.id, epoch: failed.epoch })).toEqual({ actionId, profileId: failed.id, epoch: failed.epoch, state: 'completed' });
+  expect(() => lstatSync(root)).toThrow();
+  const snapshot = f.service.inspect();
+  expect(snapshot.profiles.map((row: any) => row.id)).toEqual([kept.id]);
+  expect(snapshot.receipts.filter((row: any) => row.profileId === failed.id)).toEqual([{ actionId, kind: 'remove-profile', profileId: failed.id, epoch: failed.epoch, state: 'completed' }]);
+  expect(snapshot.receipts.some((row: any) => row.actionId === login.actionId)).toBe(false);
+  expect(() => f.service.removeProfile({ actionId, profileId: kept.id, epoch: kept.epoch })).toThrow();
+  expect(() => f.service.removeProfile({ actionId: randomUUID(), profileId: failed.id, epoch: failed.epoch })).toThrow('does not exist');
+  await f.service.destroy();
+  expect(f.create().inspect().profiles.map((row: any) => row.id)).toEqual([kept.id]);
+});
+test.skipIf(process.platform !== 'darwin')('profile removal refuses a live login and a signed-in profile without explicit confirmation', async () => {
+  const f = fixture(), p = f.prepare(), login = f.login(p), child = f.children[0];
+  const refused = randomUUID();
+  let error: any; try { f.service.removeProfile({ actionId: refused, profileId: p.id, epoch: p.epoch, confirmSignedIn: true }); } catch (cause) { error = cause; }
+  expect(error?.code).toBe('native_login_busy'); expect(error?.actionRecorded).toBe(false);
+  writeFileSync(join(f.calls[0].config.env.CODEX_HOME, 'auth.json'), '', { mode: 0o600 });
+  child.emit('close', 0, null);
+  expect(f.service.inspectLogin(login.id).state).toBe('signed-in-checking');
+  error = undefined; try { f.service.removeProfile({ actionId: randomUUID(), profileId: p.id, epoch: p.epoch }); } catch (cause) { error = cause; }
+  expect(error?.code).toBe('profile_signed_in'); expect(error?.actionRecorded).toBe(false);
+  expect(() => f.service.checkRemovable({ profileId: p.id, epoch: p.epoch })).toThrow('explicit confirmation');
+  const registryBefore = readFileSync(join(f.authorityHome, 'registry.json'), 'utf8');
+  expect(f.service.checkRemovable({ profileId: p.id, epoch: p.epoch, confirmSignedIn: true })).toEqual({ signedIn: true });
+  expect(readFileSync(join(f.authorityHome, 'registry.json'), 'utf8')).toBe(registryBefore);
+  expect(f.service.inspect().profiles).toHaveLength(1);
+  // Auth content is never opened: removal unlinks it with the profile tree.
+  f.service.removeProfile({ actionId: randomUUID(), profileId: p.id, epoch: p.epoch, confirmSignedIn: true });
+  expect(f.service.inspect().profiles).toHaveLength(0);
+  expect(() => lstatSync(join(f.authorityHome, 'profiles', p.id))).toThrow();
+});
+test.skipIf(process.platform !== 'darwin')('profile removal refuses a held profile owner and finishes an interrupted erase on the next owner', async () => {
+  const f = fixture(), p = f.prepare(), child = (f.login(p), f.children[0]);
+  writeFileSync(join(f.calls[0].config.env.CODEX_HOME, 'auth.json'), '', { mode: 0o600 });
+  child.emit('close', 0, null);
+  // Profile-owner leases are the execution/inventory exclusion; a held lease refuses even a confirmed removal.
+  const lease = { profileId: p.id, epoch: p.epoch };
+  const holder = f.service.acquireProfileOwner({ ...lease, actionId: randomUUID(), kind: 'execution' });
+  let error: any; try { f.service.removeProfile({ actionId: randomUUID(), ...lease, confirmSignedIn: true }); } catch (cause) { error = cause; }
+  expect(error?.code).toBe('profile_owner_busy'); expect(error?.actionRecorded).toBe(false);
+  // The precheck tolerates only the execution lease main is about to close.
+  expect(() => f.service.checkRemovable({ ...lease, confirmSignedIn: true })).toThrow('Close the Native profile');
+  expect(f.service.checkRemovable({ ...lease, confirmSignedIn: true, executionHeld: true })).toEqual({ signedIn: true });
+  f.service.releaseProfileOwner(holder);
+  const inventory = f.service.acquireProfileOwner({ ...lease, actionId: randomUUID(), kind: 'inventory' });
+  expect(() => f.service.checkRemovable({ ...lease, confirmSignedIn: true, executionHeld: true })).toThrow('Close the Native profile');
+  f.service.releaseProfileOwner(inventory);
+  await f.service.destroy();
+  let interrupted = false;
+  const failing = createNativeAccountAuthorityFor(f, () => { interrupted = true; throw new Error('simulated crash after intent'); });
+  expect(() => failing.removeProfile({ actionId: randomUUID(), ...lease, confirmSignedIn: true })).toThrow('simulated crash');
+  expect(interrupted).toBe(true);
+  const registry = JSON.parse(readFileSync(join(f.authorityHome, 'registry.json'), 'utf8'));
+  expect(registry.profiles).toEqual([]);
+  expect(registry.receipts.at(-1)).toMatchObject({ kind: 'remove-profile', state: 'prepared' });
+  expect(lstatSync(join(f.authorityHome, 'profiles', p.id)).isDirectory()).toBe(true);
+  // Simulate the crashed owner: its lock stays behind, so recovery is the only way forward.
+  rmSync(join(f.authorityHome, 'owner.lock'));
+  const recovered = f.create(); recovered.prepareProfile({ actionId: randomUUID(), label: 'After crash' });
+  expect(() => lstatSync(join(f.authorityHome, 'profiles', p.id))).toThrow();
+  expect(recovered.inspect().receipts.find((row: any) => row.kind === 'remove-profile').state).toBe('completed');
+  await failing.destroy().catch(() => {});
+});
+function createNativeAccountAuthorityFor(f: any, afterRemovalIntent: () => void) {
+  const service = createNativeAccountAuthority({ authorityHome: f.authorityHome, executable: f.binary,
+    executableSha256: createHash('sha256').update(readFileSync(f.binary)).digest('hex'), stopGraceMs: 100,
+    testHooks: { platform: 'darwin', probePolicy() {}, afterRemovalIntent } });
+  return service;
+}
