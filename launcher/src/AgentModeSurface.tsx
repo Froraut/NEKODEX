@@ -23,6 +23,12 @@ const errorText = (error: unknown) => stripIpcErrorPrefix(error instanceof Error
 const terminal = (task: AgentTask) => task.status === 'stopped' || task.status === 'verified_complete';
 type ModelRow = AgentModeStatus['models'][number];
 const modelChoice = (row: ModelRow) => row.provider === 'owned-native' ? JSON.stringify([row.provider, row.id, row.admissionId]) : row.id;
+/** A current, fully passing independent review is required before Confirm is offered. */
+const semanticCurrent = (task: AgentTask) => Boolean(task.semanticReview && task.semanticReview.generation === task.generation
+  && task.semanticReview.taskRevision === task.revision && task.semanticReview.evidenceRevision === task.evidenceRevision);
+const semanticPassed = (task: AgentTask) => semanticCurrent(task) && task.semanticReview!.completeInput && task.semanticReview!.deliverable.verdict === 'pass'
+  && task.semanticReview!.requirements.every(row => row.verdict === 'pass' && row.sufficiency === 'complete');
+const verdictTone = (verdict: 'pass' | 'fail' | 'unknown') => verdict === 'pass' ? 'success' as const : verdict === 'fail' ? 'error' as const : 'warning' as const;
 const matchesModel = (task: AgentTask, row: ModelRow) => row.id === task.execution?.model
   && (row.provider ?? 'local-responses') === task.execution?.provider
   && (task.execution?.provider !== 'owned-native' || row.available === true && row.admissionId === task.execution.admissionId);
@@ -70,6 +76,7 @@ export function AgentModeSurface({ language, api, disabled = false }: {
   const [mode, setMode] = useState<'manual' | 'goal' | 'loop'>('manual');
   const [recurring, setRecurring] = useState(false);
   const [model, setModel] = useState('');
+  const [reviewerModel, setReviewerModel] = useState('');
   const [turns, setTurns] = useState('8');
   const [concurrent, setConcurrent] = useState('1');
   const [stageOrder, setStageOrder] = useState<StageOrder>('sequence');
@@ -296,6 +303,25 @@ export function AgentModeSurface({ language, api, disabled = false }: {
     const action = verify ? 'verify' : 'review';
     void act(action, async () => {
       await mutate({ action, taskId: task.id, ...(verify ? { reviewId: task.review?.id } : {}) });
+      await refresh(task.id); if (mounted.current) setNotice(text.saved);
+    });
+  };
+  const semanticReview = () => {
+    const task = detail?.task;
+    if (!task || !reviewerModel) return;
+    void act('semantic-review', async () => {
+      try { await mutate({ action: 'semantic-review', taskId: task.id, reviewer: { provider: 'local-responses', model: reviewerModel }, explicitUserAction: true }); }
+      catch (cause) {
+        // These terminals are durable attempt receipts. A later deliberate click is a new
+        // explicit review identity; an ambiguous transport failure keeps its identity.
+        if (/^(?:Task semantic review (?:outcome is unknown|attempt already exists)|Task semantic reviewer returned no valid verdict|Stale task semantic review)/.test(errorText(cause))) {
+          for (const key of uncertain.current.keys()) {
+            const command = JSON.parse(key) as { action: string; taskId?: string };
+            if (command.action === 'semantic-review' && command.taskId === task.id) uncertain.current.delete(key);
+          }
+        }
+        throw cause;
+      }
       await refresh(task.id); if (mounted.current) setNotice(text.saved);
     });
   };
@@ -625,7 +651,7 @@ export function AgentModeSurface({ language, api, disabled = false }: {
           </Panel>
           <Panel title={text.review} actions={<div className="agent-mode-actions">
             <Button size="sm" disabled={locked || terminal(task)} busy={pending === 'review'} onClick={() => review()}>{text.reviewAction}</Button>
-            {task.review ? <Button size="sm" disabled={locked || terminal(task) || !task.review.completeInput || task.review.findings.length > 0 || task.review.coverage.some(row => !row.evidenceIds.length) || task.review.generation !== task.generation || task.review.taskRevision !== task.revision || task.review.evidenceRevision !== task.evidenceRevision} busy={pending === 'verify'} onClick={() => review(true)}>{text.verify}</Button> : null}
+            {task.review ? <Button size="sm" disabled={locked || terminal(task) || !task.review.completeInput || !semanticPassed(task) || task.review.generation !== task.generation || task.review.taskRevision !== task.revision || task.review.evidenceRevision !== task.evidenceRevision} busy={pending === 'verify'} onClick={() => review(true)}>{text.verify}</Button> : null}
           </div>}>
             {!task.review ? <p className="agent-mode-muted">{text.noReview}</p> : <>
               <h3>{text.recommendation}</h3><p className="agent-mode-prose">{task.review.recommendation}</p>
@@ -633,6 +659,30 @@ export function AgentModeSurface({ language, api, disabled = false }: {
               <h3>{text.findings}</h3><RecordList empty={text.none}>{task.review.findings.map((finding, index) => <li key={index}>{finding}</li>)}</RecordList>
               <h3>{text.coverage}</h3><RecordList empty={text.none}>{task.review.coverage.map(row => <li key={row.requirementId}><strong>{row.requirementId}</strong>: {row.evidenceIds.join(', ') || text.none}</li>)}</RecordList>
               <small>{text.generation}: {task.review.generation} · {text.revision}: {task.review.taskRevision} · {text.evidence}: {task.review.evidenceRevision}</small>
+            </>}
+          </Panel>
+          <Panel title={text.semanticTitle}>
+            <p className="agent-mode-muted">{text.semanticHint}</p>
+            {!status?.capabilities.semanticReview?.available ? <Notice tone="warning">{text.semanticUnavailable}</Notice> : <form className="agent-mode-form" onSubmit={event => { event.preventDefault(); if (!locked) semanticReview(); }}>
+              <div className="nk-field"><label htmlFor="agent-semantic-reviewer">{text.semanticModel}</label><Select id="agent-semantic-reviewer" value={reviewerModel}
+                options={[{ value: '', label: text.semanticChoose }, ...(status?.models.filter(row => (row.provider ?? 'local-responses') === 'local-responses' && row.available !== false) ?? []).map(row => ({ value: row.id, label: row.label ?? row.id }))]} onChange={setReviewerModel} disabled={locked || terminal(task)} /></div>
+              <div className="agent-mode-actions"><Button type="submit" disabled={locked || terminal(task) || task.status !== 'review_required' || task.mode === 'loop' || !reviewerModel} busy={pending === 'semantic-review'}>{text.semanticAction}</Button></div>
+            </form>}
+            {!task.semanticReview ? <p className="agent-mode-muted">{text.semanticNone}</p> : <>
+              {!semanticCurrent(task) ? <Notice tone="warning">{text.semanticStale}</Notice> : null}
+              {!task.semanticReview.completeInput ? <Notice tone="warning">{text.semanticIncomplete}</Notice> : null}
+              <h3>{text.semanticDeliverable}</h3>
+              <p><Badge tone={verdictTone(task.semanticReview.deliverable.verdict)}>{task.semanticReview.deliverable.verdict === 'pass' ? text.verdictPass : task.semanticReview.deliverable.verdict === 'fail' ? text.verdictFail : text.verdictUnknown}</Badge></p>
+              <p className="agent-mode-prose">{task.semanticReview.deliverable.rationale}</p>
+              <h3>{text.coverage}</h3>
+              <RecordList empty={text.none}>{task.semanticReview.requirements.map(row => <li key={row.requirementId}>
+                <Badge tone={verdictTone(row.verdict)}>{row.verdict === 'pass' ? text.verdictPass : row.verdict === 'fail' ? text.verdictFail : text.verdictUnknown}</Badge> <strong>{row.requirementId}</strong> · {row.sufficiency === 'complete' ? text.sufficiencyComplete : row.sufficiency === 'partial' ? text.sufficiencyPartial : text.sufficiencyNone}
+                <p className="agent-mode-prose">{row.rationale}</p>
+                <small>{text.semanticCited}: {[...row.evidenceIds, ...row.toolReceiptIds].join(', ') || text.none}</small>
+                {row.missing.length ? <p><small>{text.semanticMissing}: {row.missing.join('; ')}</small></p> : null}
+              </li>)}</RecordList>
+              {task.semanticReview.hostAdjustments.length ? <><h3>{text.semanticAdjustments}</h3><RecordList empty={text.none}>{task.semanticReview.hostAdjustments.map((row, index) => <li key={index}>{row}</li>)}</RecordList></> : null}
+              <small>{text.semanticReviewer}: {task.semanticReview.reviewer.model} · {task.semanticReview.reviewer.independence === 'separate-provider' ? text.independenceProvider : task.semanticReview.reviewer.independence === 'separate-model' ? text.independenceModel : text.independenceContext} · <code>{task.semanticReview.reviewer.receiptId}</code> · {text.generation}: {task.semanticReview.generation} · {text.revision}: {task.semanticReview.taskRevision} · {text.evidence}: {task.semanticReview.evidenceRevision}</small>
             </>}
           </Panel>
           <Panel title={text.receipts}>

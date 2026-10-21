@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AgentModeRunner, AgentModeRuntime, AgentModeStore, createAgentModeRoutes, createLocalResponsesExecutionPort } from "../src/agent-mode";
+import { recordSemanticPass } from "./semantic-review-fixture";
 import type { AgentExecutionPort, AgentTask, CreateAgentTask, OutcomeReview } from "../src/agent-mode";
 
 const stores: AgentModeStore[] = []; const directories: string[] = [];
@@ -42,6 +43,7 @@ describe("Agent task archive", () => {
     await new AgentModeRunner(store, port, "owner").runNext(verified.id, { reservedSpend: 1 });
     let current = store.recordEvidence(verified.id, { id: "fact", taskRevision: 1, requirementId: "artifact", sourceEventId: "synthetic-event", subject: "synthetic-artifact", subjectRevision: "sha256:fixture", property: "exact contents", outcome: "passed", observer: "synthetic-fixture-observer" });
     store.recordReview(verified.id, review(current, ["fact"]));
+    recordSemanticPass(store, verified.id);
     current = store.verifyComplete(verified.id, "review-1");
     expect(current.status).toBe("verified_complete");
     const evidenceBefore = ledger(store, verified.id);

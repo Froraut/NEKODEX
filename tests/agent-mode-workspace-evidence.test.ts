@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AgentModeStore } from "../src/agent-mode";
+import { AgentModeStore, activeTaskEvidence, SEMANTIC_REVIEW_PROTOCOL } from "../src/agent-mode";
 import { defaultConfig } from "../src/config";
 import { startServer } from "../src/server";
 import { createAgentWorkspaceEvidenceAuthority } from "../launcher/electron/agent-workspace-evidence.cjs";
@@ -24,10 +24,21 @@ test.serial("signed real-file observations reject drift at final verify and reco
     if (id !== workspaceId) throw new Error("Fixture workspace was not selected"); return { id, path: root };
   } });
   let server: ReturnType<typeof startServer> | undefined; let reader: AgentModeStore | undefined;
-  let modelCalls = 0;
+  let modelCalls = 0; const reviewContexts: string[] = []; let workerContext = "";
   try {
     const config = { ...defaultConfig(), port: 0 };
-    server = startServer(config, { fetchUpstream: async () => { throw new Error("No provider network in artifact fixture"); }, adapterFactory: () => ({ name: "synthetic-artifact-report", async runTurn(_parsed, _incoming, emit) {
+    server = startServer(config, { fetchUpstream: async () => { throw new Error("No provider network in artifact fixture"); }, adapterFactory: () => ({ name: "synthetic-artifact-report", async runTurn(parsed, _incoming, emit) {
+      const context = (parsed as { _clientContext?: { threadId: string } })._clientContext;
+      if (context?.threadId.startsWith("agent_review_thread_")) {
+        // Independent reviewer turn: separate thread identity, cites only the current observed facts.
+        reviewContexts.push(context.threadId);
+        const current = reader!.getTask(taskId), active = activeTaskEvidence(current);
+        emit({ type: "text_delta", text: JSON.stringify({ protocol: SEMANTIC_REVIEW_PROTOCOL, requirements: current.requirements.map(row => ({ requirementId: row.id, verdict: "pass", sufficiency: "complete",
+          evidenceIds: active.filter(fact => fact.requirementId === row.id).map(fact => fact.id), toolReceiptIds: [], rationale: "The cited current observation establishes this requirement.", missing: [] })),
+          deliverable: { verdict: "pass", rationale: "Both selected artifacts satisfy their requirements." } }) });
+        emit({ type: "done", endTurn: true }); return;
+      }
+      workerContext = context?.threadId ?? "";
       modelCalls++; emit({ type: "text_delta", text: "The synthetic stage is reported complete; inspect the selected actual artifacts before verification." }); emit({ type: "done", endTurn: true });
     } }) });
     const url = `http://127.0.0.1:${server.port}/admin/agent-mode`;
@@ -67,19 +78,41 @@ test.serial("signed real-file observations reject drift at final verify and reco
     await observe("other", "other.txt", "file-exists");
     const reviewed = await call({ action: "review", taskId, actionId: randomUUID(), scope: scope() });
     expect(reviewed.body.value.task.review.findings).toHaveLength(0);
+    // Two passing file properties are still not verification of the whole deliverable.
+    const unreviewed = await call({ action: "verify", taskId, actionId: randomUUID(), scope: scope(), reviewId: reviewed.body.value.task.review.id });
+    expect(unreviewed.status).toBe(409); expect(unreviewed.body.message).toContain("Current independent semantic review required");
+    const reviewer = { provider: "local-responses", model: status.body.value.models[0].id };
+    // A drifted file fact is never sent to the reviewer.
+    writeFileSync(file, "External edit before review.\n");
+    const driftedReview = await call({ action: "semantic-review", taskId, actionId: randomUUID(), scope: scope(), reviewer, explicitUserAction: true });
+    expect(driftedReview.status).toBe(409); expect(driftedReview.body.message).toContain("changed after observation"); expect(reviewContexts).toHaveLength(0);
+    writeFileSync(file, expectedBytes);
+    const restored = await observe("artifact", "artifact.txt", "file-sha256"); // restore needs a new observation, not a replay
+    expect(restored.evidence.supersedes).toEqual([firstPass.evidence.id]);
+    const semantic = await call({ action: "semantic-review", taskId, actionId: randomUUID(), scope: scope(), reviewer, explicitUserAction: true });
+    expect(semantic.status).toBe(200); expect(semantic.body.value.task.semanticReview.deliverable.verdict).toBe("pass");
+    expect(semantic.body.value.task.semanticReview.reviewer).toMatchObject({ context: "fresh-tool-less", independence: "separate-context" });
+    expect(reviewContexts).toHaveLength(1); expect(workerContext.startsWith("agent_thread_")).toBe(true);
+    // An unchanged ledger is not reviewed again.
+    expect((await call({ action: "semantic-review", taskId, actionId: randomUUID(), scope: scope(), reviewer, explicitUserAction: true })).status).toBe(200);
+    expect(reviewContexts).toHaveLength(1);
     writeFileSync(file, "External edit after a passing observation.\n");
     const stale = await call({ action: "verify", taskId, actionId: randomUUID(), scope: scope(), reviewId: reviewed.body.value.task.review.id });
     expect(stale.status).toBe(409); expect(stale.body.message).toContain("changed after observation");
     expect(task().status).toBe("review_required");
     writeFileSync(file, expectedBytes);
     const fresh = await observe("artifact", "artifact.txt", "file-sha256");
-    expect(fresh.evidence.supersedes).toEqual([firstPass.evidence.id]);
+    expect(fresh.evidence.supersedes).toEqual([restored.evidence.id]);
     const finalReview = await call({ action: "review", taskId, actionId: randomUUID(), scope: scope() });
+    expect(finalReview.body.value.task.semanticReview).toBeUndefined();
+    expect((await call({ action: "verify", taskId, actionId: randomUUID(), scope: scope(), reviewId: finalReview.body.value.task.review.id })).status).toBe(409);
+    expect((await call({ action: "semantic-review", taskId, actionId: randomUUID(), scope: scope(), reviewer, explicitUserAction: true })).status).toBe(200);
+    expect(reviewContexts).toHaveLength(2); expect(reviewContexts[0]).not.toBe(reviewContexts[1]);
     const verified = await call({ action: "verify", taskId, actionId: randomUUID(), scope: scope(), reviewId: finalReview.body.value.task.review.id });
     expect(verified.status).toBe(200); expect(verified.body.value.task.status).toBe("verified_complete");
     const details = await call({ action: "get", taskId });
-    expect(details.body.value.task.evidence).toHaveLength(5); expect(details.body.value.activeEvidence).toHaveLength(2);
-    expect(details.body.value.workspaceEvidence).toHaveLength(5); expect(JSON.stringify(details.body.value.workspaceEvidence)).not.toContain(expectedBytes);
+    expect(details.body.value.task.evidence).toHaveLength(6); expect(details.body.value.activeEvidence).toHaveLength(2);
+    expect(details.body.value.workspaceEvidence).toHaveLength(6); expect(JSON.stringify(details.body.value.workspaceEvidence)).not.toContain(expectedBytes);
     expect(modelCalls).toBe(1);
   } finally {
     await server?.stop(true); reader?.close();

@@ -5,7 +5,7 @@ import { ConversationHistoryStore } from "./conversation-history";
 import { conversationHistoryRequest } from "./conversation-history/http";
 import { createOwnedConversationHistoryBridge } from './conversation-history/owned-conversation-bridge';
 import { createOwnedConversationHistoryControlRoutes } from './conversation-history/owned-conversation-control';
-import { AgentModeStore, AgentModeRuntime, activeTaskEvidence, createAgentModeRoutes, createLocalResponsesExecutionPort, createOwnedNativeExecutionPort, createAgentExecutionRouter } from "./agent-mode";
+import { AgentModeStore, AgentModeRuntime, activeTaskEvidence, createAgentModeRoutes, createLocalResponsesExecutionPort, createOwnedNativeExecutionPort, createAgentExecutionRouter, createResponsesSemanticReviewPort } from "./agent-mode";
 import { createLauncherNativeBridge } from "./agent-mode/launcher-native-bridge";
 import { createAgentNativeControlRoutes } from "./agent-mode/native-control";
 import { createAgentLoopProducerRoutes } from "./agent-mode/external-producer-http";
@@ -1123,7 +1123,10 @@ export function startServer(
           recordEvent: input => getHistoryStore().transcript.recordEvent(input), release: lease => historyStore?.transcript.release(lease) } },
       selectedSkills: request => getAgentTools().selectedSkillContent({ taskId: request.task.id, generation: request.task.generation, toolCallId: request.dispatch.id }) });
     const executionPort = createAgentExecutionRouter({ localResponses: webExecution, ownedNative: nativeExecution });
-    agentRuntime = new AgentModeRuntime({ store, models, executionPort,
+    // DW9 reviewer: a separate tool-less Web Responses context through the same loopback owner.
+    const semanticReviewer = createResponsesSemanticReviewPort({ endpoint: () => `http://127.0.0.1:${server.port}/v1/responses`,
+      requestHeaders: request => ({ authorization: `Bearer ${config.controlToken}`, "x-nekodex-agent-review": request.attemptId }) });
+    agentRuntime = new AgentModeRuntime({ store, models, executionPort, semanticReviewer,
       ownerId: `agent:${process.pid}:${instanceId}`,
       canStart: () => acceptingAgentTools() && (acceptingTurns() || nativeBridge.models().some(row => row.available === true && row.accepting !== false)),
       canExecute: task => acceptingAgentTools() && (task.execution?.provider === "owned-native"
@@ -1701,7 +1704,18 @@ export function startServer(
       if (policy?.endpoint === "responses" || policy?.endpoint === "compact") {
         let agentContext: ExternalClientContext | undefined;
         const agentDispatchId = req.headers.get("x-nekodex-agent-dispatch");
-        if (agentDispatchId) {
+        const agentReviewId = req.headers.get("x-nekodex-agent-review");
+        if (agentReviewId) {
+          if (agentDispatchId || policy.endpoint !== "responses" || !controlAuthorized(req) || !agentRuntime) return formatErrorResponse(403, "permission_error", "Agent review authority is unavailable");
+          try {
+            const body = await readJsonRequestBody(req.clone(), 768 * 1024, 768 * 1024) as { model?: unknown; tools?: unknown };
+            if (typeof body.model !== "string" || !isChatGptWebModelSlug(body.model) || !Array.isArray(body.tools) || body.tools.length) throw new Error("Agent review scope changed");
+            agentRuntime.claimSemanticReviewTransport(agentReviewId, body.model, createHash("sha256").update(JSON.stringify(body)).digest("hex"));
+            // Review-only thread identity: never the worker's agent_thread or a Codex workspace.
+            agentContext = { producer: "agent", threadId: `agent_review_thread_${createHash("sha256").update(agentReviewId).digest("hex")}`,
+              turnId: `agent_review_turn_${agentReviewId}`, root: join(historyHome, "agent-mode", "virtual") };
+          } catch { return formatErrorResponse(403, "permission_error", "Agent review request does not match its live attempt"); }
+        } else if (agentDispatchId) {
           if (policy.endpoint !== "responses" || !controlAuthorized(req) || !agentRuntime) return formatErrorResponse(403, "permission_error", "Agent Responses authority is unavailable");
           try {
             const dispatch = agentRuntime.store.getDispatch(agentDispatchId);

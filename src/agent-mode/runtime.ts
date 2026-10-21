@@ -4,9 +4,10 @@ import { AgentModeRunner } from "./runner";
 import { AgentModeStore } from "./store";
 import { projectNativeSelectedAttachments } from "./native-images";
 import { activeTaskEvidence } from "./evidence";
+import { normalizeSemanticReview, SEMANTIC_REVIEW_INSTRUCTIONS, SemanticReviewOutputError } from "./semantic-review";
 import { agentModelConfigured, agentModelAccepting, agentNativeConcurrency, type AgentModelOption } from "./provider";
 import { nativeScopeOf, sameNativeScope, type AgentNativeScope } from "./native-protocol";
-import type { AgentControl, AgentDispatch, AgentExecutionPort, AgentLoopSourceAuthority, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliationResult, AgentWorkPacket, CreateAgentTask, OutcomeEvidence, OutcomeReview } from "./types";
+import type { AgentControl, AgentDispatch, AgentExecutionPort, AgentLoopSourceAuthority, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliationResult, AgentWorkPacket, CreateAgentTask, OutcomeEvidence, OutcomeReview, AgentSemanticReviewer, SemanticOutcomeReview, SemanticReviewPort } from "./types";
 
 export interface AgentModeRuntimeOptions {
   store: AgentModeStore;
@@ -31,6 +32,8 @@ export interface AgentModeRuntimeOptions {
   onTaskScopeInvalidated?: (taskId: string) => void;
   /** Real monetary upper bound. Omit for subscription providers with no monetary quotes. */
   reserveSpend?: (task: AgentTask) => number;
+  /** DW9 independent reviewer: one fresh tool-less turn through an existing execution owner. */
+  semanticReviewer?: SemanticReviewPort;
 }
 export interface ScopedAgentAction {
   taskId: string;
@@ -49,6 +52,8 @@ export class AgentModeRuntime {
   private readonly pending = new Map<string, Promise<unknown>>();
   /** A durable run command authorizes only this live runtime and exact task scope. Never restored from status. */
   private readonly automaticRuns = new Map<string, AgentActionScope & { ownerId: string; runId: string }>();
+  /** Live reviewer attempts only; a restart never resumes or resends one. */
+  private readonly semanticAttempts = new Map<string, { taskId: string; model: string; abort: AbortController }>();
   private stopping = false;
   private shutdownFinished = false;
   constructor(private readonly options: AgentModeRuntimeOptions) {
@@ -64,6 +69,7 @@ export class AgentModeRuntime {
   status() {
     return { configured: this.options.configured?.() ?? this.options.models().length > 0,
       models: this.options.models(), capabilities: { tools: this.options.toolsAvailable?.() ?? false, workspace: false, autoSchedule: true, monetaryQuotes: Boolean(this.options.reserveSpend), loopSource: "mailbox", externalWatchers: false, externalEventProducers: true, toolReconciliation: Boolean(this.options.reconcileToolReceipt),
+        semanticReview: { available: Boolean(this.options.semanticReviewer), providers: this.options.semanticReviewer ? ["local-responses" as const] : [] },
         ownedNative: { configured: this.options.models().some(row => row.provider === "owned-native" && row.available === true && Boolean(row.admissionId)), imageInput: this.options.models().some(row => row.provider === "owned-native" && row.imageInput === true), turnUnit: "native-offers", actualProviderRequestCount: null } },
       ownerId: this.runner.ownerId, activeDispatchIds: this.runner.liveDispatchIds, accepting: !this.stopping && (this.options.canStart?.() ?? true) };
   }
@@ -249,6 +255,66 @@ export class AgentModeRuntime {
         recommendation: findings.length ? "Review the listed requirements, inspect their actual outcomes, and attach exact observed evidence before completing the goal." : "Selected observed evidence covers the declared requirements. Review its scope before explicitly verifying completion.", coverage, completeInput: true };
       return this.store.recordReview(taskId, review);
     }).result;
+  }
+  /** DW9: explicit independent semantic review of the current settled deliverable. The reviewer
+   * gets a separate tool-less context and the bounded ledger packet; its verdict is a recommendation
+   * that Verify re-derives. An unchanged ledger is never reviewed twice; a lost terminal is not replayed. */
+  async semanticReview(taskId: string, actionId: string, scope: AgentActionScope, reviewer: AgentSemanticReviewer, explicitUserAction: boolean): Promise<AgentTask> {
+    if (explicitUserAction !== true) throw new Error("Task semantic review requires an explicit user action");
+    const input = { scope, reviewer, explicitUserAction };
+    const prior = this.store.readCommandResult<AgentTask>(taskId, actionId, "semantic_review", input);
+    if (prior) return prior.result;
+    if (this.stopping || this.options.canStart?.() === false) throw new Error("Task runtime admission is closed");
+    this.assertScope(taskId, scope);
+    const task = this.store.getTask(taskId);
+    const reviewed = this.store.semanticReviewInput(taskId), current = task.semanticReview;
+    if (current && current.generation === task.generation && current.taskRevision === task.revision && current.evidenceRevision === task.evidenceRevision && current.inputDigest === reviewed.digest)
+      return this.store.command(taskId, actionId, "semantic_review", input, () => this.store.getTask(taskId)).result;
+    const port = this.options.semanticReviewer;
+    if (!port) throw new Error("Task semantic reviewer is unavailable");
+    if ([...this.semanticAttempts.values()].some(row => row.taskId === taskId)) throw new Error("Task semantic review is already in progress");
+    if (task.archivedAt !== undefined || task.mode === "loop" || task.status !== "review_required" || task.reserved !== 0
+      || this.store.listDispatches(taskId).some(row => ["admitted", "offered", "acked", "unknown"].includes(row.state))) throw new Error("Task semantic review requires a settled finite task awaiting review");
+    if (reviewer.provider !== "local-responses" || this.options.models().filter(row => (row.provider ?? "local-responses") === "local-responses" && row.id === reviewer.model && row.available !== false && row.accepting !== false).length !== 1) throw new Error("Task semantic reviewer model is unavailable");
+    // A retried action whose reviewer terminal was lost or invalid is not sent again.
+    if (this.store.listReceipts(taskId).some(row => row.kind === "semantic_review_attempt" && (row.body as { actionId?: unknown }).actionId === actionId)) throw new Error("Task semantic review attempt already exists for this action; inspect its receipt and start a new explicit review");
+    // The same synchronous observer as Verify: drifted file/property facts are never reviewed.
+    this.checkObservedCurrent(task);
+    const attemptId = randomUUID();
+    this.store.recordSemanticReviewAttempt(taskId, { attemptId, actionId, generation: task.generation, taskRevision: task.revision, evidenceRevision: task.evidenceRevision, inputDigest: reviewed.digest, reviewer: { ...reviewer } });
+    const abort = new AbortController();
+    this.semanticAttempts.set(attemptId, { taskId, model: reviewer.model, abort });
+    const operationId = `semantic-review:${attemptId}`;
+    const operation = (async (): Promise<AgentTask> => {
+      let raw: { receiptId: string; text: string };
+      try { raw = await port.review({ attemptId, taskId, reviewer: { ...reviewer }, instructions: SEMANTIC_REVIEW_INSTRUCTIONS, prompt: reviewed.text, signal: abort.signal }); }
+      catch (error) {
+        const invalid = error instanceof SemanticReviewOutputError;
+        this.store.recordSemanticReviewResult(taskId, { attemptId, state: invalid ? "invalid_output" : "outcome_unknown" });
+        throw new Error(invalid ? "Task semantic reviewer returned no valid verdict; inspect its attempt receipt before an explicit new review" : "Task semantic review outcome is unknown; inspect its attempt receipt before an explicit new review");
+      }
+      let verdicts: ReturnType<typeof normalizeSemanticReview>;
+      try { verdicts = normalizeSemanticReview(reviewed.packet, raw.text); }
+      catch {
+        this.store.recordSemanticReviewResult(taskId, { attemptId, state: "invalid_output", receiptId: raw.receiptId });
+        throw new Error("Task semantic reviewer returned no valid verdict; inspect its attempt receipt before an explicit new review");
+      }
+      const review: SemanticOutcomeReview = { id: randomUUID(), attemptId, generation: task.generation, taskRevision: task.revision, evidenceRevision: task.evidenceRevision, inputDigest: reviewed.digest,
+        reviewer: { ...reviewer, context: "fresh-tool-less", independence: task.execution?.provider !== reviewer.provider ? "separate-provider" : task.execution.model !== reviewer.model ? "separate-model" : "separate-context", receiptId: raw.receiptId },
+        requirements: verdicts.requirements, deliverable: verdicts.deliverable, completeInput: reviewed.packet.completeInput, hostAdjustments: verdicts.hostAdjustments, createdAt: Date.now() };
+      const recorded = this.store.recordSemanticReviewResult(taskId, { attemptId, state: "recorded", receiptId: raw.receiptId, review });
+      if (!recorded.current) throw new Error("Stale task semantic review: the task ledger changed during review; its result receipt is retained");
+      return this.store.command(taskId, actionId, "semantic_review", input, () => this.store.getTask(taskId)).result;
+    })();
+    this.pending.set(operationId, operation);
+    try { return await operation; } finally { this.pending.delete(operationId); this.semanticAttempts.delete(attemptId); }
+  }
+  /** Trusted loopback seam for the reviewer request. Exact live attempt/model, claimed once. */
+  claimSemanticReviewTransport(attemptId: string, model: string, payloadDigest: string): { taskId: string } {
+    const attempt = this.semanticAttempts.get(attemptId);
+    if (!attempt || attempt.model !== model || attempt.abort.signal.aborted || this.stopping) throw new Error("Stale semantic review transport");
+    this.store.claimSemanticReviewTransport(attempt.taskId, attemptId, payloadDigest);
+    return { taskId: attempt.taskId };
   }
   /** Only a host observer may construct this. The HTTP layer never accepts raw evidence from a caller. */
   recordObservedEvidence(taskId: string, actionId: string, evidence: OutcomeEvidence): AgentTask {
@@ -438,14 +504,7 @@ export class AgentModeRuntime {
     } catch { this.pauseAtBound(taskId); }
   }
   verify(taskId: string, actionId: string, reviewId: string, scope?: AgentActionScope): AgentTask {
-    const checkCurrent = () => {
-      this.assertScope(taskId, scope);
-      const checked: unknown = this.options.beforeVerify?.(this.store.getTask(taskId));
-      if (checked && typeof (checked as { then?: unknown }).then === "function") {
-        void Promise.resolve(checked).catch(() => {});
-        throw new Error("Task evidence observer must finish synchronously before verification");
-      }
-    };
+    const checkCurrent = () => { this.assertScope(taskId, scope); this.checkObservedCurrent(this.store.getTask(taskId)); };
     const command = this.store.command(taskId, actionId, "verify", { reviewId, ...(scope ? { scope } : {}) }, () => {
       checkCurrent(); return this.store.verifyComplete(taskId, reviewId);
     });
@@ -473,8 +532,8 @@ export class AgentModeRuntime {
   }
   /** Fixture/shutdown observation only; no timer or repeated polling. */
   async waitForIdle(): Promise<void> { while (this.pending.size) await Promise.allSettled([...this.pending.values()]); }
-  abortLocalWork(): void { this.automaticRuns.clear(); this.runner.abortLocalWork(); }
-  beginShutdown(): void { this.stopping = true; this.automaticRuns.clear(); this.runner.beginShutdown(); }
+  abortLocalWork(): void { this.automaticRuns.clear(); for (const attempt of this.semanticAttempts.values()) attempt.abort.abort(); this.runner.abortLocalWork(); }
+  beginShutdown(): void { this.stopping = true; this.automaticRuns.clear(); for (const attempt of this.semanticAttempts.values()) attempt.abort.abort(); this.runner.beginShutdown(); }
   finishShutdown(): void {
     if (this.shutdownFinished) return;
     if (this.pending.size) throw new Error("Agent operations have not settled");
@@ -490,6 +549,13 @@ export class AgentModeRuntime {
     if (task.ownerId !== this.runner.ownerId || !["ready", "running"].includes(task.status)) return;
     if (task.turns >= task.bounds.maxTurns) this.store.hold(taskId, this.runner.ownerId, task.generation, "turn_bound");
     else if (task.bounds.maxSpend !== null && this.options.reserveSpend && task.spent + task.reserved + this.options.reserveSpend(task) > task.bounds.maxSpend) this.store.hold(taskId, this.runner.ownerId, task.generation, "spend_bound");
+  }
+  private checkObservedCurrent(task: AgentTask): void {
+    const checked: unknown = this.options.beforeVerify?.(task);
+    if (checked && typeof (checked as { then?: unknown }).then === "function") {
+      void Promise.resolve(checked).catch(() => {});
+      throw new Error("Task evidence observer must finish synchronously before verification");
+    }
   }
   private assertScope(taskId: string, scope?: AgentActionScope): void {
     if (!scope) return;
