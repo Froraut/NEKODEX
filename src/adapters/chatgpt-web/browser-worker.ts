@@ -19,6 +19,7 @@ import {
   chatGptRateLimitDialog,
   dismissChatGptTemporaryChatOnboarding,
   resolveChatGptToolConfirmation,
+  chatGptMessageTooLongAlert,
   throwIfChatGptEffortCapabilityDialog,
   throwIfChatGptRateLimitDialog,
   throwIfChatGptSessionFailureAlert,
@@ -3595,6 +3596,11 @@ export class ChatGptBrowserWorker {
       } else if (!(error instanceof DOMException && error.name === "AbortError")
         && !(error instanceof ChatGptWebAdapterError && error.code === "client_cancelled")) {
         error = await submissionRejection.failure() ?? error;
+        // Only an unclassified failure may be explained by ChatGPT's visible size rejection.
+        if (!(error instanceof ChatGptWebAdapterError) && diagnosticPage && !diagnosticPage.isClosed()) {
+          error = await withChatGptBrowserObservationTimeout(chatGptMessageTooLongAlert(diagnosticPage), 3_000)
+            .catch(() => undefined) ?? error;
+        }
       }
       const reportedError = chatGptSubmittedProviderFailure(error, providerSubmissionStage);
       console.error(

@@ -242,6 +242,23 @@ export class ChatGptSubmissionRejectionObserver {
   }
 }
 
+// ChatGPT's visible size rejection (upstream #874). The network shapes are handled by the
+// submission observer; this alert can arrive without one and otherwise reads as a vanished DOM.
+const CHATGPT_MESSAGE_TOO_LONG = /The message you submitted was too long/i;
+
+export function isChatGptMessageTooLongAlertText(text: string): boolean {
+  return CHATGPT_MESSAGE_TOO_LONG.test(text.replace(/\s+/g, " "));
+}
+
+export async function chatGptMessageTooLongAlert(page: Page): Promise<ChatGptWebAdapterError | undefined> {
+  const alert = page.locator('[role="alert"]').filter({ hasText: CHATGPT_MESSAGE_TOO_LONG }).last();
+  if (!await alert.isVisible().catch(() => false)) return undefined;
+  return new ChatGptWebAdapterError(
+    "ChatGPT rejected this message because it exceeds the selected mode's input-size limit. Compact the task before retrying.",
+    { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
+  );
+}
+
 export async function throwIfChatGptTerminalErrorAlert(scope: ChatGptTextScope): Promise<void> {
   if (await chatGptThinkingFailedAlert(scope).isVisible().catch(() => false)) {
     throw new ChatGptWebAdapterError(
