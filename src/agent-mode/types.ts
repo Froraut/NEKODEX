@@ -39,6 +39,46 @@ export interface OutcomeReview {
   /** False when the bounded evidence/history input is incomplete. */
   completeInput: boolean;
 }
+export type SemanticVerdict = "pass" | "fail" | "unknown";
+/** Host classification of a cited canonical tool receipt. An action receipt proves only that input ran. */
+export type SemanticFactClass = "observation" | "tool-result" | "action-receipt";
+export interface SemanticRequirementVerdict {
+  requirementId: string;
+  verdict: SemanticVerdict;
+  /** Reviewer judgment of whether the cited facts establish the WHOLE requirement, not one property. */
+  sufficiency: "complete" | "partial" | "none";
+  /** Active observed OutcomeEvidence IDs for this requirement. */
+  evidenceIds: string[];
+  /** Canonical current-revision tool receipt keys from the reviewed packet. */
+  toolReceiptIds: string[];
+  rationale: string;
+  missing: string[];
+}
+/** Explicitly selected reviewer. Only the existing loopback Responses owner can run it. */
+export interface AgentSemanticReviewer { provider: "local-responses"; model: string }
+/** Independent recommendation from a separate tool-less model context. Never self-certifies:
+ * Verify still re-derives every cited fact from the store and rebuilds the reviewed input digest. */
+export interface SemanticOutcomeReview {
+  id: string;
+  attemptId: string;
+  generation: number;
+  taskRevision: number;
+  evidenceRevision: number;
+  /** sha256 of the exact bounded review packet; any later ledger change makes this review stale. */
+  inputDigest: string;
+  reviewer: AgentSemanticReviewer & { context: "fresh-tool-less"; independence: "separate-provider" | "separate-model" | "separate-context"; receiptId: string };
+  requirements: SemanticRequirementVerdict[];
+  deliverable: { verdict: SemanticVerdict; rationale: string };
+  completeInput: boolean;
+  /** Fixed host normalizations applied to the reviewer's raw verdicts, e.g. pass without an observed basis. */
+  hostAdjustments: string[];
+  createdAt: number;
+}
+export interface SemanticReviewRequest { attemptId: string; taskId: string; reviewer: AgentSemanticReviewer; instructions: string; prompt: string; signal: AbortSignal }
+/** One fresh, tool-less model turn through an existing execution owner. Throwing means unknown outcome. */
+export interface SemanticReviewPort {
+  review(request: SemanticReviewRequest): Promise<{ receiptId: string; text: string }>;
+}
 export interface AgentTask {
   schemaVersion: 1;
   id: string;
@@ -68,6 +108,8 @@ export interface AgentTask {
   evidenceRevision: number;
   evidence: OutcomeEvidence[];
   review?: OutcomeReview;
+  /** DW9 independent semantic review of the current generation/revision/evidence and ledger digest. */
+  semanticReview?: SemanticOutcomeReview;
   cycle: number;
   lastWorkKey?: string;
   loopRun?: { ownerId: string; generation: number };

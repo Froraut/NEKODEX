@@ -79,7 +79,7 @@ export function createAgentModeRoutes(options: AgentModeRouteOptions): (request:
     if (!options.authorize(request)) return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
     if (request.method !== "POST") return Response.json({ ok: false, error: "method_not_allowed" }, { status: 405, headers: { allow: "POST" } });
     try {
-      const envelope = z.object({ action: z.enum(["status", "list", "get", "create", "control", "step", "run", "review", "evidence", "verify", "workspace-grant", "resume-continuation", "enqueue-work", "cycle", "workspace-evidence", "reconcile-tool", "refresh-execution", "archive"]), taskId: identity.optional(), actionId: identity.optional(), idempotencyKey: identity.optional(), dispatchId: identity.optional(), workId: identity.optional(), work: z.unknown().optional(), input: z.unknown().optional(), control: z.unknown().optional(), scope: taskScope.optional(), loopSourceRunId: identity.optional(), grant: z.unknown().optional(), proof: z.unknown().optional(), explicitUserAction: z.boolean().optional(), workerName: identity.optional(), reviewId: identity.optional(), evidence: z.unknown().optional() }).strict().parse(await readJsonRequestBody(request, 512 * 1024, 512 * 1024));
+      const envelope = z.object({ action: z.enum(["status", "list", "get", "create", "control", "step", "run", "review", "evidence", "verify", "workspace-grant", "resume-continuation", "enqueue-work", "cycle", "workspace-evidence", "reconcile-tool", "refresh-execution", "archive", "semantic-review"]), taskId: identity.optional(), actionId: identity.optional(), idempotencyKey: identity.optional(), dispatchId: identity.optional(), workId: identity.optional(), work: z.unknown().optional(), input: z.unknown().optional(), control: z.unknown().optional(), scope: taskScope.optional(), loopSourceRunId: identity.optional(), grant: z.unknown().optional(), proof: z.unknown().optional(), explicitUserAction: z.boolean().optional(), workerName: identity.optional(), reviewId: identity.optional(), evidence: z.unknown().optional(), reviewer: z.unknown().optional() }).strict().parse(await readJsonRequestBody(request, 512 * 1024, 512 * 1024));
       const runtime = options.runtime;
       if (envelope.action === "status") return success({ ...runtime.status(), ...listing(runtime), capabilities: { ...runtime.status().capabilities, observedEvidence: Boolean(options.resolveEvidence || options.observeWorkspaceEvidence) } });
       if (envelope.action === "list") return success(listing(runtime));
@@ -133,6 +133,11 @@ export function createAgentModeRoutes(options: AgentModeRouteOptions): (request:
       if (envelope.action === "control") return success({ task: runtime.control(taskId, actionId, control.parse(envelope.control), envelope.scope) });
       if (envelope.action === "step" || envelope.action === "run") return success(runtime.step(taskId, actionId, { explicitUserAction: envelope.explicitUserAction === true, workerName: envelope.workerName, automatic: envelope.action === "run" }, envelope.scope), 202);
       if (envelope.action === "review") return success({ task: runtime.review(taskId, actionId, envelope.scope) });
+      if (envelope.action === "semantic-review") {
+        const request = z.object({ action: z.literal("semantic-review"), taskId: identity, actionId: identity, scope: taskScope, explicitUserAction: z.literal(true),
+          reviewer: z.object({ provider: z.literal("local-responses"), model: identity }).strict() }).strict().parse(envelope);
+        return success({ task: await runtime.semanticReview(taskId, actionId, request.scope, request.reviewer, request.explicitUserAction) });
+      }
       if (envelope.action === "verify") return success({ task: runtime.verify(taskId, actionId, identity.parse(envelope.reviewId), envelope.scope) });
       if (!options.resolveEvidence) return Response.json({ ok: false, error: "observed_evidence_unavailable", message: "A trusted outcome observer is not configured. Model text and caller assertions cannot verify an outcome." }, { status: 503 });
       const task = runtime.store.getTask(taskId);
@@ -145,7 +150,7 @@ export function createAgentModeRoutes(options: AgentModeRouteOptions): (request:
       if (error instanceof z.ZodError) return Response.json({ ok: false, error: "invalid_request", message: "The Agent action does not match its bounded schema." }, { status: 400 });
       // Domain errors are fixed internal strings; do not echo unknown exceptions or SQL/filesystem details.
       const message = (error as { code?: unknown })?.code === "EVIDENCE_STALE" ? "The workspace file changed after observation. Inspect its current revision and observe it again before verification."
-        : error instanceof Error && /^(?:Task |Manual |Unknown send|Agent provider|Select a configured|This provider|Loop requires|Stopped task|Current complete|Requirement outcome|Stale |Execution owner|Action identity|Stage is|Worker |Empty Continue|Tool receipt|Tool reconciliation)/.test(error.message) ? error.message : "The Agent action could not be completed; inspect its current durable state before retrying.";
+        : error instanceof Error && /^(?:Task |Manual |Unknown send|Agent provider|Select a configured|This provider|Loop requires|Stopped task|Current complete|Requirement outcome|Stale |Execution owner|Action identity|Stage is|Worker |Empty Continue|Tool receipt|Tool reconciliation|Current independent|Semantic review|Application property evidence)/.test(error.message) ? error.message : "The Agent action could not be completed; inspect its current durable state before retrying.";
       return Response.json({ ok: false, error: "agent_action_conflict", message }, { status: 409 });
     }
   };

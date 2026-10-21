@@ -1,5 +1,5 @@
 const path = require('node:path');
-const ACTIONS = new Set(['status', 'list', 'get', 'create', 'control', 'step', 'run', 'review', 'verify', 'evidence', 'workspace-grant', 'resume-continuation', 'enqueue-work', 'cycle', 'workspace-evidence', 'reconcile-tool', 'refresh-execution', 'archive']);
+const ACTIONS = new Set(['status', 'list', 'get', 'create', 'control', 'step', 'run', 'review', 'verify', 'evidence', 'workspace-grant', 'resume-continuation', 'enqueue-work', 'cycle', 'workspace-evidence', 'reconcile-tool', 'refresh-execution', 'archive', 'semantic-review']);
 const UUID = /^[a-f0-9-]{36}$/;
 const record = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 const owns = (value, name) => Object.prototype.hasOwnProperty.call(value, name);
@@ -42,7 +42,8 @@ function registerAgentMode({ handle, runtimeHost, workspaceService, workspaceEvi
     const send = async payload => {
       let receipt;
       try {
-        receipt = await supervisor.control(config, 'agent-mode', { body: payload, returnErrorReceipt: true });
+        // One independent reviewer model turn can outlast the ordinary short control wait.
+        receipt = await supervisor.control(config, 'agent-mode', { body: payload, returnErrorReceipt: true, ...(payload.action === 'semantic-review' ? { timeoutMs: 300_000 } : {}) });
       } catch (error) {
         if (pendingVersion && /\bHTTP 404\b/.test(error instanceof Error ? error.message : String(error))) throw new Error(pendingMessage);
         throw error;

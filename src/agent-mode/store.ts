@@ -6,9 +6,10 @@ import { chmodSync, lstatSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { projectNativeSelectedAttachments } from "./native-images";
 import { activeTaskEvidence } from "./evidence";
+import { buildSemanticReviewPacket, semanticRequirementBasis, type SemanticReviewInput } from "./semantic-review";
 import { invocationFingerprint } from "../agent-tools/journal";
 import { AGENT_NATIVE_PROTOCOL, nativeDigest, nativeToolCallId } from "./native-protocol";
-import type { AgentControl, AgentDispatch, AgentExecutionConfig, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliation, AgentWorker, AgentWorkPacket, CreateAgentTask, ExecutionResult, MailMessage, OutcomeEvidence, OutcomeReview, Requirement, StageInput } from "./types";
+import type { AgentControl, AgentDispatch, AgentExecutionConfig, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliation, AgentWorker, AgentWorkPacket, CreateAgentTask, ExecutionResult, MailMessage, OutcomeEvidence, OutcomeReview, Requirement, SemanticOutcomeReview, StageInput } from "./types";
 
 function text(value: string, name: string, max = 16_384): void {
   if (typeof value !== "string" || !value.trim() || Buffer.byteLength(value) > max) throw new Error(`Invalid ${name}`);
@@ -201,7 +202,7 @@ export class AgentModeStore {
       }
       if (control.action === "mode" && (!["manual", "goal", "loop"].includes(control.mode) || (control.mode === "loop" && control.recurringAuthorized !== true))) throw new Error("Loop requires explicit recurrence authorization");
       // Invalidate before aborting the physical port; late results remain attached to the old generation.
-      task.generation++; delete task.ownerId; delete task.review;
+      task.generation++; delete task.ownerId; delete task.review; delete task.semanticReview;
       delete task.loopRun;
       task.status = control.action === "stop" ? "stopped" : control.action === "pause" ? "paused" : "ready";
       task.reason = control.action;
@@ -283,7 +284,7 @@ export class AgentModeStore {
       const awaitingInput = task.status === 'awaiting_input';
       task.execution = structuredClone(execution);
       task.generation++;
-      delete task.ownerId; delete task.review; delete task.loopRun; delete task.workspaceSnapshotGrant;
+      delete task.ownerId; delete task.review; delete task.semanticReview; delete task.loopRun; delete task.workspaceSnapshotGrant;
       task.status = userPaused ? 'paused' : awaitingInput ? 'awaiting_input' : task.stages.every(stage => stage.status === "completed") ? "review_required" : "ready";
       task.reason = userPaused ? 'pause' : 'execution_refreshed';
       this.saveTask(task); return task;
@@ -670,7 +671,7 @@ export class AgentModeStore {
         }
       }
       if (task.ownerId === proof.ownerId) {
-        delete task.ownerId; task.generation++; delete task.review;
+        delete task.ownerId; task.generation++; delete task.review; delete task.semanticReview;
         delete task.loopRun;
         if (["ready", "running"].includes(task.status)) { task.status = "paused"; task.reason = "owner_recovery"; }
       }
@@ -696,7 +697,7 @@ export class AgentModeStore {
         }
       }
       if (task.evidence.length >= 512) throw new Error("Evidence quota reached");
-      task.evidence.push(structuredClone(evidence)); task.evidenceRevision++; delete task.review;
+      task.evidence.push(structuredClone(evidence)); task.evidenceRevision++; delete task.review; delete task.semanticReview;
       if (task.status === "verified_complete") { task.status = "review_required"; task.reason = "evidence_changed"; }
       this.saveTask(task); return task;
     });
@@ -715,15 +716,63 @@ export class AgentModeStore {
       task.review = structuredClone(review); this.saveTask(task); return task;
     });
   }
+  /** Pure projection of the current ledger that a semantic reviewer receives and Verify rebuilds. */
+  semanticReviewInput(taskId: string): SemanticReviewInput {
+    const task = this.getTask(taskId);
+    return buildSemanticReviewPacket({ task, dispatches: this.listDispatches(taskId), outcomes: this.effectiveToolOutcomes(taskId), receiptKey: (dispatchId, toolCallId) => this.toolCallReceiptKey(dispatchId, toolCallId) });
+  }
+  private semanticAttempts(taskId: string, inputDigest: string): number {
+    return this.listReceipts(taskId).filter(row => row.kind === "semantic_review_attempt" && (row.body as { inputDigest?: unknown }).inputDigest === inputDigest).length;
+  }
+  /** Durable intent before any reviewer request. Bounded per exact reviewed input; a lost
+   * terminal stays an unknown attempt and is never replayed under the same identity. */
+  recordSemanticReviewAttempt(taskId: string, attempt: { attemptId: string; actionId: string; generation: number; taskRevision: number; evidenceRevision: number; inputDigest: string; reviewer: { provider: "local-responses"; model: string } }): void {
+    id(attempt.attemptId); id(attempt.actionId); id(attempt.reviewer.model);
+    this.atomic(() => {
+      const task = this.getTask(taskId);
+      if (task.archivedAt !== undefined || attempt.generation !== task.generation || attempt.taskRevision !== task.revision || attempt.evidenceRevision !== task.evidenceRevision || attempt.inputDigest !== this.semanticReviewInput(taskId).digest) throw new Error("Stale task semantic review scope");
+      if (this.semanticAttempts(taskId, attempt.inputDigest) >= 3) throw new Error("Task semantic review attempt bound reached for this unchanged ledger; change the facts or inspect the attempt receipts");
+      this.receipt(`semantic-attempt:${attempt.attemptId}`, taskId, "semantic_review_attempt", attempt);
+    });
+  }
+  /** One exact reviewer request per attempt. A second claim is refused, never resent. */
+  claimSemanticReviewTransport(taskId: string, attemptId: string, payloadDigest: string): void {
+    if (!/^[a-f0-9]{64}$/.test(payloadDigest)) throw new Error("Invalid semantic review payload digest");
+    this.atomic(() => {
+      if (!this.listReceipts(taskId).some(row => row.id === `semantic-attempt:${attemptId}`)) throw new Error("Unknown semantic review attempt");
+      if (!this.receipt(`semantic-transport:${attemptId}`, taskId, "semantic_review_transport", { attemptId, payloadDigest })) throw new Error("Semantic review transport already claimed");
+    });
+  }
+  /** Immutable result receipt for every terminal attempt; only a still-current review is attached. */
+  recordSemanticReviewResult(taskId: string, result: { attemptId: string; state: "recorded" | "invalid_output" | "outcome_unknown"; receiptId?: string; review?: SemanticOutcomeReview }): { task: AgentTask; current: boolean } {
+    return this.atomic(() => {
+      this.receipt(`semantic-result:${result.attemptId}`, taskId, "semantic_review_result", result);
+      const task = this.getTask(taskId), review = result.review;
+      if (result.state !== "recorded" || !review) return { task, current: false };
+      id(review.id); if (review.attemptId !== result.attemptId) throw new Error("Semantic review attempt identity conflict");
+      if (task.archivedAt !== undefined || review.generation !== task.generation || review.taskRevision !== task.revision || review.evidenceRevision !== task.evidenceRevision || review.inputDigest !== this.semanticReviewInput(taskId).digest) return { task, current: false };
+      if (!Array.isArray(review.requirements) || review.requirements.length !== task.requirements.length || task.requirements.some(row => review.requirements.filter(verdict => verdict.requirementId === row.id).length !== 1)) throw new Error("Invalid semantic outcome review");
+      task.semanticReview = structuredClone(review); this.saveTask(task); return { task, current: true };
+    });
+  }
   verifyComplete(taskId: string, reviewId: string): AgentTask {
     return this.atomic(() => {
       const task = this.getTask(taskId); const review = task.review;
       if (task.status === "verified_complete" && review?.id === reviewId) return task;
-      if (task.mode === "loop" || task.status !== "review_required" || task.reserved !== 0 || !review || review.id !== reviewId || review.generation !== task.generation || review.taskRevision !== task.revision || review.evidenceRevision !== task.evidenceRevision || !review.completeInput || review.findings.length || this.listDispatches(taskId).some(row => unsettled.has(row.state))) throw new Error("Current complete outcome review required");
+      if (task.mode === "loop" || task.status !== "review_required" || task.reserved !== 0 || !review || review.id !== reviewId || review.generation !== task.generation || review.taskRevision !== task.revision || review.evidenceRevision !== task.evidenceRevision || !review.completeInput || this.listDispatches(taskId).some(row => unsettled.has(row.state))) throw new Error("Current complete outcome review required");
+      // The local helper lists findings for any requirement without host evidence. Those
+      // may still be closed only by an independent semantic pass over observed facts.
+      const semantic = task.semanticReview;
       for (const requirement of task.requirements) {
-        const coverage = review.coverage.find(row => row.requirementId === requirement.id);
         const facts = activeTaskEvidence(task).filter(row => row.requirementId === requirement.id);
-        if (!coverage?.evidenceIds.length || coverage.evidenceIds.some(key => !facts.some(row => row.id === key && row.outcome === "passed")) || facts.some(row => row.outcome !== "passed")) throw new Error("Requirement outcome is not verified");
+        if (facts.some(row => row.outcome !== "passed") || (!facts.length && !semantic)) throw new Error("Requirement outcome is not verified");
+      }
+      const input = this.semanticReviewInput(taskId);
+      if (!semantic || semantic.generation !== task.generation || semantic.taskRevision !== task.revision || semantic.evidenceRevision !== task.evidenceRevision
+        || semantic.inputDigest !== input.digest || !semantic.completeInput || !input.packet.completeInput || semantic.deliverable.verdict !== "pass") throw new Error("Current independent semantic review required");
+      for (const requirement of task.requirements) {
+        const verdict = semantic.requirements.find(row => row.requirementId === requirement.id);
+        if (!verdict || verdict.verdict !== "pass" || verdict.sufficiency !== "complete" || !semanticRequirementBasis(input.packet, verdict).length) throw new Error("Requirement outcome is not semantically verified");
       }
       task.status = "verified_complete"; delete task.ownerId; this.saveTask(task); return task;
     });
@@ -735,7 +784,7 @@ export class AgentModeStore {
       if (task.mode !== "loop" || task.status !== "review_required" || this.listDispatches(taskId).some(row => unsettled.has(row.state))) throw new Error("Loop cycle is not settled");
       if (!input.stages.length || input.workKey === task.lastWorkKey) { task.status = "paused"; task.reason = "no_new_work"; this.saveTask(task); return task; }
       plan(task.requirements, input.stages);
-      task.generation++; task.revision++; task.cycle++; delete task.ownerId; delete task.review;
+      task.generation++; task.revision++; task.cycle++; delete task.ownerId; delete task.review; delete task.semanticReview;
       task.lastWorkKey = input.workKey; task.stages = input.stages.map(row => ({ ...structuredClone(row), status: "pending" })); task.status = "ready";
       this.saveTask(task); return task;
     });
