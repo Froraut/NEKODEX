@@ -14,7 +14,10 @@ field.addEventListener("input", () => { send.disabled = !field.innerText.trim();
 send.addEventListener("click", () => {
   window.fixtureSends++;
   const text = field.innerText; field.textContent = ""; send.disabled = true;
-  history.pushState(null, "", "/c/fixture-conversation");
+  // Live ChatGPT (P11, 2026-10-21): a new chat first gets its client-side id, then its saved id
+  // after send has returned (its message-ID wait is about 1s).
+  history.pushState(null, "", "/c/local-chatgpt%3Ae7b99a63-8626-44d7-827f-6efb58121825");
+  setTimeout(() => history.replaceState(null, "", "/c/fixture-conversation"), 1300);
   // The message ID hydrates only after send has returned: reads must keep the ordinal identity.
   thread.insertAdjacentHTML("beforeend", '<article data-testid="conversation-turn-1" data-turn="user"><div data-message-author-role="user"></div></article>');
   const user = thread.querySelector('[data-message-author-role="user"]'); user.textContent = text;

@@ -88,7 +88,7 @@ browser input. The root owns registration, navigation and lifecycle wiring.
    that tab's main frame. Only then does it read visible page text and control
    labels. The extension does not enumerate other page URLs or infer an account.
 4. The popup sends the observation (with the bundled feature list, currently
-   `chatgpt-v1`) and hands the selection to an inactive extension **session tab**
+   `chatgpt-v1` and `chatgpt-turns-v1`) and hands the selection to an inactive extension **session tab**
    through a one-time session-storage nonce. That session tab owns the single poll
    loop under a Web Lock, so the toolbar popup may close. There is no service
    worker, alarm or automatic reconnect: closing or reloading the session tab
@@ -98,6 +98,13 @@ browser input. The root owns registration, navigation and lifecycle wiring.
    `host.observe(...)`; refs and coordinates cannot be supplied without a binding.
    Successful input consumes the current action observation. A document anchor
    allows a fresh read after input, while another input requires the new snapshot.
+   Observe and input require the selected tab to be the active tab of its window.
+   Chrome on macOS reports a fully occluded window (for example behind NEKODEX
+   while the human approves the exact call) as `hidden`; the dispatcher therefore
+   passes the time of its active-tab check (only for a non-minimized window) and
+   the page accepts hiddenness that began before it. Hiding after that check, a
+   different active tab, a changed document/epoch or a stale observation still
+   refuse, each with its own reason. Occluded observations are text-only.
 
 No tab URL, page text, screenshot or pairing secret is written to extension local
 or sync storage. The popup and host hold one bounded observation in memory, and
@@ -365,8 +372,11 @@ It then waits for exactly one user turn whose text matches the prompt and return
 its message ID, waiting briefly for it to hydrate, or `ordinal:1`. Because send
 required an empty new chat, reads keep matching that ordinal after a later ID
 hydration, but only while that turn still carries the SHA-256 of the sent
-(whitespace-normalized) text. The leaf also pins the first `/c/<id>` path it sees;
-navigation to another conversation during settlement holds the answer as
+(whitespace-normalized) text. A new chat then moves its own document from `/`
+to `/c/local-chatgpt:<uuid>` and on to its saved `/c/<id>`; each forward step is
+accepted once, only while the read reports exactly one user turn (so an extension
+without `chatgpt-turns-v1` is refused before dispatch). The leaf pins the first saved
+`/c/<id>`; any other navigation during settlement holds the answer as
 unobserved instead of rebinding. Failures before the click are `rejected`, executed false, and remove the
 extension's own draft (the session tab stays alive for a corrected turn); anything
 after the click without that proof is `unknown`.

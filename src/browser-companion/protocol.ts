@@ -34,6 +34,8 @@ export const browserActionSchema = z.discriminatedUnion("kind", [
 /** Bundled ChatGPT document operations (extension `chatgpt.js`). The host never sends selectors
  * or script; each operation runs only on the exact selected https://chatgpt.com document. */
 export const COMPANION_CHATGPT_FEATURE = "chatgpt-v1" as const;
+/** Reads report the conversation's user-turn count, required to follow ChatGPT's new-chat URL change. */
+export const COMPANION_CHATGPT_TURNS_FEATURE = "chatgpt-turns-v1" as const;
 export const CHATGPT_COMPANION_MAX_PROMPT_CHARS = 200_000;
 export const CHATGPT_COMPANION_MAX_ANSWER_HTML_CHARS = 400_000;
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -50,7 +52,8 @@ export const chatGptCompanionResultSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("identify"), account: digest, modelLabel, path: z.string().max(2048),
     newChat: z.boolean(), composerReady: z.boolean(), generating: z.boolean() }).strict(),
   z.object({ op: z.literal("send"), userMessageId: id, path: z.string().max(2048) }).strict(),
-  z.object({ op: z.literal("read"), path: z.string().max(2048), userTurnFound: z.boolean(), generating: z.boolean(),
+  z.object({ op: z.literal("read"), path: z.string().max(2048), userTurnFound: z.boolean(),
+    userTurnCount: z.number().int().nonnegative().max(10_000).optional(), generating: z.boolean(),
     account: digest.optional(),
     assistant: z.object({ messageId: id.optional(), html: z.string().max(CHATGPT_COMPANION_MAX_ANSWER_HTML_CHARS),
       truncated: z.boolean(), completionAction: z.boolean() }).strict().optional() }).strict(),

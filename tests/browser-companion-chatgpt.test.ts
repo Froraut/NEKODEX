@@ -28,7 +28,7 @@ async function companion(options: { features?: string[]; url?: string } = {}) {
   const observation = (scope = "scope-1", documentId = "document-1"): BrowserObservation => ({ kind: "browser", sessionId: credentials.sessionId!, scopeId: scope,
     tabId: 4, windowId: 2, frameId: 0, documentId, documentEpoch: `epoch-${documentId}`, observationId: `observation-${scope}`,
     url: options.url ?? "https://chatgpt.com/", title: "ChatGPT", text: "", refs: [] });
-  const select = async (scope?: string, documentId?: string, features = options.features ?? ["chatgpt-v1"]) =>
+  const select = async (scope?: string, documentId?: string, features = options.features ?? ["chatgpt-v1", "chatgpt-turns-v1"]) =>
     expect((await post("select", { observation: observation(scope, documentId), features })).status).toBe(200);
   await select();
   // Page model: one account, one visible model label, one new chat, one possible send.
@@ -178,6 +178,87 @@ test("same-document navigation to another conversation during settlement is held
     await expect(transport.port.run(turn().turn)).rejects.toMatchObject({ code: "companion_response_unobserved" });
     expect(transport.status().held).toMatchObject({ stage: "response", reason: "the bound tab navigated to another conversation" });
     expect(f.page.sends).toBe(1);
+  } finally { await f.close(); }
+});
+
+/** Live P11 (6.1.33-nekodex.8): ChatGPT moves a new chat "/" -> "/c/local-chatgpt%3A<uuid>" -> "/c/<id>". */
+function newChatNavigation(f: Awaited<ReturnType<typeof companion>>, options: { savedAfterReads?: number; userTurnCount?: () => number; savedPath?: string } = {}) {
+  const provisional = "/c/local-chatgpt%3Ae7b99a63-8626-44d7-827f-6efb58121825";
+  f.page.path = provisional;
+  let moved = false;
+  const previous = f.setHandler(command => {
+    const op = command.chatgpt!;
+    if (op.op === "send") { f.page.sends++; return { outcome: "completed", executed: true, chatgpt: { op: "send", userMessageId: "ordinal:1", path: provisional } }; }
+    if (op.op === "read" && !moved && f.page.reads + 1 >= (options.savedAfterReads ?? 2)) { moved = true; f.page.path = options.savedPath ?? "/c/6ad9031a-f698-83ea-95d5-b1281ab83277"; }
+    const reply = previous(command);
+    if (op.op === "read" && reply !== "drop" && reply.chatgpt) (reply.chatgpt as { userTurnCount?: number }).userTurnCount = options.userTurnCount?.() ?? 1;
+    return reply;
+  });
+}
+
+test("a new chat's own transition to its saved /c/<id> during the bound send settles (live P11 sequence)", async () => {
+  const f = await companion();
+  try {
+    const transport = createCompanionChatGptTransport({ host: () => f.host, timing: fast });
+    await transport.bind({ modelId: "gpt-5.6-sol", reasoning: "max" });
+    f.page.answerAfterReads = 3; f.page.html = "<p>p11-ok</p>";
+    newChatNavigation(f);
+    expect(await transport.port.run(turn().turn)).toBe("p11-ok");
+    expect(transport.status()).toMatchObject({ state: "bound", held: null, lastTurn: { userMessageId: "ordinal:1", path: "/c/6ad9031a-f698-83ea-95d5-b1281ab83277" } });
+    expect(f.page.sends).toBe(1);
+  } finally { await f.close(); }
+});
+
+test("new-chat transitions are refused unless the new conversation holds exactly the sent turn and moves forward once", async () => {
+  // A second user turn in the conversation the tab moved to: not this send's own new chat.
+  let f = await companion();
+  try {
+    const transport = createCompanionChatGptTransport({ host: () => f.host, timing: fast });
+    await transport.bind({ modelId: "gpt-5.6-sol", reasoning: "max" });
+    f.page.answerAfterReads = 3;
+    newChatNavigation(f, { userTurnCount: () => f.page.path.startsWith("/c/local-chatgpt") ? 1 : 2 });
+    await expect(transport.port.run(turn().turn)).rejects.toMatchObject({ code: "companion_response_unobserved" });
+    expect(transport.status().held).toMatchObject({ stage: "response", reason: "the bound tab navigated to another conversation" });
+    expect(f.page.sends).toBe(1);
+  } finally { await f.close(); }
+  // Once the saved conversation is pinned, a later move to another conversation is still held.
+  f = await companion();
+  try {
+    const transport = createCompanionChatGptTransport({ host: () => f.host, timing: fast });
+    await transport.bind({ modelId: "gpt-5.6-sol", reasoning: "max" });
+    f.page.answerAfterReads = 4;
+    newChatNavigation(f, { savedAfterReads: 1 });
+    const previous = f.setHandler(command => {
+      if (command.chatgpt?.op === "read" && f.page.reads >= 2) f.page.path = "/c/another-conversation";
+      return previous(command);
+    });
+    await expect(transport.port.run(turn().turn)).rejects.toMatchObject({ code: "companion_response_unobserved" });
+    expect(transport.status().held).toMatchObject({ reason: "the bound tab navigated to another conversation" });
+  } finally { await f.close(); }
+  // Leaving for a project conversation or back to a new chat is never the send's own transition.
+  for (const savedPath of ["/g/g-p-project/c/6ad9031a", "/"]) {
+    f = await companion();
+    try {
+      const transport = createCompanionChatGptTransport({ host: () => f.host, timing: fast });
+      await transport.bind({ modelId: "gpt-5.6-sol", reasoning: "max" });
+      f.page.answerAfterReads = 3;
+      newChatNavigation(f, { savedAfterReads: 1, savedPath });
+      await expect(transport.port.run(turn().turn)).rejects.toMatchObject({ code: "companion_response_unobserved" });
+      expect(transport.status().held).toMatchObject({ reason: "the bound tab left the new conversation" });
+    } finally { await f.close(); }
+  }
+});
+
+test("an extension that cannot report user turns is refused before the send fence", async () => {
+  const f = await companion({ features: ["chatgpt-v1"] });
+  try {
+    const transport = createCompanionChatGptTransport({ host: () => f.host, timing: fast });
+    await transport.bind({ modelId: "gpt-5.6-sol", reasoning: "max" });
+    const { turn: request, calls } = turn();
+    await expect(transport.port.run(request)).rejects.toMatchObject({ code: "companion_extension_outdated" });
+    expect(calls.activated).toBe(0);
+    expect(sends(f.commands)).toHaveLength(0); expect(f.page.sends).toBe(0);
+    expect(transport.status().held).toBeNull();
   } finally { await f.close(); }
 });
 
