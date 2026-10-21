@@ -29,8 +29,9 @@ carry forward specific authorization already given in the task.
 
 ## GitHub builds
 
-The macOS prerelease dispatch builds ARM64 and Intel on matching runners. Stable releases
-retain the full platform contract. Do not publish unsigned Windows files to complete a macOS
+Releases are built for macOS Apple Silicon (arm64) only; Intel is not built and other platforms
+come later. Stable tags release on push; a prerelease tag needs an explicit dispatch of
+`release.yml` with no platform input. Do not publish unsigned Windows files to complete a macOS
 request. Use a new version tag when release source changes; preserve existing published refs.
 
 The signing and publishing environments hold separate encrypted secrets. Restrict their

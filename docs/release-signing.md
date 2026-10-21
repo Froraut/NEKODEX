@@ -155,9 +155,10 @@ SignTool executable path), with the certificate/private key accessible in `Cert:
 Bun is timestamp-signed before runtime hashing, and excluded from later re-signing. Electron
 Builder signs the app and NSIS installer with the same certificate. Every executable in the
 packaging staging tree must have a valid timestamped Authenticode signature from the expected
-publisher. The pipeline publishes both the NSIS installer and
+publisher. A signed Windows release would publish both the NSIS installer and
 `codex-web-gpt-${version}-win-x64.zip`; the updater uses the ZIP to stage and validate a complete
-replacement before switching installations.
+replacement before switching installations. The release workflow does not build Windows for now
+(see [macOS Apple Silicon only](#macos-apple-silicon-only)).
 
 To sign already built **local** assets without uploading anything, put the final files in a fresh
 flat directory, create `checksums.txt` first if desired, then run from the repository:
@@ -181,12 +182,12 @@ They come from a content-named transport release and must match the byte pins of
 not by the checkout path they were built in. See
 [native-release-inputs.md](development/native-release-inputs.md).
 
-The tag workflow builds on matching operating systems, signs final metadata, uses GitHub OIDC
-to attest final assets, creates a **draft** release, verifies the remotely reported digest of
-every uploaded file against local bytes, and only then publishes. Existing tags/releases are not
-overwritten; inspect and explicitly clean up a failed draft before retrying. SHA-256 checksums
-are not rebuilt from remote values or changed after metadata signing. Pre-release versions stay
-pre-releases. The workflow never silently substitutes upstream assets.
+The tag workflow builds the macOS Apple Silicon package on an arm64 runner, signs final metadata,
+uses GitHub OIDC to attest final assets, creates a **draft** release, verifies the remotely
+reported digest of every uploaded file against local bytes, and only then publishes. Existing
+tags/releases are not overwritten; inspect and explicitly clean up a failed draft before retrying.
+SHA-256 checksums are not rebuilt from remote values or changed after metadata signing.
+Pre-release versions stay pre-releases. The workflow never silently substitutes upstream assets.
 
 All action revisions are full commit SHAs, verified against their repositories on 2026-09-11.
 Checkout does not persist its token. Build jobs retain `contents: read`; only publication receives
@@ -200,7 +201,8 @@ gh attestation verify /absolute/path/to/downloaded-asset \
   --signer-workflow Froraut/NEKODEX/.github/workflows/release.yml
 ```
 
-The terminal-only `scripts/install.sh` installer supports macOS arm64 and x86_64 runtime archives.
+The terminal-only `scripts/install.sh` installer supports macOS Apple Silicon (arm64) only. A Rosetta
+shell on Apple Silicon still gets the arm64 runtime; an Intel Mac is refused before any download.
 It requires a preinstalled, trusted Node.js runtime before downloading anything, and embeds the
 same Ed25519 publisher key and signed-metadata verifier as the launcher installer. It pins
 `Froraut/NEKODEX`, the requested version and published GitHub Actions provenance, checks metadata
@@ -235,16 +237,21 @@ Primary references: [GitHub artifact attestations](https://docs.github.com/en/ac
 [electron-builder v26 macOS options](https://www.electron.build/v26/docs/mac/),
 [Electron notarization](https://github.com/electron/notarize).
 
-## Explicit macOS-only prerelease
+## macOS Apple Silicon only
 
-The owner can dispatch `release.yml` against an **existing matching prerelease tag** and select
-`platform_scope: macos`. This builds and signs both macOS architectures, publishes only those
-native assets and their matching runtime archives, and generates notices on the macOS runner.
-No Windows certificate is requested and no unsigned Windows/Linux artifact is substituted.
-All normal metadata, notarization, attestation and draft-verification gates still apply.
-A stable tag cannot use this reduced scope. Stable tag pushes retain the full-platform matrix;
-prerelease tags wait for an explicit workflow dispatch with the intended platform scope. It does not bypass
+Releases are built and published for macOS Apple Silicon (arm64) only (owner decision,
+2026-10-21); other platforms come later. The single build runs on the arm64 `macos-15` runner and
+publication depends on it alone, so no Intel, Windows or Linux job can block a release. Stable tag
+pushes release automatically. Prerelease tags wait for `gh workflow run release.yml --ref v<version>`
+against the existing matching tag; there is no platform input. The opt-in `windows_preview` input
+builds an unsigned Windows x64 Actions artifact for a prerelease tag; it is never published and
+publication does not wait for it. No Windows certificate is requested. All normal metadata,
+notarization, attestation and draft-verification gates still apply. Dispatch does not bypass
 protection of the signing or publishing environments and does not create a tag.
+
+Intel Macs keep their installed version: the in-app updater offers only releases that contain the
+Mac's own package, `install-launcher.sh` picks the newest release that still has an Intel ZIP, and
+the README links the last Intel DMG (`publishedIntelReleaseVersion`, checked by `check-version`).
 
 Release packaging reuses the focused behavior evidence recorded for the reviewed source commit.
 It builds the renderer and runtime directly instead of repeating the typecheck, behavior tests

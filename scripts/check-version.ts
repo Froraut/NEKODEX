@@ -6,6 +6,7 @@ const root = resolve(import.meta.dir, "..");
 const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")) as {
   version?: string;
   publishedReleaseVersion?: string;
+  publishedIntelReleaseVersion?: string;
   publishedLinuxReleaseVersion?: string;
   packageManager?: string;
   devDependencies?: Record<string, string>;
@@ -18,10 +19,11 @@ const publishedReleaseVersion = packageJson.publishedReleaseVersion ?? packageVe
 if (!/^\d+\.\d+\.\d+-nekodex\.\d+$/.test(publishedReleaseVersion)) {
   throw new Error("package.json has an invalid publishedReleaseVersion");
 }
-// The last published Linux files can be older than the macOS release (macOS-only publications).
-const publishedLinuxReleaseVersion = packageJson.publishedLinuxReleaseVersion ?? publishedReleaseVersion;
-if (!/^\d+\.\d+\.\d+-nekodex\.\d+$/.test(publishedLinuxReleaseVersion)) {
-  throw new Error("package.json has an invalid publishedLinuxReleaseVersion");
+// Releases are built for macOS Apple Silicon only. Intel and Linux links may name only the
+// last release that still carried those files; without that version they get no links.
+const { publishedIntelReleaseVersion, publishedLinuxReleaseVersion } = packageJson;
+for (const [field, value] of Object.entries({ publishedIntelReleaseVersion, publishedLinuxReleaseVersion })) {
+  if (value !== undefined && !/^\d+\.\d+\.\d+-nekodex\.\d+$/.test(value)) throw new Error(`package.json has an invalid ${field}`);
 }
 const packageManagerMatch = /^bun@(\d+\.\d+\.\d+)$/.exec(packageJson.packageManager ?? "");
 if (!packageManagerMatch) throw new Error("package.json must pin an exact Bun packageManager version");
@@ -62,6 +64,7 @@ if (!repository) throw new Error("package.json must identify the GitHub release 
 for (const name of readdirSync(root).filter(name => /^README(?:\.[\w-]+)?\.md$/.test(name))) {
   assertReadmeDownloads(name, readFileSync(resolve(root, name), "utf8"), {
     version: publishedReleaseVersion,
+    intelVersion: publishedIntelReleaseVersion,
     linuxVersion: publishedLinuxReleaseVersion,
     repository,
     dmgName: launcherPackage.build.dmg.artifactName,
