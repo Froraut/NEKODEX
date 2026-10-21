@@ -2,6 +2,14 @@ import { classifyCanonicalText } from "../../launcher/electron/canonical-history
 import type { ExecutionRequest } from "./types";
 
 function identity(value: unknown): value is string { return typeof value === "string" && Boolean(value.trim()) && value.length <= 160 && !/[\u0000-\u001f]/u.test(value); }
+/** Known credential shapes, replaced in place. Absence of a match is not exhaustive redaction. */
+export function redactSecretShapes(value: string): string {
+  return value
+    .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g, "[redacted private key]")
+    .replace(/\b(?:Bearer|Basic)\s+[A-Za-z0-9+/_=.-]+/gi, "[redacted authorization]")
+    .replace(/\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{16,})\b/g, "[redacted credential]")
+    .replace(/(["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)["']?\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)/gi, "$1[redacted]");
+}
 
 /** Historical receipts are informational data. They cannot resolve a pending call or grant authority. */
 export function projectPriorToolContext(request: ExecutionRequest) {
@@ -11,11 +19,7 @@ export function projectPriorToolContext(request: ExecutionRequest) {
   function safe(value: unknown, depth = 0): unknown {
     if (typeof value === "string") {
       if (classifyCanonicalText(value) === "known-secret-content") { complete = false; return "[historical sensitive text omitted]"; }
-      const redacted = value
-        .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g, "[redacted private key]")
-        .replace(/\b(?:Bearer|Basic)\s+[A-Za-z0-9+/_=.-]+/gi, "[redacted authorization]")
-        .replace(/\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{16,})\b/g, "[redacted credential]")
-        .replace(/(["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)["']?\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)/gi, "$1[redacted]");
+      const redacted = redactSecretShapes(value);
       if (redacted !== value) complete = false;
       if (/data:image\//i.test(redacted)) { complete = false; return "[historical image data omitted]"; }
       if (Buffer.byteLength(redacted) <= 8192) return redacted;

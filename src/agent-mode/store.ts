@@ -9,7 +9,7 @@ import { activeTaskEvidence } from "./evidence";
 import { buildSemanticReviewPacket, semanticRequirementBasis, type SemanticReviewInput } from "./semantic-review";
 import { invocationFingerprint } from "../agent-tools/journal";
 import { AGENT_NATIVE_PROTOCOL, nativeDigest, nativeToolCallId } from "./native-protocol";
-import type { AgentControl, AgentDispatch, AgentExecutionConfig, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliation, AgentWorker, AgentWorkPacket, CreateAgentTask, ExecutionResult, MailMessage, OutcomeEvidence, OutcomeReview, Requirement, SemanticOutcomeReview, StageInput } from "./types";
+import type { AgentControl, AgentDispatch, AgentExecutionConfig, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliation, AgentWorker, AgentWorkPacket, CreateAgentTask, ExecutionResult, MailMessage, OutcomeEvidence, OutcomeReview, Requirement, SemanticOutcomeReview, SemanticReviewInvalidEvidence, StageInput } from "./types";
 
 function text(value: string, name: string, max = 16_384): void {
   if (typeof value !== "string" || !value.trim() || Buffer.byteLength(value) > max) throw new Error(`Invalid ${name}`);
@@ -721,17 +721,27 @@ export class AgentModeStore {
     const task = this.getTask(taskId);
     return buildSemanticReviewPacket({ task, dispatches: this.listDispatches(taskId), outcomes: this.effectiveToolOutcomes(taskId), receiptKey: (dispatchId, toolCallId) => this.toolCallReceiptKey(dispatchId, toolCallId) });
   }
-  private semanticAttempts(taskId: string, inputDigest: string): number {
-    return this.listReceipts(taskId).filter(row => row.kind === "semantic_review_attempt" && (row.body as { inputDigest?: unknown }).inputDigest === inputDigest).length;
+  /** Attempts for one exact reviewed input, split by whether their durable result is a settled
+   * invalid output. In-flight, lost and recorded attempts form the original bound. */
+  private semanticAttempts(taskId: string, inputDigest: string): { bounded: number; invalid: number } {
+    const receipts = this.listReceipts(taskId);
+    const invalid = new Set(receipts.filter(row => row.kind === "semantic_review_result" && (row.body as { state?: unknown }).state === "invalid_output").map(row => (row.body as { attemptId?: unknown }).attemptId));
+    const attempts = receipts.filter(row => row.kind === "semantic_review_attempt" && (row.body as { inputDigest?: unknown }).inputDigest === inputDigest);
+    const settledInvalid = attempts.filter(row => invalid.has((row.body as { attemptId?: unknown }).attemptId)).length;
+    return { bounded: attempts.length - settledInvalid, invalid: settledInvalid };
   }
   /** Durable intent before any reviewer request. Bounded per exact reviewed input; a lost
-   * terminal stays an unknown attempt and is never replayed under the same identity. */
+   * terminal stays an unknown attempt and is never replayed under the same identity. A settled
+   * invalid output is a completed turn without a verdict: it does not use up that bound, so a
+   * new explicit action may review again, within a separate backstop for the unchanged ledger. */
   recordSemanticReviewAttempt(taskId: string, attempt: { attemptId: string; actionId: string; generation: number; taskRevision: number; evidenceRevision: number; inputDigest: string; reviewer: { provider: "local-responses"; model: string } }): void {
     id(attempt.attemptId); id(attempt.actionId); id(attempt.reviewer.model);
     this.atomic(() => {
       const task = this.getTask(taskId);
       if (task.archivedAt !== undefined || attempt.generation !== task.generation || attempt.taskRevision !== task.revision || attempt.evidenceRevision !== task.evidenceRevision || attempt.inputDigest !== this.semanticReviewInput(taskId).digest) throw new Error("Stale task semantic review scope");
-      if (this.semanticAttempts(taskId, attempt.inputDigest) >= 3) throw new Error("Task semantic review attempt bound reached for this unchanged ledger; change the facts or inspect the attempt receipts");
+      const attempts = this.semanticAttempts(taskId, attempt.inputDigest);
+      if (attempts.bounded >= 3) throw new Error("Task semantic review attempt bound reached for this unchanged ledger; change the facts or inspect the attempt receipts");
+      if (attempts.invalid >= 8) throw new Error("Task semantic review invalid-output bound reached for this unchanged ledger; change the facts or inspect the attempt receipts");
       this.receipt(`semantic-attempt:${attempt.attemptId}`, taskId, "semantic_review_attempt", attempt);
     });
   }
@@ -743,8 +753,10 @@ export class AgentModeStore {
       if (!this.receipt(`semantic-transport:${attemptId}`, taskId, "semantic_review_transport", { attemptId, payloadDigest })) throw new Error("Semantic review transport already claimed");
     });
   }
-  /** Immutable result receipt for every terminal attempt; only a still-current review is attached. */
-  recordSemanticReviewResult(taskId: string, result: { attemptId: string; state: "recorded" | "invalid_output" | "outcome_unknown"; receiptId?: string; review?: SemanticOutcomeReview }): { task: AgentTask; current: boolean } {
+  /** Immutable result receipt for every terminal attempt; only a still-current review is attached.
+   * An invalid output may carry its bounded diagnosis, never a verdict. */
+  recordSemanticReviewResult(taskId: string, result: { attemptId: string; state: "recorded" | "invalid_output" | "outcome_unknown"; receiptId?: string; review?: SemanticOutcomeReview; invalid?: SemanticReviewInvalidEvidence }): { task: AgentTask; current: boolean } {
+    if (result.invalid !== undefined && (result.state !== "invalid_output" || Buffer.byteLength(JSON.stringify(result.invalid)) > 16 * 1024)) throw new Error("Invalid semantic review result evidence");
     return this.atomic(() => {
       this.receipt(`semantic-result:${result.attemptId}`, taskId, "semantic_review_result", result);
       const task = this.getTask(taskId), review = result.review;

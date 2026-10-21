@@ -75,9 +75,24 @@ export interface SemanticOutcomeReview {
   createdAt: number;
 }
 export interface SemanticReviewRequest { attemptId: string; taskId: string; reviewer: AgentSemanticReviewer; instructions: string; prompt: string; signal: AbortSignal }
-/** One fresh, tool-less model turn through an existing execution owner. Throwing means unknown outcome. */
+/** Fixed reasons a reviewer terminal carried no usable verdict; recorded with its attempt. */
+export type SemanticReviewInvalidReason = "turn_not_completed" | "non_message_output" | "unsupported_provenance" | "final_answer_empty"
+  | "no_json_object" | "multiple_json_objects" | "unterminated_json_object" | "schema_mismatch" | "requirement_mismatch" | "unclassified";
+export interface SemanticReviewTextExcerpt { bytes: number; text: string; truncated: boolean }
+/** Bounded, redacted shape of one reviewer reply, retained only to diagnose an invalid output. */
+export interface SemanticReviewReplyEvidence {
+  items: { type: string; phase: "final_answer" | "commentary" | "none" | "other" | null; bytes: number }[];
+  omittedItems: number;
+  /** The final-channel text the host parsed. */
+  final: SemanticReviewTextExcerpt;
+  /** Commentary is kept for diagnosis only; it is never parsed as a verdict. */
+  commentary: SemanticReviewTextExcerpt;
+}
+export interface SemanticReviewInvalidEvidence { reason: SemanticReviewInvalidReason; issues?: { path: string; code: string }[]; reply?: SemanticReviewReplyEvidence }
+/** One fresh, tool-less model turn through an existing execution owner. Throwing means unknown
+ * outcome, except SemanticReviewOutputError: a terminal that carried no usable verdict. */
 export interface SemanticReviewPort {
-  review(request: SemanticReviewRequest): Promise<{ receiptId: string; text: string }>;
+  review(request: SemanticReviewRequest): Promise<{ receiptId: string; text: string; reply?: SemanticReviewReplyEvidence }>;
 }
 export interface AgentTask {
   schemaVersion: 1;
