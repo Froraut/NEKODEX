@@ -20,4 +20,4 @@ function reviewedOwnedNativeDevPin(sourceRoot) {
   return { executable, executableSha256: PIN.executableSha256, wrapperBuildPin, target: PIN.target,
     officialBootstrapCatalog: metadata.officialBootstrapCatalog };
 }
-module.exports = { reviewedOwnedNativeDevPin };
+module.exports = { reviewedOwnedNativeDevPin, REVIEWED_OWNED_NATIVE_DEV_PIN: PIN };

@@ -171,6 +171,16 @@ The script refuses an existing metadata file, validates every asset, signs with 
 key, and verifies its own output against the packaged public root. Offline metadata explicitly
 records `buildType: local` and run ID `0`. It does not imply native signing or CI attestation.
 
+The standalone `install-launcher.sh` never selects such a local build by default: it skips
+candidates whose metadata payload says `buildType: local` and installs the newest GitHub Actions
+release with the platform asset. A local build is installed only by explicit version.
+
+On `macos-15` the workflow first fetches the accepted Owned Native worker and execution VM guest.
+They come from a content-named transport release and must match the byte pins of
+`launcher/native/release-inputs.json` in the tagged commit. Packaging admits them by those pins,
+not by the checkout path they were built in. See
+[native-release-inputs.md](development/native-release-inputs.md).
+
 The tag workflow builds on matching operating systems, signs final metadata, uses GitHub OIDC
 to attest final assets, creates a **draft** release, verifies the remotely reported digest of
 every uploaded file against local bytes, and only then publishes. Existing tags/releases are not

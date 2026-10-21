@@ -81,6 +81,11 @@ jobs:
         run: bun run launcher/scripts/prepare-linux-appimage-tools.cjs
       - name: Check release version consistency
         run: bun run check-version
+      - name: Fetch the accepted macOS arm64 Native inputs pinned by the source lock
+        if: matrix.runner == 'macos-15'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/native-release-inputs.cjs fetch
       - name: Prepare macOS publisher credentials
         if: runner.os == 'macOS'
         env:
