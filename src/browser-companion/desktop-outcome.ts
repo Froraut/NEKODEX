@@ -72,3 +72,17 @@ export function resolveDesktopPropertyEvidence(task: AgentTask, reference: Agent
   return { ...expected, id: `desktop-evidence:${hash(JSON.stringify([task.id, task.revision, reference.requirementId, expected.sourceEventId]))}`,
     taskRevision: task.revision, outcome: verified.outcome, observer: "selected-macos-application-property-v1" };
 }
+/** A current semantic review may cite exact desktop/verifyProperty receipts for prose
+ * requirements. At Verify each cited receipt must still be the latest approved observation
+ * of the same attached window, exactly like recorded property evidence. Stale reviews are
+ * refused by digest elsewhere, so only the current review's citations are re-checked. */
+export function assertSemanticDesktopCitationsCurrent(task: AgentTask, input: { currentDigest: string; lookup: (receiptKey: string) => ToolOutcome | undefined; assertCurrent: (evidence: OutcomeEvidence) => void }): void {
+  const review = task.semanticReview;
+  if (!review || review.inputDigest !== input.currentDigest || review.generation !== task.generation || review.taskRevision !== task.revision) return;
+  for (const verdict of review.requirements) for (const key of verdict.toolReceiptIds) {
+    const outcome = input.lookup(key);
+    if (!outcome || outcome.tool !== "desktop/verifyProperty") continue;
+    const reference = desktopPropertyReference(outcome, verdict.requirementId);
+    input.assertCurrent({ ...reference, id: `semantic-desktop-citation:${hash(key)}`, taskRevision: task.revision, outcome: "passed", observer: "selected-macos-application-property-v1" });
+  }
+}

@@ -718,7 +718,10 @@ held mouse buttons/focus and intervening input immediately before dispatch.
 `desktop-outcome.ts` resolves separately approved exact AX scalar properties;
 missing is unknown and differing is failed. Canonical journal evidence plus
 `assertPropertyEvidenceCurrent` at resolution/completion prevents stale selection,
-attachment or later-operation acceptance. These are point-in-time declared facts;
+attachment or later-operation acceptance. That re-check is passive: it needs the exact
+generation attachment, current window, AX availability and latest observation, not an
+active input scope, so it works at `review_required`. Verify applies it also to
+`desktop/verifyProperty` receipts cited by the current semantic review. These are point-in-time declared facts;
 input receipts alone are execution-only. Real provider/vision/CG/app outcome and
 other OS support require their own evidence.
 
@@ -746,7 +749,8 @@ failed/unknown evidence. Verify then needs the current local review, no failed o
 unknown evidence and a current semantic deliverable pass whose packet digest still
 matches, with every requirement passing on a re-derived observed basis. A single
 passing property or action receipt is not verification. Native reviewers are not
-offered yet.
+offered: owned-native offers are bound to a committed running stage dispatch that main
+validates, and a review is not a stage.
 
 ### OAuth, local consumers, usage and delivery
 

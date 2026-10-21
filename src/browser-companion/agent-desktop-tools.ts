@@ -293,7 +293,12 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
      * captures, starts a helper or restores authority from a historical receipt. */
     assertPropertyEvidenceCurrent(task: Pick<AgentTask, "id" | "generation">, evidence: OutcomeEvidence) {
       const scope = { taskId: task.id, generation: task.generation, toolCallId: "application-property-evidence-check" };
-      const selection = bound(scope, false);
+      // A passive re-check, not tool authority: Verify runs at review_required, when the task
+      // scope is no longer active for input. The exact generation attachment, current window
+      // identity, AX availability and latest approved observation must still all match.
+      validateToolScope(scope);
+      const selection = attachments.get(scopeKey(scope)), selected = cached?.selected;
+      if (closed || !enabled || !native || !selection || !selected || !sameSelection(selection, selected) || !propertiesAvailable()) throw new Error("Application property evidence is no longer the latest approved observation; approve a fresh verification");
       if (operation || evidence.observer !== "selected-macos-application-property-v1" || latestProperty?.scopeKey !== scopeKey(scope)
         || latestProperty.sourceEventId !== evidence.sourceEventId || latestProperty.subjectRevision !== evidence.subjectRevision
         || evidence.subject !== `desktop-window:${JSON.stringify(selection)}`) throw new Error("Application property evidence is no longer the latest approved observation; approve a fresh verification");

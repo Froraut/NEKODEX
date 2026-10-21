@@ -150,7 +150,7 @@ export function createAgentModeRoutes(options: AgentModeRouteOptions): (request:
       if (error instanceof z.ZodError) return Response.json({ ok: false, error: "invalid_request", message: "The Agent action does not match its bounded schema." }, { status: 400 });
       // Domain errors are fixed internal strings; do not echo unknown exceptions or SQL/filesystem details.
       const message = (error as { code?: unknown })?.code === "EVIDENCE_STALE" ? "The workspace file changed after observation. Inspect its current revision and observe it again before verification."
-        : error instanceof Error && /^(?:Task |Manual |Unknown send|Agent provider|Select a configured|This provider|Loop requires|Stopped task|Current complete|Requirement outcome|Stale |Execution owner|Action identity|Stage is|Worker |Empty Continue|Tool receipt|Tool reconciliation|Current independent|Semantic review)/.test(error.message) ? error.message : "The Agent action could not be completed; inspect its current durable state before retrying.";
+        : error instanceof Error && /^(?:Task |Manual |Unknown send|Agent provider|Select a configured|This provider|Loop requires|Stopped task|Current complete|Requirement outcome|Stale |Execution owner|Action identity|Stage is|Worker |Empty Continue|Tool receipt|Tool reconciliation|Current independent|Semantic review|Application property evidence)/.test(error.message) ? error.message : "The Agent action could not be completed; inspect its current durable state before retrying.";
       return Response.json({ ok: false, error: "agent_action_conflict", message }, { status: 409 });
     }
   };

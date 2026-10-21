@@ -19,7 +19,7 @@ import { browserCompanionRequest, createAgentBrowserToolsProvider, createBrowser
 import type { ToolScope } from "./agent-tools/types";
 import type { AgentTask } from "./agent-mode/types";
 import { createAgentDesktopToolsProvider, type AgentDesktopToolsProvider } from "./browser-companion/agent-desktop-tools";
-import { resolveDesktopPropertyEvidence } from "./browser-companion/desktop-outcome";
+import { assertSemanticDesktopCitationsCurrent, resolveDesktopPropertyEvidence } from "./browser-companion/desktop-outcome";
 import { resolveBrowserTextTransitionEvidence } from "./browser-companion/outcome-observer";
 import { createMacosDesktopProvider } from "./browser-companion/macos-desktop";
 import { resolveDesktopHelper, type PinnedDesktopHelper } from "./browser-companion/desktop-helper-path";
@@ -1148,6 +1148,15 @@ export function startServer(
           if (evidence.observer === "workspace-file-observer-v1") getAgentEvidence().assertCurrent(task, evidence);
           if (evidence.observer === "selected-macos-application-property-v1") getAgentDesktopTools().assertPropertyEvidenceCurrent(task, evidence);
         }
+        assertSemanticDesktopCitationsCurrent(task, { currentDigest: store.semanticReviewInput(task.id).digest,
+          lookup: key => {
+            if (!store.effectiveToolOutcomes(task.id).some(row => row.idempotencyKey === key && row.tool === "desktop/verifyProperty")) return undefined;
+            // A cited AX receipt without its canonical journal record is never accepted.
+            const canonical = canonicalTaskToolOutcome(task, key);
+            if (!canonical) throw new Error("Application property evidence is no longer the latest approved observation; approve a fresh verification");
+            return canonical;
+          },
+          assertCurrent: evidence => getAgentDesktopTools().assertPropertyEvidenceCurrent(task, evidence) });
       }, workspaceEvidenceReferences: task => task.evidence.some(evidence => evidence.observer === "workspace-file-observer-v1") ? getAgentEvidence().listTask(task.id) : [],
       toolsAvailable: () => getAgentTools().status().config.enabled || Boolean(agentBrowserTools?.status().bindings.some(binding => {
         const scope = { taskId: binding.taskId, generation: binding.generation, toolCallId: 'capability-status' };
