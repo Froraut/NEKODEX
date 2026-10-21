@@ -2219,7 +2219,8 @@ export class ChatGptBrowserWorker {
     if (files.length === 0) return;
     const composer = await this.activeComposer(page, 30_000, abortSignal);
     const composerForm = composer.locator("xpath=ancestor::form[1]");
-    const input = page.locator('input[data-testid="upload-photos-input"], form[data-chatgpt-composer] input[type="file"][multiple]:not([accept])');
+    // Saved chats can keep a hidden home composer mounted; upload only through the active form (#866).
+    const input = composerForm.locator('input[data-testid="upload-photos-input"], input[type="file"][multiple]:not([accept])');
     await withBrowserTurnAbort(input.waitFor({ state: "attached", timeout: 20_000 }), abortSignal);
     // Send must wait until ChatGPT has processed every file, not only shown its card.
     const uploads = await observeChatGptAttachmentUploads(page, files.map(file => file.name));
