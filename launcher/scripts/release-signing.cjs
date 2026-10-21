@@ -86,18 +86,39 @@ function run(command, args, { env = process.env, capture = false } = {}) {
   if (result.error || result.status !== 0) throw new Error(`Publisher signature command ${path.basename(command)} failed`);
   return `${result.stdout || ""}\n${result.stderr || ""}`;
 }
-// `stapler validate` asks Apple's CloudKit ticket service; a dropped connection there
-// (exit 68, "The network connection was lost") says nothing about the stapled ticket.
+// `stapler staple` and `stapler validate` ask Apple's CloudKit ticket service; a dropped
+// connection there (exit 68, "The network connection was lost") says nothing about the ticket.
 // Retry only that transient failure; any other result still fails the release.
-function staplerValidate(target, env, { attempts = 4, sleep = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms) } = {}) {
+const sleepSync = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function isDroppedCloudKitConnection(result) {
+  return !result.error && result.status === 68 && /The network connection was lost/i.test(`${result.stdout || ""}\n${result.stderr || ""}`);
+}
+function stapler(action, target, env = process.env, { attempts = 4, sleep = sleepSync } = {}) {
+  if (action !== "staple" && action !== "validate") throw new Error(`Unsupported stapler action: ${action}`);
   for (let attempt = 1; ; attempt++) {
-    const result = spawnSync("xcrun", ["stapler", "validate", target], { env, encoding: "utf8", stdio: "pipe", shell: false });
+    const result = spawnSync("xcrun", ["stapler", action, target], { env, encoding: "utf8", stdio: "pipe", shell: false });
     process.stdout.write(result.stdout || ""); process.stderr.write(result.stderr || "");
     if (!result.error && result.status === 0) return;
-    const transient = !result.error && result.status === 68 && /network connection was lost|NSURLErrorDomain/i.test(`${result.stdout}\n${result.stderr}`);
-    if (!transient || attempt >= attempts) throw new Error("Publisher signature command xcrun failed");
+    if (!isDroppedCloudKitConnection(result) || attempt >= attempts) throw new Error(`Publisher signature command xcrun stapler ${action} failed`);
+    console.warn(`stapler ${action} lost its connection to Apple (attempt ${attempt}/${attempts}); retrying`);
     sleep(15_000 * attempt);
   }
+}
+const staplerValidate = (target, env, options) => stapler("validate", target, env, options);
+function notarytoolCredentials(env = process.env) {
+  return env.APPLE_KEYCHAIN_PROFILE
+    ? ["--keychain-profile", env.APPLE_KEYCHAIN_PROFILE, ...(env.APPLE_KEYCHAIN ? ["--keychain", env.APPLE_KEYCHAIN] : [])]
+    : ["--key", env.APPLE_API_KEY, "--key-id", env.APPLE_API_KEY_ID, "--issuer", env.APPLE_API_ISSUER];
+}
+// Submit `upload` (the target itself, or a ZIP of an app bundle) and staple the accepted ticket to `target`.
+function notarizeAndStaple(target, env = process.env, { upload = target, label = path.basename(target), staplerOptions } = {}) {
+  const submission = spawnSync("xcrun", ["notarytool", "submit", upload, ...notarytoolCredentials(env),
+    "--wait", "--output-format", "json"], { env, encoding: "utf8", timeout: 30 * 60 * 1000, maxBuffer: 1024 * 1024, shell: false });
+  if (submission.error || submission.status !== 0) throw new Error(`${label} notarization submission failed`);
+  const receipt = JSON.parse(submission.stdout);
+  if (receipt.status !== "Accepted") throw new Error(`${label} notarization was not accepted (${receipt.status})`);
+  console.log(`${label} notarization accepted: ${receipt.id}`);
+  stapler("staple", target, env, staplerOptions);
 }
 function assertMacPublisher(details, expectedTeam) {
   if (!/^Authority=Developer ID Application:/m.test(details) || !details.includes(`TeamIdentifier=${expectedTeam}\n`)
@@ -213,4 +234,4 @@ function verifyWindowsTree(directory, env = process.env) {
     else if (entry.isFile() && /\.exe$/i.test(entry.name)) verifyWindowsPublisher(file, env);
   }
 }
-module.exports = { BROWSER_COMPANION_RESOURCES, staplerValidate, chromeExtensionIdFromKey, validatePackagedRuntimeAssets, validateOwnedNativePackagedAssets, signingConfiguration, assertMacPublisher, verifyMacPublisher, verifyWindowsPublisher, verifyWindowsTree, signEmbeddedRuntime, signOwnedNativeWorker, signCredentialHelper, signDesktopHelper, signSkillPdfHelper };
+module.exports = { BROWSER_COMPANION_RESOURCES, stapler, staplerValidate, notarytoolCredentials, notarizeAndStaple, chromeExtensionIdFromKey, validatePackagedRuntimeAssets, validateOwnedNativePackagedAssets, signingConfiguration, assertMacPublisher, verifyMacPublisher, verifyWindowsPublisher, verifyWindowsTree, signEmbeddedRuntime, signOwnedNativeWorker, signCredentialHelper, signDesktopHelper, signSkillPdfHelper };

@@ -304,6 +304,7 @@
   {"path":"launcher/scripts/measure-task-lookup.cjs","dependencies":["launcher/electron/browser-task-ledger.cjs","node:assert/strict","node:child_process","node:fs","node:module","node:os","node:path"]},
   {"path":"launcher/scripts/measure-ui-work.cjs","dependencies":["launcher/scripts/ui-preview.cjs","node:fs","node:path","node:zlib","playwright-core"]},
   {"path":"launcher/scripts/measure-usage-projection.cjs","dependencies":["launcher/electron/usage-report.cjs","launcher/electron/usage-schema.cjs","node:assert/strict","node:child_process","node:module","node:path"]},
+  {"path":"launcher/scripts/notarize-mac-app.cjs","dependencies":["launcher/scripts/release-signing.cjs","node:child_process","node:fs","node:os","node:path"]},
   {"path":"launcher/scripts/package.cjs","dependencies":["launcher/electron/runtime-install.cjs","launcher/scripts/release-signing.cjs","node:child_process","node:fs","node:os","node:path","scripts/build-desktop-helper.cjs"]},
   {"path":"launcher/scripts/prepare-linux-appimage-tools.cjs","dependencies":["app-builder-lib/out/toolsets/linux.js","builder-util","node:child_process","node:fs","node:path","scripts/build-output.cjs"]},
   {"path":"launcher/scripts/prepare-runtime.cjs","dependencies":["launcher/scripts/release-signing.cjs","node:child_process","node:crypto","node:fs","node:path"]},
