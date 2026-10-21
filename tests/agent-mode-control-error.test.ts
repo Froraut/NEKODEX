@@ -18,8 +18,9 @@ const control = (...args: unknown[]) => RuntimeSupervisor.prototype.control.appl
 const generic = 'The Agent action could not be completed; inspect its current durable state before retrying.';
 /** Every passed-through refusal must stay a literal the daemon owner actually throws. */
 function sourceLiterals(...paths: string[]): string {
-  return paths.flatMap(path => path.endsWith('.ts') ? [path] : readdirSync(path).filter(name => name.endsWith('.ts')).map(name => join(path, name)))
-    .map(path => readFileSync(join(import.meta.dir, '..', path), 'utf8')).join('\n');
+  const root = join(import.meta.dir, '..');
+  return paths.flatMap(path => path.endsWith('.ts') ? [path] : readdirSync(join(root, path)).filter(name => name.endsWith('.ts')).map(name => join(path, name)))
+    .map(path => readFileSync(join(root, path), 'utf8')).join('\n');
 }
 
 test('Agent control preserves a fixed stale-file reason while bounding and sanitizing error receipts', async () => {
