@@ -511,6 +511,7 @@ export async function responseDomSnapshot(
       ...(segment.sourceStart !== undefined ? { sourceStart: segment.sourceStart } : {}),
       ...(segment.sourceEnd !== undefined ? { sourceEnd: segment.sourceEnd } : {}),
       streamable: index < segments.length - 1 && !segment.pendingLinks,
+      ...(segment.pendingLinks ? { pendingLinks: true } : {}),
       ...(segment.mutableReference ? { mutableReference: true } : {}),
       linkTargets: segment.linkTargets,
     }));

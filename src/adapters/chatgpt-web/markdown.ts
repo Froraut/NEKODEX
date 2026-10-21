@@ -261,6 +261,8 @@ export interface ChatGptMarkdownSegment {
   sourceStart?: number;
   sourceEnd?: number;
   streamable: boolean;
+  /** A link has no target yet; ChatGPT can hydrate a citation after its text settles. */
+  pendingLinks?: boolean;
   /** File-reference controls can replace their label, spinner and download link until completion. */
   mutableReference?: boolean;
 }
@@ -371,7 +373,7 @@ export class ChatGptMarkdownBuffer {
     }
 
     const visibleCandidates = new Set<string>();
-    for (const segment of reconciled) {
+    for (const [index, segment] of reconciled.entries()) {
       const candidateId = this.candidateId(segment);
       visibleCandidates.add(candidateId);
       const previous = this.candidates.get(candidateId);
@@ -391,7 +393,10 @@ export class ChatGptMarkdownBuffer {
       this.candidates.set(candidateId, {
         ...segment,
         streamable,
-        ...(streamable && !segment.streamable ? { tailBoundary: true } : {}),
+        // Only the last block, with every link target present, is the tail. An earlier block
+        // waiting on a citation's target keeps the whole window after the proof.
+        ...(streamable && !segment.streamable && index === reconciled.length - 1 && !segment.pendingLinks
+          ? { tailBoundary: true } : {}),
         changedAt: unchanged ? previous.changedAt : now,
         ...(streamable ? {
           streamableAt: unchanged && previous.streamableAt !== undefined

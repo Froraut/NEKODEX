@@ -89,3 +89,28 @@ test("a block bounded by the next block still waits the full window after that b
   setSystemTime(new Date(1_750));
   expect(buffer.observe([block("first", "First", true), block("second", "Second", false)])).toBe("First");
 });
+
+test("a bounded block or tail still waiting on a citation target keeps the whole window after the proof", () => {
+  const buffer = new ChatGptMarkdownBuffer();
+  const cited = (key: string, text: string) => ({ key, tag: "p", html: `<p>${text} <a>[1]</a></p>`, text: `${text} [1]`,
+    streamable: false, pendingLinks: true });
+  setSystemTime(new Date(500));
+  buffer.observe([cited("first", "First"), paragraph("Second")]);
+  setSystemTime(new Date(2_000));
+  expect(buffer.observe([cited("first", "First"), paragraph("Second")], { tailReady: true })).toBe("");
+  expect(buffer.nextReleaseAt()).toBe(2_750);
+  setSystemTime(new Date(2_250));
+  expect(buffer.observe([cited("first", "First"), paragraph("Second")], { tailReady: true })).toBe("");
+  setSystemTime(new Date(2_750));
+  expect(buffer.observe([cited("first", "First"), paragraph("Second")], { tailReady: true })).toContain("Second");
+
+  const tail = new ChatGptMarkdownBuffer();
+  setSystemTime(new Date(500));
+  tail.observe([cited("answer", "Only")]);
+  setSystemTime(new Date(2_000));
+  expect(tail.observe([cited("answer", "Only")], { tailReady: true })).toBe("");
+  setSystemTime(new Date(2_250));
+  expect(tail.observe([cited("answer", "Only")], { tailReady: true })).toBe("");
+  setSystemTime(new Date(2_750));
+  expect(tail.observe([cited("answer", "Only")], { tailReady: true })).toContain("Only");
+});
