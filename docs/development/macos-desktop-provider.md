@@ -138,6 +138,17 @@ caller without its own Accessibility or post-event rights cannot answer that
 alert, and before a confirmed enable the helper cannot capture, select or input.
 `listWindows` before a confirmed enable returns owner names and identities with
 empty titles, because titles depend on the helper's screen recording grant.
+
+On macOS 27, CG may put the selected application's small Window Sharing title-bar
+surface before its focused window. That surface is not a separate AX window.
+Foreground ordering skips only such same-process surfaces that do not map to an
+application AX window. A separate same-process AX window or any other process's
+normal window above the selection still blocks the handoff. Foreground AX press
+and text input also hit-test their exact target point, using the unfiltered CG
+stack; a sharing accessory or other surface covering that point is still refused.
+The exact AX focused window, process instance, frame, original image and focused
+control checks remain in force.
+
 The Bun owner waits for this answer without its 12-second request deadline.
 The launcher's explicit enable request also waits for that same terminal answer,
 instead of aborting the HTTP request after five seconds. Only this human enable

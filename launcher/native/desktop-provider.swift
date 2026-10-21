@@ -187,6 +187,17 @@ struct WindowRow {
         "owner": owner, "title": title, "frame": ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height],
         "foreground": NSWorkspace.shared.frontmostApplication?.processIdentifier == pid] }
 }
+// CG also lists title-bar accessories as layer-0 surfaces owned by the application.
+// macOS 27's 66x20 Window Sharing surface has no AX window and can precede its own
+// focused window. Separate application windows still fence foreground authority;
+// point hit-testing and the unfiltered CG stack remain mandatory before input.
+@MainActor func selectedWindowIsForemost(_ selected: WindowRow, among rows: [WindowRow], isAXWindow: (WindowRow) -> Bool) -> Bool {
+    for row in rows {
+        if row.id == selected.id { return row.processID == selected.processID }
+        if row.pid != selected.pid || isAXWindow(row) { return false }
+    }
+    return false
+}
 struct Captured {
     let binding: [String: Any]; let png: Data; let resource: String; let frame: CGRect
     let lastInput: TimeInterval; let focusedElement: AXUIElement?
@@ -279,6 +290,9 @@ func lastInputTime() -> TimeInterval {
               CFGetTypeID(element) == AXUIElementGetTypeID() else { return nil }
         return (element as! AXUIElement)
     }
+    func foregroundWindowOrder(_ row: WindowRow) -> Bool {
+        selectedWindowIsForemost(row, among: windows()) { matchAX($0) != nil }
+    }
     // The selected window must own the point both by real Accessibility hit-testing and
     // by the CG stacking order. Never send a pixel click through a menu, sheet, popover,
     // another application's window or a nonstandard surface, even one owned by this PID.
@@ -360,7 +374,7 @@ func lastInputTime() -> TimeInterval {
                 && !CGEventSource.buttonState(.combinedSessionState, button: .center)
                 && CGEventSource.flagsState(.combinedSessionState).intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift]).isEmpty
             if NSWorkspace.shared.frontmostApplication?.processIdentifier == row.pid,
-               let focused = focused, CFEqual(focused, target), windows().first?.id == row.id,
+               let focused = focused, CFEqual(focused, target), foregroundWindowOrder(row),
                matchingFocus, released, ProcessInfo.processInfo.systemUptime - lastInputTime() >= 0.15 { return }
             try await Task.sleep(nanoseconds: 100_000_000)
         }
@@ -370,7 +384,7 @@ func lastInputTime() -> TimeInterval {
               let target = selectedAX, axWindows(row).contains(where: { CFEqual($0, target) }),
               let frame = axFrame(target), sameFrame(frame, row.frame),
               let focused = attribute(AXUIElementCreateApplication(row.pid), kAXFocusedWindowAttribute as CFString), CFEqual(focused, target),
-              windows().first?.id == row.id else { try reject("selected-window-not-exactly-focused") }
+              foregroundWindowOrder(row) else { try reject("selected-window-not-exactly-focused") }
         let currentFocus = focusElement(row)
         if let expected = expectedFocus {
             guard let current = currentFocus, CFEqual(current, expected) else { try reject("focused-element-changed") }
@@ -677,6 +691,7 @@ func lastInputTime() -> TimeInterval {
                     guard ownerIntact() else { return receipt("rejected", false, "parent-owner-exited") }
                     if waits {
                         try inputOwner(try currentWindow(), expectedFocus: original.focusedElement, requirePostEvent: false)
+                        try pixelTarget(current, point: point)
                         guard lastInputTime() <= inputBaseline + 0.005 else { return receipt("rejected", false, "human-input-changed") }
                     }
                     let status = AXUIElementPerformAction(target.element, kAXPressAction as CFString)
@@ -711,6 +726,9 @@ func lastInputTime() -> TimeInterval {
                     guard ownerIntact() else { return receipt("rejected", false, "parent-owner-exited") }
                     if waits {
                         try inputOwner(try currentWindow(), expectedFocus: original.focusedElement, requirePostEvent: false)
+                        let hitFrame = target.frame.intersection(current.frame)
+                        guard !hitFrame.isEmpty else { return receipt("rejected", false, "captured-text-target-changed") }
+                        try pixelTarget(current, point: CGPoint(x: hitFrame.midX, y: hitFrame.midY))
                         guard lastInputTime() <= inputBaseline + 0.005 else { return receipt("rejected", false, "human-input-changed") }
                     }
                     if target.selectedTextWritable { status = AXUIElementSetAttributeValue(target.element, kAXSelectedTextAttribute as CFString, text as CFString) }
