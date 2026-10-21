@@ -10,9 +10,15 @@ import {dlopen,ptr} from 'bun:ffi';
 import {readFileSync} from 'node:fs';
 const input=JSON.parse(readFileSync(process.argv[2],'utf8')),uid=process.getuid();
 const lib=dlopen('/usr/lib/libproc.dylib',{proc_listpids:{args:['u32','u32','ptr','i32'],returns:'i32'},proc_pidpath:{args:['i32','ptr','u32'],returns:'i32'},proc_pidinfo:{args:['i32','i32','u64','ptr','i32'],returns:'i32'}});
+const sys=dlopen('/usr/lib/libSystem.B.dylib',{sysctl:{args:['ptr','u32','ptr','ptr','ptr','u64'],returns:'i32'}});
 const absent=pid=>{try{process.kill(pid,0);return false;}catch(e){if(e.code==='ESRCH')return true;throw Error('unverified_pid');}};
 function list(){const b=Buffer.alloc(65536),n=lib.symbols.proc_listpids(4,uid,ptr(b),b.length);if(n<=0||n%4||n>=b.length-4)throw Error('incomplete_process_inventory');const ids=[];for(let i=0;i<n;i+=4){const pid=b.readInt32LE(i);if(pid>0)ids.push(pid);}if(new Set(ids).size!==ids.length||ids.length>16000)throw Error('invalid_process_inventory');return ids.sort((a,b)=>a-b);}
-function info(pid){const b=Buffer.alloc(136);if(lib.symbols.proc_pidinfo(pid,3,0,ptr(b),b.length)!==b.length){if(absent(pid))return null;throw Error('uninspectable_process');}if(b.readUInt32LE(12)!==pid||b.readUInt32LE(20)!==uid)throw Error('process_identity_changed');return {pid,uid,status:b.readUInt32LE(4),flags:b.readUInt32LE(0),shortName:b.subarray(48,64).toString('utf8').split('\0')[0],start:b.readBigUInt64LE(120)+':'+b.readBigUInt64LE(128),nativeName:b.subarray(64,96).toString('utf8').split('\0')[0]};}
+// libproc cannot inspect an exited, unreaped child (SZOMB). Such a process has
+// released its address space, descriptors and locks, so it cannot own Native
+// state. Only a positive same-UID kernel kinfo_proc identity excludes it.
+const zombies=new Map();
+function zombie(pid){const mib=new Int32Array([1,14,1,pid]),k=Buffer.alloc(648),len=new BigUint64Array([648n]);if(sys.symbols.sysctl(ptr(mib),4,ptr(k),ptr(len),null,0)!==0||len[0]!==648n||k.readInt32LE(40)!==pid||k[36]!==5||k.readUInt32LE(392)!==uid||k.readUInt32LE(420)!==uid)return null;const sec=k.readBigInt64LE(0),usec=k.readInt32LE(8);if(sec<0n||usec<0||usec>999999)return null;return {pid,uid,start:sec+':'+usec};}
+function info(pid){const b=Buffer.alloc(136);if(lib.symbols.proc_pidinfo(pid,3,0,ptr(b),b.length)!==b.length){if(absent(pid))return null;const z=zombie(pid);if(!z)throw Error('uninspectable_process');if(zombies.has(pid)&&zombies.get(pid).start!==z.start)throw Error('process_identity_changed');zombies.set(pid,z);return null;}if(b.readUInt32LE(12)!==pid||b.readUInt32LE(20)!==uid)throw Error('process_identity_changed');return {pid,uid,status:b.readUInt32LE(4),flags:b.readUInt32LE(0),shortName:b.subarray(48,64).toString('utf8').split('\0')[0],start:b.readBigUInt64LE(120)+':'+b.readBigUInt64LE(128),nativeName:b.subarray(64,96).toString('utf8').split('\0')[0]};}
 try{if(input.uid!==uid||!Array.isArray(input.paths)||!Array.isArray(input.formerPids)||input.formerPids.some(pid=>!Number.isSafeInteger(pid)||pid<2))throw Error('invalid_observer_input');if(input.formerPids.some(pid=>!absent(pid)))throw Error('former_owner_live');const first=list(),matches=[];
 const fixedNames=[...input.paths.map(name=>name.split('/').pop()),'nekodex-owned-native-worker','codex','sandbox-exec'];
 const prefixOf=name=>Buffer.from(name,'utf8').subarray(0,15).toString('latin1');
@@ -43,8 +49,13 @@ const second=list(),firstSet=new Set(first),secondSet=new Set(second),removed=fi
 for(const pid of added)observePid(pid);
 const removedAbsent=removed.every(absent);
 if(!removedAbsent)throw Object.assign(Error('process_inventory_changed'),{inventoryDelta:{added:added.length,removed:removed.length,removedAbsent,addedAbsent:false}});
-const former=input.formerPids.map(pid=>({pid,absent:absent(pid)}));process.stdout.write(JSON.stringify({version:1,uid,complete:true,processCount:first.length,matches,former}));
-}catch(e){process.stdout.write(JSON.stringify({version:1,complete:false,reasonCode:/^[a-z_]{1,80}$/.test(e.message)?e.message:'process_observation_unavailable',...(e.blockedProcess?{blockedProcess:e.blockedProcess}:{}),...(e.inventoryDelta?{inventoryDelta:e.inventoryDelta}:{})}));process.exitCode=2;}finally{lib.close();}
+// A zombie is terminal: it may only be reaped. Anything else at its PID after the
+// second enumeration is a reused or unobserved process and blocks recovery.
+for(const z of zombies.values()){const again=zombie(z.pid);if(again?again.start!==z.start:!absent(z.pid))throw Object.assign(Error('process_identity_changed'),{blockedProcess:{pid:z.pid,uid,start:z.start,status:5}});}
+if(zombies.size>256)throw Error('too_many_zombie_processes');
+const excludedZombies=[...zombies.values()].sort((a,b)=>a.pid-b.pid);
+const former=input.formerPids.map(pid=>({pid,absent:absent(pid)}));process.stdout.write(JSON.stringify({version:1,uid,complete:true,processCount:first.length,matches,excludedZombies,former}));
+}catch(e){process.stdout.write(JSON.stringify({version:1,complete:false,reasonCode:/^[a-z_]{1,80}$/.test(e.message)?e.message:'process_observation_unavailable',...(e.blockedProcess?{blockedProcess:e.blockedProcess}:{}),...(e.inventoryDelta?{inventoryDelta:e.inventoryDelta}:{})}));process.exitCode=2;}finally{lib.close();sys.close();}
 `;
 function recoveryExecutableDigest(file) {
   if (typeof file !== 'string' || !path.isAbsolute(file) || fs.realpathSync(file) !== file) throw fail('recovery_runtime_unavailable', 'Recovery requires a canonical pinned runtime');
@@ -54,6 +65,11 @@ function recoveryExecutableDigest(file) {
   const hash = fileDigest(file, 512 * 1024 * 1024), after = fs.lstatSync(file, { bigint: true });
   for (const key of ['dev', 'ino', 'size', 'uid', 'mode', 'nlink', 'mtimeNs', 'ctimeNs']) if (before[key] !== after[key]) throw fail('recovery_runtime_unavailable', 'Recovery executable changed during pinning');
   if (fs.realpathSync(file) !== file) throw fail('recovery_runtime_unavailable', 'Recovery executable path changed'); return hash;
+}
+// Exited, unreaped same-UID processes the observer positively identified.
+function validExcludedZombies(rows) {
+  return Array.isArray(rows) && rows.length <= 256 && new Set(rows.map(row => row?.pid)).size === rows.length
+    && rows.every(row => row && Object.keys(row).length === 3 && Number.isSafeInteger(row.pid) && row.pid > 1 && row.uid === process.getuid() && typeof row.start === 'string' && /^\d+:\d{1,6}$/.test(row.start));
 }
 async function observeNativeRecoveryProcesses({ getMetadataRuntimePin, paths, formerPids }) {
   if (process.platform !== 'darwin' || typeof getMetadataRuntimePin !== 'function') throw fail('recovery_process_proof_unavailable', 'Recovery requires macOS executable ownership evidence');
@@ -78,8 +94,9 @@ async function observeNativeRecoveryProcesses({ getMetadataRuntimePin, paths, fo
     const result = JSON.parse(output);
     if (result.version !== 1 || result.complete !== true || result.uid !== process.getuid() || !Number.isSafeInteger(result.processCount) || result.processCount < 1 || result.processCount > 16000
       || !Array.isArray(result.matches) || result.matches.length > 128 || result.matches.some(row => !Number.isSafeInteger(row.pid) || row.pid < 1 || row.uid !== process.getuid() || !/^\d+:\d+$/.test(row.start) || !(['owned-worker', 'launch-carrier', 'trusted-executable'].includes(row.role)) || (row.role === 'owned-worker' ? row.executable !== undefined : !paths.includes(row.executable)))
+      || !validExcludedZombies(result.excludedZombies) || result.excludedZombies.some(row => result.matches.some(match => match.pid === row.pid))
       || !Array.isArray(result.former) || result.former.length !== formerPids.length || result.former.some((row, index) => row.pid !== formerPids[index] || typeof row.absent !== 'boolean')) throw fail('recovery_process_proof_unavailable', 'Native process proof is incomplete');
     return result;
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 }
-module.exports = { observeNativeRecoveryProcesses, recoveryExecutableDigest, NATIVE_RECOVERY_OBSERVER_SOURCE: OBSERVER };
+module.exports = { observeNativeRecoveryProcesses, recoveryExecutableDigest, validExcludedZombies, NATIVE_RECOVERY_OBSERVER_SOURCE: OBSERVER };
