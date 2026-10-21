@@ -21,7 +21,7 @@ const { compileOAuthVaultHelper } = createRequire(import.meta.url)("./build-oaut
 const { compileDesktopHelper, DESKTOP_HELPER_BUNDLE } = createRequire(import.meta.url)("./build-desktop-helper.cjs");
 const { compileSkillPdfHelper } = createRequire(import.meta.url)("./build-skill-pdf-helper.cjs");
 const { prepareExecutionVmRuntime, prepareOwnedNativeRuntime } = createRequire(import.meta.url)("../launcher/scripts/prepare-runtime.cjs");
-const { signingConfiguration, signEmbeddedRuntime, signDesktopHelper, signSkillPdfHelper } = createRequire(import.meta.url)("../launcher/scripts/release-signing.cjs");
+const { signingConfiguration, signEmbeddedRuntime, signDesktopHelper, desktopHelperPublisherIdentity, signSkillPdfHelper } = createRequire(import.meta.url)("../launcher/scripts/release-signing.cjs");
 
 const root = resolve(import.meta.dir, "..");
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
@@ -139,7 +139,9 @@ if (oauthVaultHelper.supported) {
   copyFileSync(oauthVaultHelper.executable, join(helperDirectory, "nekodex-oauth-vault-helper"));
   chmodSync(join(helperDirectory, "nekodex-oauth-vault-helper"), 0o755);
 }
+// Only a Developer ID signature carries the release TCC identity; ad-hoc bundles get the development one.
 const desktopHelper = compileDesktopHelper({ repositoryRoot: root, development: true,
+  releaseIdentity: Boolean(desktopHelperPublisherIdentity(process.platform, process.env)),
   sign: (candidate: string) => signDesktopHelper(candidate, process.platform, process.env, { development: true }) });
 if (desktopHelper.supported) {
   // The whole signed bundle: its seal covers Info.plist, which carries the stable TCC identity.

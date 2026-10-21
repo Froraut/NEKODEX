@@ -15,7 +15,9 @@ let maximumImageBytes = 8 * 1024 * 1024
 // launcher. The fixed bundle therefore re-executes itself once with responsibility disclaimed.
 // TCC then keys the grant to this bundle's identifier and designated requirement, which every
 // signed release keeps, so one grant survives updates and covers nothing but this helper.
-let helperBundleIdentifier = "dev.nekodex.desktop-provider.v1"
+// Developer ID builds carry the release identifier; ad-hoc DEV builds carry their own, so a DEV
+// grant never creates or overwrites the release identifier's TCC row (equal to the builder's constants).
+let helperBundleIdentifiers: Set<String> = ["dev.nekodex.desktop-provider.v1", "dev.nekodex.desktop-provider.development.v1"]
 let helperStageKey = "NEKODEX_DESKTOP_HELPER_STAGE"
 let disclaimedStage = ProcessInfo.processInfo.environment[helperStageKey] == "disclaimed"
 typealias ResponsibleForPid = @convention(c) (pid_t, UnsafeMutablePointer<pid_t>, UnsafeMutablePointer<UInt64>, UnsafeMutablePointer<Int>, UnsafeMutablePointer<CChar>) -> Int32
@@ -56,20 +58,22 @@ func ownExecutable() -> String? {
 /// The fixed bundle only: the running image must be this bundle's own canonical executable.
 func ownedHelperBundle() -> Bundle? {
     let bundle = Bundle.main
-    guard bundle.bundleIdentifier == helperBundleIdentifier, bundle.bundleURL.pathExtension == "app",
+    guard let identifier = bundle.bundleIdentifier, helperBundleIdentifiers.contains(identifier), bundle.bundleURL.pathExtension == "app",
           let executable = ownExecutable(), let declared = bundle.executablePath, canonicalPath(declared) == executable else { return nil }
     return bundle
 }
 /// The TCC grant now belongs to this helper, so speaking its stdio protocol must not be enough
-/// to use it: any same-user process could spawn the bundle. Every enable therefore needs the
-/// user's answer to a system alert this process shows; a caller without its own input rights
-/// cannot answer it. The default button refuses, and a timeout or failure refuses.
+/// to use it: any same-user process could spawn the bundle. The first enable of each helper
+/// process therefore needs the user's answer to a system alert this process shows; a caller
+/// without its own input rights cannot answer it. The default button refuses, and a timeout or
+/// failure refuses. The answer is kept only in this process, whose stdio belongs to the owner
+/// that started it; nothing is persisted, so every new helper process asks again.
 func userConfirmedEnable() -> Bool {
     var response: CFOptionFlags = 0
     let shown = CFUserNotificationDisplayAlert(120, CFOptionFlags(kCFUserNotificationCautionAlertLevel), nil, nil, nil,
         "Allow NEKODEX desktop control?" as CFString,
-        ("NEKODEX Desktop Helper will capture the window you attach and send the clicks and text you approve to it, until desktop access is disabled or "
-         + "NEKODEX restarts. Allow only if you just chose Enable desktop provider in NEKODEX.") as CFString,
+        ("NEKODEX Desktop Helper will capture the window you attach and send the clicks and text you approve to it, until NEKODEX releases "
+         + "desktop access or restarts. Allow only if you just chose Enable desktop provider in NEKODEX.") as CFString,
         "Don't Allow" as CFString, "Allow" as CFString, nil, &response)
     return shown == 0 && response & 0x3 == CFOptionFlags(kCFUserNotificationAlternateResponse)
 }
@@ -222,6 +226,8 @@ func lastInputTime() -> TimeInterval {
 
 @MainActor final class DesktopPort {
     var enabled = false
+    /// Set once the user allowed this helper process; never persisted.
+    var enableConfirmed = false
     var selected: WindowRow?
     var selectedAX: AXUIElement?
     var captured: Captured?
@@ -569,7 +575,10 @@ func lastInputTime() -> TimeInterval {
         case "enable":
             guard exact(request, base + ["enabled"]), let value = request["enabled"] as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() else { try reject("invalid-request") }
             enabled = false; selected = nil; selectedAX = nil; captured = nil; image = nil; propertyElements = []
-            if value.boolValue, !userConfirmedEnable() { try reject("enable-not-confirmed") }
+            if value.boolValue, !enableConfirmed {
+                guard userConfirmedEnable() else { try reject("enable-not-confirmed") }
+                enableConfirmed = true
+            }
             enabled = value.boolValue
             return ["enabled": enabled]
         case "select":

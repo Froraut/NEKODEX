@@ -51,7 +51,9 @@ export class NativeDesktopHelperClient implements NativeDesktopTransport {
   private closed = false;
   private closing?: Promise<void>;
   private idleWaiters = new Set<() => void>();
-  constructor(private readonly options: { executable: string; sha256: string; requestTimeoutMs?: number }) {}
+  /** `prepare` re-establishes the pinned bytes at `executable` before each start (the stable
+   * per-user copy); the pin is still checked afterwards, so it cannot substitute other bytes. */
+  constructor(private readonly options: { executable: string; sha256: string; requestTimeoutMs?: number; prepare?: () => void }) {}
   get activeCount(): number { return this.pending || this.closing && this.child && this.child.exitCode === null && this.child.signalCode === null ? 1 : 0; }
   private settleIdle() { if (this.activeCount === 0) { for (const resolve of this.idleWaiters) resolve(); this.idleWaiters.clear(); } }
   waitForIdle(): Promise<void> { return this.activeCount === 0 ? Promise.resolve() : new Promise(resolve => this.idleWaiters.add(resolve)); }
@@ -59,6 +61,7 @@ export class NativeDesktopHelperClient implements NativeDesktopTransport {
     if (this.closed) throw new Error('Native desktop helper is closed; no automatic restart');
     if (this.child) return this.child;
     const { executable, sha256 } = this.options;
+    this.options.prepare?.();
     const stat = lstatSync(executable);
     if (process.platform !== 'darwin' || !isAbsolute(executable) || !stat.isFile() || stat.isSymbolicLink()
       || realpathSync(executable) !== executable || !(stat.mode & 0o111) || !/^[a-f0-9]{64}$/.test(sha256)
@@ -179,7 +182,7 @@ export interface MacosDesktopProvider extends DesktopProviderPort {
   close(): Promise<void>;
 }
 /** Trusted control methods are separate from model-facing observe/act. Neither accepts an executable/path. */
-export function createMacosDesktopProvider(options: { helperExecutable: string; helperSha256: string;
+export function createMacosDesktopProvider(options: { helperExecutable: string; helperSha256: string; prepareHelper?: () => void;
   isScopeActive(scope: ToolScope): boolean; platform?: NodeJS.Platform;
   /** Trusted test/composition port; never read from renderer/model configuration. */
   transportFactory?: () => NativeDesktopTransport }): MacosDesktopProvider {
@@ -195,7 +198,7 @@ export function createMacosDesktopProvider(options: { helperExecutable: string; 
   const scopeKey = (scope: ToolScope) => `${scope.taskId}\0${scope.generation}`;
   const native = () => {
     if (platform !== 'darwin' || closed) throw new Error('Native desktop provider is unavailable on this platform');
-    return transport ??= options.transportFactory?.() ?? new NativeDesktopHelperClient({ executable: options.helperExecutable, sha256: options.helperSha256 });
+    return transport ??= options.transportFactory?.() ?? new NativeDesktopHelperClient({ executable: options.helperExecutable, sha256: options.helperSha256, prepare: options.prepareHelper });
   };
   const active = (scope: ToolScope) => {
     validateToolScope(scope);

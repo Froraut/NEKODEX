@@ -203,8 +203,11 @@ test.skipIf(process.platform !== 'darwin' || !existsSync(helper))('compiled nati
     expect(typeof state.screenCaptureGranted).toBe('boolean'); expect(typeof state.accessibilityGranted).toBe('boolean');
     expect(typeof state.postEventGranted).toBe('boolean'); expect(state.inputWindowBound).toBe(false);
     // Permissions are judged for the helper bundle itself, never for the process that started it.
-    expect(state.permissionClient).toEqual({ selfResponsible: true, bundleIdentifier: 'dev.nekodex.desktop-provider.v1', name: 'NEKODEX Desktop Helper',
-      bundlePath: dirname(dirname(dirname(executable))) });
+    // An ad-hoc checkout build carries the development identity; only a Developer ID build carries the release one.
+    const reported = state.permissionClient as { bundleIdentifier: string };
+    const identity = reported.bundleIdentifier === 'dev.nekodex.desktop-provider.v1' ? { bundleIdentifier: 'dev.nekodex.desktop-provider.v1', name: 'NEKODEX Desktop Helper' }
+      : { bundleIdentifier: 'dev.nekodex.desktop-provider.development.v1', name: 'NEKODEX Desktop Helper (Development)' };
+    expect(state.permissionClient).toEqual({ selfResponsible: true, ...identity, bundlePath: dirname(dirname(dirname(executable))) });
     const inventory = await client.request('listWindows') as { windows: unknown[] }; expect(Array.isArray(inventory.windows)).toBe(true);
     expect(inventory.windows.length).toBeLessThanOrEqual(128);
     await expect(client.request('status', { command: 'act' })).rejects.toThrow('protocol ownership');
@@ -322,3 +325,19 @@ test.skipIf(!swiftCompiler)('pixel click events address the selected window with
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
 }, 180000);
+
+test('the pinned client re-establishes its stable copy before each start and still refuses other bytes', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'nekodex-prepare-')));
+  try {
+    // Inert stand-in that reads and never answers; the stable copy is (re)written by prepare.
+    const source = '#!/bin/sh\nexec /bin/cat >/dev/null\n', executable = join(root, 'helper'), sha256 = digest(Buffer.from(source));
+    let prepared = 0;
+    const client = new NativeDesktopHelperClient({ executable, sha256, requestTimeoutMs: 50,
+      prepare: () => { prepared++; writeFileSync(executable, source, { mode: 0o755 }); } });
+    await expect(client.request('listWindows')).rejects.toThrow('timed out');
+    expect(prepared).toBe(1); await client.close();
+    const other = new NativeDesktopHelperClient({ executable, sha256, requestTimeoutMs: 50,
+      prepare: () => { writeFileSync(executable, `${source}# other bytes\n`); } });
+    await expect(other.request('listWindows')).rejects.toThrow('unavailable or changed'); await other.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
