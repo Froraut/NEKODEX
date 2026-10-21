@@ -3,9 +3,10 @@ import { Badge, BadgeRow, Button, EmptyState, Notice, Page, Panel, PanelStack, S
 import { mergeNativeThreads, nativeExternalThreadControl, nativeThreadRows } from './native-threads-model';
 import type { Language } from './types';
 import type { CodexClientControlSnapshot, CodexStatusScope, CodexThreadMetadata, NativeThreadsApi,
-  NativeThreadsResult } from './native-threads-types';
+  NativeThreadsResult, CodexForkAttachmentParity } from './native-threads-types';
 import './surfaces/native-threads.css';
 import { NativePersistentConversationsPanel } from './NativePersistentConversationsPanel';
+import { NativeThreadHandoffPanel } from './NativeThreadHandoffPanel';
 import type { NativePersistentApi } from './native-persistent-types';
 import type { OwnedConversationHistoryApi } from './OwnedConversationHistoryPanel';
 
@@ -36,7 +37,12 @@ const en = {
   boundaryInvalid: 'Use a native turn ID of at most 128 characters without control characters.',
   forkSource: 'Source thread', forkBoundary: 'Accepted fork boundary', latestBoundary: 'Latest history at the provider',
   externalTitle: 'External execution remains with its owner',
-  externalBody: 'No verified exclusive owner handoff is available for this connection. Idle or not loaded status does not grant permission to resume an external executor. Continue it in its owning client; approvals and sending are unavailable here.',
+  externalBody: 'This metadata connection never resumes an external executor: idle or not loaded status is not permission to take it over. Continue in the owning client, or use the exclusive handoff below, which Codex itself enforces.',
+  attachmentsTitle: 'Stored thread attachments',
+  attachments: { matched: 'Copied to the fork', missing: 'Some were not copied', partial: 'Only the first page was compared',
+    unavailable: 'Could not be compared', unsupported: 'Not supported by this Codex version' },
+  attachmentsCounts: (source: number, fork: number, missing: number) => `Source ${source} · fork ${fork} · missing ${missing}`,
+  attachmentsHelp: 'Codex copies a fork\u2019s attachments best effort; a missing copy does not undo the fork. Conversation history, including image inputs, is part of the fork itself.',
   owner: 'Current execution owner', ownerUnknown: 'Not established by metadata',
   originator: 'Historical originator',
   statuses: { notLoaded: 'Not loaded here', idle: 'Idle', systemError: 'Native error', active: 'Active' },
@@ -69,7 +75,12 @@ const ru: typeof en = {
   boundaryInvalid: 'Нужен ID хода до 128 символов без управляющих символов.',
   forkSource: 'Исходный чат', forkBoundary: 'Принятая граница ответвления', latestBoundary: 'Актуальная история у провайдера',
   externalTitle: 'Внешнее выполнение остаётся у владельца',
-  externalBody: 'Для этого подключения нет проверенной передачи исключительного владения. Статус ожидания или отсутствия загрузки не разрешает возобновлять внешний исполнитель. Продолжайте его в исходном клиенте; согласования и отправка здесь недоступны.',
+  externalBody: 'Это подключение метаданных никогда не возобновляет внешний исполнитель: статус ожидания или отсутствия загрузки не даёт права его забрать. Продолжайте в исходном клиенте или используйте исключительную передачу ниже, которую обеспечивает сам Codex.',
+  attachmentsTitle: 'Сохранённые вложения чата',
+  attachments: { matched: 'Скопированы в ответвление', missing: 'Скопированы не все', partial: 'Сравнена только первая страница',
+    unavailable: 'Сравнить не удалось', unsupported: 'Не поддерживается этой версией Codex' },
+  attachmentsCounts: (source: number, fork: number, missing: number) => `Источник ${source} · ответвление ${fork} · не хватает ${missing}`,
+  attachmentsHelp: 'Codex копирует вложения ответвления по возможности; пропуск копии не отменяет ответвление. История диалога, включая изображения во вводе, входит в само ответвление.',
   owner: 'Текущий владелец выполнения', ownerUnknown: 'Метаданные его не устанавливают',
   originator: 'Исторический источник создания',
   statuses: { notLoaded: 'Не загружен здесь', idle: 'Ожидает', systemError: 'Ошибка Codex', active: 'Выполняется' },
@@ -91,7 +102,7 @@ export function NativeThreadsSurface({ language, disabled = false, api, historyA
   const [busy, setBusy] = useState<'list' | 'read' | 'fork' | 'acknowledge' | null>(null);
   const [error, setError] = useState<SafeError | null>(null);
   const [forkedId, setForkedId] = useState<string | null>(null);
-  const [forkReceipt, setForkReceipt] = useState<{ sourceThreadId: string; lastTurnId: string | null } | null>(null);
+  const [forkReceipt, setForkReceipt] = useState<{ sourceThreadId: string; lastTurnId: string | null; attachments?: CodexForkAttachmentParity } | null>(null);
   const [lastTurnId, setLastTurnId] = useState('');
   const [uncertainFork, setUncertainFork] = useState<string | null>(null);
   const locked = useRef(false), mounted = useRef(true);
@@ -168,7 +179,7 @@ export function NativeThreadsSurface({ language, disabled = false, api, historyA
       setThreads(previous => mergeNativeThreads(previous, [result.thread]));
       setSelectedId(result.thread.id); setScope(result.statusScope); setForkedId(result.thread.id); setLastTurnId('');
       if (result.sourceThreadId === id && result.lastTurnId === (boundary ?? null) && result.executionStarted === false) {
-        setForkReceipt({ sourceThreadId: result.sourceThreadId, lastTurnId: result.lastTurnId });
+        setForkReceipt({ sourceThreadId: result.sourceThreadId, lastTurnId: result.lastTurnId, attachments: result.attachments });
       }
     });
   };
@@ -207,7 +218,11 @@ export function NativeThreadsSurface({ language, disabled = false, api, historyA
       ? <Notice tone="warning" title={text.unknownFork} meta={uncertainFork}>{text.unknownForkBody}</Notice> : null}
     {forkedId ? <Notice tone="success" title={text.forkSuccess} meta={forkedId}>{text.forkSuccessBody}
       {forkReceipt ? <> <span className="native-threads__notice-detail">{text.forkSource}: <code>{forkReceipt.sourceThreadId}</code><br />{' '}
-        {text.forkBoundary}: <code>{forkReceipt.lastTurnId || text.latestBoundary}</code></span></> : null}</Notice> : null}
+        {text.forkBoundary}: <code>{forkReceipt.lastTurnId || text.latestBoundary}</code></span>
+        {forkReceipt.attachments ? <span className="native-threads__notice-detail">{text.attachmentsTitle}: {text.attachments[forkReceipt.attachments.state]}
+          {forkReceipt.attachments.source !== null && forkReceipt.attachments.fork !== null && forkReceipt.attachments.missing !== null
+            ? <> ({text.attachmentsCounts(forkReceipt.attachments.source, forkReceipt.attachments.fork, forkReceipt.attachments.missing)})</> : null}
+          <br />{text.attachmentsHelp}</span> : null}</> : null}</Notice> : null}
     <div className="native-threads__layout">
       <Panel title={text.rows} titleId={listId} className="native-threads__list-panel"
         actions={<Badge>{text.metadataOnly}</Badge>}>
@@ -251,6 +266,8 @@ export function NativeThreadsSurface({ language, disabled = false, api, historyA
             || uncertainActions.some(action => action.threadId === selected.id)}
             busy={busy === 'fork'} onClick={fork}>{busy === 'fork' ? text.forkPending : text.fork}</Button></div>
           <p className="native-threads__hint">{text.permission}</p>
+          {api.nativeThreadContinue ? <NativeThreadHandoffPanel language={language} disabled={disabled || busy !== null} api={api}
+            thread={selected} onSettled={id => { if (mounted.current) read(id); }} /> : null}
         </> : <p className="native-threads__hint">{text.read}</p>}
         </PanelStack>
       </Panel>

@@ -1,24 +1,12 @@
-const path = require('node:path');
-const { spawn } = require('node:child_process');
-const { StringDecoder } = require('node:string_decoder');
-const { DETACH_OWNED_CHILD, terminateOwnedProcessTree } = require('./process-tree.cjs');
+const { createCodexAppServerConnection, absolute, record, error } = require('./codex-app-server-connection.cjs');
 const { createCodexForkJournal } = require('./codex-fork-journal.cjs');
 
-const MAX_LINE_BYTES = 1024 * 1024;
 const MAX_CONVERSATION_MESSAGE_BYTES = 128 * 1024;
 const MAX_CONVERSATION_PAGE_BYTES = 384 * 1024;
 const SOURCE_KINDS = ['cli', 'vscode', 'exec', 'appServer', 'subAgent', 'subAgentReview',
   'subAgentCompact', 'subAgentThreadSpawn', 'subAgentOther', 'unknown'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const error = (code, message, details) => Object.assign(new Error(message), { code, ...details });
-const record = value => value && typeof value === 'object' && !Array.isArray(value);
 
-function absolute(value, label) {
-  if (typeof value !== 'string' || !path.isAbsolute(value) || value.includes('\0')) {
-    throw error('invalid_configuration', `${label} must be an absolute path supplied by main`);
-  }
-  return path.resolve(value);
-}
 function threadId(value) {
   if (typeof value !== 'string' || !UUID.test(value)) throw error('invalid_thread_id', 'Invalid Codex thread ID');
   return value;
@@ -62,166 +50,37 @@ function projectThread(value) {
 
 /** Main-process-only port. Never pass constructor options through renderer IPC. */
 function createCodexClientControl({ executable, codexHome, controlSocket, journalPath, cwd,
-  environment = process.env, spawnProcess = spawn, requestTimeoutMs = 15_000,
-  stopGraceMs = 1000, maxLineBytes = MAX_LINE_BYTES,
-  terminateProcess = terminateOwnedProcessTree } = {}) {
-  executable = absolute(executable, 'Codex executable');
-  codexHome = absolute(codexHome, 'Codex home');
-  cwd = absolute(cwd || codexHome, 'Working directory');
-  if (controlSocket !== undefined) controlSocket = absolute(controlSocket, 'Control socket');
+  environment = process.env, spawnProcess, requestTimeoutMs = 15_000,
+  stopGraceMs = 1000, maxLineBytes, terminateProcess } = {}) {
   if (journalPath !== undefined) journalPath = absolute(journalPath, 'Fork journal');
-  if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 120_000
-    || !Number.isInteger(stopGraceMs) || stopGraceMs < 1 || stopGraceMs > 10_000
-    || !Number.isInteger(maxLineBytes) || maxLineBytes < 128 || maxLineBytes > 16 * MAX_LINE_BYTES) {
-    throw error('invalid_configuration', 'Invalid Codex client bounds');
-  }
-  let child, connecting, closing, failure, initialized = false, closed = false, destroyed = false;
-  let nextId = 1, buffer = '', bufferBytes = 0, initializeResult = null, pendingForks = 0;
-  const pending = new Map();
-  const decoder = new StringDecoder('utf8');
-  let resolveClosed;
-  const childClosed = new Promise(resolve => { resolveClosed = resolve; });
+  const connection = createCodexAppServerConnection({ executable, codexHome, controlSocket, cwd, environment,
+    requestTimeoutMs, stopGraceMs, clientName: 'nekodex-client-control',
+    ...(spawnProcess ? { spawnProcess } : {}), ...(terminateProcess ? { terminateProcess } : {}),
+    ...(maxLineBytes !== undefined ? { maxLineBytes } : {}) });
+  codexHome = connection.codexHome; executable = connection.executable; controlSocket = connection.controlSocket ?? undefined;
+  let pendingForks = 0;
   const methodSupport = { list: 'unverified', read: 'unverified', fork: 'unverified' };
-  const transport = controlSocket ? 'existing-server-proxy' : 'owned-stdio-server';
+  const transport = connection.transport;
   const journal = createCodexForkJournal({ journalPath, codexHome, executable, controlSocket });
+  const request = connection.request;
 
   function snapshot() {
     return {
-      state: destroyed ? (closed || !child ? 'closed' : 'closing')
-        : failure ? 'unavailable' : initialized ? 'ready' : child ? 'connecting' : 'disconnected',
+      state: connection.state(),
       transport, statusScope: controlSocket ? 'configured-server' : 'connection',
-      userAgent: initializeResult?.userAgent || null,
+      userAgent: connection.userAgent(),
+      // This metadata connection never resumes or sends. Exclusive handoff is a
+      // separate owned process (codex-thread-handoff.cjs) with its own receipts.
       capabilities: { ...methodSupport, startTurn: false, interruptTurn: false, approve: false,
         resumeExternal: false, exclusiveHandoff: false },
       externalControl: { executionOwner: 'unverified', reason: 'exclusive-owner-contract-unavailable' },
-      errorCode: failure?.code || null,
+      errorCode: connection.failureCode(),
       uncertainForks: journal?.snapshot() || [],
     };
   }
-  function fail(reason) {
-    if (!failure) failure = reason;
-    for (const wait of pending.values()) wait.reject(failure);
-    pending.clear();
-  }
-  function write(message) {
-    if (failure) throw failure;
-    if (!child || closed || destroyed) throw error('client_closed', 'Codex client is closed');
-    const line = `${JSON.stringify(message)}\n`;
-    if (Buffer.byteLength(line) > maxLineBytes) throw error('request_too_large', 'Codex request exceeds the bound');
-    child.stdin.write(line, writeError => {
-      if (writeError) fail(error('transport_error', 'Codex input stream failed'));
-    });
-  }
-  function request(method, params, { signal, mutation = false } = {}) {
-    if (signal?.aborted) return Promise.reject(error('cancelled', 'Codex observation was cancelled'));
-    if (failure) return Promise.reject(failure);
-    if (pending.size >= 32) return Promise.reject(error('too_many_requests', 'Too many pending Codex requests'));
-    return new Promise((resolve, reject) => {
-      const id = nextId++;
-      let timer;
-      const settle = (handler, value) => {
-        pending.delete(id);
-        clearTimeout(timer);
-        signal?.removeEventListener('abort', abort);
-        handler(value);
-      };
-      const abort = () => settle(reject, error('cancelled', 'Codex observation was cancelled'));
-      pending.set(id, {
-        resolve: value => settle(resolve, value),
-        reject: reason => settle(reject, mutation ? error('fork_outcome_unknown',
-          'Codex fork did not return a receipt; reconcile thread metadata before retrying', { cause: reason }) : reason),
-      });
-      timer = setTimeout(() => pending.get(id)?.reject(error('rpc_timeout', 'Codex request timed out')), requestTimeoutMs);
-      signal?.addEventListener('abort', abort, { once: true });
-      try { write({ id, method, params }); } catch (reason) { pending.get(id)?.reject(reason); }
-    });
-  }
-  function consume(chunk) {
-    // Bound each line independently, including a partial line split across chunks.
-    const text = decoder.write(chunk);
-    let offset = 0;
-    while (offset < text.length) {
-      const newline = text.indexOf('\n', offset);
-      const end = newline < 0 ? text.length : newline;
-      const part = text.slice(offset, end);
-      bufferBytes += Buffer.byteLength(part);
-      if (bufferBytes > maxLineBytes) {
-        fail(error('response_too_large', 'Codex response exceeds the bound'));
-        void destroy().catch(() => {});
-        return;
-      }
-      buffer += part;
-      if (newline < 0) return;
-      const line = buffer;
-      buffer = ''; bufferBytes = 0; offset = newline + 1;
-      if (!line.trim()) continue;
-      let message;
-      try { message = JSON.parse(line); } catch {
-        fail(error('invalid_response', 'Codex returned malformed JSON'));
-        void destroy().catch(() => {}); return;
-      }
-      if (!record(message)) { fail(error('invalid_response', 'Codex returned an invalid RPC envelope')); return; }
-      if (typeof message.method === 'string') {
-        if (message.id !== undefined) {
-          // This metadata port cannot approve commands, tools, permissions or refresh auth.
-          try { write({ id: message.id, error: { code: -32601, message: 'This client does not handle server requests' } }); }
-          catch { /* The transport failure already settles pending callers. */ }
-        }
-        continue;
-      }
-      const wait = pending.get(message.id);
-      if (!wait) continue; // Cancelled/timed-out reads can still return; IDs are never reused.
-      if (record(message.error)) {
-        // Provider messages/data can contain paths, prompts or private values; expose only numeric code.
-        wait.reject(error('rpc_error', 'Codex rejected the request', { rpcCode: message.error.code, authoritative: true }));
-      } else if (Object.hasOwn(message, 'result')) wait.resolve(message.result);
-      else wait.reject(error('invalid_response', 'Codex returned an invalid RPC response'));
-    }
-  }
   async function connect() {
-    if (destroyed) throw error('client_closed', 'Codex client is closed');
-    if (failure) throw failure;
-    if (initialized) return snapshot();
-    if (connecting) return connecting;
-    connecting = (async () => {
-      const env = { ...environment, CODEX_HOME: codexHome };
-      // Never inherit the enclosing agent's thread identity into this client.
-      delete env.CODEX_THREAD_ID;
-      child = spawnProcess(executable, controlSocket
-        ? ['app-server', 'proxy', '--sock', controlSocket] : ['app-server', '--stdio'], {
-        cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: DETACH_OWNED_CHILD, windowsHide: true,
-      });
-      child.stderr.on('data', () => {}); // Drain without logging possible private diagnostics.
-      child.stderr.on('error', () => {});
-      child.stdin.on('error', () => fail(error('transport_error', 'Codex input stream failed')));
-      child.stdout.on('data', consume);
-      child.stdout.on('error', () => fail(error('transport_error', 'Codex output stream failed')));
-      child.once('error', () => {
-        fail(error('spawn_failed', 'Configured Codex executable could not start'));
-      });
-      child.once('close', () => {
-        closed = true; buffer = ''; bufferBytes = 0;
-        fail(error('client_closed', 'Codex client process closed'));
-        resolveClosed();
-      });
-      const response = await request('initialize', {
-        clientInfo: { name: 'nekodex-client-control', title: 'NEKODEX', version: '1' },
-        capabilities: { experimentalApi: false, requestAttestation: false },
-      });
-      if (!record(response) || typeof response.userAgent !== 'string'
-        || typeof response.codexHome !== 'string' || path.resolve(response.codexHome) !== codexHome) {
-        throw error('home_mismatch', 'Codex did not confirm the configured home');
-      }
-      initializeResult = { userAgent: response.userAgent };
-      write({ method: 'initialized', params: {} });
-      initialized = true;
-      return snapshot();
-    })().catch(async reason => {
-      fail(reason);
-      await destroy();
-      throw reason;
-    });
-    return connecting;
+    await connection.connect();
+    return snapshot();
   }
   async function call(kind, method, params, options) {
     await connect();
@@ -324,6 +183,39 @@ function createCodexClientControl({ executable, codexHome, controlSocket, journa
       complete: cursor == null && result.nextCursor === null && excludedItems === 0
         && messages.every(message => message.coverage === 'complete'), excludedItems };
   }
+  /** Stored thread attachments are resource references Codex keeps beside history.
+   * Identities only (type + identity key); payloads never leave this module. */
+  async function attachmentIdentities(id) {
+    const result = await request('thread/attachment/list', { threadId: id, limit: 100 });
+    if (!record(result) || !Array.isArray(result.data) || result.data.length > 100
+      || (result.nextCursor !== null && typeof result.nextCursor !== 'string')) {
+      throw error('invalid_response', 'Codex returned an invalid attachment page');
+    }
+    const identities = new Set();
+    for (const row of result.data) {
+      if (!record(row) || typeof row.attachmentType !== 'string' || typeof row.identityKey !== 'string') {
+        throw error('invalid_response', 'Codex returned an invalid attachment');
+      }
+      identities.add(JSON.stringify([row.attachmentType, row.identityKey]));
+    }
+    return { identities, complete: result.nextCursor === null };
+  }
+  /** Codex copies a non-ephemeral fork's attachments best effort (a copy failure is logged
+   * and the fork still succeeds), so parity is observed, never assumed. Membership can
+   * change independently, so only identities present before and after the fork count. */
+  async function forkAttachmentParity(sourceId, forkId, before) {
+    try {
+      const after = await attachmentIdentities(sourceId), copied = await attachmentIdentities(forkId);
+      const required = [...after.identities].filter(key => !before || before.identities.has(key));
+      const missing = required.filter(key => !copied.identities.has(key)).length;
+      const complete = after.complete && copied.complete && (!before || before.complete);
+      return { state: missing ? 'missing' : complete ? 'matched' : 'partial', source: required.length,
+        fork: copied.identities.size, missing };
+    } catch (reason) {
+      const rpcCode = reason.rpcCode ?? reason.cause?.rpcCode;
+      return { state: rpcCode === -32601 ? 'unsupported' : 'unavailable', source: null, fork: null, missing: null };
+    }
+  }
   async function forkThread({ threadId: id, lastTurnId, userInitiated } = {}) {
     if (userInitiated !== true) throw error('user_action_required', 'Fork requires an explicit user action');
     const params = { threadId: threadId(id), excludeTurns: true };
@@ -337,8 +229,10 @@ function createCodexClientControl({ executable, codexHome, controlSocket, journa
     try {
       // Handshake/readiness failure precedes durable mutation ownership.
       await connect();
+      // Observation only; a failed attachment read never blocks or alters the fork.
+      const attachmentsBefore = await attachmentIdentities(id).catch(() => null);
       actionId = journal.begin(id, lastTurnId);
-      const result = await call('fork', 'thread/fork', params, { mutation: true });
+      const result = await call('fork', 'thread/fork', params, { lostCode: 'fork_outcome_unknown' });
       if (record(result?.thread) && UUID.test(result.thread.id) && result.thread.id !== id) {
         observedForkId = result.thread.id;
       }
@@ -351,8 +245,9 @@ function createCodexClientControl({ executable, codexHome, controlSocket, journa
       }
       observedForkId = thread.id;
       journal.finish(actionId, { state: 'completed', forkId: thread.id, completedAt: new Date().toISOString() });
+      const attachments = await forkAttachmentParity(id, thread.id, attachmentsBefore);
       return { thread, actionId, sourceThreadId: id, lastTurnId: params.lastTurnId ?? null,
-        executionStarted: false, statusScope: snapshot().statusScope };
+        executionStarted: false, attachments, statusScope: snapshot().statusScope };
     } catch (reason) {
       if (actionId) {
         if (reason.code === 'rpc_error' && reason.authoritative) {
@@ -369,29 +264,7 @@ function createCodexClientControl({ executable, codexHome, controlSocket, journa
       pendingForks--;
     }
   }
-  async function waitClosed(ms) {
-    if (closed) return true;
-    let timer;
-    const didClose = await Promise.race([childClosed.then(() => true),
-      new Promise(resolve => { timer = setTimeout(() => resolve(false), ms); })]);
-    clearTimeout(timer);
-    return didClose;
-  }
-  function destroy() {
-    if (closing) return closing;
-    destroyed = true;
-    fail(error('client_closed', 'Codex client is closing'));
-    closing = (async () => {
-      if (!child || closed) return;
-      child.stdin.end();
-      if (await waitClosed(stopGraceMs)) return;
-      terminateProcess(child, 'SIGTERM');
-      if (await waitClosed(stopGraceMs)) return;
-      terminateProcess(child, 'SIGKILL');
-      if (!await waitClosed(stopGraceMs)) throw error('process_not_settled', 'Owned Codex client did not close');
-    })();
-    return closing;
-  }
+  const destroy = () => connection.destroy();
   const currentOperation = () => pendingForks ? 'Creating native Codex fork' : null;
   function acknowledgeFork({ actionId, threadId: id, confirmedInspection } = {}) {
     if (confirmedInspection !== true || typeof actionId !== 'string' || !UUID.test(actionId)) {

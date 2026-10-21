@@ -20,6 +20,20 @@ const MESSAGES = {
   fork_reconciliation_required: 'Inspect and acknowledge the earlier uncertain fork before creating another fork of this thread.',
   process_not_settled: 'The owned native Codex connection has not closed.',
   cancelled: 'The metadata read was cancelled.',
+  invalid_text: 'Provide nonempty message text of at most 32 KiB.',
+  handoff_unavailable: 'Exclusive native handoff is not configured in this build.',
+  handoff_journal_unavailable: 'Private native handoff receipts are unavailable. Nothing was sent.',
+  handoff_busy: 'Another native handoff is running or needs inspection. Wait or acknowledge it first.',
+  handoff_reconciliation_required: 'Inspect and acknowledge the earlier handoff of this thread before sending again.',
+  handoff_owner_active: 'Another Codex client still owns this thread. Close or switch away from it in Codex, wait for Codex to release it, then try again. Nothing was sent.',
+  handoff_subagent_thread: 'Only a persisted root thread can be handed off. Subagent threads stay with their parent.',
+  handoff_thread_not_idle: 'The thread was not idle after the exclusive handoff. Nothing was sent.',
+  handoff_resume_rejected: 'Codex rejected the handoff. Nothing was sent.',
+  handoff_resume_unconfirmed: 'Codex did not confirm the handoff. Nothing was sent and the owned process was closed.',
+  handoff_turn_rejected: 'Codex rejected the message. No turn was started; the thread was released.',
+  handoff_outcome_unknown: 'The message outcome is unknown. Inspect the thread in Codex before sending again.',
+  handoff_release_unconfirmed: 'The handoff process did not confirm closing. The thread may still be owned; inspect it before continuing.',
+  connect_failed: 'The official Codex executable could not start for the handoff.',
 };
 function invalid() { throw Object.assign(new Error(MESSAGES.invalid_parameters), { code: 'invalid_parameters' }); }
 function plain(value) { return value && typeof value === 'object' && !Array.isArray(value); }
@@ -41,7 +55,7 @@ function failure(reason) {
 
 // `handle` MUST be main's sender-authorized handler wrapper. getClient is a lazy,
 // main-owned, cached service; renderer input can never select its executable/home/socket.
-function registerCodexClientControlIpc({ handle, getClient }) {
+function registerCodexClientControlIpc({ handle, getClient, getHandoff }) {
   const register = (channel, action) => handle(channel, async (_event, ...args) => {
     try { return { ok: true, value: await action(args) }; }
     catch (reason) { return failure(reason); }
@@ -72,6 +86,25 @@ function registerCodexClientControlIpc({ handle, getClient }) {
     const params = input(args[0], ['actionId', 'threadId', 'confirmedInspection']);
     if (params.confirmedInspection !== true) invalid();
     return getClient().acknowledgeFork({ actionId: id(params.actionId), threadId: id(params.threadId), confirmedInspection: true });
+  });
+  const handoff = () => {
+    if (typeof getHandoff !== 'function') throw Object.assign(new Error('unavailable'), { code: 'handoff_unavailable' });
+    return getHandoff();
+  };
+  register('launcher:native-thread-handoff-snapshot', args => { noArgs(args); return handoff().snapshot(); });
+  // One explicit user action: exclusive acquire, one message, terminal turn state, release.
+  register('launcher:native-thread-continue', args => {
+    if (args.length !== 1) invalid();
+    const params = input(args[0], ['threadId', 'text']);
+    if (typeof params.text !== 'string' || !params.text.trim() || Buffer.byteLength(params.text) > 32 * 1024
+      || params.text.includes('\0')) throw Object.assign(new Error(MESSAGES.invalid_text), { code: 'invalid_text' });
+    return handoff().continueThread({ threadId: id(params.threadId), text: params.text, userInitiated: true });
+  });
+  register('launcher:native-thread-acknowledge-handoff', args => {
+    if (args.length !== 1) invalid();
+    const params = input(args[0], ['actionId', 'threadId', 'confirmedInspection']);
+    if (params.confirmedInspection !== true) invalid();
+    return handoff().acknowledge({ actionId: id(params.actionId), threadId: id(params.threadId), confirmedInspection: true });
   });
 }
 

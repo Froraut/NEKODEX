@@ -4,7 +4,7 @@ import { createRoot } from '../../launcher/node_modules/react-dom/client';
 import { NativeThreadsSurface } from '../../launcher/src/NativeThreadsSurface';
 import '../../launcher/src/tokens.css';
 import '../../launcher/src/design/components.css';
-import type { CodexThreadMetadata, CodexForkAction, NativeThreadsApi } from '../../launcher/src/native-threads-types';
+import type { CodexThreadMetadata, CodexForkAction, CodexHandoffAction, NativeThreadsApi } from '../../launcher/src/native-threads-types';
 
 const ROOT = '0199a001-0000-7000-8000-000000000001';
 const CHILD = '0199a001-0000-7000-8000-000000000002';
@@ -18,7 +18,8 @@ const thread = (id: string, name: string, extra = {}): CodexThreadMetadata => ({
 const rows = [thread(ROOT, 'Fixture parent'), thread(CHILD, 'Fixture worker', { parentThreadId: ROOT,
   agentNickname: 'Reader', agentRole: 'reviewer', source: 'subAgent',
   status: { type: 'active', activeFlags: ['waitingOnApproval'] } })];
-const fixture = { calls: [] as string[], failList: false, unknownFork: false, uncertain: [] as CodexForkAction[] };
+const fixture = { calls: [] as string[], failList: false, unknownFork: false, uncertain: [] as CodexForkAction[],
+  ownerActive: false, uncertainHandoffs: [] as CodexHandoffAction[] };
 Object.assign(window, { nativeThreadsFixture: fixture });
 const api: NativeThreadsApi = {
   nativeThreadsSnapshot: async () => ({ ok: true, value: { state: 'ready', transport: 'owned-stdio-server',
@@ -49,7 +50,22 @@ const api: NativeThreadsApi = {
     rows.push(fork);
     return { ok: true, value: { thread: fork, statusScope: 'connection',
       actionId: '0199a001-0000-7000-8000-000000000005', sourceThreadId: threadId,
-      lastTurnId: lastTurnId ?? null, executionStarted: false } };
+      lastTurnId: lastTurnId ?? null, executionStarted: false, attachments: { state: 'matched', source: 1, fork: 1, missing: 0 } } };
+  },
+  nativeThreadHandoffSnapshot: async () => ({ ok: true, value: { available: true, transport: 'owned-stdio-server',
+    exclusivity: 'codex-thread-writer-lock', approvals: 'refused', active: null,
+    uncertainHandoffs: [...fixture.uncertainHandoffs], errorCode: null } }),
+  nativeThreadContinue: async ({ threadId, text }) => {
+    fixture.calls.push(`continue:${threadId}:${text}`);
+    if (fixture.ownerActive) return { ok: false, error: { code: 'handoff_owner_active', rpcCode: -32600,
+      message: 'Another Codex client still owns this thread. Close or switch away from it in Codex, wait for Codex to release it, then try again. Nothing was sent.' } };
+    return { ok: true, value: { actionId: '0199a001-0000-7000-8000-000000000006', threadId, turnId: 'fixture-turn-1',
+      turnStatus: 'completed', approvalsRefused: 1, released: true, executionOwner: 'released',
+      assistantText: 'Fixture final reply', assistantTextTruncated: false } };
+  },
+  nativeThreadAcknowledgeHandoff: async ({ actionId }) => {
+    fixture.uncertainHandoffs = fixture.uncertainHandoffs.filter(row => row.actionId !== actionId);
+    return api.nativeThreadHandoffSnapshot!();
   },
   nativeThreadAcknowledgeFork: async ({ actionId }) => {
     fixture.calls.push(`acknowledge:${actionId}`);

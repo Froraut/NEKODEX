@@ -34,6 +34,12 @@ function fixture(options: any = {}) {
       if (message.method === 'initialize') queueMicrotask(() => respond(message, {
         userAgent: 'codex-cli/0.163.0', codexHome: options.responseHome || '/fixture/codex',
       }));
+      // Stored attachments are observed around forks; default to an empty first page.
+      if (message.method === 'thread/attachment/list' && !options.holdAttachments) queueMicrotask(() => {
+        const rows = options.attachments?.(message.params.threadId);
+        if (typeof rows === 'number') reject(message, rows);
+        else respond(message, { data: rows || [], nextCursor: null });
+      });
     }
     callback();
   } });
@@ -103,6 +109,39 @@ test('fork requires user action, preserves native policies and returns the new f
     expect(f.received.at(-1)).toEqual({ id: 900, error: { code: -32601,
       message: 'This client does not handle server requests' } });
   } finally { await f.client.destroy(); }
+});
+
+test('fork observes stored attachment parity by identity only and never blocks the fork on it', async () => {
+  const pr = (key: string) => ({ id: `a-${key}`, attachmentType: 'pull_request', identityKey: key,
+    payload: { privateUrl: 'https://private.example/pr' }, createdAt: 1 });
+  const sourceRows = [pr('one'), pr('two')];
+  const f = fixture({ attachments: (id: string) => id === ROOT ? sourceRows : [pr('one')] });
+  try {
+    const forking = f.client.forkThread({ threadId: ROOT, userInitiated: true });
+    const request = await f.next('thread/fork');
+    f.respond(request, { thread: thread(CHILD, { forkedFromId: ROOT }) });
+    const receipt = await forking;
+    // Codex copies best effort: a missing copy is visible, the fork itself stays completed.
+    expect(receipt.attachments).toEqual({ state: 'missing', source: 2, fork: 1, missing: 1 });
+    expect(JSON.stringify(receipt)).not.toMatch(/private\.example/);
+    const lists = f.received.filter(row => row.method === 'thread/attachment/list');
+    expect(lists.map(row => row.params.threadId)).toEqual([ROOT, ROOT, CHILD]);
+    expect(lists.every(row => row.params.limit === 100)).toBe(true);
+    const saved = JSON.parse(readFileSync(join(f.directory, 'native-thread-control', 'forks.json'), 'utf8'));
+    expect(saved.records[0]).toMatchObject({ state: 'completed', forkId: CHILD });
+  } finally { await f.client.destroy(); }
+  const same = fixture({ attachments: () => [pr('one')] });
+  try {
+    const forking = same.client.forkThread({ threadId: ROOT, userInitiated: true });
+    same.respond(await same.next('thread/fork'), { thread: thread(CHILD, { forkedFromId: ROOT }) });
+    expect((await forking).attachments).toEqual({ state: 'matched', source: 1, fork: 1, missing: 0 });
+  } finally { await same.client.destroy(); }
+  const old = fixture({ attachments: () => -32601 });
+  try {
+    const forking = old.client.forkThread({ threadId: ROOT, userInitiated: true });
+    old.respond(await old.next('thread/fork'), { thread: thread(CHILD, { forkedFromId: ROOT }) });
+    expect(await forking).toMatchObject({ thread: { id: CHILD }, attachments: { state: 'unsupported', source: null } });
+  } finally { await old.client.destroy(); }
 });
 
 test('native fork carries the exact turn boundary and no execution authority', async () => {

@@ -1,5 +1,6 @@
-// Opt-in installed-protocol fixture. No credentials, real thread, turn/start or model request.
-// node tests/fixtures/codex-client-control-offline.cjs /absolute/path/to/codex [--canonical-only]
+// Opt-in installed-protocol fixture. No credentials or real thread. Only `--handoff` sends one
+// turn, to an unreachable loopback provider, so no model request can leave the machine.
+// node tests/fixtures/codex-client-control-offline.cjs /absolute/path/to/codex [--canonical-only|--handoff]
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -7,11 +8,13 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { createInterface } = require('node:readline');
 const { createCodexClientControl } = require('../../launcher/electron/codex-client-control.cjs');
+const { createCodexThreadHandoff } = require('../../launcher/electron/codex-thread-handoff.cjs');
 
 const executable = process.argv[2];
 assert(executable && path.isAbsolute(executable), 'Provide an absolute installed Codex executable');
 const canonicalOnly = process.argv[3] === '--canonical-only';
-assert(process.argv[3] === undefined || canonicalOnly, 'Unsupported fixture mode');
+const handoffMode = process.argv[3] === '--handoff';
+assert(process.argv[3] === undefined || canonicalOnly || handoffMode, 'Unsupported fixture mode');
 const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nekodex-client-control-offline-')));
 const home = path.join(root, 'codex');
 fs.mkdirSync(home);
@@ -23,12 +26,14 @@ sandbox_mode = "read-only"
 name = "Offline fixture"
 base_url = "http://127.0.0.1:9/v1"
 wire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
 [analytics]
 enabled = false
 `);
 const environment = { PATH: process.env.PATH, HOME: root, CODEX_HOME: home,
   HTTP_PROXY: 'http://127.0.0.1:9', HTTPS_PROXY: 'http://127.0.0.1:9', ALL_PROXY: 'http://127.0.0.1:9' };
-let child, port, stopped = true, creatorClosed;
+let child, port, handoff, stopped = true, creatorClosed;
 const pending = new Map();
 
 async function stopCreator() {
@@ -36,6 +41,32 @@ async function stopCreator() {
   child.stdin.end();
   const kill = setTimeout(() => child.kill('SIGKILL'), 1000);
   try { await creatorClosed; } finally { clearTimeout(kill); }
+}
+/** A separate official process resumes the thread: succeeds only if no other writer holds it. */
+async function resumeInFreshProcess(threadId) {
+  const other = spawn(executable, ['app-server', '--stdio'], { cwd: root, env: environment, stdio: ['pipe', 'pipe', 'pipe'] });
+  other.stderr.on('data', () => {}); other.stdin.on('error', () => {});
+  const closed = new Promise(resolve => other.once('close', resolve));
+  const replies = new Map();
+  createInterface({ input: other.stdout }).on('line', line => {
+    const message = JSON.parse(line); if (message.id !== undefined && !message.method) replies.get(message.id)?.(message);
+  });
+  const call = (id, method, params) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Fresh resume timed out')), 30_000);
+    replies.set(id, message => { clearTimeout(timer); resolve(message); });
+    other.stdin.write(`${JSON.stringify({ id, method, params })}\n`);
+  });
+  try {
+    await call(1, 'initialize', { clientInfo: { name: 'nekodex-offline-fixture', title: null, version: '1' },
+      capabilities: { experimentalApi: false, requestAttestation: false } });
+    other.stdin.write(`${JSON.stringify({ method: 'initialized', params: {} })}\n`);
+    const resumed = await call(2, 'thread/resume', { threadId, excludeTurns: true });
+    return !resumed.error && resumed.result?.thread?.id === threadId;
+  } finally {
+    other.stdin.end();
+    const kill = setTimeout(() => other.kill('SIGKILL'), 5000);
+    await closed; clearTimeout(kill);
+  }
 }
 async function main() {
   try {
@@ -117,6 +148,31 @@ async function main() {
     // This materializes fixture history without executing a turn, tools, or a model.
     await request('thread/inject_items', { threadId: start.thread.id, items: [{ type: 'message', role: 'user',
       content: [{ type: 'input_text', text: 'Inert offline fixture history. No turn is started.' }] }] });
+    if (handoffMode) {
+      // The creator still owns the loaded thread: Codex's writer lock must refuse a second process.
+      handoff = createCodexThreadHandoff({ executable, codexHome: home, cwd: root, environment,
+        journalPath: path.join(root, 'private', 'handoffs.json'), requestTimeoutMs: 30_000, turnTimeoutMs: 20_000 });
+      const refused = await handoff.continueThread({ threadId: start.thread.id, text: 'Owned elsewhere', userInitiated: true })
+        .then(() => null, reason => reason);
+      assert.equal(refused?.code, 'handoff_owner_active');
+      await stopCreator(); lines.close();
+      const receipt = await handoff.continueThread({ threadId: start.thread.id, text: 'Offline handoff turn', userInitiated: true });
+      assert.equal(receipt.released, true);
+      assert.equal(receipt.threadId, start.thread.id);
+      // Released: another official process can now become the writer.
+      const nextOwnerResumed = await resumeInFreshProcess(start.thread.id);
+      assert.equal(nextOwnerResumed, true);
+      port = createCodexClientControl({ executable, codexHome: home, cwd: root, environment, requestTimeoutMs: 10_000 });
+      const after = await port.readThread(start.thread.id);
+      console.log(JSON.stringify({ mode: 'handoff', installedProtocol: port.snapshot().userAgent,
+        ownerActiveRefused: true, acquiredAfterRelease: true, turnStatus: receipt.turnStatus,
+        approvalsRefused: receipt.approvalsRefused, released: receipt.released, nextOwnerResumed, statusAfterRelease: after.thread.status.type,
+        uncertainHandoffs: handoff.snapshot().uncertainHandoffs.length, providerReachable: false }));
+      return;
+    }
+    // Stored attachments are copied by a non-ephemeral fork; observe parity by identity.
+    await request('thread/attachment/add', { threadId: start.thread.id, attachmentType: 'pull_request',
+      identityKey: JSON.stringify(['github.com', 'fixture', 'offline', 1]), payload: { fixture: true } });
     await stopCreator(); lines.close();
     port = createCodexClientControl({ executable, codexHome: home, journalPath: path.join(root, 'private', 'forks.json'),
       cwd: root, environment, requestTimeoutMs: 10_000 });
@@ -131,10 +187,11 @@ async function main() {
     assert.equal(fork.thread.forkedFromId, start.thread.id);
     assert.equal(fork.thread.status.type, 'idle');
     console.log(JSON.stringify({ installedProtocol: port.snapshot().userAgent, initialize: 'passed',
-      emptyForkRejected: true, metadataRead: 'passed', forkReceipt: 'passed',
+      emptyForkRejected: true, metadataRead: 'passed', forkReceipt: 'passed', attachments: fork.attachments,
       listCount: page.data.length, statusScope: page.statusScope, modelTurnStarted: false }));
   } finally {
     if (port) await port.destroy();
+    if (handoff) await handoff.destroy();
     await stopCreator();
     fs.rmSync(root, { recursive: true, force: true });
     assert(!fs.existsSync(root));
