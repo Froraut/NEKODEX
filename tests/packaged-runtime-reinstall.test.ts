@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const { ensurePackagedRuntime } = require("../launcher/electron/runtime-install.cjs");
+const { ensurePackagedRuntime, installedRuntimeRoot } = require("../launcher/electron/runtime-install.cjs");
 
 const VERSION = "9.9.9-reinstall";
 const roots: string[] = [];
@@ -63,4 +63,16 @@ test("an identical durable copy is reused as it is", () => {
   const second = install(build, coreHome);
   expect(second.runtimeRoot).toBe(first.runtimeRoot);
   expect(statSync(second.runtimeRoot).ino).toBe(inode);
+});
+
+test("Finder metadata does not make a committed runtime unusable; any other unmanifested file does", () => {
+  const coreHome = mkdtempSync(join(tmpdir(), "nekodex-core-"));
+  roots.push(coreHome);
+  const root = join(coreHome, "versions", `${VERSION}-${process.platform}-${process.arch}`);
+  writeBundle(root, { commit: "aaaa" });
+  // Revealing the desktop helper in Finder leaves this behind; it rolled back an app update.
+  writeFileSync(join(root, "app", ".DS_Store"), "finder");
+  expect(installedRuntimeRoot({ coreHome, version: VERSION })).toBe(root);
+  writeFileSync(join(root, "app", "injected.js"), "process.exit(1)");
+  expect(() => installedRuntimeRoot({ coreHome, version: VERSION })).toThrow(/unmanifested file/);
 });

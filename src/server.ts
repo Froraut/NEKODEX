@@ -76,7 +76,7 @@ import type { AccountCapabilityFields, AppConfig } from "./config";
 import { getConfigDir, providerConfig } from "./config";
 import { parseChatGptWebProModelVersion, type ChatGptWebProModelVersion } from "./chatgpt-web-models";
 import { AsyncEventQueue } from "./event-queue";
-import { createInternalJsonRequest, readJsonRequestBody } from "./http-body";
+import { createInternalJsonRequest, readJsonRequestBody, readRequestBodyBytes } from "./http-body";
 import { httpStatusFromTerminalError } from "./lib/errors";
 import { join } from "node:path";
 import { augmentNativeModelCatalog } from "./model-catalog";
@@ -121,7 +121,8 @@ import { VERSION } from "./version";
 import { HermesIntegration, type HermesContext } from "./hermes-integration";
 
 import { HttpTurnCounter, type NativeCodexTurnIdentity } from "./http-turn-lifecycle";
-import { ServerAdmission, TUNNEL_UNAVAILABLE_REASON_PATTERN, waitForWebAdmission, webAdmissionFailureMessage } from "./server-admission";
+import { RESTART_RETRY_AFTER_SECONDS, ServerAdmission, TUNNEL_UNAVAILABLE_REASON_PATTERN, waitForWebAdmission,
+  webAdmissionFailureMessage, type DrainOptions } from "./server-admission";
 import { inferenceRoutePolicy, type InferenceRoutePolicy } from "./server-route-policy";
 
 type ChatGptWebAdapterFactory = (provider: CodexProviderConfig) => ProviderAdapter;
@@ -129,6 +130,13 @@ type ChatGptWebAdapterFactory = (provider: CodexProviderConfig) => ProviderAdapt
 /** How long a Web request waits for the tool tunnel before NEKODEX answers with the reason. */
 export const WEB_TUNNEL_HOLD_MS = 60_000;
 const WEB_TUNNEL_HOLD_POLL_MS = 1_000;
+/**
+ * How long a new request waits while the launcher drains this runtime for a switch. The switch
+ * either resumes admission (it was cancelled) or shuts this process down; held requests then get a
+ * retryable 503 with Retry-After instead of a burst of immediate refusals.
+ */
+export const RUNTIME_SWITCH_HOLD_MS = 20_000;
+const RUNTIME_SWITCH_HOLD_POLL_MS = 250;
 
 export interface ResponseRequestOptions {
   /** Native passthrough remains available independently of the browser/tool broker. */
@@ -975,7 +983,12 @@ export function startServer(
     ? "starting"
     : "not-required";
   let brokerFailureCode: string | undefined;
-  const admission = new ServerAdmission();
+  const admission = new ServerAdmission(reason => {
+    // The owner of this drain never renewed, resumed or completed it (for example a launcher that
+    // was killed mid-switch). Serving again is the only state nobody has to repair by hand.
+    console.warn(`[server] drain lease${reason ? ` (${reason})` : ""} expired without an owner; admission resumed`);
+    turnBroker?.setExternalOwnersAccepted(acceptingTurns());
+  });
   // Launcher-owned Full mode reports tunnel readiness separately from the local listener.
   // Standalone hosts retain their existing tunnel service contract.
   const requiresTunnelSignal = config.mode === "full" && config.browserHost === "launcher";
@@ -992,13 +1005,24 @@ export function startServer(
   // Detach/drain still prevent new local work; model offers keep the Web gate.
   const acceptingAgentTools = () => admission.accepting && !launcherDetached;
   const acceptingTurns = () => admission.accepting && !launcherDetached && brokerReady() && tunnelReady;
-  const admissionFailure = () => formatErrorResponse(
-    503,
-    "server_error",
-    webAdmissionFailureMessage({ draining: admission.draining, launcherDetached,
-      brokerReady: brokerReady(), tunnelUnavailableReason: tunnelReady ? null : tunnelUnavailableReason }),
-    "nekodex_unavailable",
-  );
+  const admissionFailure = () => {
+    const response = formatErrorResponse(
+      503,
+      "server_error",
+      webAdmissionFailureMessage({ draining: admission.draining, switching: admission.switching, launcherDetached,
+        brokerReady: brokerReady(), tunnelUnavailableReason: tunnelReady ? null : tunnelUnavailableReason }),
+      "nekodex_unavailable",
+    );
+    // A drain ends in a restart or a resume within seconds; say when to retry.
+    if (admission.draining) response.headers.set("Retry-After", String(RESTART_RETRY_AFTER_SECONDS));
+    return response;
+  };
+  // While the launcher drains this runtime for a switch, a new request waits briefly: the switch
+  // resumes admission (cancelled) or shuts down, which ends the wait with the retryable refusal.
+  const awaitSwitchAdmission = (accepting: () => boolean, signal?: AbortSignal): Promise<boolean> => waitForWebAdmission({
+    accepting, recoverable: () => admission.switching,
+    holdMs: RUNTIME_SWITCH_HOLD_MS, pollMs: RUNTIME_SWITCH_HOLD_POLL_MS, signal,
+  });
   // Only the tool tunnel is missing (a VPN reconnecting, the Mac just woke): wait for it briefly
   // instead of failing the request. A restart, a detached launcher or a broken broker still answer
   // at once. A request still refused after the hold gets the real reason, and Codex retries it.
@@ -1270,7 +1294,12 @@ export function startServer(
     policy: InferenceRoutePolicy,
     run: Parameters<HttpTurnCounter["track"]>[0],
   ): Promise<Response> | Response => {
-    if (!(policy.admission === "web" ? acceptingTurns() : acceptingNative())) return admissionFailure();
+    const admitted = () => policy.admission === "web" ? acceptingTurns() : acceptingNative();
+    if (!admitted()) {
+      if (!admission.switching) return admissionFailure();
+      return awaitSwitchAdmission(admitted, req.signal).then(ok => ok
+        ? httpTurns.track(run, req.signal, process.platform, policy.endpoint) : admissionFailure());
+    }
     return httpTurns.track(run, req.signal, process.platform, policy.endpoint);
   };
   const modelPreferenceReaders = (): Pick<ResponseRequestOptions, "readProModelVersion" | "readCompactionModel"> => ({
@@ -1283,6 +1312,7 @@ export function startServer(
   ): ResponseRequestOptions => ({
     onTurnIdentity: bindIdentity,
     webAdmission: async (signal?: AbortSignal) => {
+      if (!acceptingTurns() && admission.switching && !await awaitSwitchAdmission(acceptingTurns, signal)) return admissionFailure();
       if (!acceptingTurns() && !await awaitWebAdmission(signal)) return admissionFailure();
       bindWeb();
       return undefined;
@@ -1397,6 +1427,7 @@ export function startServer(
           native_accepting_turns: acceptingNative(),
           web_accepting_turns: acceptingTurns(),
           draining: admission.draining,
+          drain_reason: admission.drainLease?.reason ?? null,
           shutdown_stage: shutdownStage,
           shutdown_error_code: shutdownErrorCode,
           broker_ready: brokerReady(),
@@ -1519,8 +1550,23 @@ export function startServer(
       }
       if (req.method === "POST" && (url.pathname === "/admin/drain" || url.pathname === "/admin/resume")) {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
-        if (url.pathname === "/admin/drain") admission.drain();
-        else if (!admission.resume()) {
+        if (url.pathname === "/admin/drain") {
+          // Optional lease: { leaseMs, reason }. An owner renews its drain by draining again.
+          let options: DrainOptions = {};
+          try {
+            const bytes = await readRequestBodyBytes(req, 4096);
+            if (bytes.byteLength > 0) {
+              const body = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+              if (body && typeof body === "object" && !Array.isArray(body)) {
+                const { leaseMs, reason } = body as { leaseMs?: unknown; reason?: unknown };
+                options = { ...(typeof leaseMs === "number" ? { leaseMs } : {}), ...(typeof reason === "string" ? { reason } : {}) };
+              }
+            }
+          } catch {
+            return new Response("Invalid drain request", { status: 400 });
+          }
+          admission.drain(options);
+        } else if (!admission.resume()) {
           return Response.json({ status: "refused", reason: "Runtime shutdown is committed",
             accepting_turns: false, native_accepting_turns: false, web_accepting_turns: false,
             draining: true, ...activity() }, { status: 409 });
@@ -1532,6 +1578,8 @@ export function startServer(
           native_accepting_turns: acceptingNative(),
           web_accepting_turns: acceptingTurns(),
           draining: admission.draining,
+          drain_reason: admission.drainLease?.reason ?? null,
+          drain_lease_expires_at: admission.drainLease ? new Date(admission.drainLease.expiresAt).toISOString() : null,
           broker_ready: brokerReady(),
           broker_state: brokerState,
           tunnel_ready: tunnelReady,

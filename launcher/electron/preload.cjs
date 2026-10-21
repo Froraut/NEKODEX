@@ -187,6 +187,7 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   doctor: () => ipcRenderer.invoke("launcher:doctor"),
   routeDiagnostics: () => ipcRenderer.invoke("launcher:route-diagnostics"),
   cancelTurns: () => ipcRenderer.invoke("launcher:cancel-turns"),
+  switchRuntimeNow: () => ipcRenderer.invoke("launcher:runtime-switch-now"),
   uninstallIntegration: () => ipcRenderer.invoke("launcher:uninstall-integration"),
   setupCore: () => ipcRenderer.invoke("launcher:setup-core"),
   getClientConnections: () => ipcRenderer.invoke("launcher:client-connections"),

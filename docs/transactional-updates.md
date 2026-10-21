@@ -55,9 +55,43 @@ changed recovery registration, it preserves the journal/backup and reports failu
 `update-worker.log`. Re-running the recorded helper with the journal path and `--recover`
 resumes the same transaction. A nonterminal transaction blocks another update.
 
+## Runtime switch after a committed update
+
+The replacement launcher keeps serving with the surviving runtime and switches to the runtime of
+the installed app in the same session once the worker's commit is observed. The switch is bounded
+and never waits for an idle moment that may never come:
+
+1. **Idle wait (up to 60 s).** At the first moment without HTTP, browser or compaction work and
+   without a launcher operation, the switch happens with no visible interruption.
+2. **Drain (up to 120 s).** New admissions stop. The daemon holds a new request for up to 20 s
+   (`RUNTIME_SWITCH_HOLD_MS`) instead of refusing it; running turns may finish. A daemon from
+   before drain leases refuses new requests at once, so its drain is limited to 30 s.
+3. **Deadline.** Turns still running are cancelled through the existing `/admin/cancel-turns`
+   path and the switch completes. Codex retries the cancelled requests on the new runtime.
+   A setup or account operation cannot be cancelled; it defers the drain by 30 s, visibly.
+
+Refused requests during a drain are `503` with `Retry-After: 3` and say that NEKODEX is switching
+or restarting. A Quit during the drain resumes admission first; the next launch resumes the
+pending switch. The Updates page shows the phase, the versions, the countdown and **Switch now**,
+which asks before cancelling running turns and then drains and switches at once.
+
+Every `/admin/drain` is a lease (`{ "leaseMs", "reason" }`, default 5 minutes). Its owner renews
+it while it waits; a drain whose owner died (for example a launcher stopped by the update worker)
+resumes admission when the lease expires. A launcher that adopts a drained background runtime
+resumes it at once, and an owned runtime that stays drained for 30 s without a transition of this
+launcher owning the drain is resumed by the launcher's watchdog.
+
+On a cold start without a surviving runtime the launcher rebinds the configured runtime to the
+installed app's version before starting it. Only an app rollback (recorded in `update-worker.log`)
+keeps the previous runtime, because the restored app is that previous version. Runtime bundle
+verification ignores Finder `.DS_Store` files, which otherwise made a committed runtime fail
+verification after its folder was opened in Finder and rolled back an otherwise valid update.
+
 ## Evidence and limits
 
-The repository has no automated tests for the update worker or package validation. When the
+The repository has no automated tests for the update worker or package validation.
+`tests/runtime-switch-drain.test.ts` covers drain leases, held admission, the bounded switch drain
+and orphaned-drain recovery with fakes and an in-process daemon; it does not install an update. When the
 validator was introduced, the installed macOS arm64 application was inspected read-only with it
 successfully.
 

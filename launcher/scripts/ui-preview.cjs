@@ -1124,6 +1124,10 @@ function installMockLauncher() {
       return { ok: true, mode: "full", checks: [...runtimeChecks, { id: "connector", status: "ok",
         message: `ChatGPT connector ${JSON.stringify(connectorNames.automatic)} is available` }] };
     },
+    switchRuntimeNow: async () => {
+      calls.push(["runtime-switch-now"]);
+      return { status: "started", activeTurns: 0 };
+    },
     cancelTurns: async () => {
       calls.push(["cancel-turns"]);
       if (devProfile) throw new Error("DEV chat turns are owned by the repository CLI process");
