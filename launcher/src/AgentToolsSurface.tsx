@@ -39,6 +39,7 @@ export function AgentToolsSurface({ api, language, disabled = false, oauthMcpReq
   const ru = language === 'ru'; const choose = (en: string, russian: string) => ru ? russian : en;
   const transport = useRef(api); transport.current = api;
   const mounted = useRef(true); const busy = useRef(false);
+  const disabledRef = useRef(disabled); disabledRef.current = disabled;
   const [status, setStatus] = useState<AgentToolsStatus | null>(null);
   const oauthScopeKey = status?.oauthScope ? JSON.stringify([status.oauthScope.accountId, status.oauthScope.epoch]) : '';
   const oauthApi = useMemo<AgentOAuthPanelPort | undefined>(() => status?.capabilities.oauth && oauthScopeKey ? {
@@ -140,7 +141,9 @@ export function AgentToolsSurface({ api, language, disabled = false, oauthMcpReq
     finally { busy.current = false; if (mounted.current) setPending(false); }
   };
   // A Native check settling while another Tools action runs must not be lost: re-read OAuth status once idle.
-  const refreshWhenIdle = () => { if (!mounted.current) return; if (busy.current) { window.setTimeout(refreshWhenIdle, 500); return; } void act(refresh); };
+  // The idle check and act() run in one synchronous turn, so busy cannot flip in between; a disabled
+  // surface (screen transition) also defers instead of dropping the one-time re-read.
+  const refreshWhenIdle = () => { if (!mounted.current) return; if (busy.current || disabledRef.current) { window.setTimeout(refreshWhenIdle, 500); return; } void act(refresh); };
   useEffect(() => { mounted.current = true; if (!disabled) void act(refresh); return () => { mounted.current = false; taskLoadRevision.current++; }; }, []);
   useEffect(() => { if (!disabled && !status && !busy.current) void act(refresh); }, [disabled]);
   const loadTask = async (value: string) => {
