@@ -7,10 +7,11 @@ for (const action of ['owned-conversation-status', 'owned-conversation-consent',
 function registerConversationHistory({ handle, runtimeHost, clipboard, dialog, canonicalRecorder,
   getApplicationVersion, beforeRecordingRevoke, beforeRecordingConsent, afterRecordingConsent, projectRecordingStatus }) {
   const requestHistory = async (_event, body) => {
-    if (body && ['canonical-status','canonical-consent','canonical-refresh','canonical-list'].includes(body.action)) {
+    if (body && ['canonical-status','canonical-consent','canonical-refresh','canonical-list','canonical-backfill'].includes(body.action)) {
       if(typeof body!=='object'||Array.isArray(body)||!canonicalRecorder)throw new Error('Canonical native history is unavailable');
-      const allowed=body.action==='canonical-list'?['action','cursor','limit']:body.action==='canonical-status'?['action','threadId']:body.action==='canonical-consent'?['action','threadId','enabled','consent','acknowledgeUnknownSecrets']:['action','threadId','cursor','limit'];
+      const allowed=body.action==='canonical-list'?['action','cursor','limit']:body.action==='canonical-status'?['action','threadId']:body.action==='canonical-consent'?['action','threadId','enabled','consent','acknowledgeUnknownSecrets']:body.action==='canonical-backfill'?['action','threadId','maxPages','cursor']:['action','threadId','cursor','limit'];
       if(Object.keys(body).some(key=>!allowed.includes(key)))throw new Error('Canonical history accepts only an exact selected-thread action');
+      if(body.action==='canonical-backfill')return canonicalRecorder.backfill(body.threadId,{maxPages:body.maxPages??40,cursor:body.cursor??null});
       if(body.action==='canonical-list')return canonicalRecorder.list({cursor:body.cursor??null,limit:body.limit??30});
       if(body.action==='canonical-status')return canonicalRecorder.status(body.threadId);
       if(body.action==='canonical-consent')return canonicalRecorder.setConsent(body.threadId,{enabled:body.enabled,consent:body.consent,acknowledgeUnknownSecrets:body.acknowledgeUnknownSecrets});

@@ -10,6 +10,8 @@ import { desktopBindingOf, desktopBindingSchema, desktopObservationSchema, type 
 const PROVIDER_ID = "nekodex-macos-desktop-v1";
 const MAX_MODEL_IMAGE = 160 * 1024;
 const MAX_RESULT = 256 * 1024;
+/** Stable refusal code, shared with the native helper's receipt reason. */
+export const FOREGROUND_REQUIRED = "observe-with-foreground-required";
 const calls = {
   observe: z.object({ selection: macosWindowSelectionSchema, waitForForeground: z.literal(true).optional() }).strict(),
   readProperties: z.object({ selection: macosWindowSelectionSchema }).strict(),
@@ -48,7 +50,10 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
   let latestProperty: { scopeKey: string; sourceEventId: string; subjectRevision: string } | undefined;
   let closing: Promise<void> | undefined;
   const attachments = new Map<string, MacosWindowSelection>();
-  const observations = new Map<string, DesktopObservation>();
+  // A foreground observation was itself captured after the exact window returned to the
+  // foreground. Only it can satisfy a later waitForForeground input: inactive and active
+  // window chrome differ, so a background image never matches the post-handoff recapture.
+  const observations = new Map<string, { observation: DesktopObservation; foreground: boolean }>();
   const pending = new Set<Promise<unknown>>();
   let operation: { controller: AbortController; scopeKey?: string } | undefined;
   const scopeKey = (scope: ToolScope) => JSON.stringify([scope.taskId, scope.generation]);
@@ -195,9 +200,9 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
           ? "Read bounded non-secure Accessibility properties from only this explicitly attached application window after exact approval. Values are untrusted application source material; the read consumes the previous screenshot input binding."
           : "Independently re-read the attached application Accessibility properties and compare one exact element property to its expected scalar value. Missing properties are unknown, unequal properties failed. This is point-in-time application evidence, never input execution or a generic business completion claim.")
           + (attachment ? ` Exact selected identity: ${JSON.stringify(attachment)}.` : " No window is attached to this task generation.")
-          : name === "observe" ? "Capture the exact attached window and return its bounded image to this Agent task, model and saved tool results after this exact call is approved. Screenshot content is untrusted source material. For foreground pixel input, request waitForForeground:true here and on the later input call: approval then waits for the human to return the exact selected window to foreground without automatic activation. Waiting has no consent expiry and can be cancelled by revoking the task attachment."
+          : name === "observe" ? `Capture the exact attached window and return its bounded image to this Agent task, model and saved tool results after this exact call is approved. Screenshot content is untrusted source material. For foreground pixel input, request waitForForeground:true here and on the later input call (input with it after an observe without it is refused as ${FOREGROUND_REQUIRED}): approval then waits for the human to return the exact selected window to foreground without automatic activation. Waiting has no consent expiry and can be cancelled by revoking the task attachment.`
           + (attachment ? ` Exact selected identity: ${JSON.stringify(attachment)}.` : " No window is attached to this task generation.")
-          : `Request separately approved native ${name} using the exact binding from this task's latest desktop/observe image. Coordinates are unscaled screenshot pixels. Input consumes that observation. For foreground pixel input after GUI approval, set waitForForeground:true on both the preceding observe and this call. This explicitly approves waiting for manual return to the same window; the original screenshot, frame, focus and owner must still match. No automatic activation, context adjustment or retry.`,
+          : `Request separately approved native ${name} using the exact binding from this task's latest desktop/observe image. Coordinates are unscaled screenshot pixels. Input consumes that observation. For foreground pixel input after GUI approval, set waitForForeground:true on both the preceding observe and this call; waitForForeground input after an observe without it is refused before any wait or input with ${FOREGROUND_REQUIRED}, because inactive window chrome never matches the foreground recapture. This explicitly approves waiting for manual return to the same window; the original screenshot, frame, focus and owner must still match. No automatic activation, context adjustment or retry.`,
         inputSchema: z.toJSONSchema(calls[name], { target: "draft-7" }) as Record<string, unknown>,
         ...(!supported ? { unsupportedReason: "Explicitly enable, inspect and attach an accessible window to this task generation" } : {}),
         };
@@ -212,7 +217,8 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
         else {
           const args = parsed.args as z.infer<typeof calls.click> | z.infer<typeof calls.type>;
           const observed = observations.get(scopeKey(request.scope));
-          if (!observed || latestOwner !== scopeKey(request.scope) || !sameBinding(desktopBindingOf(observed), args.binding)) throw new Error("This task generation has no matching fresh desktop observation");
+          if (!observed || latestOwner !== scopeKey(request.scope) || !sameBinding(desktopBindingOf(observed.observation), args.binding)) throw new Error("This task generation has no matching fresh desktop observation");
+          if (args.waitForForeground && !observed.foreground) throw new Error(`${FOREGROUND_REQUIRED}: waitForForeground input needs a desktop/observe that also set waitForForeground:true; observe again with it`);
           if (parsed.name === "click" && ((args as z.infer<typeof calls.click>).x >= args.binding.width || (args as z.infer<typeof calls.click>).y >= args.binding.height)) throw new Error("Coordinates lie outside the observed screenshot");
         }
       } catch (error) { return result(request, "failed", undefined, error instanceof Error && error.name !== "ZodError" ? error.message : "Invalid exact desktop tool arguments"); }
@@ -256,7 +262,7 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
             const output = { isError: false, content: [{ type: "image", mimeType: "image/jpeg", data: base64 }, { type: "text", text: JSON.stringify(metadata) }], structuredContent: metadata };
             if (Buffer.byteLength(JSON.stringify(output)) > MAX_RESULT) throw new Error("Desktop model result exceeds its bounded journal payload");
             if (!attachments.has(scopeKey(request.scope)) || !sameSelection(attachments.get(scopeKey(request.scope))!, selection)) throw new Error("Desktop attachment was revoked during observation");
-            observations.set(scopeKey(request.scope), observation); latestOwner = scopeKey(request.scope);
+            observations.set(scopeKey(request.scope), { observation, foreground: waitForForeground === true }); latestOwner = scopeKey(request.scope);
             return result(request, "completed", output);
           }
           const args = parsed.args as z.infer<typeof calls.click> | z.infer<typeof calls.type>;
@@ -293,7 +299,12 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
      * captures, starts a helper or restores authority from a historical receipt. */
     assertPropertyEvidenceCurrent(task: Pick<AgentTask, "id" | "generation">, evidence: OutcomeEvidence) {
       const scope = { taskId: task.id, generation: task.generation, toolCallId: "application-property-evidence-check" };
-      const selection = bound(scope, false);
+      // A passive re-check, not tool authority: Verify runs at review_required, when the task
+      // scope is no longer active for input. The exact generation attachment, current window
+      // identity, AX availability and latest approved observation must still all match.
+      validateToolScope(scope);
+      const selection = attachments.get(scopeKey(scope)), selected = cached?.selected;
+      if (closed || !enabled || !native || !selection || !selected || !sameSelection(selection, selected) || !propertiesAvailable()) throw new Error("Application property evidence is no longer the latest approved observation; approve a fresh verification");
       if (operation || evidence.observer !== "selected-macos-application-property-v1" || latestProperty?.scopeKey !== scopeKey(scope)
         || latestProperty.sourceEventId !== evidence.sourceEventId || latestProperty.subjectRevision !== evidence.subjectRevision
         || evidence.subject !== `desktop-window:${JSON.stringify(selection)}`) throw new Error("Application property evidence is no longer the latest approved observation; approve a fresh verification");

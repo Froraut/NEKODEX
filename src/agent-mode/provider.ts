@@ -33,7 +33,8 @@ export interface LocalResponsesProviderOptions {
   selectedSkills?: (request: ExecutionRequest) => unknown[] | Promise<unknown[]>;
 }
 
-function endpoint(value: string): string {
+/** The only Responses URL an Agent worker or reviewer may use. */
+export function loopbackResponsesEndpoint(value: string): string {
   const url = new URL(value);
   if (url.protocol !== "http:" || !["127.0.0.1", "[::1]"].includes(url.hostname) || url.username || url.password || url.search || url.hash || url.pathname !== "/v1/responses") throw new Error("Agent provider must use the configured loopback Responses endpoint");
   return url.href;
@@ -48,7 +49,7 @@ export function createLocalResponsesExecutionPort(options: LocalResponsesProvide
       try {
         if (!configured || configured.provider !== "local-responses" || !agentModelAccepting(request.task, options.models())) throw new Error("Model is not configured");
         if (request.continuation?.source.kind === "owned-native") throw new Error("Native continuation cannot enter Web Responses");
-        url = endpoint(options.endpoint()); authorization = options.authorization?.(configured.model);
+        url = loopbackResponsesEndpoint(options.endpoint()); authorization = options.authorization?.(configured.model);
       } catch {
         return { receiptId: `not-sent:${request.dispatch.id}`, outcome: "not_sent", summary: "Agent provider configuration is unavailable; no request was sent.", actualSpend: 0 };
       }

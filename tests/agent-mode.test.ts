@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentModeRunner, AgentModeStore } from "../src/agent-mode";
 import type { AgentExecutionPort, AgentTask, CreateAgentTask, ExecutionResult, OutcomeReview } from "../src/agent-mode";
+import { recordSemanticPass } from "./semantic-review-fixture";
 
 const directories: string[] = [];
 const openStores: AgentModeStore[] = [];
@@ -59,6 +60,9 @@ describe("standalone durable Agent mode", () => {
     expect(() => store.verifyComplete(task.id, "review-0")).toThrow("not verified");
     current = store.recordEvidence(task.id, { id: "fact", taskRevision: 1, requirementId: "artifact", sourceEventId: "synthetic-check-event", subject: "synthetic-artifact", subjectRevision: "sha256:fixture", property: "exact contents", outcome: "passed", observer: "synthetic-fixture-observer" });
     store.recordReview(task.id, review(current, ["fact"]));
+    // One passing property with a clean local review is not verification of the deliverable.
+    expect(() => store.verifyComplete(task.id, "review-1")).toThrow("Current independent semantic review required");
+    expect(recordSemanticPass(store, task.id).current).toBe(true);
     expect(store.verifyComplete(task.id, "review-1").status).toBe("verified_complete");
     expect(open(path).getTask(task.id).status).toBe("verified_complete");
     expect(sends).toBe(2);

@@ -20,6 +20,7 @@ const { registerAgentMode } = require('./ipc/agent-mode.cjs');
 const { createLoopFileWatcherIntegration } = require('./loop-file-watcher-integration.cjs');
 const { registerAgentLoopProducers } = require('./ipc/agent-loop-producers.cjs');
 const { createCodexClientControl } = require('./codex-client-control.cjs');
+const { createCodexThreadHandoff } = require('./codex-thread-handoff.cjs');
 const { createAgentNativeBridge } = require('./agent-native-bridge.cjs');
 const { createAgentNativeDescriptorPublisher } = require('./agent-native-descriptor.cjs');
 const { createAgentRemoteDescriptorPublisher } = require('./agent-remote-descriptor.cjs');
@@ -171,6 +172,7 @@ const taskPlans = createTaskPlanStore({
 });
 let localWorkspaceService = null;
 let nativeClientControl = null;
+let nativeThreadHandoff = null;
 let agentNativeBridge = null;
 let agentNativeDescriptor = null;
 let agentRemoteDescriptor = null;
@@ -1202,6 +1204,16 @@ function registerIpc({ logger, stateStore }) {
     });
     return nativeClientControl;
   };
+  // Separate owned process per explicit handoff; never the metadata connection or a shared daemon.
+  const getNativeHandoff = () => {
+    nativeThreadHandoff ??= createCodexThreadHandoff({
+      executable: resolveCodexExecutable({ environment: process.env }),
+      codexHome: LAUNCHER_PROFILE.codexHome,
+      cwd: LAUNCHER_PROFILE.codexHome,
+      journalPath: path.join(CORE_HOME, 'native-thread-control', 'handoffs.json'),
+    });
+    return nativeThreadHandoff;
+  };
   const canonicalRecorder = createCanonicalNativeHistoryRecorder({
     sourceId: createHash('sha256').update(JSON.stringify({
       kind: 'native-codex', profile: LAUNCHER_PROFILE.codexHome, transport: 'owned-stdio-server',
@@ -1313,10 +1325,10 @@ function registerIpc({ logger, stateStore }) {
     },
   });
   registerExternalUsageIpc({ handle, service: externalUsageService });
-  registerCodexClientControlIpc({ handle, getClient: getNativeClient });
+  registerCodexClientControlIpc({ handle, getClient: getNativeClient, getHandoff: getNativeHandoff });
   registerLifecycleParticipant('native-thread-control', {
-    currentOperation: () => nativeClientControl?.currentOperation?.() ?? null,
-    destroy: async () => { await nativeClientControl?.destroy(); },
+    currentOperation: () => nativeThreadHandoff?.currentOperation?.() ?? nativeClientControl?.currentOperation?.() ?? null,
+    destroy: async () => { await Promise.all([nativeThreadHandoff?.destroy(), nativeClientControl?.destroy()]); },
   });
   registerLifecycleParticipant('agent-native', {
     currentOperation: () => persistentNativeConversations?.currentOperation()

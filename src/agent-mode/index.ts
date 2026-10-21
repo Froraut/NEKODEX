@@ -5,6 +5,8 @@ export { AgentModeRuntime } from "./runtime";
 export { createAgentModeRoutes } from "./http";
 export { createLocalResponsesExecutionPort, createAgentExecutionRouter, agentModelConfigured, agentModelAccepting } from "./provider";
 export { createOwnedNativeExecutionPort } from "./native-provider";
+export { buildSemanticReviewPacket, normalizeSemanticReview, semanticFactClass, semanticRequirementBasis, createResponsesSemanticReviewPort, SEMANTIC_REVIEW_PROTOCOL, SEMANTIC_REVIEW_INSTRUCTIONS, SemanticReviewOutputError } from "./semantic-review";
+export type { SemanticReviewPacket, SemanticReviewInput, ResponsesSemanticReviewOptions } from "./semantic-review";
 export * from "./native-protocol";
 export type { OwnedNativeExecutionPortOptions } from "./native-provider";
 export { buildAgentToolContinuationInput, AgentToolImageProjectionError } from "./tool-images";

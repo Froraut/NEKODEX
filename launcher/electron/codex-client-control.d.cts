@@ -32,6 +32,13 @@ export interface CodexForkAction {
   reasonCode: string | null;
   observedForkId: string | null;
 }
+/** Observed stored-attachment identities (type + identity key) after a fork. Counts only. */
+export interface CodexForkAttachmentParity {
+  state: 'matched' | 'missing' | 'partial' | 'unavailable' | 'unsupported';
+  source: number | null;
+  fork: number | null;
+  missing: number | null;
+}
 export interface CodexConversationMessage {
   messageId: string;
   turnId: string;
@@ -81,7 +88,7 @@ export interface CodexClientControl {
   /** Call only from a guarded, explicit user action. No turn starts or approval overrides. */
   forkThread(params: { threadId: string; lastTurnId?: string; userInitiated: true }): Promise<{
     thread: CodexThreadMetadata; actionId: string; sourceThreadId: string; lastTurnId: string | null;
-    executionStarted: false; statusScope: CodexStatusScope }>;
+    executionStarted: false; attachments: CodexForkAttachmentParity; statusScope: CodexStatusScope }>;
   acknowledgeFork(params: { actionId: string; threadId: string; confirmedInspection: true }): CodexClientControlSnapshot;
   /** Awaits the owned client process closing. Never stops an existing server daemon. */
   destroy(): Promise<void>;

@@ -3,13 +3,15 @@ import { createHash, randomUUID } from "node:crypto";
 import { createAgentDesktopToolsProvider } from "../src/browser-companion/agent-desktop-tools";
 import { createMacosDesktopProvider, type NativeDesktopTransport } from "../src/browser-companion/macos-desktop";
 import { projectNativeToolImages } from "../src/agent-mode/native-images";
-import { desktopPropertyReference, desktopPropertyRequirement, resolveDesktopPropertyEvidence } from "../src/browser-companion/desktop-outcome";
+import { assertSemanticDesktopCitationsCurrent, desktopPropertyReference, desktopPropertyRequirement, resolveDesktopPropertyEvidence } from "../src/browser-companion/desktop-outcome";
 import type { AgentTask } from "../src/agent-mode/types";
 import type { ToolScope } from "../src/agent-tools/types";
 
 test("desktop controller is passive/off until explicit controls and binds bounded image/input to one task generation", async () => {
   const scope: ToolScope = { taskId: "controller-task", generation: 1, toolCallId: "observe-1" };
   const calls: string[] = []; let creates = 0, enabled = false, selected = false, closed = 0, activeGeneration = 1;
+  // False models review_required: same generation, no active input scope.
+  let scopeActive = true;
   let observedForegroundMode: unknown, dispatchedAction: unknown;
   let expire = false, failNextStatus = false, corruptNextImage = false, pendingOperation: { id: string; binding: unknown } | undefined, late: unknown;
   const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0, 8, 8, 0, 1, 0, 1, 0, 0xff, 0xd9]);
@@ -50,7 +52,7 @@ test("desktop controller is passive/off until explicit controls and binds bounde
     readExistingReceipt(id, binding) { return pendingOperation?.id === id && JSON.stringify(binding) === JSON.stringify(pendingOperation.binding) ? late : undefined; },
     async close() { closed++; },
   };
-  const controller = createAgentDesktopToolsProvider({ platform: "darwin", isScopeActive: current => current.generation === activeGeneration,
+  const controller = createAgentDesktopToolsProvider({ platform: "darwin", isScopeActive: current => scopeActive && current.generation === activeGeneration,
     createProvider: () => { creates++; return createMacosDesktopProvider({ helperExecutable: "/unlaunched-controller-fixture", helperSha256: "f".repeat(64), platform: "darwin",
       isScopeActive: current => current.generation === activeGeneration, transportFactory: () => transport }); } });
   let sequence = 0;
@@ -98,6 +100,19 @@ test("desktop controller is passive/off until explicit controls and binds bounde
     const evidence = resolveDesktopPropertyEvidence(task, reference, lookup);
     expect(evidence.outcome).toBe("passed");
     expect(() => controller.assertPropertyEvidenceCurrent(task, evidence)).not.toThrow();
+    // Verify runs at review_required: the passive re-check must not need an active input scope.
+    scopeActive = false;
+    expect(() => controller.assertPropertyEvidenceCurrent(task, evidence)).not.toThrow();
+    expect(() => controller.assertPropertyEvidenceCurrent({ ...task, generation: task.generation + 1 }, evidence)).toThrow("latest approved observation");
+    // A current semantic review citing the exact receipt for a prose requirement gets the same re-check.
+    const reviewed = { ...task, requirements: [{ id: "prose", text: "The counter reads the expected value." }], semanticReview: { inputDigest: "digest", generation: task.generation, taskRevision: 1,
+      requirements: [{ requirementId: "prose", verdict: "pass", toolReceiptIds: [verified.idempotencyKey, "failed-receipt"] }, { requirementId: "other", verdict: "unknown", toolReceiptIds: ["unknown-receipt"] }] } } as unknown as AgentTask;
+    const other = (key: string, state: "failed" | "outcome_unknown") => ({ ...structuredClone(verified), idempotencyKey: key, state, result: undefined });
+    const citations = (digest: string) => assertSemanticDesktopCitationsCurrent(reviewed, { currentDigest: digest,
+      lookup: key => key === verified.idempotencyKey ? verified : key === "failed-receipt" ? other(key, "failed") : key === "unknown-receipt" ? other(key, "outcome_unknown") : undefined,
+      assertCurrent: fact => controller.assertPropertyEvidenceCurrent(reviewed, fact) });
+    expect(() => citations("digest")).not.toThrow();
+    scopeActive = true;
     expect(() => resolveDesktopPropertyEvidence({ ...task, requirements: [{ id: "property-requirement", text: "Complete the business process" }] }, reference, lookup)).toThrow("explicitly request");
     expect(() => resolveDesktopPropertyEvidence({ ...task, generation: 2 }, reference, lookup)).toThrow("generation");
     expect(() => desktopPropertyReference({ ...verified, tool: "desktop/type" }, "property-requirement")).toThrow("input receipt");
@@ -106,6 +121,11 @@ test("desktop controller is passive/off until explicit controls and binds bounde
     propertyValue = "Application did not save";
     expect((await invoke("verifyProperty", { selection, expectation })).result).toMatchObject({ structuredContent: { verification: { outcome: "failed", actual: propertyValue } } });
     expect(() => controller.assertPropertyEvidenceCurrent(task, evidence)).toThrow("latest approved observation");
+    scopeActive = false; // a drifted fact stays refused at review_required too
+    expect(() => controller.assertPropertyEvidenceCurrent(task, evidence)).toThrow("latest approved observation");
+    expect(() => citations("digest")).toThrow("latest approved observation");
+    expect(() => citations("stale-review-digest")).not.toThrow(); // a stale review is refused by its digest at Verify instead
+    scopeActive = true;
     expect((await invoke("verifyProperty", { selection, expectation: { ...expectation, elementId: "missing" } })).result).toMatchObject({ structuredContent: { verification: { outcome: "unknown", actual: null } } });
     screenGranted = false; await controller.inspectPermissions(true);
     const axOnly = await controller.discover(scope);
@@ -124,7 +144,18 @@ test("desktop controller is passive/off until explicit controls and binds bounde
     const foregroundBinding = (foreground.result as any).structuredContent.binding;
     expect((await invoke("click", { binding: foregroundBinding, x: 0, y: 0, waitForForeground: true })).state).toBe("completed");
     expect(dispatchedAction).toEqual({ kind: "click", x: 0, y: 0, waitForForeground: true });
-    const fresh = await invoke("observe", { selection });
+    // A background observation can never match the post-handoff foreground recapture
+    // (inactive vs active window chrome), so waitForForeground input refuses it early.
+    const background = await invoke("observe", { selection });
+    const backgroundBinding = (background.result as any).structuredContent.binding;
+    const actsBeforeRefusal = calls.filter(row => row === "act").length;
+    const refused = await invoke("click", { binding: backgroundBinding, x: 0, y: 0, waitForForeground: true });
+    expect(refused.state).toBe("failed");
+    expect(JSON.stringify(refused)).toContain("observe-with-foreground-required");
+    expect(calls.filter(row => row === "act")).toHaveLength(actsBeforeRefusal);
+    const description = (await controller.discover(scope)).find(row => row.id === "desktop/click")?.description;
+    expect(description).toContain("observe-with-foreground-required");
+    const fresh = await invoke("observe", { selection, waitForForeground: true });
     const freshBinding = (fresh.result as any).structuredContent.binding;
     expire = true;
     const request = { scope: { ...scope, toolCallId: "retained-call" }, tool: "desktop/type", arguments: { binding: freshBinding, text: "offered text", waitForForeground: true }, idempotencyKey: "retained-exact-desktop-op" };

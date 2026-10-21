@@ -52,7 +52,7 @@ test('bounded workers join dependencies and preserve sibling human wait until an
     expect(requests[2]!.messages.some(row => row.sender === 'user' && row.text.includes('17'))).toBe(true);
     expect(f.store.getTask('task').status).toBe('review_required');
     f.runtime.review('task', 'review'); expect(f.store.getTask('task').review!.findings).toHaveLength(1);
-    expect(() => f.runtime.verify('task', 'verify', f.store.getTask('task').review!.id)).toThrow('Current complete');
+    expect(() => f.runtime.verify('task', 'verify', f.store.getTask('task').review!.id)).toThrow('Requirement outcome is not verified');
     expect(f.runtime.step('task', 'new-run', run).duplicate).toBe(true); expect(requests).toHaveLength(4);
   } finally { first.resolve(done('cleanup-a')); second.resolve(done('cleanup-b')); await f.close(); }
 }, 5000);
