@@ -12,7 +12,8 @@ login, arbitrary RPC or arbitrary executable renderer API.
 client's thread. It is a separate service with its own owned process per explicit
 action; see [Exclusive cooperative handoff](#exclusive-cooperative-handoff). Both
 use the shared transport `codex-app-server-connection.cjs`, which owns exactly one
-child process and refuses every server request.
+child process and never grants a server request: the metadata client refuses every
+one, and the handoff declines only its own thread's approval requests.
 
 ## Protocol evidence
 
@@ -34,6 +35,18 @@ official source and tests at tag `rust-v0.163.0` (commit `129b8ec7`):
 {thread_processor,thread_lifecycle}.rs`, `outgoing_message.rs`,
 `bespoke_event_handling.rs`, the app-server `README.md` and the suites
 `tests/suite/v2/{thread_resume,thread_unsubscribe,thread_unload}.rs`.
+
+After the DW2 live acceptance on 6.1.33-nekodex.4 the same binary and tag were
+checked for the service tier and approval answers: the generated
+`ThreadResumeParams.serviceTier`, `ThreadResumeResponse.serviceTier`, the
+`*ApprovalDecision`, `PermissionsRequestApprovalResponse` and
+`McpServerElicitationRequestResponse` types; `thread_processor.rs`,
+`persisted_resume_settings.rs`, `core/src/config/mod.rs`,
+`core/src/session/{mod,thread_settings}.rs`, `bespoke_event_handling.rs` and
+`core/src/mcp_tool_call.rs`. An offline probe with a disposable home (global
+`service_tier = "flex"`, a thread started with `serviceTier: "default"`) showed
+that a resume without `serviceTier` reports and records `flex`, `"default"` keeps
+`default`, and `null` resolves to `default`.
 
 The generated public types confirm `initialize`, `thread/list`, `thread/read`
 with `includeTurns: false`, and `thread/fork` with `excludeTurns: true`.
@@ -214,11 +227,29 @@ Codex home (never `proxy`, never the metadata connection):
    blocks until acknowledged.
 2. `thread/read` (`includeTurns: false`) binds the exact thread. Subagent and
    ephemeral threads are refused: their parent owns them.
-3. `thread/resume { threadId, excludeTurns: true }` with no overrides, so the
-   thread keeps its persisted model, approval policy and sandbox. The writer-lock
-   refusal becomes the known `handoff_owner_active` (journal `refused`), with
-   nothing sent. The response must report the thread `idle`: `turn/start` on an
-   active thread would steer someone else's turn.
+3. `thread/resume { threadId, excludeTurns: true, serviceTier }`. Codex 0.163
+   restores the persisted model, reasoning effort, approval policy and sandbox by
+   itself. Without `serviceTier` it applies the profile's configured
+   `service_tier` instead of the thread's own and checkpoints that into the
+   thread's settings at resume (`thread_resume_inner`, `Config` service-tier
+   override handling). No stable method reports a non-loaded thread's own tier, so
+   `codex-rollout-settings.cjs` reads it, read-only, from the latest
+   `thread_settings_applied` snapshot that the thread owns (`thread_id` equals the
+   thread; copied snapshots keep their source's ID) in the rollout at
+   `thread.path`. The file must be a regular, non-symlinked
+   `rollout-…-<thread>.jsonl` inside `sessions/` or `archived_sessions/` of the
+   configured home. It is read backwards in 1 MiB chunks, and lines over 16 MiB
+   are skipped unparsed. A snapshot without a tier, or a thread that never
+   recorded one, is resumed with `serviceTier: null`, which Codex resolves to its
+   standard `default` tier; the global default is never applied. An unreadable
+   path or snapshot fails before the resume (`handoff_settings_unconfirmed`,
+   journal `failed/settings_unreadable`). No other override is sent. The
+   writer-lock refusal becomes the known `handoff_owner_active` (journal
+   `refused`), with nothing sent. The response must report the thread `idle`:
+   `turn/start` on an active thread would steer someone else's turn. It must also
+   report the requested tier (`null` and `default` both mean the standard tier);
+   otherwise the handoff refuses with nothing sent (`handoff_settings_unconfirmed`,
+   journal `refused/service_tier_changed`).
 4. Journal `dispatching` durably, then send the only mutation: `turn/start` with
    one text input. An authoritative rejection is a known failure; a lost or
    invalid receipt is `unknown` and is never replayed.
@@ -229,10 +260,23 @@ Codex home (never `proxy`, never the metadata connection):
 6. Close the child, which releases the writer. A close that does not settle is
    `release_unconfirmed` (unknown).
 
-Server requests (command/file/permission approvals, user input, elicitations,
-token refresh) receive method-not-found. Codex settles a client error as a
-denied/failed request (`on_command_execution_request_approval_response`), so
-commands that need approval do not run; the receipt counts refused requests.
+Approval requests of the handed-off thread receive the protocol's user decline
+(`codex app-server generate-ts`, `bespoke_event_handling.rs` and
+`mcp_tool_call.rs` at `rust-v0.163.0`):
+
+| Server request | Answer | Codex records |
+| --- | --- | --- |
+| `item/commandExecution/requestApproval` | `{ decision: "decline" }` | denied "rejected by user", item `declined`, turn continues |
+| `item/fileChange/requestApproval` | `{ decision: "decline" }` | denied "rejected by user", turn continues |
+| `item/permissions/requestApproval` | `{ permissions: {}, scope: "turn" }` | nothing granted |
+| `mcpServer/elicitation/request` | `{ action: "decline", content: null, _meta: null }` | declined; an MCP tool approval is "user rejected MCP tool call" |
+
+`cancel` is not used: it would interrupt the turn. Every other server request
+(user input, dynamic tool calls, auth token refresh, attestation, legacy v1
+approvals, unknown methods, and approvals of any other thread) receives
+method-not-found, which Codex settles as a failed request ("approval request
+failed" before this change). Commands that need approval therefore do not run;
+the receipt's `approvalsRefused` counts declined and refused requests together.
 The journal stores identities, phases, turn ID/status and counts only, never
 prompt or reply text. A restart turns `acquiring`/`held` records into `failed`
 (`process_restarted_before_send`) and later phases into `unknown`. Quitting during
@@ -303,14 +347,16 @@ messages or private error data. No mutation is replayed.
 Transport lines, concurrent requests and request duration are bounded. Responses
 are correlated by unique IDs and can arrive out of order. Stderr and unrelated
 notifications are drained without logging their content. Server requests receive
-method-not-found; this metadata client cannot grant native permissions or
-provide authentication refresh tokens.
+method-not-found; this metadata client owns no turn, never declines on another
+client's behalf, and cannot grant native permissions or provide authentication
+refresh tokens.
 
 ## Focused verification
 
 ```sh
 bun test tests/codex-client-control.test.ts
 bun test tests/codex-thread-handoff.test.ts
+bun test tests/codex-rollout-settings.test.ts
 bun test tests/conversation-history-canonical.test.ts
 node tests/fixtures/codex-client-control-offline.cjs /Users/alex/.local/bin/codex
 node tests/fixtures/codex-client-control-offline.cjs /Users/alex/.local/bin/codex --canonical-only
@@ -331,7 +377,11 @@ durable exact fork receipts, pre-dispatch storage refusal, and retention of an
 actually observed provider ID when a post-response storage write fails.
 
 The handoff suite drives fake official children: success with resume/turn payloads
-exactly as above, a refused approval, last-message selection and child close;
+exactly as above, a declined approval, last-message selection and child close;
+the decline answers for this thread's four approval kinds and method-not-found for
+other threads and every other or unknown request; the recorded, missing and legacy
+tiers against a stand-in that would apply the global default; refusal when Codex
+reports another tier or the rollout path is missing or outside the session store;
 the exact writer-lock refusal with no `turn/start`; non-idle and subagent refusals;
 a lost `turn/start` receipt that stays unknown, blocks that thread and other
 handoffs until acknowledged, and is never resent; own-turn interruption and an
@@ -362,7 +412,11 @@ acquired the thread, sent one turn, interrupted its own unsettled turn at the
 20-second bound (`interrupted`), and closed its child. A fresh official process
 then resumed the thread successfully, proving the writer was released; no
 handoff stayed uncertain. No credentials, real account history or installed app
-were involved.
+were involved. The profile sets a global `service_tier = "flex"` and the thread
+starts with its own `default`: every settings snapshot the thread owns after the
+handoff is still `default`, while the fresh process's plain resume records `flex`.
+Run against the previous handoff (resume without `serviceTier`), the same route
+fails with snapshots `default`, `flex`.
 
 The separate `--canonical-only` route does not repeat the fork flow. It starts
 one disposable empty thread, injects inert synthetic user/assistant Responses

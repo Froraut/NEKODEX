@@ -1,11 +1,15 @@
 const { createCodexAppServerConnection, absolute, record, error } = require('./codex-app-server-connection.cjs');
 const { createCodexHandoffJournal } = require('./codex-handoff-journal.cjs');
+const { readRecordedServiceTier } = require('./codex-rollout-settings.cjs');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TURN_ID = /^[^\u0000-\u001f]{1,128}$/;
 const MAX_TEXT_BYTES = 32 * 1024;
 const MAX_REPLY_BYTES = 128 * 1024;
 const TERMINAL = ['completed', 'interrupted', 'failed'];
+// Codex reports an explicit `null` tier as its standard `default` tier.
+const standardTier = tier => tier === null || tier === 'default';
+const sameServiceTier = (requested, reported) => requested === reported || (standardTier(requested) && standardTier(reported));
 
 function text(value) {
   if (typeof value !== 'string' || !value.trim() || Buffer.byteLength(value) > MAX_TEXT_BYTES || value.includes('\0')) {
@@ -30,8 +34,10 @@ function bounded(value) {
  * writer` until the current owner unloads the thread or exits. This service owns a
  * dedicated `codex app-server --stdio` child per explicit action: acquire (resume),
  * send exactly one turn, await its terminal state, then close the child, which
- * releases the writer for the external client. It never retries, never steers an
- * active turn and refuses every server request (approvals fail closed). */
+ * releases the writer for the external client. The resume carries the thread's own
+ * recorded service tier, so the profile's global default is never applied. It never
+ * retries, never steers an active turn, declines that thread's approval requests and
+ * refuses every other server request (approvals fail closed). */
 function createCodexThreadHandoff({ executable, codexHome, journalPath, cwd, environment = process.env,
   spawnProcess, terminateProcess, requestTimeoutMs = 30_000, turnTimeoutMs = 30 * 60_000,
   interruptGraceMs = 30_000, stopGraceMs = 10_000 } = {}) {
@@ -50,7 +56,7 @@ function createCodexThreadHandoff({ executable, codexHome, journalPath, cwd, env
       available: Boolean(journal) && !destroyed,
       transport: 'owned-stdio-server',
       exclusivity: 'codex-thread-writer-lock',
-      approvals: 'refused',
+      approvals: 'declined',
       active: current ? { actionId: current.actionId, threadId: current.threadId, phase: current.phase } : null,
       uncertainHandoffs: journal?.snapshot() || [],
       errorCode: lastError,
@@ -70,8 +76,9 @@ function createCodexThreadHandoff({ executable, codexHome, journalPath, cwd, env
     let turnId = null, approvalsRefused = 0, wake = null, sent = false;
     const signal = () => { const resolve = wake; wake = null; resolve?.(); };
     const connection = createCodexAppServerConnection({ executable, codexHome, cwd, environment,
-      requestTimeoutMs, stopGraceMs, clientName: 'nekodex-thread-handoff',
+      requestTimeoutMs, stopGraceMs, clientName: 'nekodex-thread-handoff', declineApprovalsFor: threadId,
       ...(spawnProcess ? { spawnProcess } : {}), ...(terminateProcess ? { terminateProcess } : {}),
+      // Counts every request that was not granted: declined approvals and refused other requests.
       onServerRequest: () => { approvalsRefused++; },
       onNotification: (method, params) => {
         if (!params || params.threadId !== threadId) return;
@@ -119,10 +126,18 @@ function createCodexThreadHandoff({ executable, codexHome, journalPath, cwd, env
       if (typeof read.thread.parentThreadId === 'string' || read.thread.ephemeral === true) {
         settle('refused', 'not_a_root_thread'); throw error('handoff_subagent_thread', 'Only a persisted root thread can be handed off');
       }
+      // Codex restores the persisted model, approval policy and sandbox by itself, but resumes with
+      // the profile's configured service tier. Pass the tier this thread last recorded instead; one
+      // that never recorded a tier gets Codex's standard tier, never the global default.
+      let serviceTier;
+      try { ({ serviceTier } = await readRecordedServiceTier({ codexHome, rolloutPath: read.thread.path, threadId })); }
+      catch {
+        settle('failed', 'settings_unreadable');
+        throw error('handoff_settings_unconfirmed', 'Codex did not report the thread settings; nothing was sent');
+      }
       let resumed;
       try {
-        // No overrides: the thread keeps its persisted model, approval policy and sandbox.
-        resumed = await connection.request('thread/resume', { threadId, excludeTurns: true });
+        resumed = await connection.request('thread/resume', { threadId, excludeTurns: true, serviceTier });
       } catch (reason) {
         if (reason.writerOwned) {
           settle('refused', 'owner_active');
@@ -142,6 +157,11 @@ function createCodexThreadHandoff({ executable, codexHome, journalPath, cwd, env
       if (resumed.thread.status.type !== 'idle') {
         // turn/start on an active thread would steer someone else's turn.
         settle('refused', 'thread_not_idle'); throw error('handoff_thread_not_idle', 'The thread is not idle in the exclusive owner');
+      }
+      if (!sameServiceTier(serviceTier, resumed.serviceTier)) {
+        // Codex ignored or could not apply the thread's own tier; never send under another one.
+        settle('refused', 'service_tier_changed');
+        throw error('handoff_settings_unconfirmed', 'Codex would not keep the thread service tier; nothing was sent');
       }
       phase('held');
       phase('dispatching'); // Durable before the only mutation; a lost reply is never replayed.

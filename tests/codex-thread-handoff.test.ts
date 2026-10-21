@@ -2,9 +2,9 @@ import { afterEach, expect, test } from 'bun:test';
 import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 const require = createRequire(import.meta.url);
 const { createCodexThreadHandoff } = require('../launcher/electron/codex-thread-handoff.cjs');
 const { registerCodexClientControlIpc } = require('../launcher/electron/ipc/codex-client-control.cjs');
@@ -15,15 +15,28 @@ const TURN = '0199a001-0000-7000-8000-0000000000aa';
 const directories: string[] = [];
 afterEach(() => { while (directories.length) rmSync(directories.pop()!, { recursive: true, force: true }); });
 
+/** One rollout settings snapshot as Codex 0.163 writes it; `undefined` tier = none recorded. */
+const settingsLine = (threadId: string, serviceTier?: string | null) => JSON.stringify({ timestamp: '2026-10-21T10:00:00Z',
+  ordinal: 1, type: 'event_msg', payload: { type: 'thread_settings_applied', thread_id: threadId,
+    thread_settings: { model: 'gpt-test', approval_policy: 'never', ...(serviceTier === undefined ? {} : { service_tier: serviceTier }) } } });
+const sessionMeta = JSON.stringify({ timestamp: '2026-10-21T10:00:00Z', ordinal: 0, type: 'session_meta', payload: { id: ROOT } });
+/** The thread recorded `default` itself; a later snapshot copied from another thread does not count. */
+const ROLLOUT = [sessionMeta, settingsLine(ROOT, 'flex'), settingsLine(ROOT, 'default'), settingsLine(CHILD, 'ultrafast'), ''].join('\n');
+
 type Handler = (message: any, child: any) => void;
 /** Each explicit action spawns its own fake official app-server child. */
 function fixture(handlers: Record<string, Handler>, options: any = {}) {
   const directory = options.directory || mkdtempSync(join(tmpdir(), 'nekodex-handoff-test-'));
   if (!options.directory) directories.push(directory);
+  const codexHome = join(directory, 'codex');
+  const rollout = join(codexHome, 'sessions', '2026', '10', '21', `rollout-2026-10-21T10-00-00-${ROOT}.jsonl`);
+  mkdirSync(dirname(rollout), { recursive: true });
+  if (!options.directory || options.rollout !== undefined) writeFileSync(rollout, options.rollout ?? ROLLOUT);
   const received: any[] = [], launches: any[] = [], children: any[] = [];
   const spawn = (...args: any[]) => {
     launches.push(args);
     const child: any = new EventEmitter();
+    child.rollout = rollout;
     child.stdout = new PassThrough(); child.stderr = new PassThrough();
     child.respond = (message: any, result: any) => child.stdout.write(`${JSON.stringify({ id: message.id, result })}\n`);
     child.reject = (message: any, code: number, text = 'private provider details') =>
@@ -38,7 +51,7 @@ function fixture(handlers: Record<string, Handler>, options: any = {}) {
         const message = JSON.parse(input.slice(0, newline)); input = input.slice(newline + 1);
         received.push(message);
         if (message.method === 'initialize') queueMicrotask(() => child.respond(message, {
-          userAgent: 'codex-cli/0.163.0', codexHome: '/fixture/codex' }));
+          userAgent: 'codex-cli/0.163.0', codexHome }));
         else if (message.method && handlers[message.method]) queueMicrotask(() => handlers[message.method]!(message, child));
       }
       callback();
@@ -47,26 +60,29 @@ function fixture(handlers: Record<string, Handler>, options: any = {}) {
     children.push(child);
     return child;
   };
-  const handoff = createCodexThreadHandoff({ executable: '/fixture/codex-bin', codexHome: '/fixture/codex',
+  const handoff = createCodexThreadHandoff({ executable: '/fixture/codex-bin', codexHome,
     journalPath: join(directory, 'native-thread-control', 'handoffs.json'),
     environment: { PATH: '/fixture/bin', CODEX_THREAD_ID: CHILD }, requestTimeoutMs: 500, stopGraceMs: 5,
     turnTimeoutMs: 2000, interruptGraceMs: 200, ...options.config,
     spawnProcess: spawn, terminateProcess: (child: any) => child.close() });
   const journal = () => JSON.parse(readFileSync(join(directory, 'native-thread-control', 'handoffs.json'), 'utf8'));
-  return { handoff, received, launches, children, directory, journal };
+  return { handoff, received, launches, children, directory, journal, rollout };
 }
 const root = (extra: any = {}) => ({ id: ROOT, parentThreadId: null, ephemeral: false, status: { type: 'notLoaded' }, ...extra });
-const readRoot: Handler = (message, child) => child.respond(message, { thread: root() });
+const readRoot: Handler = (message, child) => child.respond(message, { thread: root({ path: child.rollout }) });
+/** Codex reports the tier it actually applied; by default the one the handoff requested. */
 const resumeIdle: Handler = (message, child) => child.respond(message, { thread: root({ status: { type: 'idle' } }),
-  model: 'gpt-test', instructionSources: ['/private/AGENTS.md'] });
+  model: 'gpt-test', serviceTier: message.params.serviceTier ?? 'default', instructionSources: ['/private/AGENTS.md'] });
 const methods = (received: any[]) => received.map(row => row.method).filter(Boolean);
+const serverRequest = (child: any, id: number, method: string, params: any) =>
+  child.stdout.write(`${JSON.stringify({ method, id, ...(params === undefined ? {} : { params }) })}\n`);
 
-test('exclusive handoff resumes without overrides, sends one turn, refuses approvals and releases the writer', async () => {
+test('exclusive handoff resumes with the thread\'s own tier, sends one turn, declines approvals and releases the writer', async () => {
   const f = fixture({ 'thread/read': readRoot, 'thread/resume': resumeIdle,
     'turn/start': (message, child) => {
       child.respond(message, { turn: { id: TURN, status: 'inProgress', items: [] } });
       setTimeout(() => {
-        child.stdout.write(`${JSON.stringify({ method: 'item/commandExecution/requestApproval', id: 77, params: { threadId: ROOT, command: 'private' } })}\n`);
+        serverRequest(child, 77, 'item/commandExecution/requestApproval', { threadId: ROOT, turnId: TURN, itemId: 'c1', command: 'private' });
         child.notify('item/completed', { threadId: ROOT, turnId: TURN, completedAtMs: 1, item: { type: 'agentMessage', id: 'm1', text: 'commentary' } });
         child.notify('item/completed', { threadId: CHILD, turnId: TURN, completedAtMs: 1, item: { type: 'agentMessage', id: 'x', text: 'other thread' } });
         child.notify('item/completed', { threadId: ROOT, turnId: TURN, completedAtMs: 2, item: { type: 'agentMessage', id: 'm2', text: 'Final reply' } });
@@ -84,22 +100,107 @@ test('exclusive handoff resumes without overrides, sends one turn, refuses appro
     approvalsRefused: 1, released: true, executionOwner: 'released', assistantText: 'Final reply', assistantTextTruncated: false });
   expect(methods(f.received)).toEqual(['initialize', 'initialized', 'thread/read', 'thread/resume', 'turn/start']);
   const resume = f.received.find(row => row.method === 'thread/resume');
-  expect(resume.params).toEqual({ threadId: ROOT, excludeTurns: true });
+  // Only the tier is passed: Codex keeps the persisted model, approval policy and sandbox itself.
+  expect(resume.params).toEqual({ threadId: ROOT, excludeTurns: true, serviceTier: 'default' });
   const start = f.received.find(row => row.method === 'turn/start');
   expect(start.params).toEqual({ threadId: ROOT, input: [{ type: 'text', text: 'Continue the plan', text_elements: [] }] });
-  expect(f.received.find(row => row.id === 77)).toEqual({ id: 77, error: { code: -32601, message: 'This client does not handle server requests' } });
+  expect(f.received.find(row => row.id === 77)).toEqual({ id: 77, result: { decision: 'decline' } });
   // A dedicated owned stdio child per action, never a proxy to a shared daemon; closed afterwards.
   expect(f.launches).toHaveLength(1);
   expect(f.launches[0][1]).toEqual(['app-server', '--stdio']);
   expect(f.launches[0][2].env.CODEX_THREAD_ID).toBeUndefined();
   expect(f.children[0].closed).toBe(true);
   expect(f.handoff.currentOperation()).toBeNull();
-  expect(f.handoff.snapshot()).toMatchObject({ available: true, exclusivity: 'codex-thread-writer-lock', approvals: 'refused',
+  expect(f.handoff.snapshot()).toMatchObject({ available: true, exclusivity: 'codex-thread-writer-lock', approvals: 'declined',
     active: null, uncertainHandoffs: [] });
   const saved = f.journal();
   expect(saved.records[0]).toMatchObject({ threadId: ROOT, state: 'completed', phase: 'released', turnId: TURN,
     turnStatus: 'completed', approvalsRefused: 1 });
   expect(JSON.stringify(saved)).not.toMatch(/Continue the plan|Final reply|private/);
+});
+
+test('only this thread\'s approval requests get the protocol decline; every other server request is refused', async () => {
+  const own = { threadId: ROOT, turnId: TURN, itemId: 'i1' };
+  const requests: [string, any][] = [
+    ['item/commandExecution/requestApproval', own],
+    ['item/fileChange/requestApproval', own],
+    ['item/permissions/requestApproval', { ...own, permissions: { network: null, fileSystem: null } }],
+    ['mcpServer/elicitation/request', { threadId: ROOT, turnId: TURN, serverName: 'fixture', mode: 'form' }],
+    ['item/commandExecution/requestApproval', { ...own, threadId: CHILD }],
+    ['item/fileChange/requestApproval', undefined],
+    ['item/tool/requestUserInput', own],
+    ['item/tool/call', own],
+    ['account/chatgptAuthTokens/refresh', { reason: 'unauthorized' }],
+    ['attestation/generate', own],
+    ['execCommandApproval', { conversationId: ROOT, callId: 'legacy' }],
+    ['constructor', own], ['__proto__', own], ['future/requestApproval', own],
+  ];
+  const f = fixture({ 'thread/read': readRoot, 'thread/resume': resumeIdle,
+    'turn/start': (message, child) => {
+      child.respond(message, { turn: { id: TURN, status: 'inProgress', items: [] } });
+      setTimeout(() => {
+        requests.forEach(([method, params], index) => serverRequest(child, 100 + index, method, params));
+        child.notify('turn/completed', { threadId: ROOT, turn: { id: TURN, status: 'completed', items: [] } });
+      }, 5);
+    } });
+  const receipt = await f.handoff.continueThread({ threadId: ROOT, text: 'probe approvals', userInitiated: true });
+  const answer = (index: number) => { const { id, ...rest } = f.received.find(row => row.id === 100 + index && !row.method); return rest; };
+  expect(answer(0)).toEqual({ result: { decision: 'decline' } });
+  expect(answer(1)).toEqual({ result: { decision: 'decline' } });
+  expect(answer(2)).toEqual({ result: { permissions: {}, scope: 'turn' } });
+  expect(answer(3)).toEqual({ result: { action: 'decline', content: null, _meta: null } });
+  for (let index = 4; index < requests.length; index++) {
+    expect(answer(index)).toEqual({ error: { code: -32601, message: 'This client does not handle server requests' } });
+  }
+  expect(receipt).toMatchObject({ turnStatus: 'completed', approvalsRefused: requests.length, released: true });
+  expect(f.journal().records[0]).toMatchObject({ state: 'completed', approvalsRefused: requests.length });
+});
+
+test('the resume carries the tier the thread recorded itself, never the profile default', async () => {
+  // Codex stands in for 0.163: without a tier it would apply the configured global `ultrafast`.
+  const resumeWithConfigDefault: Handler = (message, child) => child.respond(message, { thread: root({ status: { type: 'idle' } }),
+    model: 'gpt-test', serviceTier: message.params.serviceTier === undefined ? 'ultrafast'
+      : message.params.serviceTier ?? 'default' });
+  const finish: Handler = (message, child) => {
+    child.respond(message, { turn: { id: TURN, status: 'inProgress', items: [] } });
+    child.notify('turn/completed', { threadId: ROOT, turn: { id: TURN, status: 'completed', items: [] } });
+  };
+  const cases: [string, string | null][] = [
+    [[sessionMeta, settingsLine(ROOT, 'flex'), ''].join('\n'), 'flex'],
+    // A snapshot without `service_tier` recorded no tier: Codex's standard tier is requested.
+    [[sessionMeta, settingsLine(ROOT, 'ultrafast'), settingsLine(ROOT), ''].join('\n'), null],
+    // An older thread that never recorded settings also gets the standard tier.
+    [[sessionMeta, settingsLine(CHILD, 'ultrafast'), ''].join('\n'), null],
+  ];
+  for (const [rollout, expected] of cases) {
+    const f = fixture({ 'thread/read': readRoot, 'thread/resume': resumeWithConfigDefault, 'turn/start': finish }, { rollout });
+    await expect(f.handoff.continueThread({ threadId: ROOT, text: 'hello', userInitiated: true }))
+      .resolves.toMatchObject({ turnStatus: 'completed', released: true });
+    expect(f.received.find(row => row.method === 'thread/resume').params).toEqual({ threadId: ROOT, excludeTurns: true, serviceTier: expected });
+  }
+});
+
+test('a tier Codex will not keep, or settings it cannot report, refuses the handoff before any send', async () => {
+  const ignored = fixture({ 'thread/read': readRoot, 'thread/resume': (message, child) => child.respond(message,
+    { thread: root({ status: { type: 'idle' } }), model: 'gpt-test', serviceTier: 'ultrafast' }) });
+  await expect(ignored.handoff.continueThread({ threadId: ROOT, text: 'hello', userInitiated: true }))
+    .rejects.toMatchObject({ code: 'handoff_settings_unconfirmed' });
+  expect(methods(ignored.received)).not.toContain('turn/start');
+  expect(ignored.children[0].closed).toBe(true);
+  expect(ignored.journal().records[0]).toMatchObject({ state: 'refused', reasonCode: 'service_tier_changed', phase: 'acquiring' });
+  expect(ignored.handoff.snapshot().uncertainHandoffs).toEqual([]);
+  // A real rollout of this thread, but outside the profile's session store.
+  const elsewhere = mkdtempSync(join(tmpdir(), 'nekodex-handoff-outside-'));
+  directories.push(elsewhere);
+  const outside = join(elsewhere, `rollout-2026-10-21T10-00-00-${ROOT}.jsonl`);
+  writeFileSync(outside, ROLLOUT);
+  for (const path of [undefined, null, 'relative.jsonl', outside]) {
+    const f = fixture({ 'thread/read': (message, child) => child.respond(message, { thread: root(path === undefined ? {} : { path }) }) });
+    await expect(f.handoff.continueThread({ threadId: ROOT, text: 'hello', userInitiated: true }))
+      .rejects.toMatchObject({ code: 'handoff_settings_unconfirmed' });
+    expect(methods(f.received)).not.toContain('thread/resume');
+    expect(f.journal().records[0]).toMatchObject({ state: 'failed', reasonCode: 'settings_unreadable' });
+  }
 });
 
 test('an external owner holding the writer lock is a known refusal: nothing is sent and nothing blocks', async () => {
@@ -199,4 +300,10 @@ test('IPC exposes only an explicit thread/text intent and sanitized handoff fail
   const bare = new Map<string, Function>();
   registerCodexClientControlIpc({ handle: (name: string, fn: Function) => bare.set(name, fn), getClient: () => ({}) });
   expect(await bare.get('launcher:native-thread-handoff-snapshot')!({})).toMatchObject({ ok: false, error: { code: 'handoff_unavailable' } });
+  const tier = new Map<string, Function>();
+  registerCodexClientControlIpc({ handle: (name: string, fn: Function) => tier.set(name, fn), getClient: () => ({}),
+    getHandoff: () => ({ continueThread: async () => { throw Object.assign(new Error('/private/rollout.jsonl'), { code: 'handoff_settings_unconfirmed' }); } }) });
+  const unconfirmed = await tier.get('launcher:native-thread-continue')!({}, { threadId: ROOT, text: 'hi' });
+  expect(unconfirmed).toEqual({ ok: false, error: { code: 'handoff_settings_unconfirmed',
+    message: 'Codex could not confirm that the thread keeps its own service tier. Nothing was sent.' } });
 });
