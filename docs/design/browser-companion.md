@@ -111,8 +111,11 @@ Chrome's `activeTab` grant may persist across same-origin navigation; the strict
 companion binding does not. The exact Chrome document ID, random document epoch,
 selected scope, tab/window/main-frame and observation ID travel together.
 Same-document URL changes are refused by the document function. DOM mutations,
-trusted human input/scroll, changed visibility and obscured controls make old refs
-unusable before input. No cross-frame action is currently supported. The provider
+trusted human input/scroll and obscured controls make old refs unusable before input.
+The dispatcher proves the exact active tab and a non-minimized window before a
+text observation or input. Hiddenness that already existed at that check can be
+macOS window occlusion; it does not invalidate refs. Hiding after the check still
+refuses. Occluded observations never capture pixels. No cross-frame action is currently supported. The provider
 performs no implicit scroll, focus switching or navigation to repair an old ref.
 
 ## Protocol and outcome ownership
@@ -362,7 +365,13 @@ empty new chat at `/` with no turns and no active generation, inserts the text w
 the same editing command the embedded worker uses, requires whitespace-normalized
 composer readback, waits for exactly one enabled send control and clicks it once.
 It then waits for exactly one user turn whose text matches the prompt and returns
-its message ID, waiting briefly for it to hydrate, or `ordinal:1`. Because send
+its message ID, waiting briefly for it to hydrate, or `ordinal:1`. For an ordinary
+new chat it waits for the saved `/c/<id>` path before acknowledging the send, so
+runtime `.8` never pins ChatGPT's provisional `/c/local-chatgpt:<id>` identity.
+The first provisional identity cannot be replaced; a changed conversation or
+missing saved identity after the bounded read remains unknown and is never sent
+again. Explicit temporary chats can keep `/`. The extension-only 0.2.1 update
+keeps the runtime `.8` wire schema and needs no launcher/core restart. Because send
 required an empty new chat, reads keep matching that ordinal after a later ID
 hydration, but only while that turn still carries the SHA-256 of the sent
 (whitespace-normalized) text. The leaf also pins the first `/c/<id>` path it sees;

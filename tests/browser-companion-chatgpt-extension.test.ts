@@ -56,3 +56,43 @@ test.skipIf(Boolean(companionChromiumMissing))("actual MV3 extension binds a Cha
     await fixture.stopSharing(); expect(runtime.status().companion?.paired).toBe(false);
   } finally { await fixture.close(); }
 }, 40_000);
+
+test("runtime .8 companion waits through ChatGPT's provisional URL and returns the one saved conversation", async () => {
+  const provisional = chatgpt
+    .replace('history.pushState(null, "", "/c/fixture-conversation");', 'history.pushState(null, "", "/c/local-chatgpt%3Afixture-new-chat"); window.fixturePaths = [location.pathname]; setTimeout(() => { history.replaceState(null, "", "/c/fixture-conversation"); window.fixturePaths.push(location.pathname); }, 1800);');
+  const fixture = await startBrowserCompanionExtensionFixture({ url: "https://chatgpt.com/", routes: {
+    "/": { body: provisional, contentType: "text/html" },
+    "/api/auth/session": { body: JSON.stringify({ user: { id: "user-fixture" } }), contentType: "application/json" },
+  } });
+  try {
+    await fixture.page.bringToFront();
+    const bound = (await fixture.runtime.bindChatGpt({ modelId: "gpt-5.6-sol", reasoning: "max" })).chatGpt;
+    const turn: BrowserTurn = { traceId: "trace-runtime8-provisional", modelId: "gpt-5.6-sol", reasoning: "max", companionAccount: bound.bound!.accountFingerprint,
+      capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: true },
+      prepare: async () => ({ text: "Reply with the fixture answer", images: [], release: () => {} }), onTextDelta: () => {} };
+    expect(await fixture.runtime.chatGptTransport().run(turn)).toBe("Fixture **answer**");
+    expect(fixture.runtime.status().chatGpt).toMatchObject({ held: null, lastTurn: { path: "/c/fixture-conversation" } });
+    expect(await fixture.page.evaluate(() => (window as unknown as { fixturePaths: string[] }).fixturePaths)).toEqual(["/c/local-chatgpt%3Afixture-new-chat", "/c/fixture-conversation"]);
+    expect(await fixture.page.evaluate(() => (window as unknown as { fixtureSends: number }).fixtureSends)).toBe(1);
+  } finally { await fixture.close(); }
+}, 40_000);
+
+for (const replacedPath of ["/c/local-chatgpt%3Aanother-chat", "/"]) test(`runtime .8 companion holds a replaced provisional conversation (${replacedPath}) without another send`, async () => {
+  const replaced = chatgpt
+    .replace('history.pushState(null, "", "/c/fixture-conversation");', `history.pushState(null, "", "/c/local-chatgpt%3Afixture-new-chat"); window.fixturePaths = [location.pathname]; setTimeout(() => { history.replaceState(null, "", ${JSON.stringify(replacedPath)}); window.fixturePaths.push(location.pathname); }, 1800);`);
+  const fixture = await startBrowserCompanionExtensionFixture({ url: "https://chatgpt.com/", routes: {
+    "/": { body: replaced, contentType: "text/html" },
+    "/api/auth/session": { body: JSON.stringify({ user: { id: "user-fixture" } }), contentType: "application/json" },
+  } });
+  try {
+    await fixture.page.bringToFront();
+    const bound = (await fixture.runtime.bindChatGpt({ modelId: "gpt-5.6-sol", reasoning: "max" })).chatGpt;
+    const turn: BrowserTurn = { traceId: "trace-runtime8-replaced", modelId: "gpt-5.6-sol", reasoning: "max", companionAccount: bound.bound!.accountFingerprint,
+      capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: true },
+      prepare: async () => ({ text: "Reply with the fixture answer", images: [], release: () => {} }), onTextDelta: () => {} };
+    await expect(fixture.runtime.chatGptTransport().run(turn)).rejects.toMatchObject({ code: "companion_outcome_unknown" });
+    expect(fixture.runtime.status().chatGpt.held).toMatchObject({ stage: "send" });
+    expect(await fixture.page.evaluate(() => (window as unknown as { fixturePaths: string[] }).fixturePaths)).toEqual(["/c/local-chatgpt%3Afixture-new-chat", replacedPath]);
+    expect(await fixture.page.evaluate(() => (window as unknown as { fixtureSends: number }).fixtureSends)).toBe(1);
+  } finally { await fixture.close(); }
+}, 40_000);

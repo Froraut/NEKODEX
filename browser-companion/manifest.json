@@ -2,12 +2,32 @@
   "manifest_version": 3,
   "name": "NEKODEX Browser Companion",
   "description": "Pair one selected page with your local NEKODEX task using an explicitly opened sharing session.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "minimum_chrome_version": "106",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1qRzEoH0cmBkbLbqRFrWnzPEV7ZLJKiC2/ruS+c9nAzKwA1eL6Xu/Piocf9TxAsRdEIhCM2G7ef/M2b/mNDwSzCquZLuwzvWbga485Uu0DU+RMIygrPR1BuAJnegmsnAKNBy+t1mG0rrdBNChll0lPXwmmUZk6y619a6ALm6EzL++lCelw/zLNkKbFXOkgJyAi190/yvr3ODtwXRq08wXduIhkfk7ZrJFVSK7CgKqvzebnIse2hLfzUAv7YQxRHpa+JIHrU6Eyp0OQR4gpAcbWQcYkWhbzuLbGWN8eMgEEOz15u4lEXTJhia8Ah7o2u5qSCiXAnr3XyYH0eX9FiUSwIDAQAB",
-  "permissions": ["activeTab", "scripting", "storage"],
-  "host_permissions": ["http://127.0.0.1:17843/*"],
-  "icons": {"16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png"},
-  "action": {"default_popup": "popup.html", "default_title": "NEKODEX: share this tab", "default_icon": {"16": "icons/icon-16.png", "32": "icons/icon-32.png"}},
-  "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'none'; connect-src http://127.0.0.1:17843"}
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:17843/*"
+  ],
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "NEKODEX: share this tab",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; connect-src http://127.0.0.1:17843"
+  }
 }

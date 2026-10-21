@@ -129,17 +129,32 @@ export async function chatGptOperation(request) {
   if (!button) { clearDraft(); return refuse("The ChatGPT send control did not become available; nothing was sent"); }
   // The click is the one input boundary. Everything after it is evidence, never a retry.
   try { button.click(); } catch { return { outcome: "unknown", executed: true, reason: "Send click began without a terminal receipt" }; }
+  // Older hosts pin the path in the send receipt. A new ordinary chat first receives an
+  // optimistic /c/local-chatgpt:<id> URL, then its saved /c/<id>; do not acknowledge the
+  // provisional identity as a saved conversation. This remains a read after the one click.
+  const savedConversation = /^\/c\/[A-Za-z0-9_-]{1,120}$/;
+  const provisionalConversation = /^\/c\/local-chatgpt(?::|%3A)[A-Za-z0-9_-]{1,120}$/i;
+  const temporaryChat = new URL(location.href).searchParams.get("temporary-chat") === "true";
+  let creatingPath;
   for (let waited = 0; waited <= 20_000; waited += 200) {
     const turns = userTurns();
     if (turns.length > 1) return { outcome: "unknown", executed: true, reason: "More than one user message appeared after send" };
     if (turns.length === 1) {
       if (normalize(userMessageElement(turns[0]).innerText) !== normalize(request.text)) return { outcome: "unknown", executed: true, reason: "The observed ChatGPT user message does not match the prompt" };
+      const path = location.pathname.slice(0, 2048);
+      if (!savedConversation.test(path) && !(temporaryChat && path === "/")) {
+        if ((creatingPath && path === "/") || (path !== "/" && (!provisionalConversation.test(path) || (creatingPath && creatingPath !== path)))) return { outcome: "unknown", executed: true, reason: "The new ChatGPT conversation changed before its send receipt settled" };
+        if (provisionalConversation.test(path)) creatingPath = path;
+        await delay(200);
+        continue;
+      }
       // Prefer a hydrated message ID; reads also accept the ordinal if it appears later.
       const sent = () => userTurns()[0] ?? turns[0];
       for (let hydrate = 0; hydrate < 5 && userMessageId(sent(), 1).startsWith("ordinal:"); hydrate++) await delay(200);
-      return { outcome: "completed", executed: true, chatgpt: { op: "send", userMessageId: userMessageId(sent(), 1), path: location.pathname.slice(0, 2048) } };
+      if (location.pathname !== path || userTurns().length !== 1 || normalize(userMessageElement(sent()).innerText) !== normalize(request.text)) return { outcome: "unknown", executed: true, reason: "The sent ChatGPT conversation changed before its send receipt settled" };
+      return { outcome: "completed", executed: true, chatgpt: { op: "send", userMessageId: userMessageId(sent(), 1), path } };
     }
     await delay(200);
   }
-  return { outcome: "unknown", executed: true, reason: "ChatGPT did not show the sent message; the outcome is unknown" };
+  return { outcome: "unknown", executed: true, reason: "ChatGPT did not settle the sent conversation; the outcome is unknown" };
 }

@@ -47,3 +47,45 @@ test("Chrome DOM fixture observes, types, rejects stale human/DOM input and docu
     expect(await page.evaluate(pageOperation, { kind: "observe", ...binding })).toMatchObject({ outcome: "rejected", executed: false });
   } finally { await browser.close(); server.stop(true); }
 }, 15_000);
+
+test("occluded selected tab (macOS hidden while approving in NEKODEX) still accepts exact input; later hiding refuses", async () => {
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response('<!doctype html><title>P12 fixture</title><label>Message<input name="msg"></label><button>Submit</button>', { headers: { "content-type": "text/html" } }) });
+  const browser = await chromium.launch({ headless: true, ...(process.env.CHATGPT_DOM_TEST_BROWSER ? { executablePath: process.env.CHATGPT_DOM_TEST_BROWSER } : {}) });
+  // Chrome's visibility model for a fully occluded window: `hidden` plus visibilitychange.
+  const setVisibility = (state: "visible" | "hidden") => page.evaluate(value => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => value });
+    document.dispatchEvent(new Event("visibilitychange"));
+  }, state);
+  let page: Awaited<ReturnType<typeof browser.newPage>>;
+  try {
+    page = await browser.newPage(); await page.goto(`http://127.0.0.1:${server.port}/`);
+    const select: any = await page.evaluate(pageOperation, { kind: "select", scopeId: "scope" });
+    const binding = { scopeId: "scope", documentEpoch: select.snapshot.documentEpoch };
+    const textbox = (snapshot: any) => snapshot.refs.find((row: any) => row.role === "textbox").ref;
+    let observed: any = await page.evaluate(pageOperation, { kind: "observe", ...binding });
+    await setVisibility("hidden");
+    await Bun.sleep(5); // The approval happens after the window was covered.
+    const act = (observation: any, extra: Record<string, unknown> = {}) => page.evaluate(pageOperation, { kind: "act", ...binding, observationId: observation.snapshot.observationId, action: { kind: "type", ref: textbox(observation.snapshot), text: "NEKODEX-P12" }, ...extra });
+    // Without the dispatcher's active-tab proof, hiddenness alone refuses, with a distinct reason.
+    expect(await act(observed)).toEqual({ outcome: "rejected", executed: false, reason: "Selected tab is hidden or was switched away from; show it and obtain a fresh observation" });
+    // Hidden before the active-in-window check: occlusion. The same observation is still exact.
+    expect(await act(observed, { shownAt: Date.now() })).toMatchObject({ outcome: "completed", executed: true });
+    expect(await page.locator("input").inputValue()).toBe("NEKODEX-P12");
+    // A text observation of the occluded tab works and is marked so no pixels are captured.
+    observed = await page.evaluate(pageOperation, { kind: "observe", ...binding, shownAt: Date.now() });
+    expect(observed).toMatchObject({ outcome: "completed", occluded: true });
+    expect(await page.evaluate(pageOperation, { kind: "observe", ...binding })).toMatchObject({ outcome: "rejected", reason: "Selected tab must be visible" });
+    // Hiding that begins after the dispatcher's check (a tab switch racing the call) refuses.
+    await setVisibility("visible");
+    observed = await page.evaluate(pageOperation, { kind: "observe", ...binding });
+    expect(observed.occluded).toBeUndefined();
+    const shownAt = Date.now() - 50;
+    await setVisibility("hidden");
+    expect(await act(observed, { shownAt })).toMatchObject({ outcome: "rejected", executed: false, reason: expect.stringContaining("hidden") });
+    // A real DOM change is reported as staleness, not hiddenness.
+    await setVisibility("visible");
+    observed = await page.evaluate(pageOperation, { kind: "observe", ...binding });
+    await page.evaluate(() => document.body.append("changed"));
+    expect(await act(observed, { shownAt: Date.now() })).toEqual({ outcome: "rejected", executed: false, reason: "Observation is stale; obtain a fresh observation" });
+  } finally { await browser.close(); server.stop(true); }
+}, 15_000);
