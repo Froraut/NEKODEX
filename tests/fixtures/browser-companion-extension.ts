@@ -78,12 +78,30 @@ export async function startBrowserCompanionExtensionFixture(site?: CompanionFixt
     const tabs = await browserCdp.send("Target.getTargets", { filter: [{ type: "tab", exclude: false }, { exclude: true }] });
     const targetInfo = tabs.targetInfos.find(target => target.url === page.url());
     if (!targetInfo) throw new Error("No exact fixture tab target is available for the extension action");
+    const popupUrl = `chrome-extension://${installed.id}/popup.html`;
+    const popupTargets = async () => (await browserCdp.send("Target.getTargets")).targetInfos.filter(target => target.type === "page" && target.url === popupUrl).map(target => target.targetId);
+    const ownedPopups = new Set(await popupTargets());
     await browserCdp.send("Extensions.triggerAction", { id: installed.id, targetId: targetInfo.targetId });
+    // The action also opens the real toolbar popup: a second popup.html Playwright does not own.
+    // Its startup probe shares storage.session and can run late on a slow machine, then forget a
+    // pairing a test revoked later. Chrome granted activeTab with the action; close that popup.
+    let actionPopup: string | undefined;
+    for (const deadline = Date.now() + 5000; !actionPopup && Date.now() < deadline; await Bun.sleep(25)) actionPopup = (await popupTargets()).find(id => !ownedPopups.has(id));
+    if (!actionPopup) throw new Error("The extension action did not open its toolbar popup");
+    await browserCdp.send("Target.closeTarget", { targetId: actionPopup });
+    for (const deadline = Date.now() + 5000; (await popupTargets()).includes(actionPopup); await Bun.sleep(25)) if (Date.now() > deadline) throw new Error("The toolbar popup did not close");
     await popup.evaluate(() => document.querySelector<HTMLButtonElement>("#select")!.click());
     await popup.locator("#status").filter({ hasText: "Sharing selected tab" }).waitFor({ timeout: 5000 });
+    // tabs.create resolves before the session document runs: return only once it holds the poll.
+    const sessionUrl = `chrome-extension://${installed.id}/session.html`;
+    let session = context.pages().find(opened => opened.url().startsWith(sessionUrl));
+    for (const deadline = Date.now() + 5000; !session || !runtime.status().companion?.connected; await Bun.sleep(25)) {
+      if (Date.now() > deadline) throw new Error("The selected tab session did not start polling");
+      session ??= context.pages().find(opened => opened.url().startsWith(sessionUrl));
+    }
     const provider = runtime.browserProvider();
     if (!provider?.current()) throw new Error("Selected fixture document observation is missing");
-    return { runtime, page, popup, provider, extensionId: installed.id, extensionEnabled, ungrantedReadRefused, close,
+    return { runtime, page, popup, session: session!, provider, extensionId: installed.id, extensionEnabled, ungrantedReadRefused, close,
       async stopSharing() {
         await popup.getByRole("button", { name: "Stop sharing", exact: true }).click();
         await popup.locator("#status").filter({ hasText: "Sharing stopped" }).waitFor();

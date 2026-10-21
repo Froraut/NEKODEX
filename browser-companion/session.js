@@ -31,18 +31,21 @@ else await navigator.locks.request("nekodex-companion-session", { ifAvailable: t
   await api.storage.session.set({ companionOwner: { tabId: (await api.tabs.getCurrent()).id, scopeId: handoff.binding.scopeId } });
   document.querySelector("#host").textContent = `Paired host: ${credentials.hostId} · selected tab ${handoff.binding.tabId}`;
   say("Sharing selected tab. Keep this session tab open.");
+  let ended;
   try { await runCompanionSession({ credentials, dispatcher, signal: controller.signal, say }); }
   catch (error) {
     if (!controller.signal.aborted) {
       // When NEKODEX revoked or replaced this pairing, forget it so the popup cannot offer it again.
       const retired = error?.status && (await companionPairingState(credentials)).state === "retired";
       if (retired && (await api.storage.session.get("pairing")).pairing?.sessionId === credentials.sessionId) await api.storage.session.remove("pairing");
-      say(retired ? `${PAIRING_RETIRED_TEXT} Sharing stopped; nothing is retried.` : `${error.message}. Sharing stopped; uncertain input is never retried.`);
+      ended = retired ? `${PAIRING_RETIRED_TEXT} Sharing stopped; nothing is retried.` : `${error.message}. Sharing stopped; uncertain input is never retried.`;
     }
   }
   finally {
     // Release only this session marker. A still-valid pairing stays available for explicit selection.
     const current = (await api.storage.session.get("companionOwner")).companionOwner;
     if (current?.scopeId === handoff.binding.scopeId) await api.storage.session.remove("companionOwner");
+    // Announce the end only once the marker is released: a popup opened then never sees a live session.
+    if (ended) say(ended);
   }
 });

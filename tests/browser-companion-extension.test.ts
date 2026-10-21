@@ -27,13 +27,13 @@ test.skipIf(Boolean(companionChromiumMissing))("actual MV3 popup pairs, selects 
 test.skipIf(Boolean(companionChromiumMissing))("actual MV3 popup and session show a NEKODEX revoke instead of a retained pairing", async () => {
   const fixture = await startBrowserCompanionExtensionFixture();
   try {
-    const { runtime, popup, extensionId } = fixture;
-    const session = popup.context().pages().find(page => page.url().startsWith(`chrome-extension://${extensionId}/session.html`))!;
-    expect(session).toBeDefined();
+    const { runtime, popup, session, extensionId } = fixture;
     // Revoked while sharing: the session names the real state and forgets the dead pairing.
     runtime.revoke();
     await session.locator("#status").filter({ hasText: "NEKODEX revoked this pairing" }).waitFor({ timeout: 5000 });
     await popup.reload();
+    // "Not paired" is the static markup; the extension line appears only once startup read storage.
+    await popup.locator("#host").filter({ hasText: `Extension: ${extensionId}` }).waitFor({ timeout: 5000 });
     await popup.locator("#status").filter({ hasText: "Not paired" }).waitFor({ timeout: 5000 });
     expect(await popup.locator("#select").isDisabled()).toBe(true);
     // Pair again without selecting: the reopened popup confirms the still-valid pairing with the host.
