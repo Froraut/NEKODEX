@@ -71,7 +71,10 @@ test.serial("actual server control mount is private/lazy and owns Agent persiste
   }
 }, 5_000);
 
-test.serial("actual local MCP approval returns its exact durable result into the same Responses turn, counting each model request", async () => {
+// Explicit Run grants live automatic continuation once the approved outcome is stored
+// (docs/design/agent-native-protocol.md); explicit Step does not, so its continuation is
+// adopted only by a later explicit command, including across a restart.
+for (const initial of ["step", "run"] as const) test.serial(`actual local MCP approval after explicit ${initial} returns its exact durable result into the same Responses turn, counting each model request`, async () => {
   const home = realpathSync(mkdtempSync(join(tmpdir(), "nekodex-agent-tool-flow-")));
   const previousHome = process.env.CODEX_CHATGPT_WEB_HOME; const previousDescriptor = process.env.CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR;
   process.env.CODEX_CHATGPT_WEB_HOME = home; delete process.env.CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR;
@@ -115,7 +118,7 @@ test.serial("actual local MCP approval returns its exact durable result into the
       const watcher = watch(join(home, "agent-mode"), () => { if (reader!.getTask(taskId).status === wanted) { clearTimeout(timeout); watcher.close(); resolve(); } });
     });
     let wait = waitFor("awaiting_input");
-    await post("agent-mode", { action: "run", taskId, actionId: "run-initial", explicitUserAction: true }); await wait;
+    await post("agent-mode", { action: initial, taskId, actionId: "run-initial", explicitUserAction: true }); await wait;
     expect(modelCalls).toBe(1); expect(existsSync(join(home, "counter"))).toBe(false);
     const pending = reader.listDispatches(taskId)[0]!.result!.continuation!.pending[0]!;
     expect(pending).toMatchObject({ toolCallId: "synthetic-owned-call", tool: "fixture/record", arguments: { text: "one isolated effect" } });
@@ -123,6 +126,20 @@ test.serial("actual local MCP approval returns its exact durable result into the
     expect((await post("agent-tools", approve)).state).toBe("completed");
     expect((await post("agent-tools", approve)).state).toBe("completed");
     expect(readFileSync(join(home, "counter"), "utf8")).toBe("1");
+    if (initial === "run") {
+      await waitFor("review_required");
+      expect(modelCalls).toBe(2); expect(reader.getTask(taskId)).toMatchObject({ turns: 2, unpricedTurns: 2, status: "review_required" });
+      expect(reader.listToolOutcomes(taskId)).toHaveLength(1);
+      expect(reader.listDispatches(taskId)[1]?.continuationOf).toBe(reader.listDispatches(taskId)[0]?.id);
+      const runProcess = (await post("agent-tools", { action: "status" })).runtime.servers[0].pid as number;
+      await server.stop(true);
+      expect(() => process.kill(runProcess, 0)).toThrow();
+      server = startServer(config, dependencies); base = `http://127.0.0.1:${server.port}`;
+      const reopenedRun = await post("agent-mode", { action: "get", taskId });
+      expect(reopenedRun.toolOutcomes).toHaveLength(1); expect(reopenedRun.dispatches).toHaveLength(2);
+      expect(modelCalls).toBe(2); expect(readFileSync(join(home, "counter"), "utf8")).toBe("1");
+      return;
+    }
     expect(reader.getTask(taskId).status).toBe("ready"); expect(reader.listToolOutcomes(taskId)).toHaveLength(1);
     const sourceDispatchId = reader.listDispatches(taskId)[0]!.id;
     const toolProcess = (await post("agent-tools", { action: "status" })).runtime.servers[0].pid as number;
