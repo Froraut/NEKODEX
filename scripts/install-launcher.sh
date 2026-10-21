@@ -44,12 +44,31 @@ if [ "$OS" = "Linux" ] && ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
+# Default selection takes only GitHub Actions builds. A maintainer's local
+# publisher build (buildType "local") is installable by explicit version only.
+# This reads the unverified payload to choose; every trust check below still runs.
+release_built_by_actions() {
+  envelope="$(curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 60 \
+    "https://github.com/$REPOSITORY/releases/download/v$1/release-metadata.json")" || {
+    echo "Could not read signed release metadata for NEKODEX $1" >&2
+    exit 1
+  }
+  payload="$(printf '%s\n' "$envelope" | sed -n 's/^[[:space:]]*"payload":[[:space:]]*"\([A-Za-z0-9+/=]*\)",\{0,1\}[[:space:]]*$/\1/p')"
+  decoded="$(printf '%s' "$payload" | base64 -d 2>/dev/null || printf '%s' "$payload" | base64 -D 2>/dev/null)" || decoded=""
+  case "$decoded" in
+    *'"buildType":"github-actions"'*) return 0 ;;
+    *'"buildType":'*) return 1 ;;
+  esac
+  echo "Signed release metadata for NEKODEX $1 is unreadable" >&2
+  exit 1
+}
+
 # NEKODEX distributes prereleases. Inspect a bounded published list for an exact
 # platform asset; keep the existing checksum download and SHA-256 gate below.
 if [ -z "$VERSION" ]; then
   RELEASES="$(curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 60 \
     "https://api.github.com/repos/$REPOSITORY/releases?per_page=10")"
-  VERSION="$(printf '%s\n' "$RELEASES" | awk -v platform="$PLATFORM" -v arch="$ARCH" -v extension="$EXTENSION" '
+  CANDIDATES="$(printf '%s\n' "$RELEASES" | awk -v platform="$PLATFORM" -v arch="$ARCH" -v extension="$EXTENSION" '
     # Walk JSON tokens so asset names cannot be confused with release metadata
     # or nested author/upload objects. The API response is bounded to 10 releases.
     function value(s, d) {
@@ -95,10 +114,10 @@ if [ -z "$VERSION" ]; then
           key[depth] = ""
           if (depth > 1) key[depth - 1] = ""
         } else if (c == "}" || c == "]") {
-          if (depth == 2 && kind[depth] == "release" && valid && !selected) {
+          if (depth == 2 && kind[depth] == "release" && valid) {
             expected = "codex-web-gpt-" tag "-" platform "-" arch "." extension
             for (n = 1; n <= count; n++) {
-              if (names[n] == expected) { selected = tag; break }
+              if (names[n] == expected) { print tag; break }
             }
           }
           delete kind[depth]; delete key[depth]; depth--
@@ -111,11 +130,17 @@ if [ -z "$VERSION" ]; then
           if (depth > 0) key[depth] = ""
         }
       }
-      if (selected) print selected
     }
   ')"
+  for CANDIDATE in $CANDIDATES; do
+    if release_built_by_actions "$CANDIDATE"; then
+      VERSION="$CANDIDATE"
+      break
+    fi
+    echo "Skipping NEKODEX $CANDIDATE: it is a local publisher build, not a GitHub Actions release" >&2
+  done
   if [ -z "$VERSION" ]; then
-    echo "No published NEKODEX release among the newest 10 has a $PLATFORM-$ARCH.$EXTENSION asset; set CODEX_WEB_GPT_VERSION explicitly" >&2
+    echo "No GitHub Actions-built NEKODEX release among the newest 10 has a $PLATFORM-$ARCH.$EXTENSION asset; set CODEX_WEB_GPT_VERSION explicitly" >&2
     exit 1
   fi
 fi

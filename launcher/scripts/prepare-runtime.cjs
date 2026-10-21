@@ -33,7 +33,8 @@ function prepareExecutionVmRuntime(appDirectory, { root = repositoryRoot, platfo
   };
   // Consume the accepted guest image; packaging must not rebuild or boot it.
   const guestManifestBytes = read(path.join(guestDirectory, "manifest.json"));
-  const guest = JSON.parse(guestManifestBytes.toString("utf8"));
+  // The accepted image is pinned by the release-input lock, wherever it came from.
+  const guest = require(path.join(root, "scripts/native-release-inputs.cjs")).assertAcceptedExecutionGuest(root, guestManifestBytes);
   const image = read(path.join(guestDirectory, "Image"));
   const initrd = read(path.join(guestDirectory, "initrd.gz"));
   const hash = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -65,14 +66,15 @@ function prepareOwnedNativeRuntime(appDirectory, { root = repositoryRoot, platfo
   arch = process.arch, env = process.env } = {}) {
   if (platform !== "darwin" || arch !== "arm64") return { supported: false };
   root = fs.realpathSync(root);
-  const { reviewedOwnedNativeDevPin } = require(path.join(root, "launcher/electron/owned-native-dev-pin.cjs"));
   const { createOwnedNativeProductionManifest } = require(path.join(root, "launcher/electron/owned-native-production-pin.cjs"));
   const { fileDigest } = require(path.join(root, "launcher/electron/owned-native-admission.cjs"));
   const { signOwnedNativeWorker } = require("./release-signing.cjs");
-  const accepted = reviewedOwnedNativeDevPin(root);
+  // Content-pinned admission: the accepted build may have been fetched by CI or
+  // built in another checkout; packaging never depends on that checkout path.
+  const accepted = require(path.join(root, "scripts/native-release-inputs.cjs")).acceptedOwnedNativeInput(root, { platform, arch });
   if (accepted.target !== "aarch64-apple-darwin") throw new Error("No reviewed Owned Native artifact for the requested package target");
   const directory = path.join(appDirectory, "owned-native");
-  const sourceRoot = accepted.wrapperBuildPin.sourceRoot;
+  const sourceRoot = accepted.sourceRoot;
   const files = ["source-pin.json", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "src/main.rs"];
   const copy = (source, destination) => {
     const metadata = fs.lstatSync(source);
@@ -87,14 +89,12 @@ function prepareOwnedNativeRuntime(appDirectory, { root = repositoryRoot, platfo
   copy(accepted.executable, executable);
   if (fileDigest(executable) !== accepted.executableSha256) throw new Error("Owned Native artifact changed before its production copy was signed");
   fs.chmodSync(executable, 0o755);
-  copy(accepted.wrapperBuildPin.metadataPath, path.join(outputDirectory, "build-info.json"));
-  if (fileDigest(path.join(outputDirectory, "build-info.json")) !== accepted.wrapperBuildPin.metadataSha256
-    || fileDigest(path.join(directory, "source-pin.json")) !== accepted.wrapperBuildPin.sourcePinSha256) {
+  copy(accepted.metadataPath, path.join(outputDirectory, "build-info.json"));
+  if (fileDigest(path.join(outputDirectory, "build-info.json")) !== accepted.metadataSha256
+    || fileDigest(path.join(directory, "source-pin.json")) !== accepted.sourcePinSha256) {
     throw new Error("Owned Native copied provenance changed from the accepted build pins");
   }
-  const catalog = path.join(path.dirname(accepted.executable), "official-bootstrap-models.json");
-  if (accepted.officialBootstrapCatalog?.path !== catalog) throw new Error("Owned Native catalog must use its fixed accepted build layout");
-  copy(catalog, path.join(outputDirectory, "official-bootstrap-models.json"));
+  copy(accepted.catalogPath, path.join(outputDirectory, "official-bootstrap-models.json"));
   signOwnedNativeWorker(executable, platform, env);
   const manifest = createOwnedNativeProductionManifest({ sourceRoot: directory, executable, target: accepted.target });
   fs.writeFileSync(path.join(outputDirectory, "production-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o644, flag: "wx" });

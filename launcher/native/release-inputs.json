@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "repository": "Froraut/NEKODEX",
+  "tag": "native-inputs-b1ba58f7-32346218",
+  "target": "darwin-arm64",
+  "files": [
+    { "asset": "owned-worker-nekodex-owned-native-worker", "path": "launcher/native/owned-worker/build/aarch64-apple-darwin/nekodex-owned-native-worker", "size": 446394224, "sha256": "b1ba58f72cd46caa3d69018bbbb68c2b8afb85dfb9167bba69272dde716a30d6", "executable": true },
+    { "asset": "owned-worker-build-info.json", "path": "launcher/native/owned-worker/build/aarch64-apple-darwin/build-info.json", "size": 1814, "sha256": "7ceee884e7992d369105929f646d3e71b01b1b02e5e5d545d0bfdda4e15dccc3" },
+    { "asset": "owned-worker-official-bootstrap-models.json", "path": "launcher/native/owned-worker/build/aarch64-apple-darwin/official-bootstrap-models.json", "size": 472072, "sha256": "943ca7fe1d19ed019054158303f0dbbd80b3bef43b3aa425a71aa7cb3fb52c2b" },
+    { "asset": "execution-guest-manifest.json", "path": "launcher/native/execution-guest/.build/bundle/manifest.json", "size": 43165, "sha256": "3234621868c7ba5eeb31d1a29e95c204fa4140f54c5b2c209588ba4c534789e0" },
+    { "asset": "execution-guest-Image", "path": "launcher/native/execution-guest/.build/bundle/Image", "size": 36306944, "sha256": "1993474a172566b1573234900ff611c9fa4307b9398742c4c210b1e9664d6e56" },
+    { "asset": "execution-guest-initrd.gz", "path": "launcher/native/execution-guest/.build/bundle/initrd.gz", "size": 140322740, "sha256": "5bd9f1559f1fa3270e982ad111992fd46ab4cdfe040e5f90429d6944e69e51a6" },
+    { "asset": "execution-guest-kernel.config", "path": "launcher/native/execution-guest/.build/bundle/kernel.config", "size": 161528, "sha256": "c946e142eef554555bcdcb0c38446cb728b0418180831599ea542e69a08e54e9" },
+    { "asset": "execution-guest-alpine-installed-packages.txt", "path": "launcher/native/execution-guest/.build/bundle/alpine-installed-packages.txt", "size": 15097, "sha256": "09d092daf696fb2da5457eb60f4915fb72657754ac810dec61401b72b3005e26" },
+    { "asset": "execution-guest-alpine-package-provenance.json", "path": "launcher/native/execution-guest/.build/bundle/alpine-package-provenance.json", "size": 33311, "sha256": "2a3e17024239db330b490fdb11b5cb2b19f9464fd44727b27617bc78e6329977" },
+    { "asset": "execution-guest-development-package-provenance.json", "path": "launcher/native/execution-guest/.build/bundle/development-package-provenance.json", "size": 34503, "sha256": "0f0ec6e3f3af6ec76ac27fa98e64e1bf4b829dafeb88d4067704fc8860f4cdb9" }
+  ]
+}
