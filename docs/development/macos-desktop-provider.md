@@ -138,8 +138,13 @@ caller without its own Accessibility or post-event rights cannot answer that
 alert, and before a confirmed enable the helper cannot capture, select or input.
 `listWindows` before a confirmed enable returns owner names and identities with
 empty titles, because titles depend on the helper's screen recording grant.
-The Bun owner waits for this answer without its 12-second request deadline;
-abort and close still stop the exact helper. `openPermissionSettings` stays
+The Bun owner waits for this answer without its 12-second request deadline.
+The launcher's explicit enable request also waits for that same terminal answer,
+instead of aborting the HTTP request after five seconds. Only this human enable
+uses the trusted supervisor's `timeoutMs: null`; ordinary controls retain their
+bounded transport deadlines. This does not bypass the helper's confirmation or
+start another enable after a lost response. Abort and close still stop the exact
+helper. `openPermissionSettings` stays
 available without confirmation: it can only make macOS show its own prompt for
 the helper, and the user still decides.
 

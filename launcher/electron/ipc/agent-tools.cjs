@@ -73,7 +73,10 @@ function registerAgentTools({ handle, runtimeHost, dialog, getWindow, remoteServ
     // authorizes a second invoke or declares physical completion.
     let receipt;
     try {
-      receipt = await supervisor.control(config, 'agent-tools', { body, timeoutMs: body.action === 'approveInvoke' ? 50000 : 5000 });
+      // The helper owns its Allow/Don't Allow alert. Do not abort its IPC after
+      // five seconds while the human is still reading; no second enable is offered.
+      const humanEnable = body.action === 'setDesktopEnabled' && body.enabled === true && body.explicitUserAction === true;
+      receipt = await supervisor.control(config, 'agent-tools', { body, timeoutMs: humanEnable ? null : body.action === 'approveInvoke' ? 50000 : 5000 });
     } catch (error) {
       if (pendingVersion && /\bHTTP 404\b/.test(error instanceof Error ? error.message : String(error))) throw new Error(pendingMessage);
       throw error;
