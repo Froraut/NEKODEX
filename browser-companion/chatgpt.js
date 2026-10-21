@@ -92,7 +92,14 @@ export async function chatGptOperation(request) {
     const roots = all(S.answer).filter(node => follows(node) && !all(S.answer).some(other => other !== node && other.contains(node)));
     const root = roots.at(-1);
     if (root) {
-      const html = root.innerHTML;
+      // A DIL renderer failure is visible UI, not the assistant's answer. Keep it tied to
+      // this sent turn and let the host retain its response hold; reads never regenerate.
+      const renderFailures = [...root.querySelectorAll("[data-dil-render-failed]")];
+      if (renderFailures.some(visible)) return refuse("ChatGPT's response renderer could not load the sent answer; inspect the conversation in the selected tab");
+      const answer = renderFailures.length ? root.cloneNode(true) : root;
+      // Hidden error templates are neither a failure nor answer text. Remove only from the copy.
+      if (renderFailures.length) for (const marker of answer.querySelectorAll("[data-dil-render-failed]")) marker.remove();
+      const html = answer.innerHTML;
       const completionAction = all(S.completion).some(button => !!(root.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING) && (!next || !!(button.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING)));
       const id = root.closest("[data-message-author-role=\"assistant\"][data-message-id]")?.getAttribute("data-message-id");
       result.assistant = { ...(id && /^[A-Za-z0-9:_-]{1,120}$/.test(id) ? { messageId: `message:${id}` } : {}),
