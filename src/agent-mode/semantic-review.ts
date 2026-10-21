@@ -39,14 +39,16 @@ function truncate(value: string): string {
   return bytes.length <= STRING_BYTES ? value : `${new TextDecoder().decode(bytes.subarray(0, STRING_BYTES - 64))}…[value truncated by host]`;
 }
 type Counters = SemanticReviewPacket["omitted"];
+/** Every host cut is counted: only declared image omission keeps the input complete. */
+function cut(value: string, counters: Counters): string {
+  if (Buffer.byteLength(value) <= STRING_BYTES) return value;
+  counters.truncatedValues++; return truncate(value);
+}
 /** Images stay out of the text reviewer by policy; their identity remains. Truncation is visible. */
 function project(value: unknown, counters: Counters, depth = 0): unknown {
   if (value === null || typeof value === "boolean") return value;
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  if (typeof value === "string") {
-    if (Buffer.byteLength(value) <= STRING_BYTES) return value;
-    counters.truncatedValues++; return truncate(value);
-  }
+  if (typeof value === "string") return cut(value, counters);
   if (depth >= 8) { counters.truncatedValues++; return "[nested value omitted by host]"; }
   if (Array.isArray(value)) {
     const rows = value.slice(0, ARRAY_ITEMS).map(row => project(row, counters, depth + 1));
@@ -75,7 +77,7 @@ export function buildSemanticReviewPacket(input: { task: AgentTask; dispatches: 
   omitted.evidence = Math.max(0, active.length - EVIDENCE_ROWS);
   const observedEvidence = active.slice(-EVIDENCE_ROWS).map(row => ({ id: row.id, requirementId: row.requirementId, observer: row.observer,
     observerKind: row.observer === "nekodex-standalone-mcp-receipt" ? "tool-receipt" as const : "host-observation" as const,
-    subject: truncate(row.subject), subjectRevision: truncate(row.subjectRevision), property: truncate(row.property), outcome: row.outcome, sourceEventId: row.sourceEventId }));
+    subject: cut(row.subject, omitted), subjectRevision: cut(row.subjectRevision, omitted), property: cut(row.property, omitted), outcome: row.outcome, sourceEventId: row.sourceEventId }));
   const current = input.dispatches.filter(row => row.taskRevision === task.revision && row.state === "settled" && row.result);
   const receipts: SemanticReviewPacket["toolReceipts"] = [];
   for (const dispatch of current) for (const call of dispatch.result?.continuation?.pending ?? []) {
@@ -83,7 +85,7 @@ export function buildSemanticReviewPacket(input: { task: AgentTask; dispatches: 
     const outcome = input.outcomes.find(row => row.idempotencyKey === key && row.tool === call.tool && row.scope.generation === dispatch.generation);
     if (!outcome) continue;
     receipts.push({ receiptId: key, tool: call.tool, class: semanticFactClass(call.tool), state: outcome.state, stageId: dispatch.stageId, generation: dispatch.generation,
-      arguments: project(call.arguments, omitted), result: outcome.state === "outcome_unknown" ? null : project(outcome.result ?? null, omitted), reason: outcome.reason ? truncate(outcome.reason) : null });
+      arguments: project(call.arguments, omitted), result: outcome.state === "outcome_unknown" ? null : project(outcome.result ?? null, omitted), reason: outcome.reason ? cut(outcome.reason, omitted) : null });
   }
   const toolReceipts: typeof receipts = []; let receiptBytes = 0;
   for (const row of receipts.reverse()) {

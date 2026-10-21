@@ -183,6 +183,17 @@ describe("DW9 independent semantic Goal review", () => {
     expect(status.body.value.capabilities.semanticReview).toEqual({ available: true, providers: ["local-responses"] });
   });
 
+  test("any host truncation of an evidence field or tool reason marks the review input incomplete", () => {
+    const store = storeAt();
+    const task = store.createTask({ ownerMode: "agent", id: "long", familyId: "long", mode: "manual", originalRequest: "Synthetic long evidence.", requirements: [{ id: "r", text: "Synthetic." }],
+      stages: [{ id: "s", instruction: "Synthetic stage.", requirementIds: ["r"] }], bounds: { maxConcurrent: 1, maxTurns: 1, maxSpend: null } });
+    expect(store.semanticReviewInput(task.id).packet.completeInput).toBe(true);
+    store.recordEvidence(task.id, { id: "long-fact", requirementId: "r", taskRevision: 1, sourceEventId: "synthetic-event", subject: "s".repeat(5000), subjectRevision: "sha256:x", property: "synthetic", outcome: "passed", observer: "synthetic-observer" });
+    const input = store.semanticReviewInput(task.id);
+    expect([input.packet.completeInput, input.packet.omitted.truncatedValues]).toEqual([false, 1]);
+    expect(input.packet.observedEvidence[0]!.subject).toEndWith("[value truncated by host]");
+  });
+
   test("host normalization enforces requirement identity, whole-requirement sufficiency and observed basis", () => {
     const packet = { task: { requirements: [{ id: "a", text: "A" }, { id: "b", text: "B" }, { id: "c", text: "C" }] },
       observedEvidence: [{ id: "fact-a", requirementId: "a", outcome: "passed" }, { id: "fact-b", requirementId: "b", outcome: "failed" }],
