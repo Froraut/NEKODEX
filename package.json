@@ -3,6 +3,7 @@
   "version": "6.1.33-nekodex.4",
   "publishedReleaseVersion": "6.1.33-nekodex.4",
   "publishedLinuxReleaseVersion": "6.1.12-nekodex.1",
+  "publishedIntelReleaseVersion": "6.1.33-nekodex.4",
   "private": true,
   "description": "NEKODEX — a desktop workspace for ChatGPT accounts, coding agents, and local tools.",
   "author": "FroRaut",

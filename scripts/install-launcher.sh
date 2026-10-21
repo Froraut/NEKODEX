@@ -24,7 +24,11 @@ case "$OS" in
     EXTENSION="zip"
     case "$MACHINE" in
       arm64|aarch64) ARCH="arm64" ;;
-      x86_64|amd64) ARCH="x64" ;;
+      # A Rosetta shell reports x86_64 on Apple Silicon; install the native app there.
+      # Releases are Apple Silicon only, so an Intel Mac gets its last Intel build.
+      x86_64|amd64)
+        if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ]; then ARCH="arm64"; else ARCH="x64"; fi
+        ;;
       *) echo "Unsupported macOS architecture: $MACHINE" >&2; exit 1 ;;
     esac
     ;;
@@ -140,7 +144,11 @@ if [ -z "$VERSION" ]; then
     echo "Skipping NEKODEX $CANDIDATE: it is a local publisher build, not a GitHub Actions release" >&2
   done
   if [ -z "$VERSION" ]; then
-    echo "No GitHub Actions-built NEKODEX release among the newest 10 has a $PLATFORM-$ARCH.$EXTENSION asset; set CODEX_WEB_GPT_VERSION explicitly" >&2
+    if [ "$PLATFORM-$ARCH" = "mac-x64" ]; then
+      echo "NEKODEX releases are built for Apple Silicon Macs only. None of the newest 10 still has an Intel build; set CODEX_WEB_GPT_VERSION to the last Intel build linked at https://github.com/$REPOSITORY#download" >&2
+    else
+      echo "No GitHub Actions-built NEKODEX release among the newest 10 has a $PLATFORM-$ARCH.$EXTENSION asset; set CODEX_WEB_GPT_VERSION explicitly" >&2
+    fi
     exit 1
   fi
 fi
