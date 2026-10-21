@@ -6,11 +6,11 @@ import { join } from "node:path";
 import { AgentModeRuntime, AgentModeStore, createLocalResponsesExecutionPort } from "../src/agent-mode";
 import { createAgentToolsComposition, type AgentToolsComposition } from "../src/agent-tools/composition";
 import { createAgentBrowserToolsProvider } from "../src/browser-companion/agent-tools";
-import { startBrowserCompanionExtensionFixture } from "./fixtures/browser-companion-extension";
+import { companionChromiumMissing, startBrowserCompanionExtensionFixture } from "./fixtures/browser-companion-extension";
 import type { BrowserObservation } from "../src/browser-companion/protocol";
 
 /** The single connected browser/model fixture for this batch. No account or ChatGPT sender. */
-test("approved Agent browser calls use actual MV3 input and canonical continuation, then recover a terminal receipt without replay", async () => {
+test.skipIf(Boolean(companionChromiumMissing))("approved Agent browser calls use actual MV3 input and canonical continuation, then recover a terminal receipt without replay", async () => {
   const home = realpathSync(mkdtempSync(join(tmpdir(), "nekodex-agent-browser-owner-")));
   const store = new AgentModeStore(join(home, "agent.sqlite"));
   let fixture: Awaited<ReturnType<typeof startBrowserCompanionExtensionFixture>> | undefined;

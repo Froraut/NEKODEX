@@ -88,6 +88,23 @@ test('Agent IPC restricts retained tool reconciliation to scoped receipt identit
   expect(fixture.calls).toHaveLength(1);
 });
 
+test('Agent IPC forwards only an exact user disposition for an unknown send', async () => {
+  const fixture = registrar(true);
+  const body = { action: 'reconcile-dispatch', taskId: 'task', actionId: 'reconcile', scope: { familyId: 'family', generation: 3, revision: 1 }, dispatchId: 'dispatch', disposition: { kind: 'abandoned', note: 'Outcome unknown, not resent.' } };
+  await fixture.call(body);
+  const delivered = { ...body, actionId: 'deliver', disposition: { kind: 'confirmed_delivered' } };
+  await fixture.call(delivered);
+  expect(fixture.calls).toEqual([[fixture.config, 'agent-mode', { body, returnErrorReceipt: true }], [fixture.config, 'agent-mode', { body: delivered, returnErrorReceipt: true }]]);
+  for (const bad of [{ ...body, disposition: { kind: 'settled' } }, { ...body, disposition: { kind: 'abandoned', receiptId: 'forged' } },
+    { ...body, disposition: { kind: 'abandoned', note: ' ' } }, { ...body, disposition: { kind: 'abandoned', note: 'x'.repeat(2001) } },
+    { ...body, dispatchId: '' }, { ...body, scope: undefined }, { ...body, explicitUserAction: true }, { ...body, disposition: undefined },
+    { action: 'archive', taskId: 'task', actionId: 'archive', scope: body.scope, disposition: body.disposition }]) {
+    await expect(fixture.call(bad)).rejects.toThrow('Invalid unknown send reconciliation');
+  }
+  await expect(fixture.call({ ...body, outcome: { state: 'completed' } })).rejects.toThrow('observed by the main process');
+  expect(fixture.calls).toHaveLength(2);
+});
+
 test('Agent IPC refuses malformed/oversized commands and propagates a failed receipt', async () => {
   const fixture = registrar(true);
   for (const body of [null, [], { action: 'execute-shell' }, { action: 'create', input: 'a'.repeat(600001) }]) {

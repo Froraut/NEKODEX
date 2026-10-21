@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { browserBindingOf } from "../src/browser-companion/protocol";
-import { startBrowserCompanionExtensionFixture } from "./fixtures/browser-companion-extension";
+import { companionChromiumMissing, startBrowserCompanionExtensionFixture } from "./fixtures/browser-companion-extension";
 
 /** Real MV3 permission/transport fixture, not visible toolbar or installed-system proof. */
-test("actual MV3 popup pairs, selects with activeTab, observes and types on inert local markup", async () => {
+test.skipIf(Boolean(companionChromiumMissing))("actual MV3 popup pairs, selects with activeTab, observes and types on inert local markup", async () => {
   const fixture = await startBrowserCompanionExtensionFixture();
   try {
     expect(fixture.extensionEnabled).toBe(true); expect(fixture.ungrantedReadRefused).toBe(true);
@@ -24,7 +24,7 @@ test("actual MV3 popup pairs, selects with activeTab, observes and types on iner
   } finally { await fixture.close(); }
 }, 25_000);
 
-test("actual MV3 popup and session show a NEKODEX revoke instead of a retained pairing", async () => {
+test.skipIf(Boolean(companionChromiumMissing))("actual MV3 popup and session show a NEKODEX revoke instead of a retained pairing", async () => {
   const fixture = await startBrowserCompanionExtensionFixture();
   try {
     const { runtime, popup, extensionId } = fixture;

@@ -4,10 +4,10 @@ import { AgentModeRunner } from "./runner";
 import { AgentModeStore } from "./store";
 import { projectNativeSelectedAttachments } from "./native-images";
 import { activeTaskEvidence } from "./evidence";
-import { normalizeSemanticReview, SEMANTIC_REVIEW_INSTRUCTIONS, SemanticReviewOutputError } from "./semantic-review";
+import { normalizeSemanticReview, SEMANTIC_REVIEW_INSTRUCTIONS, SemanticReviewOutputError, semanticReviewInvalidEvidence, semanticReviewTextEvidence } from "./semantic-review";
 import { agentModelConfigured, agentModelAccepting, agentNativeConcurrency, type AgentModelOption } from "./provider";
 import { nativeScopeOf, sameNativeScope, type AgentNativeScope } from "./native-protocol";
-import type { AgentControl, AgentDispatch, AgentExecutionPort, AgentLoopSourceAuthority, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliationResult, AgentWorkPacket, CreateAgentTask, OutcomeEvidence, OutcomeReview, AgentSemanticReviewer, SemanticOutcomeReview, SemanticReviewPort } from "./types";
+import type { AgentControl, AgentDispatch, AgentDispatchDisposition, AgentExecutionPort, AgentLoopSourceAuthority, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliationResult, AgentWorkPacket, CreateAgentTask, OutcomeEvidence, OutcomeReview, AgentSemanticReviewer, SemanticOutcomeReview, SemanticReviewPort } from "./types";
 
 export interface AgentModeRuntimeOptions {
   store: AgentModeStore;
@@ -98,6 +98,15 @@ export class AgentModeRuntime {
     });
     if (!command.duplicate) this.automaticRuns.delete(taskId);
     return command.result;
+  }
+  /** Explicit user record for an unknown send of a stopped task. It never resends, replays or settles the dispatch. */
+  reconcileDispatch(taskId: string, actionId: string, scope: AgentActionScope, dispatchId: string, disposition: { kind: AgentDispatchDisposition["kind"]; note?: string }): { task: AgentTask; disposition: AgentDispatchDisposition } {
+    return this.store.command(taskId, actionId, "reconcile_dispatch", { scope, dispatchId, disposition }, () => {
+      this.assertScope(taskId, scope);
+      if (this.store.listDispatches(taskId).some(row => this.runner.liveDispatchIds.includes(row.id) || this.pending.has(row.id))) throw new Error("Task still has live execution");
+      const fact = this.store.recordDispatchDisposition(taskId, dispatchId, { ...disposition, actionId, scope });
+      return { task: this.store.getTask(taskId), disposition: fact };
+    }).result;
   }
   /** Explicitly refresh the same selected provider/model without offering any work. */
   refreshExecution(taskId: string, actionId: string, scope: AgentActionScope, explicitUserAction: boolean): AgentTask {
@@ -258,7 +267,8 @@ export class AgentModeRuntime {
   }
   /** DW9: explicit independent semantic review of the current settled deliverable. The reviewer
    * gets a separate tool-less context and the bounded ledger packet; its verdict is a recommendation
-   * that Verify re-derives. An unchanged ledger is never reviewed twice; a lost terminal is not replayed. */
+   * that Verify re-derives. An unchanged ledger is never reviewed twice and no action is sent twice.
+   * After a lost terminal or an invalid output, only a new explicit action may start a new attempt. */
   async semanticReview(taskId: string, actionId: string, scope: AgentActionScope, reviewer: AgentSemanticReviewer, explicitUserAction: boolean): Promise<AgentTask> {
     if (explicitUserAction !== true) throw new Error("Task semantic review requires an explicit user action");
     const input = { scope, reviewer, explicitUserAction };
@@ -286,18 +296,23 @@ export class AgentModeRuntime {
     this.semanticAttempts.set(attemptId, { taskId, model: reviewer.model, abort });
     const operationId = `semantic-review:${attemptId}`;
     const operation = (async (): Promise<AgentTask> => {
-      let raw: { receiptId: string; text: string };
+      // An invalid output keeps its fixed reason and bounded, redacted reply shape as evidence.
+      const noVerdict = "Task semantic reviewer returned no valid verdict; inspect its attempt receipt before an explicit new review";
+      let raw: Awaited<ReturnType<SemanticReviewPort["review"]>>;
       try { raw = await port.review({ attemptId, taskId, reviewer: { ...reviewer }, instructions: SEMANTIC_REVIEW_INSTRUCTIONS, prompt: reviewed.text, signal: abort.signal }); }
       catch (error) {
-        const invalid = error instanceof SemanticReviewOutputError;
-        this.store.recordSemanticReviewResult(taskId, { attemptId, state: invalid ? "invalid_output" : "outcome_unknown" });
-        throw new Error(invalid ? "Task semantic reviewer returned no valid verdict; inspect its attempt receipt before an explicit new review" : "Task semantic review outcome is unknown; inspect its attempt receipt before an explicit new review");
+        if (!(error instanceof SemanticReviewOutputError)) {
+          this.store.recordSemanticReviewResult(taskId, { attemptId, state: "outcome_unknown" });
+          throw new Error("Task semantic review outcome is unknown; inspect its attempt receipt before an explicit new review");
+        }
+        this.store.recordSemanticReviewResult(taskId, { attemptId, state: "invalid_output", ...(error.evidence.receiptId ? { receiptId: error.evidence.receiptId } : {}), invalid: semanticReviewInvalidEvidence(error) });
+        throw new Error(noVerdict);
       }
       let verdicts: ReturnType<typeof normalizeSemanticReview>;
       try { verdicts = normalizeSemanticReview(reviewed.packet, raw.text); }
-      catch {
-        this.store.recordSemanticReviewResult(taskId, { attemptId, state: "invalid_output", receiptId: raw.receiptId });
-        throw new Error("Task semantic reviewer returned no valid verdict; inspect its attempt receipt before an explicit new review");
+      catch (error) {
+        this.store.recordSemanticReviewResult(taskId, { attemptId, state: "invalid_output", receiptId: raw.receiptId, invalid: semanticReviewInvalidEvidence(error, raw.reply ?? semanticReviewTextEvidence(raw.text)) });
+        throw new Error(noVerdict);
       }
       const review: SemanticOutcomeReview = { id: randomUUID(), attemptId, generation: task.generation, taskRevision: task.revision, evidenceRevision: task.evidenceRevision, inputDigest: reviewed.digest,
         reviewer: { ...reviewer, context: "fresh-tool-less", independence: task.execution?.provider !== reviewer.provider ? "separate-provider" : task.execution.model !== reviewer.model ? "separate-model" : "separate-context", receiptId: raw.receiptId },

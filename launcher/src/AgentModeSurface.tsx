@@ -11,6 +11,7 @@ import { NativeAttachmentsPanel, type NativeSelectedAttachment } from './NativeA
 import { AgentLoopFileWatcher } from './AgentLoopFileWatcher';
 import { AgentLoopExternalProducer } from './AgentLoopExternalProducer';
 import { RemovalConfirmation } from './RemovalConfirmation';
+import { AgentDispatchReconciliation, type AgentDispatchDispositionInput } from './AgentDispatchReconciliation';
 
 const lines = (text: string) => text.split('\n').map(value => value.trim()).filter(Boolean);
 const requirementRows = (text: string) => lines(text).map((value, index) => ({ id: `r${index + 1}`, text: value }));
@@ -20,6 +21,10 @@ const stageRows = (text: string, requirementIds: string[], order: StageOrder = '
     : index && order === 'sequence' ? [`s${index}`] : [],
 }));
 const errorText = (error: unknown) => stripIpcErrorPrefix(error instanceof Error ? error.message : String(error));
+/** Fixed refusals for a semantic-review action whose attempt receipt is already durable. The
+ * supervisor passes these exact daemon messages through; a later deliberate click is then a
+ * new explicit review identity, while an ambiguous transport failure keeps its identity. */
+export const semanticAttemptTerminal = /^(?:Task semantic review (?:outcome is unknown|attempt already exists)|Task semantic reviewer returned no valid verdict|Stale task semantic review)/;
 const terminal = (task: AgentTask) => task.status === 'stopped' || task.status === 'verified_complete';
 type ModelRow = AgentModeStatus['models'][number];
 const modelChoice = (row: ModelRow) => row.provider === 'owned-native' ? JSON.stringify([row.provider, row.id, row.admissionId]) : row.id;
@@ -70,6 +75,8 @@ export function AgentModeSurface({ language, api, disabled = false }: {
   const [notice, setNotice] = useState<string | null>(null);
   const [archiving, setArchiving] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [reconciling, setReconciling] = useState<string | null>(null);
+  const [reconcileError, setReconcileError] = useState<string | null>(null);
   const [request, setRequest] = useState('');
   const [requirements, setRequirements] = useState('');
   const [stages, setStages] = useState('');
@@ -237,6 +244,15 @@ export function AgentModeSurface({ language, api, disabled = false }: {
       await refresh(''); if (mounted.current) setNotice(text.archived);
     });
   };
+  const reconcileDispatch = (dispatchId: string, disposition: AgentDispatchDispositionInput) => {
+    const taskId = selectedRef.current;
+    void act('reconcile-dispatch', async () => {
+      try { await mutate({ action: 'reconcile-dispatch', taskId, dispatchId, disposition }); }
+      catch (cause) { if (mounted.current) setReconcileError(errorText(cause)); return; } // Reported inside the dialog, above its backdrop.
+      if (mounted.current) { setReconciling(null); setReconcileError(null); }
+      await refresh(taskId); if (mounted.current) setNotice(text.reconciled);
+    });
+  };
   const reply = () => {
     const taskId = selectedRef.current;
     void act('reply', async () => {
@@ -312,9 +328,7 @@ export function AgentModeSurface({ language, api, disabled = false }: {
     void act('semantic-review', async () => {
       try { await mutate({ action: 'semantic-review', taskId: task.id, reviewer: { provider: 'local-responses', model: reviewerModel }, explicitUserAction: true }); }
       catch (cause) {
-        // These terminals are durable attempt receipts. A later deliberate click is a new
-        // explicit review identity; an ambiguous transport failure keeps its identity.
-        if (/^(?:Task semantic review (?:outcome is unknown|attempt already exists)|Task semantic reviewer returned no valid verdict|Stale task semantic review)/.test(errorText(cause))) {
+        if (semanticAttemptTerminal.test(errorText(cause))) {
           for (const key of uncertain.current.keys()) {
             const command = JSON.parse(key) as { action: string; taskId?: string };
             if (command.action === 'semantic-review' && command.taskId === task.id) uncertain.current.delete(key);
@@ -393,6 +407,10 @@ export function AgentModeSurface({ language, api, disabled = false }: {
   const canRunLoop = Boolean(task?.mode === 'loop' && task.status === 'review_required' && status?.configured && status.accepting !== false
     && status.models.some(row => matchesModel(task, row) && row.accepting !== false) && task.turns < task.bounds.maxTurns
     && !detail?.dispatches.some(row => ['unknown', 'offered', 'admitted', 'acked'].includes(row.state)));
+  const dispositionOf = (dispatchId: string) => detail?.dispatchDispositions?.find(row => row.dispatchId === dispatchId);
+  // The core owner re-checks scope, stop, owner and state; this only decides where the control appears.
+  const canReconcileDispatch = Boolean(task && task.status === 'stopped' && !task.ownerId && !task.loopRun && task.archivedAt === undefined);
+  const reconcilingDispatch = reconciling && canReconcileDispatch ? detail?.dispatches.find(row => row.id === reconciling && row.state === 'unknown' && !dispositionOf(row.id)) : undefined;
   const currentNativeModel = task?.execution?.provider === 'owned-native' ? status?.models.find(row =>
     row.provider === 'owned-native' && row.id === task.execution?.model && row.available === true && row.accepting !== false && row.admissionId) : undefined;
   const staleNativeAdmission = task?.execution?.provider === 'owned-native' && !!currentNativeModel && currentNativeModel.admissionId !== task.execution.admissionId;
@@ -515,7 +533,7 @@ export function AgentModeSurface({ language, api, disabled = false }: {
               <Button size="sm" disabled={locked || terminal(task) || task.status === 'paused'} busy={pending === 'pause'} onClick={() => control('pause')}>{text.pause}</Button>
               <Button size="sm" disabled={locked || terminal(task) || task.status !== 'paused'} busy={pending === 'resume'} onClick={() => control('resume')}>{text.resume}</Button>
               <Button size="sm" variant="danger" disabled={locked || terminal(task)} busy={pending === 'stop'} onClick={() => control('stop')}>{text.stop}</Button>
-              {terminal(task) && task.archivedAt === undefined ? <Button size="sm" variant="ghost" disabled={locked || detail?.dispatches.some(row => ['unknown', 'offered', 'admitted', 'acked'].includes(row.state))}
+              {terminal(task) && task.archivedAt === undefined ? <Button size="sm" variant="ghost" disabled={locked || detail?.dispatches.some(row => ['offered', 'admitted', 'acked'].includes(row.state) || row.state === 'unknown' && !dispositionOf(row.id))}
                 onClick={() => { setArchiveError(null); setArchiving(true); }}>{text.archive}</Button> : null}
               <Button size="sm" variant="primary" disabled={locked || !canExecute}
                 busy={pending === 'step'} onClick={() => execute('step')}>{text.step}</Button>
@@ -605,6 +623,8 @@ export function AgentModeSurface({ language, api, disabled = false }: {
           </Panel>
           <Panel title={text.dispatches}>
             <RecordList empty={text.none}>{detail.dispatches.map(row => <li key={row.id}><code>{row.id}</code> · {row.state} · {row.stageId}
+              {row.state === 'unknown' && dispositionOf(row.id) ? <p><Badge>{text.recordedOutcome}: {dispositionOf(row.id)!.kind === 'abandoned' ? text.reconcileAbandoned : text.reconcileDelivered}</Badge>{dispositionOf(row.id)!.note ? <span className="agent-mode-prose"> {dispositionOf(row.id)!.note}</span> : null}</p>
+                : row.state === 'unknown' && canReconcileDispatch ? <div><p className="agent-mode-muted">{text.reconcileDispatchHint}</p><Button size="sm" disabled={locked} onClick={() => { setReconcileError(null); setReconciling(row.id); }}>{text.reconcileDispatch}</Button></div> : null}
               {row.result ? <><p className="agent-mode-prose">{row.result.summary}</p><small>{row.result.outcome} · <code>{row.result.receiptId}</code></small></> : null}
               {row.result?.continuation && row.generation !== task.generation && task.stages.some(stage => stage.continuationFrom === row.id && stage.continuationGeneration !== task.generation) ? <div><p className="agent-mode-muted">{text.adoptToolsHint}</p><Button size="sm" disabled={locked || terminal(task)} busy={pending === `adopt:${row.id}`} onClick={() => adoptContinuation(row.id)}>{text.adoptTools}</Button></div> : null}</li>)}</RecordList>
           </Panel>
@@ -695,6 +715,8 @@ export function AgentModeSurface({ language, api, disabled = false }: {
       pending={pending === 'archive'} error={archiveError} onKeep={() => setArchiving(false)} onConfirm={archive}>
       <p>{text.archiveBody}</p><p><code>{task.id}</code></p>
     </RemovalConfirmation> : null}
+    {reconcilingDispatch ? <AgentDispatchReconciliation key={reconcilingDispatch.id} dispatch={reconcilingDispatch} text={text} pending={pending === 'reconcile-dispatch'} error={reconcileError}
+      onKeep={() => setReconciling(null)} onConfirm={disposition => reconcileDispatch(reconcilingDispatch.id, disposition)} /> : null}
     </PanelStack>
   </Page>;
 }

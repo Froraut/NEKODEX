@@ -1,9 +1,12 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { classifyCanonicalText } from "../../launcher/electron/canonical-history-policy.cjs";
 import { readRequestBodyBytes } from "../http-body";
 import { activeTaskEvidence } from "./evidence";
+import { redactSecretShapes } from "./prior-tool-context";
 import { loopbackResponsesEndpoint } from "./provider";
-import type { AgentDispatch, AgentTask, AgentToolOutcome, SemanticFactClass, SemanticRequirementVerdict, SemanticReviewPort, SemanticReviewRequest, SemanticVerdict } from "./types";
+import type { AgentDispatch, AgentTask, AgentToolOutcome, SemanticFactClass, SemanticRequirementVerdict, SemanticReviewInvalidEvidence, SemanticReviewInvalidReason, SemanticReviewPort,
+  SemanticReviewReplyEvidence, SemanticReviewRequest, SemanticReviewTextExcerpt, SemanticVerdict } from "./types";
 
 /** DW9: an independent, tool-less reviewer judges the whole deliverable per requirement.
  * The packet is a pure projection of the durable task ledger, so its digest identifies
@@ -130,7 +133,90 @@ const replySchema = z.object({ protocol: z.literal(SEMANTIC_REVIEW_PROTOCOL),
     evidenceIds: z.array(z.string().min(1).max(256)).max(64), toolReceiptIds: z.array(z.string().min(1).max(256)).max(64),
     rationale: z.string().trim().min(1).max(4096), missing: z.array(z.string().trim().min(1).max(1024)).max(16) }).strict()).min(1).max(128),
   deliverable: z.object({ verdict, rationale: z.string().trim().min(1).max(4096) }).strict() }).strict();
-export class SemanticReviewOutputError extends Error {}
+
+/** A completed reviewer terminal that carried no usable verdict, with its fixed reason. */
+export class SemanticReviewOutputError extends Error {
+  constructor(message: string, readonly reason: SemanticReviewInvalidReason, readonly evidence: { receiptId?: string; reply?: SemanticReviewReplyEvidence; issues?: { path: string; code: string }[] } = {}) {
+    super(message); this.name = "SemanticReviewOutputError";
+  }
+}
+
+const REPLY_ITEMS = 16;
+type ReplyItem = Record<string, unknown>;
+const replyItem = (item: unknown): ReplyItem | undefined => item && typeof item === "object" && !Array.isArray(item) ? item as ReplyItem : undefined;
+function messagePhase(row: ReplyItem): "final_answer" | "commentary" | "none" | "other" {
+  return row.phase === undefined || row.phase === null ? "none" : row.phase === "final_answer" || row.phase === "commentary" ? row.phase : "other";
+}
+function messageText(row: ReplyItem): string {
+  return Array.isArray(row.content) ? row.content.flatMap(part => { const value = replyItem(part); return value?.type === "output_text" && typeof value.text === "string" ? [value.text] : []; }).join("") : "";
+}
+/** The reviewer's answer is its final channel only. Commentary, such as the Web adapter's
+ * local-tools notice or reasoning trace, is never part of the verdict; an answer streamed
+ * around commentary or reasoning items is rejoined exactly. */
+export function semanticReviewFinalText(output: unknown[]): string {
+  return output.flatMap(item => { const row = replyItem(item); return row?.type === "message" && ["final_answer", "none"].includes(messagePhase(row)) ? [messageText(row)] : []; }).join("");
+}
+/** Redacts the whole text before any cut, so a bound cannot split a recognised secret. Known
+ * credential shapes are replaced and any line the canonical secret classifier still flags is
+ * omitted. Control characters are replaced so the stored JSON stays within a fixed bound. */
+function excerpt(value: string, head: number, tail: number): SemanticReviewTextExcerpt {
+  const redacted = redactSecretShapes(value).replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*$/u, "[redacted private key]")
+    .split("\n").map(line => classifyCanonicalText(line) === "known-secret-content" ? "[line omitted by host: known secret pattern]" : line).join("\n")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/gu, "\ufffd");
+  const bytes = Buffer.from(redacted);
+  const text = bytes.length <= head + tail ? redacted
+    : `${bytes.subarray(0, head).toString("utf8")}…[${bytes.length - head - tail} bytes omitted by host]…${tail ? bytes.subarray(bytes.length - tail).toString("utf8") : ""}`;
+  return { bytes: Buffer.byteLength(value), text, truncated: bytes.length > head + tail };
+}
+/** Item layout plus bounded, redacted final and commentary text; never reasoning text. */
+export function semanticReviewReplyEvidence(output: unknown[]): SemanticReviewReplyEvidence {
+  const items: SemanticReviewReplyEvidence["items"] = []; const commentary: string[] = []; let seen = 0;
+  for (const item of output) {
+    const row = replyItem(item); if (!row) continue;
+    const type = typeof row.type === "string" && /^[a-z_]{1,64}$/u.test(row.type) ? row.type : "unknown";
+    const phase = type === "message" ? messagePhase(row) : null;
+    if (phase === "commentary") commentary.push(messageText(row));
+    if (++seen <= REPLY_ITEMS) items.push({ type, phase, bytes: Buffer.byteLength(type === "message" ? messageText(row) : JSON.stringify(row)) });
+  }
+  return { items, omittedItems: Math.max(0, seen - REPLY_ITEMS), final: excerpt(semanticReviewFinalText(output), 3000, 1000), commentary: excerpt(commentary.join("\n"), 1024, 0) };
+}
+/** Evidence for a reviewer port that returned only its final text. */
+export function semanticReviewTextEvidence(text: string): SemanticReviewReplyEvidence {
+  return semanticReviewReplyEvidence([{ type: "message", role: "assistant", content: [{ type: "output_text", text }] }]);
+}
+/** Durable diagnosis of an invalid terminal: a fixed reason, bounded schema issue paths and the
+ * bounded, redacted reply shape. Never the unbounded or unredacted reply. */
+export function semanticReviewInvalidEvidence(error: unknown, reply?: SemanticReviewReplyEvidence): SemanticReviewInvalidEvidence {
+  const known = error instanceof SemanticReviewOutputError ? error : undefined;
+  const shape = known?.evidence.reply ?? reply;
+  return { reason: known?.reason ?? "unclassified", ...(known?.evidence.issues?.length ? { issues: known.evidence.issues } : {}), ...(shape ? { reply: shape } : {}) };
+}
+
+/** Exactly one JSON object from the final answer: bare, in one fenced block or amid prose.
+ * Several objects, an unterminated object or none at all are ambiguous and rejected. A balanced
+ * brace span that is not valid JSON, such as prose "{r1, r2}", is not an object; braces and
+ * quotes inside JSON strings are honoured. */
+export function extractSemanticReviewObject(text: string): Record<string, unknown> {
+  if (!text.trim()) throw new SemanticReviewOutputError("Semantic reviewer final answer is empty", "final_answer_empty");
+  const objects: Record<string, unknown>[] = [];
+  let depth = 0, start = 0, quoted = false, escaped = false;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    if (depth === 0) { if (char === "{") { depth = 1; start = index; } continue; }
+    if (quoted) { if (escaped) escaped = false; else if (char === "\\") escaped = true; else if (char === "\"") quoted = false; continue; }
+    if (char === "\"") quoted = true;
+    else if (char === "{") depth++;
+    else if (char === "}" && --depth === 0) {
+      let value: unknown;
+      try { value = JSON.parse(text.slice(start, index + 1)); } catch { continue; }
+      if (replyItem(value)) objects.push(value as Record<string, unknown>);
+    }
+  }
+  if (depth !== 0) throw new SemanticReviewOutputError("Semantic reviewer final answer has an unterminated JSON object", "unterminated_json_object");
+  if (objects.length > 1) throw new SemanticReviewOutputError("Semantic reviewer final answer has more than one JSON object", "multiple_json_objects");
+  if (!objects.length) throw new SemanticReviewOutputError("Semantic reviewer final answer has no JSON object", "no_json_object");
+  return objects[0]!;
+}
 
 /** Observed basis that may carry a pass: active passed evidence for this requirement or a
  * completed non-action canonical receipt. Action receipts and claims are support only. */
@@ -142,13 +228,12 @@ export function semanticRequirementBasis(packet: SemanticReviewPacket, row: Pick
 /** Parses the reviewer's raw text and applies fixed host rules. The reviewer never chooses
  * which facts exist; unsupported passes become unknown and every adjustment is recorded. */
 export function normalizeSemanticReview(packet: SemanticReviewPacket, text: string): { requirements: SemanticRequirementVerdict[]; deliverable: { verdict: SemanticVerdict; rationale: string }; hostAdjustments: string[] } {
-  let reply: z.infer<typeof replySchema>;
-  try {
-    const trimmed = text.trim().replace(/^```(?:json)?\s*/u, "").replace(/\s*```$/u, "");
-    reply = replySchema.parse(JSON.parse(trimmed));
-  } catch { throw new SemanticReviewOutputError("Semantic reviewer output does not match its bounded verdict schema"); }
+  const parsed = replySchema.safeParse(extractSemanticReviewObject(text));
+  if (!parsed.success) throw new SemanticReviewOutputError("Semantic reviewer output does not match its bounded verdict schema", "schema_mismatch",
+    { issues: parsed.error.issues.slice(0, 8).map(issue => ({ path: issue.path.map(String).join(".").slice(0, 160), code: String(issue.code).slice(0, 64) })) });
+  const reply = parsed.data;
   const known = new Set(packet.task.requirements.map(row => row.id));
-  if (reply.requirements.some(row => !known.has(row.requirementId)) || new Set(reply.requirements.map(row => row.requirementId)).size !== reply.requirements.length) throw new SemanticReviewOutputError("Semantic reviewer verdicts do not match the task requirements");
+  if (reply.requirements.some(row => !known.has(row.requirementId)) || new Set(reply.requirements.map(row => row.requirementId)).size !== reply.requirements.length) throw new SemanticReviewOutputError("Semantic reviewer verdicts do not match the task requirements", "requirement_mismatch");
   const hostAdjustments: string[] = [];
   const requirements = packet.task.requirements.map(requirement => {
     const raw = reply.requirements.find(row => row.requirementId === requirement.id);
@@ -199,16 +284,15 @@ export function createResponsesSemanticReviewPort(options: ResponsesSemanticRevi
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("Invalid semantic review terminal");
     const record = body as Record<string, unknown>;
     if (typeof record.id !== "string" || !record.id.trim() || record.id.length > 120 || !Array.isArray(record.output)) throw new Error("Semantic review terminal identity is unavailable");
-    if (record.status !== "completed") throw new SemanticReviewOutputError("Semantic reviewer did not complete its turn");
-    const text: string[] = [];
-    for (const item of record.output) {
+    const receiptId = `response:${record.id}`, output: unknown[] = record.output;
+    const invalid = (message: string, reason: SemanticReviewInvalidReason) => new SemanticReviewOutputError(message, reason, { receiptId, reply: semanticReviewReplyEvidence(output) });
+    if (record.status !== "completed") throw invalid("Semantic reviewer did not complete its turn", "turn_not_completed");
+    for (const item of output) {
       if (!item || typeof item !== "object") continue;
-      const row = item as Record<string, unknown>;
-      if (row.type !== "message" && row.type !== "reasoning") throw new SemanticReviewOutputError("Semantic reviewer attempted a tool or non-message output");
-      if (row.type !== "message") continue;
-      if (row.role !== "assistant" || !Array.isArray(row.content)) throw new SemanticReviewOutputError("Semantic reviewer output has unsupported provenance");
-      for (const part of row.content) if (part && typeof part === "object" && (part as Record<string, unknown>).type === "output_text" && typeof (part as Record<string, unknown>).text === "string") text.push((part as { text: string }).text);
+      const row = item as ReplyItem;
+      if (row.type !== "message" && row.type !== "reasoning") throw invalid("Semantic reviewer attempted a tool or non-message output", "non_message_output");
+      if (row.type === "message" && (row.role !== "assistant" || !Array.isArray(row.content))) throw invalid("Semantic reviewer output has unsupported provenance", "unsupported_provenance");
     }
-    return { receiptId: `response:${record.id}`, text: text.join("\n") };
+    return { receiptId, text: semanticReviewFinalText(output), reply: semanticReviewReplyEvidence(output) };
   } };
 }

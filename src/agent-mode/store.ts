@@ -9,7 +9,7 @@ import { activeTaskEvidence } from "./evidence";
 import { buildSemanticReviewPacket, semanticRequirementBasis, type SemanticReviewInput } from "./semantic-review";
 import { invocationFingerprint } from "../agent-tools/journal";
 import { AGENT_NATIVE_PROTOCOL, nativeDigest, nativeToolCallId } from "./native-protocol";
-import type { AgentControl, AgentDispatch, AgentExecutionConfig, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliation, AgentWorker, AgentWorkPacket, CreateAgentTask, ExecutionResult, MailMessage, OutcomeEvidence, OutcomeReview, Requirement, SemanticOutcomeReview, StageInput } from "./types";
+import type { AgentControl, AgentDispatch, AgentDispatchDisposition, AgentExecutionConfig, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliation, AgentWorker, AgentWorkPacket, CreateAgentTask, ExecutionResult, MailMessage, OutcomeEvidence, OutcomeReview, Requirement, SemanticOutcomeReview, SemanticReviewInvalidEvidence, StageInput } from "./types";
 
 function text(value: string, name: string, max = 16_384): void {
   if (typeof value !== "string" || !value.trim() || Buffer.byteLength(value) > max) throw new Error(`Invalid ${name}`);
@@ -256,8 +256,9 @@ export class AgentModeStore {
       const task = this.getTask(taskId);
       if (task.archivedAt !== undefined) return task;
       if (task.status !== "stopped" && task.status !== "verified_complete") throw new Error("Task archive requires a stopped or verified complete task");
-      const dispatches = this.listDispatches(taskId);
-      if (task.ownerId || task.loopRun || dispatches.some(row => unsettled.has(row.state))) throw new Error("Task archive requires settled execution");
+      const dispatches = this.listDispatches(taskId), closed = new Set(this.listDispatchDispositions(taskId).map(row => row.dispatchId));
+      // An unknown send stays unknown; only the user's explicit disposition receipt closes it for archive.
+      if (task.ownerId || task.loopRun || dispatches.some(row => unsettled.has(row.state) && !(row.state === "unknown" && closed.has(row.id)))) throw new Error("Task archive requires settled execution");
       // A stopped task never applies late tool outcomes to its row; a verified one could, so it must have none left.
       const outcomes = this.effectiveToolOutcomes(taskId), recorded = new Set(this.listToolOutcomes(taskId).map(row => row.idempotencyKey));
       if (task.status === "verified_complete" && (outcomes.some(row => row.state === "outcome_unknown") || dispatches.some(row => row.generation === task.generation
@@ -265,6 +266,35 @@ export class AgentModeStore {
       task.archivedAt = this.now(); task.updatedAt = task.archivedAt;
       this.db.query("UPDATE agent_tasks SET body=? WHERE id=?").run(JSON.stringify(task), task.id);
       return task;
+    });
+  }
+  listDispatchDispositions(taskId: string): AgentDispatchDisposition[] {
+    return (this.db.query("SELECT body FROM agent_receipts WHERE taskId=? AND kind='dispatch_disposition' ORDER BY rowid").all(taskId) as { body: string }[]).map(row => JSON.parse(row.body) as AgentDispatchDisposition);
+  }
+  /**
+   * Records the user's outcome for one unknown send of a stopped task with no owner or Loop run. It sends and
+   * replays nothing and is not a terminal receipt: the dispatch row, its worker, stage, turn, reservation, mail,
+   * receipts and evidence are unchanged. One immutable receipt per dispatch; archive may then proceed.
+   */
+  recordDispatchDisposition(taskId: string, dispatchId: string, input: { kind: AgentDispatchDisposition["kind"]; note?: string; actionId: string; scope: AgentDispatchDisposition["scope"] }): AgentDispatchDisposition {
+    id(input.actionId);
+    if (!["abandoned", "confirmed_delivered"].includes(input.kind)) throw new Error("Unknown send reconciliation outcome is not supported");
+    if (input.note !== undefined && (typeof input.note !== "string" || !input.note.trim() || input.note.length > 2000)) throw new Error("Unknown send reconciliation note must be 1-2000 characters");
+    return this.atomic(() => {
+      const task = this.getTask(taskId), row = this.row<AgentDispatch>("agent_dispatches", dispatchId);
+      if (!row || row.taskId !== taskId) throw new Error("Unknown send reconciliation dispatch does not belong to this task");
+      if (task.archivedAt !== undefined) throw new Error("Task is archived; its ledger is read-only");
+      if (task.familyId !== input.scope.familyId || task.generation !== input.scope.generation || task.revision !== input.scope.revision) throw new Error("Stale task action scope");
+      if (task.status !== "stopped") throw new Error("Unknown send reconciliation requires a stopped task");
+      if (task.ownerId || task.loopRun) throw new Error("Unknown send reconciliation requires a task with no execution owner");
+      if (row.state !== "unknown") throw new Error("Unknown send reconciliation requires a dispatch whose outcome is unknown");
+      if (this.listDispatchDispositions(taskId).some(fact => fact.dispatchId === dispatchId)) throw new Error("Unknown send reconciliation is already recorded for this dispatch");
+      if (input.kind === "confirmed_delivered" && !row.acceptanceReceipt) throw new Error("Unknown send reconciliation cannot confirm delivery without the dispatch's acceptance receipt");
+      const fact: AgentDispatchDisposition = { dispatchId, kind: input.kind, ...(input.note !== undefined ? { note: input.note } : {}),
+        ...(input.kind === "confirmed_delivered" ? { acceptanceReceipt: row.acceptanceReceipt } : {}), actionId: input.actionId, scope: { ...input.scope },
+        dispatchGeneration: row.generation, dispatchTaskRevision: row.taskRevision, resent: false, recordedAt: this.now() };
+      this.receipt(`dispatch-disposition:${dispatchId}`, taskId, "dispatch_disposition", fact);
+      return fact;
     });
   }
   /** Host-resolved pins only. Completed work and immutable dispatch history survive rebinding. */
@@ -721,17 +751,27 @@ export class AgentModeStore {
     const task = this.getTask(taskId);
     return buildSemanticReviewPacket({ task, dispatches: this.listDispatches(taskId), outcomes: this.effectiveToolOutcomes(taskId), receiptKey: (dispatchId, toolCallId) => this.toolCallReceiptKey(dispatchId, toolCallId) });
   }
-  private semanticAttempts(taskId: string, inputDigest: string): number {
-    return this.listReceipts(taskId).filter(row => row.kind === "semantic_review_attempt" && (row.body as { inputDigest?: unknown }).inputDigest === inputDigest).length;
+  /** Attempts for one exact reviewed input, split by whether their durable result is a settled
+   * invalid output. In-flight, lost and recorded attempts form the original bound. */
+  private semanticAttempts(taskId: string, inputDigest: string): { bounded: number; invalid: number } {
+    const receipts = this.listReceipts(taskId);
+    const invalid = new Set(receipts.filter(row => row.kind === "semantic_review_result" && (row.body as { state?: unknown }).state === "invalid_output").map(row => (row.body as { attemptId?: unknown }).attemptId));
+    const attempts = receipts.filter(row => row.kind === "semantic_review_attempt" && (row.body as { inputDigest?: unknown }).inputDigest === inputDigest);
+    const settledInvalid = attempts.filter(row => invalid.has((row.body as { attemptId?: unknown }).attemptId)).length;
+    return { bounded: attempts.length - settledInvalid, invalid: settledInvalid };
   }
   /** Durable intent before any reviewer request. Bounded per exact reviewed input; a lost
-   * terminal stays an unknown attempt and is never replayed under the same identity. */
+   * terminal stays an unknown attempt and is never replayed under the same identity. A settled
+   * invalid output is a completed turn without a verdict: it does not use up that bound, so a
+   * new explicit action may review again, within a separate backstop for the unchanged ledger. */
   recordSemanticReviewAttempt(taskId: string, attempt: { attemptId: string; actionId: string; generation: number; taskRevision: number; evidenceRevision: number; inputDigest: string; reviewer: { provider: "local-responses"; model: string } }): void {
     id(attempt.attemptId); id(attempt.actionId); id(attempt.reviewer.model);
     this.atomic(() => {
       const task = this.getTask(taskId);
       if (task.archivedAt !== undefined || attempt.generation !== task.generation || attempt.taskRevision !== task.revision || attempt.evidenceRevision !== task.evidenceRevision || attempt.inputDigest !== this.semanticReviewInput(taskId).digest) throw new Error("Stale task semantic review scope");
-      if (this.semanticAttempts(taskId, attempt.inputDigest) >= 3) throw new Error("Task semantic review attempt bound reached for this unchanged ledger; change the facts or inspect the attempt receipts");
+      const attempts = this.semanticAttempts(taskId, attempt.inputDigest);
+      if (attempts.bounded >= 3) throw new Error("Task semantic review attempt bound reached for this unchanged ledger; change the facts or inspect the attempt receipts");
+      if (attempts.invalid >= 8) throw new Error("Task semantic review invalid-output bound reached for this unchanged ledger; change the facts or inspect the attempt receipts");
       this.receipt(`semantic-attempt:${attempt.attemptId}`, taskId, "semantic_review_attempt", attempt);
     });
   }
@@ -743,8 +783,10 @@ export class AgentModeStore {
       if (!this.receipt(`semantic-transport:${attemptId}`, taskId, "semantic_review_transport", { attemptId, payloadDigest })) throw new Error("Semantic review transport already claimed");
     });
   }
-  /** Immutable result receipt for every terminal attempt; only a still-current review is attached. */
-  recordSemanticReviewResult(taskId: string, result: { attemptId: string; state: "recorded" | "invalid_output" | "outcome_unknown"; receiptId?: string; review?: SemanticOutcomeReview }): { task: AgentTask; current: boolean } {
+  /** Immutable result receipt for every terminal attempt; only a still-current review is attached.
+   * An invalid output may carry its bounded diagnosis, never a verdict. */
+  recordSemanticReviewResult(taskId: string, result: { attemptId: string; state: "recorded" | "invalid_output" | "outcome_unknown"; receiptId?: string; review?: SemanticOutcomeReview; invalid?: SemanticReviewInvalidEvidence }): { task: AgentTask; current: boolean } {
+    if (result.invalid !== undefined && (result.state !== "invalid_output" || Buffer.byteLength(JSON.stringify(result.invalid)) > 16 * 1024)) throw new Error("Invalid semantic review result evidence");
     return this.atomic(() => {
       this.receipt(`semantic-result:${result.attemptId}`, taskId, "semantic_review_result", result);
       const task = this.getTask(taskId), review = result.review;
