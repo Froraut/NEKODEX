@@ -2,6 +2,7 @@
 // Native prerequisite only. The probe uses Electron's Node mode, never a GUI or
 // user profile. Compatible bindings are reused; a failed rebuild/probe stops startup.
 const path = require("node:path");
+const fs = require("node:fs");
 const { createRequire } = require("node:module");
 const { spawnSync } = require("node:child_process");
 
@@ -11,10 +12,30 @@ function ensureWorkspaceTerminal({ root = path.resolve(__dirname, ".."), force =
   const localRequire = createRequire(path.join(root, "package.json"));
   const version = localRequire("electron/package.json").version;
   const electron = localRequire("electron");
+  // Some package-manager extractions leave node-pty's Unix helper at 0644.
+  // Loading pty.node alone still succeeds, but the first terminal cannot spawn.
+  if (process.platform !== "win32") {
+    const providerRoot = path.dirname(localRequire.resolve("node-pty/package.json"));
+    for (const directory of ["build/Release", "build/Debug", `prebuilds/${process.platform}-${process.arch}`]) {
+      const helper = path.join(providerRoot, directory, "spawn-helper");
+      if (!fs.existsSync(helper)) continue;
+      const stat = fs.lstatSync(helper);
+      if (!stat.isFile()) throw new Error("The PTY spawn helper must be a regular file");
+      if ((stat.mode & 0o111) !== 0o111) fs.chmodSync(helper, stat.mode | 0o111);
+    }
+  }
   const probeSource = `const p = require('node-pty');
     if (!process.versions.electron || typeof p.spawn !== 'function') throw new Error('Native PTY provider unavailable');
-    console.log(JSON.stringify({ electron: process.versions.electron, abi: process.versions.modules,
-      platform: process.platform, arch: process.arch }));`;
+    const windows = process.platform === 'win32';
+    const terminal = p.spawn(windows ? (process.env.ComSpec || 'cmd.exe') : '/bin/sh',
+      windows ? ['/c', 'exit 0'] : ['-c', 'exit 0'], { cwd: process.cwd(), env: process.env });
+    terminal.onExit(({ exitCode }) => {
+      if (exitCode !== 0) { process.exit(1); }
+      // The shell has physically exited. Flush the receipt, then close this
+      // disposable probe even if the native provider retains an idle handle.
+      process.stdout.write(JSON.stringify({ electron: process.versions.electron, abi: process.versions.modules,
+        platform: process.platform, arch: process.arch }) + '\\n', () => process.exit(0));
+    });`;
   const probe = () => {
     const result = run(electron, ["-e", probeSource], { cwd: root, encoding: "utf8", windowsHide: true,
       env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, timeout: 15000, maxBuffer: 65536 });
