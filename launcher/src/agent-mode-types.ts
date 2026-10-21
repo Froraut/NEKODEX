@@ -1,5 +1,5 @@
-import type { AgentTask, AgentWorker, AgentDispatch, MailMessage, AgentToolOutcome, AgentWorkPacket } from '../../src/agent-mode/types';
-export type { AgentTask, AgentWorker, AgentDispatch, MailMessage, AgentToolOutcome };
+import type { AgentTask, AgentWorker, AgentDispatch, AgentDispatchDisposition, MailMessage, AgentToolOutcome, AgentWorkPacket } from '../../src/agent-mode/types';
+export type { AgentTask, AgentWorker, AgentDispatch, AgentDispatchDisposition, MailMessage, AgentToolOutcome };
 
 /** Transport is injected by App; this surface never reaches a provider directly. */
 export interface AgentWorkspaceRoot { id: string; name: string }
@@ -56,6 +56,8 @@ export interface AgentModeDetail {
   toolOutcomes?: AgentToolOutcome[];
   pendingToolCalls?: AgentPendingToolCall[];
   toolReconciliations?: AgentToolReconciliationView[];
+  /** User-recorded outcomes for unknown sends of stopped tasks; separate receipts, never dispatch-row edits. */
+  dispatchDispositions?: AgentDispatchDisposition[];
   effectiveToolOutcomes?: AgentToolOutcome[];
   workPackets?: AgentWorkPacket[];
   loopSource?: 'mailbox';

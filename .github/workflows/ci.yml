@@ -62,6 +62,9 @@ jobs:
       - name: Run focused Web regression tests
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun run test:regressions
+      - name: Run Agent task cleanup regressions
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun test tests/agent-mode-dispatch-reconciliation.test.ts tests/agent-mode-archive.test.ts tests/agent-mode-ipc.test.ts tests/agent-dispatch-reconciliation-view.test.ts --timeout 10000
       - name: Run selective workflow feature regressions
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun run test:selective-adoption

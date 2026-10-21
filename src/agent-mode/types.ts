@@ -289,6 +289,26 @@ export interface AgentDispatch {
   late?: boolean;
   createdAt: number;
 }
+/**
+ * The user's explicit closing record for an `unknown` send on a stopped task with no owner. It is stored as
+ * a separate append-only receipt, never on the dispatch row. It is not a terminal or not-sent receipt: the
+ * dispatch stays `unknown`, nothing is resent or replayed, its turn and reservation stay charged and its stage
+ * is unchanged. Archive alone treats such a send as closed.
+ */
+export interface AgentDispatchDisposition {
+  dispatchId: string;
+  /** `confirmed_delivered` requires the dispatch's own durable acceptance receipt and names it. */
+  kind: "abandoned" | "confirmed_delivered";
+  note?: string;
+  acceptanceReceipt?: string;
+  actionId: string;
+  /** Exact task scope the user reviewed; the dispatch's own generation/revision stay on its row. */
+  scope: { familyId: string; generation: number; revision: number };
+  dispatchGeneration: number;
+  dispatchTaskRevision: number;
+  resent: false;
+  recordedAt: number;
+}
 export interface ExecutionRequest {
   dispatch: AgentDispatch;
   task: AgentTask;

@@ -7,7 +7,7 @@ import { activeTaskEvidence } from "./evidence";
 import { normalizeSemanticReview, SEMANTIC_REVIEW_INSTRUCTIONS, SemanticReviewOutputError, semanticReviewInvalidEvidence, semanticReviewTextEvidence } from "./semantic-review";
 import { agentModelConfigured, agentModelAccepting, agentNativeConcurrency, type AgentModelOption } from "./provider";
 import { nativeScopeOf, sameNativeScope, type AgentNativeScope } from "./native-protocol";
-import type { AgentControl, AgentDispatch, AgentExecutionPort, AgentLoopSourceAuthority, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliationResult, AgentWorkPacket, CreateAgentTask, OutcomeEvidence, OutcomeReview, AgentSemanticReviewer, SemanticOutcomeReview, SemanticReviewPort } from "./types";
+import type { AgentControl, AgentDispatch, AgentDispatchDisposition, AgentExecutionPort, AgentLoopSourceAuthority, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliationResult, AgentWorkPacket, CreateAgentTask, OutcomeEvidence, OutcomeReview, AgentSemanticReviewer, SemanticOutcomeReview, SemanticReviewPort } from "./types";
 
 export interface AgentModeRuntimeOptions {
   store: AgentModeStore;
@@ -98,6 +98,15 @@ export class AgentModeRuntime {
     });
     if (!command.duplicate) this.automaticRuns.delete(taskId);
     return command.result;
+  }
+  /** Explicit user record for an unknown send of a stopped task. It never resends, replays or settles the dispatch. */
+  reconcileDispatch(taskId: string, actionId: string, scope: AgentActionScope, dispatchId: string, disposition: { kind: AgentDispatchDisposition["kind"]; note?: string }): { task: AgentTask; disposition: AgentDispatchDisposition } {
+    return this.store.command(taskId, actionId, "reconcile_dispatch", { scope, dispatchId, disposition }, () => {
+      this.assertScope(taskId, scope);
+      if (this.store.listDispatches(taskId).some(row => this.runner.liveDispatchIds.includes(row.id) || this.pending.has(row.id))) throw new Error("Task still has live execution");
+      const fact = this.store.recordDispatchDisposition(taskId, dispatchId, { ...disposition, actionId, scope });
+      return { task: this.store.getTask(taskId), disposition: fact };
+    }).result;
   }
   /** Explicitly refresh the same selected provider/model without offering any work. */
   refreshExecution(taskId: string, actionId: string, scope: AgentActionScope, explicitUserAction: boolean): AgentTask {
