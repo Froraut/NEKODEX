@@ -147,7 +147,11 @@ imports the approved certificate, and deletes it and the temporary API key even 
 fail. The Bun executable is signed with hardened runtime/JIT entitlements **before** its runtime
 manifest is hashed; the package signer excludes only that already signed binary to preserve its
 recorded digest. The outer app and nested Electron code are signed with Developer ID, and
-`electron-builder` performs notarization and stapling. The extracted final ZIP must pass strict
+`launcher/scripts/notarize-mac-app.cjs`, an `electron-builder` `afterSign` hook, notarizes the app
+with `notarytool submit --wait` and staples it before the DMG and ZIP are built; the builder's own
+notarization is disabled. `stapler staple` and `stapler validate` retry, up to four attempts with
+backoff, only when Apple's CloudKit connection drops (exit 68, "The network connection was lost");
+any other failure stops the release. The extracted final ZIP must pass strict
 signature checks, expected-team checks, `stapler validate` and `spctl --assess` before publication.
 
 For Windows, provide `CODEX_WEB_GPT_WINDOWS_CERT_SHA1` and `CODEX_WEB_GPT_SIGNTOOL` (absolute SDK
