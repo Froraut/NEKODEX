@@ -53,6 +53,44 @@ Synthetic CG stacks gave the expected results: overlays only → unobstructed; a
 
 **Background observe followed by foreground input could never pass.** In attempt 1 (`acceptance-attempt1.json`), observe ran without `waitForForeground` while the fixture was inactive, and click then ran with it. After the handoff, the fresh capture shows active window chrome, so its PNG SHA can never equal the inactive-chrome binding. The click was refused late with `screen-or-frame-changed`, after the human had already returned the window. The tool layer now records whether each observation was itself a foreground observation. A `waitForForeground` click or type after an observe without it fails at argument validation with `observe-with-foreground-required`, before any wait, capture or native request. The observe, click and type tool descriptions name the requirement and the code. The native helper enforces the same rule as a backstop and returns a rejected receipt with that reason. It consumes the observation and does not wait.
 
+## P13 pixel-click delivery finding (2026-10-21, macOS 27.2)
+
+With the hit-test fix installed as 6.1.33-nekodex.4, P13 attempt 4 (`attempt4/acceptance-p13.json`) passed observe and the hit test. `desktop/click` returned `completed` with `input-dispatched; application-result-unverified`, but the purple view never received `mouseDown`. The AX readback and `state.json` stayed at `Counter: 0`. The helper had posted a down/up pair of `CGEvent`s, built from the global point, with `postToPid`.
+
+AppKit routes a mouse event by the window number and window-relative point in its event record. The WindowServer fills both when it routes an event, but an event posted to a PID is not routed. A diagnostic twin of the fixture logged every received mouse event. The events arrived with `windowNumber` 0 and a screen-space `locationInWindow`, so `NSApplication` had no window to send them to. Setting the public `kCGMouseEventWindowUnderMousePointer` and `kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent` fields to the window ID did not change this.
+
+`NSEvent.mouseEvent(with:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:)` is public and its `cgEvent` carries the window number. For a window of another process, the conversion treats the location as a screen point: the record's location and its window-relative point both become that point, flipped against a screen height. The helper reads that height from the conversion of the origin and encodes the exact top-left window-relative point the same way. It posts mouse-moved, down and up to the selected PID only. Before dispatch it checks the converted record: type, location, left button, click state 0/1/1, no modifier flags and the decoded window number. A mismatch is refused as `event-unavailable`. Immediately before dispatch the window must also still have the observed frame, because the events carry window-relative coordinates (`owner-or-frame-changed`). The existing owner, focus, hit-test, occlusion, button and input checks are unchanged and still run last.
+
+Delivery probes, against the owned fixture or its diagnostic twin only, at screenshot (248,336), window point (124,168):
+
+| Method | Received by the application | Effect |
+| --- | --- | --- |
+| Previous helper: `CGEvent` at the global point, `postToPid` | window 0, screen-space location | counter unchanged |
+| Same, plus window fields 91/92, a mouse-moved first, click state 1 | window 0 | counter unchanged |
+| `NSEvent` constructor with the documented window-base location | window set, `locationInWindow` (124,−661) | view not hit |
+| Same, then `CGEvent.location` set to the global point | window set, `locationInWindow` (−1,313) | view not hit |
+| `NSEvent` constructor with the encoded window-relative point (shipped) | window set, `locationInWindow` (124,144), `mouseDown` inside | counter +1, 3 of 3 |
+| Session-tap post while frontmost | routed by the WindowServer | counter +1, but the real pointer moved |
+
+The session tap also works, but it delivers to whatever window is under the point when the WindowServer routes the event, and it moves the human's pointer. The PID-targeted event cannot reach another application. The pointer position was unchanged after every PID-targeted run.
+
+End to end, a driver used the helper's real stdio protocol: enable, select, properties, observe with `waitForForeground`, click with `waitForForeground`, properties. Each observation was 1120 × 624 for the 560 × 312 window. The fixture window was at (584,207) for the first rows and at attempt 4's (584,206) for the final build.
+
+| Helper | Screenshot point → window point | Receipt | AX counter and `state.json` |
+| --- | --- | --- | --- |
+| Previous (built from `origin/main`) | (248,336) → (124,168) | `completed`, `input-dispatched` | 6 → 6 |
+| Fixed, 4 runs | (248,336) → (124,168) | `completed` | +1 each, 6 → 10 |
+| Fixed | (50,242) → (25,121), inside | `completed` | +1 |
+| Fixed | (46,238) → (23,119), 1 pt outside | `completed` | unchanged |
+| Fixed | (446,430) → (223,215), inside | `completed` | +1 |
+| Fixed | (450,434) → (225,217), 1 pt outside | `completed` | unchanged |
+| Final build, fresh fixture, 2 runs | (248,336) → global (708,374) | `completed` | +1 each, 0 → 2 |
+| Final build | (50,242) inside, then (46,238) 1 pt outside | `completed` | +1, then unchanged |
+
+The final development helper, compiled with `scripts/build-desktop-helper.cjs --development`, has SHA-256 `10aeafc8c4f66cc33e68295f6b616168983429a654ff5df61937fc64c2161667`. The screenshot-to-point mapping is unchanged and correct: with attempt 4's frame (584,206), (248,336) maps to global (708,374). The corner probes show that the delivered point is accurate to within 1 pt. The encoded global location in the record is the window-relative point, because the conversion cannot know another process's window origin. AppKit's `locationInWindow` is correct; an application that reads the raw `CGEvent` global location would see that window-relative value. The conversion behavior for a foreign window is undocumented, so the record check is the guard. Delivery inside the target application remains live evidence only. Raw probe sources and results are in `p13-cg-click-20261021/delivery-proof-20261021/`.
+
+A new focused test compiles the real helper source with an inert entry point and checks the encoded events without capturing or posting anything. Replacing the encoder with the previous coordinate-only events makes it fail. This is development-helper and fixture evidence, not installed P13 acceptance.
+
 ## Delivery boundary
 
 This source batch is not the earlier installed `.9` artifact. No installer or public release asset has been produced for it. Native sign-in remains postponed by the user, and active production core work is preserved. Actual installed acceptance and the remaining desktop calls require their own evidence.

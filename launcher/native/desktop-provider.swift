@@ -92,6 +92,7 @@ func lastInputTime() -> TimeInterval {
     var captured: Captured?
     var image: Captured?
     var uncertain = false
+    var pixelClicks = 0
     let session = UUID().uuidString.lowercased()
     var propertyElements: [(AXUIElement, String)] = []
 
@@ -235,6 +236,41 @@ func lastInputTime() -> TimeInterval {
         } else if currentFocus != nil { try reject("focused-element-changed") }
         let flags = CGEventSource.flagsState(.combinedSessionState)
         guard flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift]).isEmpty else { try reject("human-modifier-held") }
+    }
+    // A pixel click is posted only to the selected process and addressed to the selected window,
+    // so it cannot reach another application. AppKit routes a mouse event by the window number
+    // and window-relative point in its event record. A CGEvent built from a global point and
+    // posted with postToPid has neither: the application sees a window-less event and drops it.
+    // Setting kCGMouseEventWindowUnderMousePointer(ThatCanHandleThisEvent) does not route it
+    // (live P13, macOS 27.2). NSEvent's public mouse-event constructor fills both. For a window
+    // of another process it treats the base-coordinate location as a screen point, so the
+    // record's location and its window-relative point both become that point, flipped against
+    // a screen height. Read that height from the conversion of the origin, encode the exact
+    // top-left window-relative point the same way, and refuse rather than dispatch when the
+    // converted record differs from that expectation.
+    func pixelClickEvents(window: CGWindowID, local: CGPoint) -> [CGEvent]? {
+        guard local.x.isFinite, local.y.isFinite, local.x >= 0, local.y >= 0 else { return nil }
+        pixelClicks += 1
+        let time = ProcessInfo.processInfo.systemUptime
+        func convert(_ kind: NSEvent.EventType, _ base: NSPoint, _ clicks: Int, _ pressure: Float) -> CGEvent? {
+            NSEvent.mouseEvent(with: kind, location: base, modifierFlags: [], timestamp: time, windowNumber: Int(window),
+                context: nil, eventNumber: pixelClicks, clickCount: clicks, pressure: pressure)?.cgEvent
+        }
+        guard let origin = convert(.mouseMoved, .zero, 0, 0), abs(origin.location.x) < 0.001,
+              origin.location.y.isFinite, origin.location.y > 0 else { return nil }
+        let base = NSPoint(x: local.x, y: origin.location.y - local.y)
+        let modifiers: CGEventFlags = [.maskAlphaShift, .maskShift, .maskControl, .maskAlternate, .maskCommand, .maskHelp, .maskSecondaryFn, .maskNumericPad]
+        var events: [CGEvent] = []
+        for (kind, type, clicks, pressure) in [(NSEvent.EventType.mouseMoved, CGEventType.mouseMoved, 0, Float(0)),
+                                               (.leftMouseDown, .leftMouseDown, 1, 1), (.leftMouseUp, .leftMouseUp, 1, 0)] {
+            guard let cg = convert(kind, base, clicks, pressure),
+                  cg.type == type, abs(cg.location.x - local.x) < 0.001, abs(cg.location.y - local.y) < 0.001,
+                  cg.flags.intersection(modifiers).isEmpty, cg.getIntegerValueField(.mouseEventButtonNumber) == 0,
+                  cg.getIntegerValueField(.mouseEventClickState) == Int64(clicks),
+                  NSEvent(cgEvent: cg)?.windowNumber == Int(window) else { return nil }
+            events.append(cg)
+        }
+        return events
     }
     func boundWindow(_ row: WindowRow) throws -> AXUIElement {
         guard AXIsProcessTrusted(), let target = selectedAX, axWindows(row).contains(where: { CFEqual($0, target) }),
@@ -453,8 +489,11 @@ func lastInputTime() -> TimeInterval {
                 guard exact(action, ["kind", "x", "y"] + (waits ? ["waitForForeground"] : [])), let x = number(action["x"]), let y = number(action["y"]),
                       x.rounded() == x, y.rounded() == y, x >= 0, y >= 0,
                       x < Double(binding["width"] as! Int), y < Double(binding["height"] as! Int) else { return receipt("rejected", false, "coordinates-outside-observation") }
-                let point = CGPoint(x: row.frame.minX + x * row.frame.width / Double(binding["width"] as! Int),
-                    y: row.frame.minY + y * row.frame.height / Double(binding["height"] as! Int))
+                // The observed frame defines the screenshot-pixel map: window-relative top-left
+                // points, and the global CG point that is hit-tested.
+                let local = CGPoint(x: x * original.frame.width / Double(binding["width"] as! Int),
+                    y: y * original.frame.height / Double(binding["height"] as! Int))
+                let point = CGPoint(x: original.frame.minX + local.x, y: original.frame.minY + local.y)
                 let candidates = original.targets.filter { $0.press && $0.frame.intersection(row.frame).contains(point) }
                     .sorted { $0.depth != $1.depth ? $0.depth > $1.depth : $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
                 if let target = candidates.first {
@@ -474,16 +513,18 @@ func lastInputTime() -> TimeInterval {
                 // Generic event input is available only when the selected exact window is already foreground.
                 try inputOwner(current, expectedFocus: original.focusedElement)
                 guard fresh.lastInput <= inputBaseline + 0.005, lastInputTime() <= inputBaseline + 0.005 else { return receipt("rejected", false, "human-input-changed") }
-                guard let source = CGEventSource(stateID: .privateState),
-                      let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
-                      let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) else { return receipt("rejected", false, "event-unavailable") }
+                guard let events = pixelClickEvents(window: row.id, local: local) else { return receipt("rejected", false, "event-unavailable") }
                 guard getppid() == initialParent else { return receipt("rejected", false, "parent-owner-exited") }
-                // Recheck focus, point stacking and physical button/modifier state as
-                // close to dispatch as possible; no activation or click-through.
-                try inputOwner(try currentWindow(), expectedFocus: original.focusedElement)
-                try pixelTarget(current, point: point)
+                // Recheck owner, frame, focus, point stacking and physical button/modifier state
+                // as close to dispatch as possible; no activation or click-through. The events
+                // carry the window-relative point, so the window must still have the observed
+                // frame that maps it to the hit-tested global point.
+                let latest = try currentWindow()
+                guard sameFrame(latest.frame, original.frame) else { return receipt("rejected", false, "owner-or-frame-changed") }
+                try inputOwner(latest, expectedFocus: original.focusedElement)
+                try pixelTarget(latest, point: point)
                 guard lastInputTime() <= inputBaseline + 0.005 else { return receipt("rejected", false, "human-input-changed") }
-                down.flags = []; up.flags = []; down.postToPid(row.pid); up.postToPid(row.pid)
+                for event in events { event.postToPid(row.pid) }
             } else if action["kind"] as? String == "type" {
                 guard exact(action, ["kind", "text"] + (waits ? ["waitForForeground"] : [])), let text = action["text"] as? String, !text.isEmpty, text.utf16.count <= 8000 else { return receipt("rejected", false, "invalid-literal-text") }
                 if let focused = original.focusedElement, let target = original.targets.first(where: { CFEqual($0.element, focused) && $0.text }) {
@@ -538,6 +579,9 @@ final class Lines: @unchecked Sendable {
         }
     }
 }
+// The helper build never defines this; a test compiles this file with an inert encoding
+// harness as its entry point instead.
+#if !NEKODEX_DESKTOP_HELPER_HARNESS
 @main struct Main {
     @MainActor static func main() async {
         let port = DesktopPort(); let lines = Lines()
@@ -565,3 +609,4 @@ final class Lines: @unchecked Sendable {
         ownerWatch.cancel()
     }
 }
+#endif
