@@ -1232,7 +1232,7 @@ export function startServer(
     authorizeAdmin: controlAuthorized, localGuard: localHttpRequestRejection, port: (): number => server.port!, peerAddress: request => server.requestIP(request)?.address,
     sources: {
       status: () => ({ version: VERSION, ready: admission.accepting, activeHttpTurns: httpTurns.count(), activeAgentTasks: agentRuntime?.activeCount ?? 0 }),
-      agentTasks: () => agentRuntime?.store.listTasks().map(task => ({ id: task.id, state: task.status, kind: "agent", mode: task.mode, familyId: task.familyId, generation: task.generation, revision: task.revision, createdAt: task.createdAt, updatedAt: task.updatedAt })),
+      agentTasks: () => agentRuntime?.store.listTasks().filter(task => task.archivedAt === undefined).map(task => ({ id: task.id, state: task.status, kind: "agent", mode: task.mode, familyId: task.familyId, generation: task.generation, revision: task.revision, createdAt: task.createdAt, updatedAt: task.updatedAt })),
       history: () => historyStore,
     }, agentAction: input => {
       if (stopPrepared) throw new Error("Agent runtime is draining");

@@ -45,6 +45,7 @@ export function AgentToolsSurface({ api, language, disabled = false, oauthMcpReq
     cancel: input => transport.current.request({ action: 'oauthCancel', ...input }) as ReturnType<AgentOAuthPanelPort['cancel']>,
     refresh: input => transport.current.request({ action: 'oauthRefresh', ...input }) as ReturnType<AgentOAuthPanelPort['refresh']>,
     revoke: input => transport.current.request({ action: 'oauthRevoke', ...input }) as ReturnType<AgentOAuthPanelPort['revoke']>,
+    removeProvider: input => transport.current.request({ action: 'oauthRemoveProvider', ...input }) as ReturnType<NonNullable<AgentOAuthPanelPort['removeProvider']>>,
     ...(api.pickOAuthProvider ? {
       pickProvider: () => transport.current.pickOAuthProvider!(),
       registerProvider: (input: Parameters<NonNullable<AgentOAuthPanelPort['registerProvider']>>[0]) => transport.current.request({ action: 'oauthRegisterProvider', ...input }) as ReturnType<NonNullable<AgentOAuthPanelPort['registerProvider']>>,

@@ -71,6 +71,8 @@ export interface AgentTask {
   cycle: number;
   lastWorkKey?: string;
   loopRun?: { ownerId: string; generation: number };
+  /** Set once by archive. The row and its ledger stay; the task is then read-only and hidden from listings. */
+  archivedAt?: number;
   createdAt: number;
   updatedAt: number;
 }

@@ -44,6 +44,7 @@ export interface AgentModeStatus {
   tasks: AgentTask[];
   total?: number;
   truncated?: boolean;
+  archived?: number;
 }
 export interface AgentModeDetail {
   task: AgentTask;

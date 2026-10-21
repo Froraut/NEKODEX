@@ -10,6 +10,7 @@ import { OwnedNativeHistoryPanel } from './OwnedNativeHistoryPanel';
 import { NativeAttachmentsPanel, type NativeSelectedAttachment } from './NativeAttachmentsPanel';
 import { AgentLoopFileWatcher } from './AgentLoopFileWatcher';
 import { AgentLoopExternalProducer } from './AgentLoopExternalProducer';
+import { RemovalConfirmation } from './RemovalConfirmation';
 
 const lines = (text: string) => text.split('\n').map(value => value.trim()).filter(Boolean);
 const requirementRows = (text: string) => lines(text).map((value, index) => ({ id: `r${index + 1}`, text: value }));
@@ -61,6 +62,8 @@ export function AgentModeSurface({ language, api, disabled = false }: {
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [archiving, setArchiving] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
   const [request, setRequest] = useState('');
   const [requirements, setRequirements] = useState('');
   const [stages, setStages] = useState('');
@@ -216,6 +219,15 @@ export function AgentModeSurface({ language, api, disabled = false }: {
     void act(action, async () => {
       await mutate({ action: 'control', taskId, control: { action } });
       await refresh(taskId); if (mounted.current) setNotice(text.saved);
+    });
+  };
+  const archive = () => {
+    const taskId = selectedRef.current;
+    void act('archive', async () => {
+      try { await mutate({ action: 'archive', taskId }); }
+      catch (cause) { if (mounted.current) setArchiveError(errorText(cause)); return; } // Reported inside the dialog, above its backdrop.
+      if (mounted.current) { setArchiving(false); setArchiveError(null); }
+      await refresh(''); if (mounted.current) setNotice(text.archived);
     });
   };
   const reply = () => {
@@ -456,6 +468,7 @@ export function AgentModeSurface({ language, api, disabled = false }: {
     <div className="agent-mode-workspace">
       <Panel title={text.tasks} className="agent-mode-task-list">
         {status?.truncated ? <p className="agent-mode-muted">{text.truncated} ({status.tasks.length}/{status.total})</p> : null}
+        {status?.archived ? <p className="agent-mode-muted">{text.archivedCount}: {status.archived}</p> : null}
         {!status?.tasks.length ? <EmptyState icon="logs" title={text.empty}>{text.emptyBody}</EmptyState>
           : <ul>{status.tasks.map(row => <li key={row.id}><button className="agent-mode-task" type="button" disabled={locked} aria-current={selected === row.id ? 'true' : undefined} onClick={() => selectTask(row.id)}>
             <strong>{row.originalRequest}</strong><span>{taskState(row)} · {row.mode} · {row.turns}/{row.bounds.maxTurns}</span><code>{row.id}</code>
@@ -476,6 +489,8 @@ export function AgentModeSurface({ language, api, disabled = false }: {
               <Button size="sm" disabled={locked || terminal(task) || task.status === 'paused'} busy={pending === 'pause'} onClick={() => control('pause')}>{text.pause}</Button>
               <Button size="sm" disabled={locked || terminal(task) || task.status !== 'paused'} busy={pending === 'resume'} onClick={() => control('resume')}>{text.resume}</Button>
               <Button size="sm" variant="danger" disabled={locked || terminal(task)} busy={pending === 'stop'} onClick={() => control('stop')}>{text.stop}</Button>
+              {terminal(task) && task.archivedAt === undefined ? <Button size="sm" variant="ghost" disabled={locked || detail?.dispatches.some(row => ['unknown', 'offered', 'admitted', 'acked'].includes(row.state))}
+                onClick={() => { setArchiveError(null); setArchiving(true); }}>{text.archive}</Button> : null}
               <Button size="sm" variant="primary" disabled={locked || !canExecute}
                 busy={pending === 'step'} onClick={() => execute('step')}>{text.step}</Button>
               {task.mode !== 'manual' ? <Button size="sm" disabled={locked || (!canExecute && !canRunLoop) || !status?.capabilities.autoSchedule} busy={pending === 'run'} onClick={() => execute('run')}>{task.mode === 'loop' ? text.loopRun : text.run}</Button> : null}
@@ -626,6 +641,10 @@ export function AgentModeSurface({ language, api, disabled = false }: {
         </>}
       </div>
     </div>
+    {archiving && task ? <RemovalConfirmation title={text.archiveTitle} eyebrow={task.originalRequest.slice(0, 120)} keepLabel={text.keepTask} confirmLabel={text.archive}
+      pending={pending === 'archive'} error={archiveError} onKeep={() => setArchiving(false)} onConfirm={archive}>
+      <p>{text.archiveBody}</p><p><code>{task.id}</code></p>
+    </RemovalConfirmation> : null}
     </PanelStack>
   </Page>;
 }

@@ -64,3 +64,28 @@ test('Native inventory IPC admits only inspected visible models and closes the e
   expect(result.receipts).toContainEqual({ actionId, kind: 'close-execution', profileId, epoch, state: 'completed' });
   expect((await request({ action: 'status', actionId })).receipts).toContainEqual({ actionId, kind: 'close-execution', profileId, epoch, state: 'completed' });
 });
+
+test('Native profile removal closes only the exact owned execution after explicit confirmation', async () => {
+  const handlers = new Map<string, Function>(), profileId = randomUUID(), epoch = randomUUID(), removed: any[] = [];
+  let held = true, destroyed = 0, beforeClosed = 0, closed = 0;
+  const authority = { inspect: () => ({ available: true, profiles: [], receipts: [] }),
+    removeProfile: (input: any) => removed.push(input) };
+  const execution = { inspect: () => ({ profileId, epoch, ownerHeld: held, models: [] }), async destroy() { destroyed++; held = false; } };
+  registerNativeAccounts({ handle: (name: string, handler: Function) => handlers.set(name, handler), getAuthority: () => authority,
+    getExecution: () => execution, beforeExecutionClosed: async () => { beforeClosed++; }, onExecutionClosed: () => { closed++; },
+    openExternal: async () => {}, clipboard: { writeText() {} } });
+  const request = (body: any) => handlers.get('launcher:native-accounts')!(null, body);
+  await expect(request({ action: 'remove-profile', actionId: randomUUID(), profileId, epoch, confirmSignedIn: 'yes' })).rejects.toThrow();
+  await expect(request({ action: 'remove-profile', actionId: randomUUID(), profileId, epoch, path: '/foreign' })).rejects.toThrow();
+  const refused = randomUUID();
+  expect((await request({ action: 'remove-profile', actionId: refused, profileId, epoch })).rejectedAction).toEqual({ actionId: refused, knownNotStarted: true });
+  expect([destroyed, removed.length]).toEqual([0, 0]);
+  // Another profile's removal never touches this execution.
+  const other = randomUUID(), otherEpoch = randomUUID();
+  await request({ action: 'remove-profile', actionId: randomUUID(), profileId: other, epoch: otherEpoch });
+  expect(destroyed).toBe(0); expect(removed.at(-1)).toMatchObject({ profileId: other, epoch: otherEpoch, confirmSignedIn: false });
+  const actionId = randomUUID();
+  await request({ action: 'remove-profile', actionId, profileId, epoch, confirmSignedIn: true });
+  expect([beforeClosed, destroyed, closed]).toEqual([1, 1, 1]);
+  expect(removed.at(-1)).toEqual({ actionId, profileId, epoch, confirmSignedIn: true });
+});

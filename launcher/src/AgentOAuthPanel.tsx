@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Badge, BadgeRow, Button, Checkbox, Notice, Panel, PanelStack } from './design';
 import type { AgentOAuthPanelPort, OAuthProviderStatus, OAuthProviderRegistrationReview } from '../../src/agent-tools/oauth-types';
+import { RemovalConfirmation } from './RemovalConfirmation';
 
 /** Status-only interface: no token fields, callback URL paste box or generic network endpoint. */
 export function AgentOAuthPanel({ api, scopeKey, choose, locked = false }: {
@@ -14,10 +15,12 @@ export function AgentOAuthPanel({ api, scopeKey, choose, locked = false }: {
   const [error, setError] = useState(false);
   const [review, setReview] = useState<OAuthProviderRegistrationReview | null>(null);
   const [registrationConsent, setRegistrationConsent] = useState(false);
+  const [removing, setRemoving] = useState<OAuthProviderStatus | null>(null);
+  const [removeError, setRemoveError] = useState(false);
   const generation = useRef(0), owned = useRef(false);
   useEffect(() => {
     const epoch = ++generation.current;
-    setRows([]); setError(false); setBusy(false); setReview(null); setRegistrationConsent(false); owned.current = false;
+    setRows([]); setError(false); setBusy(false); setReview(null); setRegistrationConsent(false); setRemoving(null); owned.current = false;
     if (api) void api.list().then(value => { if (generation.current === epoch) setRows(value); }, () => { if (generation.current === epoch) setError(true); });
     return () => { generation.current++; };
   }, [api, scopeKey]);
@@ -84,10 +87,24 @@ export function AgentOAuthPanel({ api, scopeKey, choose, locked = false }: {
           {row.state === 'authorization_pending' ? <Button className="agent-tools-button" disabled={blocked} onClick={() => void act(() => api!.cancel(input))}>{choose('Cancel pending authorization', 'Отменить ожидающую авторизацию')}</Button> : null}
           <Button className="agent-tools-button" disabled={blocked || !row.canRefresh || unsettled || row.state === 'authorization_pending'} onClick={() => void act(() => api!.refresh(input))}>{choose('Refresh authorization', 'Обновить авторизацию')}</Button>
           <Button className="agent-tools-button" disabled={blocked || !row.canRevoke || unsettled || row.state === 'authorization_pending'} onClick={() => void act(() => api!.revoke(input))}>{choose('Revoke provider access', 'Отозвать доступ у провайдера')}</Button>
+          {api?.removeProvider ? <Button className="agent-tools-button" variant="ghost" disabled={blocked || unsettled || row.state === 'authorization_pending'}
+            onClick={() => { setRemoveError(false); setRemoving(row); }}>{choose('Remove provider', 'Удалить провайдера')}</Button> : null}
         </div>
       </PanelStack>;
     })}
     {api ? <Button className="agent-tools-button" disabled={busy} onClick={() => void act(() => Promise.resolve())}>{choose('Inspect authorization status', 'Проверить состояние авторизации')}</Button> : null}
+    {removing && api?.removeProvider ? <RemovalConfirmation eyebrow={removing.issuer} title={choose(`Remove ${removing.label}?`, `Удалить провайдера ${removing.label}?`)}
+      keepLabel={choose('Keep provider', 'Оставить провайдера')} confirmLabel={choose('Remove provider', 'Удалить провайдера')} pending={busy}
+      error={removeError ? choose('Removal was not acknowledged. The provider status was refreshed; inspect it before another attempt.', 'Удаление не подтверждено. Состояние провайдера обновлено; проверьте его перед новой попыткой.') : null}
+      onKeep={() => setRemoving(null)} onConfirm={() => {
+        const target = removing; setRemoveError(false);
+        void act(async () => {
+          try { await api.removeProvider!({ providerId: target.providerId, explicitUserAction: true }); setRemoving(null); }
+          catch (cause) { setRemoveError(true); throw cause; }
+        });
+      }}>
+      <p>{choose('NEKODEX first revokes any credential it holds for this provider, then disconnects every task OAuth MCP binding that uses it, and finally removes the reviewed registration. Tool-call receipts are kept. To use the provider again, review its registration file anew.', 'NEKODEX сначала отзовёт сохранённые учётные данные этого провайдера, затем отключит все OAuth MCP-привязки задач к нему и только после этого удалит проверенную регистрацию. Квитанции вызовов инструментов сохраняются. Чтобы снова пользоваться провайдером, заново проверьте файл его регистрации.')}</p>
+    </RemovalConfirmation> : null}
     </PanelStack>
   </Panel>;
 }

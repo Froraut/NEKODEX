@@ -82,6 +82,7 @@ export class AgentModeStore {
     return rows.map(row => JSON.parse(row.body) as T);
   }
   private saveTask(task: AgentTask): void {
+    if (task.archivedAt !== undefined) throw new Error("Task is archived; its ledger is read-only");
     task.updatedAt = this.now();
     const body = JSON.stringify(task);
     if (Buffer.byteLength(body) > 512 * 1024) throw new Error("Agent task quota exceeded; preserve history and export before extending");
@@ -241,6 +242,18 @@ export class AgentModeStore {
         row.state = "cancelled"; task.reserved -= row.reservedSpend; this.saveDispatch(row); this.sleepWorker(row);
       }
       this.saveTask(task); return task;
+    });
+  }
+  /** Hides a settled stopped or verified task. Dispatches, receipts, mail, tool outcomes and evidence are kept unchanged. */
+  archiveTask(taskId: string): AgentTask {
+    return this.atomic(() => {
+      const task = this.getTask(taskId);
+      if (task.archivedAt !== undefined) return task;
+      if (task.status !== "stopped" && task.status !== "verified_complete") throw new Error("Task archive requires a stopped or verified complete task");
+      if (task.ownerId || task.loopRun || this.listDispatches(taskId).some(row => unsettled.has(row.state))) throw new Error("Task archive requires settled execution");
+      task.archivedAt = this.now(); task.updatedAt = task.archivedAt;
+      this.db.query("UPDATE agent_tasks SET body=? WHERE id=?").run(JSON.stringify(task), task.id);
+      return task;
     });
   }
   /** Host-resolved pins only. Completed work and immutable dispatch history survive rebinding. */

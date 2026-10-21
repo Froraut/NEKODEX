@@ -1,5 +1,5 @@
 const path = require('node:path');
-const ACTIONS = new Set(['status', 'list', 'get', 'create', 'control', 'step', 'run', 'review', 'verify', 'evidence', 'workspace-grant', 'resume-continuation', 'enqueue-work', 'cycle', 'workspace-evidence', 'reconcile-tool', 'refresh-execution']);
+const ACTIONS = new Set(['status', 'list', 'get', 'create', 'control', 'step', 'run', 'review', 'verify', 'evidence', 'workspace-grant', 'resume-continuation', 'enqueue-work', 'cycle', 'workspace-evidence', 'reconcile-tool', 'refresh-execution', 'archive']);
 const UUID = /^[a-f0-9-]{36}$/;
 const record = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 const owns = (value, name) => Object.prototype.hasOwnProperty.call(value, name);

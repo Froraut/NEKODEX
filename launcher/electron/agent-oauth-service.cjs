@@ -12,7 +12,7 @@ const { createAgentOAuthLauncher, createOAuthTransport } = require('./agent-oaut
 const { createOAuthProtectedVault, oauthProtectedVaultAvailable } = require('./agent-oauth-vault.cjs');
 const ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,159}$/;
 const HASH = /^[a-f0-9]{64}$/;
-const ACTIONS = new Set(['oauthList', 'oauthBegin', 'oauthCancel', 'oauthRefresh', 'oauthRevoke', 'oauthRegisterProvider']);
+const ACTIONS = new Set(['oauthList', 'oauthBegin', 'oauthCancel', 'oauthRefresh', 'oauthRevoke', 'oauthRegisterProvider', 'oauthRemoveProvider']);
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const exact = (value, keys) => value && typeof value === 'object' && !Array.isArray(value)
   && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
@@ -116,9 +116,28 @@ function createAgentOAuthService({ coreHome, getAuthority, openExternal, approve
   const directory = path.join(coreHome, 'agent-oauth'), registryPath = path.join(directory, 'providers.json');
   let owner = null, closed = false, uncertain = false, registrationBusy = false, activeActions = 0;
   const reviews = new Map(), mcpInvalidationListeners = new Set();
-  function notifyMcpInvalidation(providerId) {
-    // Consumers deny in memory before persistence. A failed consumer write must not block credential revocation.
-    for (const listener of mcpInvalidationListeners) { try { listener(providerId); } catch {} }
+  function notifyMcpInvalidation(providerId, strict = false) {
+    // Consumers deny in memory before persistence. A failed consumer write must not block credential revocation,
+    // but provider removal (strict) requires every consumer to acknowledge its durable binding removal.
+    let failed = false;
+    for (const listener of mcpInvalidationListeners) { try { listener(providerId); } catch { failed = true; } }
+    if (strict && failed) fail();
+  }
+  /** Same lock, stamp check, revision increment and durable atomic write as registration. */
+  function commitRegistry(stamp, providers) {
+    const lockPath = `${registryPath}.lock`; let lock;
+    try {
+      fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+      const stat = fs.lstatSync(directory); if (!stat.isDirectory() || stat.isSymbolicLink()) fail();
+      lock = fs.openSync(lockPath, 'wx', 0o600);
+      const current = context();
+      if (current.stamp !== stamp) fail();
+      const next = { version: 1, revision: current.registry.revision + 1, providers: providers(current.registry.providers) };
+      if (next.providers.length > 64 || Buffer.byteLength(JSON.stringify(next)) > 128 * 1024) fail();
+      const receipt = writePrivateFileAtomic(registryPath, `${JSON.stringify(next, null, 2)}\n`, { durable: true });
+      if (receipt.durability === 'uncertain') { uncertain = true; closeOwner(); fail(); }
+      closeOwner();
+    } finally { if (lock !== undefined) { fs.closeSync(lock); fs.unlinkSync(lockPath); } }
   }
   function authority() {
     if (closed || uncertain) fail();
@@ -270,7 +289,6 @@ function createAgentOAuthService({ coreHome, getAuthority, openExternal, approve
         const review = reviews.get(body.reviewId);
         if (!review || review.digest !== body.reviewDigest || current.stamp !== review.stamp) fail();
         registrationBusy = true;
-        const lockPath = `${registryPath}.lock`; let lock;
         try {
           if (current.configs.some(config => config.providerId === review.row.config.providerId)) {
             if (current.broker.hasOwner(review.row.config.providerId)) fail();
@@ -278,19 +296,29 @@ function createAgentOAuthService({ coreHome, getAuthority, openExternal, approve
             if (!['disconnected', 'revoked'].includes(priorStatus.state) || current.broker.hasOwner(review.row.config.providerId)
               || context().stamp !== review.stamp) fail();
           }
-          fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-          const stat = fs.lstatSync(directory); if (!stat.isDirectory() || stat.isSymbolicLink()) fail();
-          lock = fs.openSync(lockPath, 'wx', 0o600);
-          if (context().stamp !== review.stamp) fail();
-          const next = { version: 1, revision: current.registry.revision + 1,
-            providers: [...current.registry.providers.filter(row => !(row.config.accountId === review.accountId && row.config.providerId === review.row.config.providerId)), review.row] };
-          if (next.providers.length > 64 || Buffer.byteLength(JSON.stringify(next)) > 128 * 1024) fail();
-          const receipt = writePrivateFileAtomic(registryPath, `${JSON.stringify(next, null, 2)}\n`, { durable: true });
-          if (receipt.durability === 'uncertain') { uncertain = true; closeOwner(); fail(); }
-          reviews.delete(review.id); closeOwner();
+          commitRegistry(review.stamp, providers => [...providers.filter(row => !(row.config.accountId === review.accountId && row.config.providerId === review.row.config.providerId)), review.row]);
+          reviews.delete(review.id);
           return { ...projectReview(review), state: 'registered', authorizationStarted: false, status: status() };
         } catch { throw new Error('OAuth registration not acknowledged; inspect retained registry before retrying'); }
-        finally { if (lock !== undefined) { fs.closeSync(lock); fs.unlinkSync(lockPath); } registrationBusy = false; }
+        finally { registrationBusy = false; }
+      }
+      if (body.action === 'oauthRemoveProvider') {
+        if (!exact(body, ['action', 'providerId', 'explicitUserAction']) || !ID.test(body.providerId) || registrationBusy || activeActions) fail();
+        const { providerId } = body;
+        if (!current.configs.some(config => config.providerId === providerId) || current.broker.hasOwner(providerId)) fail();
+        registrationBusy = true;
+        try {
+          // Deny first, then revoke any held credential. Removal never orphans a protected credential.
+          notifyMcpInvalidation(providerId);
+          let state = (await current.broker.status(providerId)).state;
+          if (!['disconnected', 'revoked'].includes(state)) state = (await current.launcher.revoke({ providerId, explicitUserAction: true })).state;
+          if (!['disconnected', 'revoked'].includes(state) || current.broker.hasOwner(providerId)) fail();
+          notifyMcpInvalidation(providerId, true);
+          commitRegistry(current.stamp, providers => providers.filter(row => !(row.config.accountId === current.current.accountId && row.config.providerId === providerId)));
+          for (const [id, review] of reviews) if (review.row.config.providerId === providerId) reviews.delete(id);
+          return { providerId, state: 'removed', status: status() };
+        } catch { throw new Error('OAuth provider removal not acknowledged; inspect the retained provider status before retrying'); }
+        finally { registrationBusy = false; }
       }
       if (!exact(body, ['action', 'providerId', 'explicitUserAction']) || !ID.test(body.providerId)) fail();
       if (registrationBusy) fail();

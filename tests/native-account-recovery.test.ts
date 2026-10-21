@@ -211,3 +211,15 @@ test.skipIf(process.platform !== 'darwin')('actual bounded macOS libproc observe
     expect(JSON.stringify(proof)).not.toContain('SYNTHETIC-ARGV'); expect(JSON.stringify(proof)).not.toContain('--eval');
   } finally { child.kill('SIGKILL'); await child.exited; rmSync(root, { recursive: true, force: true }); }
 }, 12000);
+
+test('a completed or pending profile removal receipt for an absent profile keeps recovery reviewable', async () => {
+  const f = fixture();
+  try {
+    const registry = JSON.parse(readFileSync(join(f.authorityHome, 'registry.json'), 'utf8'));
+    registry.receipts.push({ actionId: randomUUID(), profileId: randomUUID(), epoch: randomUUID(), kind: 'remove-profile', state: 'completed' },
+      { actionId: randomUUID(), profileId: randomUUID(), epoch: randomUUID(), kind: 'remove-profile', state: 'prepared' });
+    f.write(join(f.authorityHome, 'registry.json'), registry);
+    // Only the interrupted removal adds to the unsettled count; its erase is finished by the next owner.
+    expect(await f.authority.previewRecovery()).toMatchObject({ state: 'reviewable', unsettledActionCount: 3 });
+  } finally { await f.close(); }
+});

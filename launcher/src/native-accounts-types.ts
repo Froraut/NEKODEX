@@ -31,7 +31,7 @@ export interface NativeAccountsSnapshot {
   execution?: import('../electron/native-account-execution.cjs').NativeAccountExecutionSnapshot;
   receipts: Array<{
     actionId: string;
-    kind: 'prepare-profile' | 'device-login' | 'cancel-login' | 'profile-config' | 'close-execution';
+    kind: 'prepare-profile' | 'device-login' | 'cancel-login' | 'profile-config' | 'close-execution' | 'remove-profile';
     profileId: string;
     epoch: string;
     loginAttemptId?: string;
@@ -46,7 +46,8 @@ export type NativeAccountsRequest =
   | { action: 'recover-owner'; actionId: string; reviewDigest: string }
   | { action: 'prepare-profile'; actionId: string; label: string }
   | { action: 'begin-device-login'; actionId: string; profileId: string; epoch: string }
-  | { action: 'cancel-login'; actionId: string; loginAttemptId: string };
+  | { action: 'cancel-login'; actionId: string; loginAttemptId: string }
+  | { action: 'remove-profile'; actionId: string; profileId: string; epoch: string; confirmSignedIn?: boolean };
 export type NativeInventoryRequest = { action: 'inspect-models'; actionId: string; profileId: string; epoch: string };
 export type NativeExecutionCloseRequest = { action: 'close-execution'; actionId: string; profileId: string; epoch: string };
 
