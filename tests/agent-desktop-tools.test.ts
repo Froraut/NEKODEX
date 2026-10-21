@@ -35,13 +35,13 @@ test("desktop controller is passive/off until explicit controls and binds bounde
       if (command === "select") { selected = true; return { selected: window, inputWindowBound: true }; }
       if (command === "observe") return { kind: "desktop", providerId: "nekodex-macos-desktop-v1", platform: "darwin", scopeId: body.scopeId,
         observationId: randomUUID(), ...selection, frameId: "frame", frameEpoch: "b".repeat(64), screenshotId: pngId,
-        coordinateSpace: "screenshot-pixels", width: 1, height: 1, screenshotResource: "native-desktop:private-png-resource" };
+        coordinateSpace: "screenshot-pixels", width: 1, height: 1, screenshotResource: "native-desktop:private-png-resource", windowSize: { width: 0.5, height: 0.5 } };
       if (command === "image") {
         if (body.encoding !== "jpeg") throw new Error("Raw PNG must not enter model result");
         const sourceScreenshotId = corruptNextImage ? "0".repeat(64) : pngId; corruptNextImage = false;
         return { mimeType: "image/jpeg", base64: jpeg.toString("base64"), sha256: createHash("sha256").update(jpeg).digest("hex"), sourceScreenshotId, width: 1, height: 1 };
       }
-      if (command === "properties") return { selection, observedAt: "2026-10-19T09:00:00.000Z", properties: [{ elementId: "element-1", role: "AXTextField", value: propertyValue }] };
+      if (command === "properties") return { selection, observedAt: "2026-10-19T09:00:00.000Z", properties: [{ elementId: "element-1", role: "AXTextField", value: propertyValue, frame: { x: 0, y: 0, width: 0.5, height: 0.25 } }], window: { width: 0.5, height: 0.5 } };
       if (command === "act") {
         if (expire) { pendingOperation = { id: body.operationId as string, binding: body.binding }; throw new Error("synthetic soft wait elapsed; physical owner retained"); }
         return { operationId: body.operationId, outcome: "completed", executed: true, reason: "synthetic native execution only" };
@@ -84,13 +84,20 @@ test("desktop controller is passive/off until explicit controls and binds bounde
     const binding = output.structuredContent.binding;
     expect((await invoke("click", { binding, x: 1, y: 0 })).state).toBe("failed");
     expect(calls.filter(row => row === "act")).toHaveLength(0);
-    expect((await invoke("click", { binding, x: 0, y: 0 })).state).toBe("completed");
+    const clicked = await invoke("click", { binding, x: 0, y: 0 });
+    expect(clicked.state).toBe("completed");
+    // The receipt names its exact consumed observation and window-relative point, never pixels.
+    expect((clicked.result as any).structuredContent).toMatchObject({ proof: "native-input-execution-only", target: { observationId: binding.observationId, screenshotId: pngId,
+      coordinateSpace: "screenshot-pixels", x: 0, y: 0, image: { width: 1, height: 1 }, windowPoint: { x: 0, y: 0 }, space: "window-points-top-left" } });
+    expect(JSON.stringify(clicked.result)).not.toContain(jpeg.toString("base64"));
     expect((await invoke("type", { binding, text: "stale" })).state).toBe("failed");
     expect(calls.filter(row => row === "act")).toHaveLength(1);
     const propertyImage = await invoke("observe", { selection });
     const propertyBinding = (propertyImage.result as any).structuredContent.binding;
     const properties = await invoke("readProperties", { selection });
     expect((properties.result as any).structuredContent.snapshot.properties[0].value).toBe(propertyValue);
+    expect((properties.result as any).structuredContent.snapshot).toMatchObject({ properties: [{ frame: { x: 0, y: 0, width: 0.5, height: 0.25 } }], window: { width: 0.5, height: 0.5 } });
+    expect((properties.result as any).structuredContent.geometry).toContain("window-relative points");
     expect((await invoke("type", { binding: propertyBinding, text: "stale after AX read" })).state).toBe("failed");
     const verified = await invoke("verifyProperty", { selection, expectation });
     const reference = desktopPropertyReference(verified, "property-requirement");

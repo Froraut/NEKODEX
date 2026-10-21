@@ -95,7 +95,12 @@ input requires a foreground observation; otherwise it is refused as
 `observe-with-foreground-required`. There are no global shortcut, keyboard
 fallback, pasteboard, arbitrary AX attribute or arbitrary process-command APIs.
 Successful receipts establish dispatch/AX acceptance, never a clicked business
-property or verified inserted result. OS input is not an atomic transaction;
+property or verified inserted result. A click receipt names its exact target:
+the consumed observation id, the screenshot-pixel point and the window-relative
+point (top-left origin, points) it maps to through the observed window size.
+Property reads report each element's frame in the same window-relative points,
+so a reviewer can judge containment without pixels; geometry is metadata, never
+part of the input binding. OS input is not an atomic transaction;
 revalidation occurs immediately before the fixed action and cannot eliminate
 every concurrent human/application change afterward.
 

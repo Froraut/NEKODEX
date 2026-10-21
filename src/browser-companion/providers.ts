@@ -34,6 +34,9 @@ export const desktopObservationSchema = desktopBindingSchema.extend({
   kind: z.literal("desktop"),
   /** Opaque provider resource, not an arbitrary URL to fetch. No screenshot data is persisted here. */
   screenshotResource: z.string().min(1).max(1024),
+  /** Observed window size in points; screenshot pixels map proportionally to window-relative
+   * points with a top-left origin. Metadata only: never part of the input binding identity. */
+  windowSize: z.object({ width: z.number().finite().positive().max(1_000_000), height: z.number().finite().positive().max(1_000_000) }).strict().optional(),
 }).strict();
 export const desktopActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("click"), x: z.number().int().nonnegative(), y: z.number().int().nonnegative(), waitForForeground: z.literal(true).optional() }).strict(),

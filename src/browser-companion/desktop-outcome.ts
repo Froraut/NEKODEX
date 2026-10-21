@@ -7,6 +7,10 @@ import type { ToolOutcome } from "../agent-tools/types";
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const selectionSchema = z.object({ windowId: z.string().regex(/^\d+$/), processId: z.string().regex(/^\d+:\d+$/), windowEpoch: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 const scalar = z.union([z.string().max(4096), z.number().finite(), z.boolean()]);
+const extent = z.number().finite().nonnegative().max(1_000_000);
+/** Window-relative points with a top-left origin, the space screenshot-pixel input maps into. */
+export const desktopWindowRectSchema = z.object({ x: z.number().finite().min(-1_000_000).max(1_000_000), y: z.number().finite().min(-1_000_000).max(1_000_000), width: extent, height: extent }).strict();
+export const desktopWindowSizeSchema = z.object({ width: extent, height: extent }).strict();
 export const desktopApplicationPropertiesSchema = z.object({
   selection: selectionSchema,
   observedAt: z.string().datetime({ offset: true }),
@@ -14,7 +18,10 @@ export const desktopApplicationPropertiesSchema = z.object({
     elementId: z.string().min(1).max(160), role: z.string().min(1).max(160),
     identifier: z.string().max(512).optional(), title: z.string().max(512).optional(),
     value: scalar.optional(), enabled: z.boolean().optional(), focused: z.boolean().optional(),
+    frame: desktopWindowRectSchema.optional(),
   }).strict()).max(128),
+  /** Selected window size in points at the read. Older snapshots carry no geometry. */
+  window: desktopWindowSizeSchema.optional(),
 }).strict().superRefine((snapshot, context) => {
   if (new Set(snapshot.properties.map(row => row.elementId)).size !== snapshot.properties.length) context.addIssue({ code: "custom", message: "Native application element identities must be unique" });
   if (Buffer.byteLength(JSON.stringify(snapshot)) > 64 * 1024) context.addIssue({ code: "custom", message: "Native application property snapshot exceeds its bound" });
