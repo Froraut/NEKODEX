@@ -90,6 +90,7 @@ import {
   CHATGPT_SEND_BUTTON_SELECTOR,
   CHATGPT_STOP_BUTTON_SELECTOR,
   chatGptAssistantTurnSelector,
+  chatGptTurnContainerSelector,
   detectChatGptAccountCapabilities,
 } from "../../chatgpt-session";
 import {
@@ -1971,7 +1972,8 @@ export class ChatGptBrowserWorker {
         throw new Error("ChatGPT Bigger Context transaction timed out while awaiting a stage acknowledgement");
       }
       await throwIfChatGptSessionFailureAlert(page);
-      await throwIfChatGptTerminalErrorAlert(responseTurn.locator);
+      // ChatGPT can replace the assistant part with its error, so scope to the whole turn.
+      await throwIfChatGptTerminalErrorAlert(page.locator(chatGptTurnContainerSelector(responseTurn.identity)));
       let snapshot = await responseDomSnapshot(responseTurn.locator, responseDomCache, abortSignal);
       if (!snapshot.responsePresent && await responseTurn.locator.count() !== 1) {
         const rebound = await this.reconcileAssistantTurnBinding(
@@ -3201,7 +3203,8 @@ export class ChatGptBrowserWorker {
           throw new DOMException("ChatGPT web turn aborted", "AbortError");
         }
         await throwIfChatGptSessionFailureAlert(page);
-        await throwIfChatGptTerminalErrorAlert(responseTurn.locator);
+        // ChatGPT can replace the assistant part with its error, so scope to the whole turn.
+        await throwIfChatGptTerminalErrorAlert(page.locator(chatGptTurnContainerSelector(responseTurn.identity)));
 
         let approvalVisibleAt: number | undefined;
         if (mode.localTools && await resolveChatGptToolConfirmation(
