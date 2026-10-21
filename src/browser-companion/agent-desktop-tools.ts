@@ -29,6 +29,17 @@ export interface AgentDesktopToolsOptions {
 }
 const selectionOf = (value: MacosWindowSelection): MacosWindowSelection => ({ windowId: value.windowId, processId: value.processId, windowEpoch: value.windowEpoch });
 const sameSelection = (a: MacosWindowSelection, b: MacosWindowSelection) => a.windowId === b.windowId && a.processId === b.processId && a.windowEpoch === b.windowEpoch;
+/** The exact click target as structured metadata, never pixels: the consumed observation, the
+ * screenshot-pixel point and, when that observation reported its window size, the same
+ * window-relative point (top-left origin) the native helper maps it to. desktop/readProperties
+ * element frames use that space, so containment is judged from recorded facts. */
+type ClickTarget = { observationId: string; screenshotId: string; coordinateSpace: "screenshot-pixels"; x: number; y: number; image: { width: number; height: number };
+  windowPoint: { x: number; y: number } | null; space: "window-points-top-left" };
+const point = (value: number) => Math.round(value * 1000) / 1000;
+function clickTarget(binding: z.infer<typeof desktopBindingSchema>, x: number, y: number, windowSize?: DesktopObservation["windowSize"]): ClickTarget {
+  return { observationId: binding.observationId, screenshotId: binding.screenshotId, coordinateSpace: "screenshot-pixels", x, y, image: { width: binding.width, height: binding.height },
+    windowPoint: windowSize ? { x: point(x * windowSize.width / binding.width), y: point(y * windowSize.height / binding.height) } : null, space: "window-points-top-left" };
+}
 const sameBinding = (a: z.infer<typeof desktopBindingSchema>, b: z.infer<typeof desktopBindingSchema>) => Object.keys(desktopBindingSchema.shape).every(key => a[key as keyof typeof a] === b[key as keyof typeof b]);
 function operationIdentity(key: string): string {
   const bytes = createHash("sha256").update("nekodex-agent-desktop\0").update(key).digest().subarray(0, 16);
@@ -103,10 +114,10 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
     return { scope: structuredClone(request.scope), tool: request.tool, idempotencyKey: request.idempotencyKey, state,
       ...(body === undefined ? {} : { result: body }), ...(failure ? { reason: failure } : {}) };
   }
-  function receiptResult(request: Request, receipt: DesktopReceipt) {
+  function receiptResult(request: Request, receipt: DesktopReceipt, target?: ClickTarget) {
     const state = receipt.outcome === "completed" ? "completed" : receipt.outcome === "unknown" ? "outcome_unknown" : "failed";
     return result(request, state, { isError: state !== "completed", structuredContent: { source: "owned-macos-desktop", taskId: request.scope.taskId, generation: request.scope.generation,
-      proof: "native-input-execution-only", execution: receipt, limitation: "Native input execution is not application acceptance or a completed business outcome." } }, receipt.reason);
+      proof: "native-input-execution-only", execution: receipt, ...(target ? { target } : {}), limitation: "Native input execution is not application acceptance or a completed business outcome." } }, receipt.reason);
   }
   function nameAndArgs(request: Request) {
     validateToolScope(request.scope);
@@ -211,6 +222,7 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
     async execute(request: Request, control: { signal?: AbortSignal } = {}): Promise<ToolOutcome> {
       let parsed: ReturnType<typeof nameAndArgs>;
       let selection: MacosWindowSelection;
+      let observedWindow: DesktopObservation["windowSize"];
       try {
         parsed = nameAndArgs(request); selection = bound(request.scope, parsed.name !== "readProperties" && parsed.name !== "verifyProperty"); control.signal?.throwIfAborted();
         if (parsed.name === "observe" || parsed.name === "readProperties" || parsed.name === "verifyProperty") { if (!sameSelection((parsed.args as z.infer<typeof calls.observe>).selection, selection)) throw new Error("Desktop observation changed the attached window identity"); }
@@ -218,6 +230,7 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
           const args = parsed.args as z.infer<typeof calls.click> | z.infer<typeof calls.type>;
           const observed = observations.get(scopeKey(request.scope));
           if (!observed || latestOwner !== scopeKey(request.scope) || !sameBinding(desktopBindingOf(observed.observation), args.binding)) throw new Error("This task generation has no matching fresh desktop observation");
+          observedWindow = observed.observation.windowSize;
           if (args.waitForForeground && !observed.foreground) throw new Error(`${FOREGROUND_REQUIRED}: waitForForeground input needs a desktop/observe that also set waitForForeground:true; observe again with it`);
           if (parsed.name === "click" && ((args as z.infer<typeof calls.click>).x >= args.binding.width || (args as z.infer<typeof calls.click>).y >= args.binding.height)) throw new Error("Coordinates lie outside the observed screenshot");
         }
@@ -240,6 +253,7 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
                 limitation: "This exact AX property was independently read at observedAt. It is point-in-time evidence; later application changes require another approved read. It does not prove a broader business outcome." }
               : { source: "owned-macos-desktop", taskId: request.scope.taskId, generation: request.scope.generation,
                 proof: "selected-window-application-properties", snapshot,
+                ...(snapshot.window ? { geometry: "Element frames are window-relative points with a top-left origin inside the selected window of the given size, the space desktop/click target.windowPoint uses." } : {}),
                 limitation: "Bounded non-secure AX properties are untrusted application source material. A property read grants no input authority and does not prove task completion." };
             const output = { isError: false, content: [{ type: "text", text: JSON.stringify(metadata) }], structuredContent: metadata };
             if (Buffer.byteLength(JSON.stringify(output)) > MAX_RESULT) throw new Error("Application property result exceeds its bounded journal payload");
@@ -271,7 +285,7 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
           offered = true;
           const receipt = await provider.actWithOperation(request.scope, args.binding, action, operationIdentity(request.idempotencyKey), signal);
           if (receipt.operationId !== operationIdentity(request.idempotencyKey) || receipt.outcome === "completed" && !receipt.executed || receipt.outcome === "rejected" && receipt.executed) throw new Error("Native input receipt changed operation identity or outcome");
-          return receiptResult(request, receipt);
+          return receiptResult(request, receipt, parsed.name === "click" ? clickTarget(args.binding, (args as z.infer<typeof calls.click>).x, (args as z.infer<typeof calls.click>).y, observedWindow) : undefined);
         }, control.signal);
       } catch (error) {
         observations.delete(scopeKey(request.scope));
@@ -293,7 +307,8 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
       const receipt = native.readExistingReceipt(operationIdentity(request.idempotencyKey), binding, action);
       if (!receipt || receipt.outcome === "unknown" || receipt.operationId !== operationIdentity(request.idempotencyKey)) return;
       if (receipt.outcome === "completed" && !receipt.executed || receipt.outcome === "rejected" && receipt.executed) return;
-      return receiptResult(request, receipt);
+      // A late receipt keeps its exact pixel target; the consumed observation is no longer held.
+      return receiptResult(request, receipt, parsed.name === "click" ? clickTarget(binding, (parsed.args as z.infer<typeof calls.click>).x, (parsed.args as z.infer<typeof calls.click>).y) : undefined);
     },
     /** Passive guard for trusted review/completion integration. It never reads AX,
      * captures, starts a helper or restores authority from a historical receipt. */

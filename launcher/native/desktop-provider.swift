@@ -360,6 +360,9 @@ func lastInputTime() -> TimeInterval {
             if let value = value { item["value"] = value }
             if let enabled = attribute(element, kAXEnabledAttribute as CFString) as? Bool { item["enabled"] = enabled }
             if let focused = attribute(element, kAXFocusedAttribute as CFString) as? Bool { item["focused"] = focused }
+            // Window-relative points with a top-left origin: the space a screenshot-pixel click
+            // maps into, so a text reviewer can judge containment without the image.
+            item["frame"] = ["x": frame.minX - row.frame.minX, "y": frame.minY - row.frame.minY, "width": frame.width, "height": frame.height]
             result.append(item)
         }
         guard let encoded = try? JSONSerialization.data(withJSONObject: result), encoded.count <= 60 * 1024 else { try reject("property-snapshot-size-limit") }
@@ -428,7 +431,8 @@ func lastInputTime() -> TimeInterval {
             let properties = try applicationProperties(row)
             let current = try currentWindow(); _ = try boundWindow(current)
             guard sameFrame(current.frame, row.frame), token(properties) == token(try applicationProperties(current)) else { try reject("property-state-changed-during-read") }
-            return ["selection": selection, "observedAt": ISO8601DateFormatter().string(from: Date()), "properties": properties]
+            return ["selection": selection, "observedAt": ISO8601DateFormatter().string(from: Date()), "properties": properties,
+                    "window": ["width": row.frame.width, "height": row.frame.height]]
         case "observe":
             let waits = try foregroundMode(request)
             guard exact(request, base + ["scopeId"] + (waits ? ["waitForForeground"] : [])), !uncertain,
@@ -444,7 +448,10 @@ func lastInputTime() -> TimeInterval {
                 guard value.lastInput <= foregroundBaseline + 0.005, lastInputTime() <= foregroundBaseline + 0.005 else { try reject("human-input-changed") }
             }
             captured = value; image = value
-            return value.binding.merging(["kind": "desktop", "screenshotResource": value.resource]) { _, new in new }
+            // The observed window size in points maps screenshot pixels to window-relative points.
+            // It is metadata beside the binding, never part of the input binding identity.
+            return value.binding.merging(["kind": "desktop", "screenshotResource": value.resource,
+                "windowSize": ["width": value.frame.width, "height": value.frame.height]]) { _, new in new }
         case "image":
             guard exact(request, base + ["binding", "resource", "encoding"]), let value = image,
                   let binding = request["binding"] as? [String: Any], NSDictionary(dictionary: binding).isEqual(to: value.binding),

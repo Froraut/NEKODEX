@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentModeRuntime, AgentModeStore, createAgentModeRoutes, createResponsesSemanticReviewPort, extractSemanticReviewObject, normalizeSemanticReview, SEMANTIC_REVIEW_PROTOCOL, SemanticReviewOutputError } from "../src/agent-mode";
 import type { AgentToolRequest, SemanticReviewInvalidEvidence, SemanticReviewPacket, SemanticReviewPort, SemanticReviewRequest } from "../src/agent-mode";
+import { chatGptHtmlToMarkdown } from "../src/adapters/chatgpt-web/markdown";
 import { emitTextDeltas } from "../src/adapters/chatgpt-web/turn-round-delivery";
 import { buildResponseJSON } from "../src/responses/json-output";
 import type { AdapterEvent } from "../src/types";
@@ -49,9 +50,32 @@ const resultEvidence = (store: AgentModeStore, taskId = "task") => store.listRec
   .map(row => row.body as { state: string; receiptId?: string; invalid?: SemanticReviewInvalidEvidence });
 
 /** A synthetic P13-shaped Manual task: observe, one click and a separate AX property check. */
-function desktopFixture(reviewReply: (request: SemanticReviewRequest) => string | Promise<string>, port?: SemanticReviewPort) {
+/** The P13 fixture geometry as the native helper reports it: a 560x308-point window captured at
+ * 2x, the purple mouse-only view and the counter label as window-relative AX frames. */
+const p13Binding = { providerId: "nekodex-macos-desktop-v1", scopeId: "task\u00001", observationId: "observation-p13", platform: "darwin", ...selection, frameId: "window-4242",
+  frameEpoch: "c".repeat(64), screenshotId: "d".repeat(64), coordinateSpace: "screenshot-pixels", width: 1120, height: 616 };
+const p13Results: Record<string, unknown> = {
+  "call-read": { isError: false, structuredContent: { source: "owned-macos-desktop", proof: "selected-window-application-properties", snapshot: { selection, observedAt: "2026-10-21T08:00:00.000Z",
+    properties: [{ elementId: "ax-purple", role: "AXImage", identifier: "nekodex.fixture.pixel-counter-area", frame: { x: 24, y: 116, width: 200, height: 96 } },
+      { elementId: "ax-counter", role: "AXStaticText", identifier: "nekodex.fixture.counter", value: "Counter: 0", frame: { x: 256, y: 148, width: 270, height: 32 } }], window: { width: 560, height: 308 } },
+    geometry: "Element frames are window-relative points with a top-left origin inside the selected window of the given size, the space desktop/click target.windowPoint uses." } },
+  "call-observe": { isError: false, content: [{ type: "image", mimeType: "image/jpeg", data: "/9j/SYNTHETICPIXELS" }], structuredContent: { source: "owned-macos-desktop", proof: "selected-window-screenshot",
+    observation: { ...p13Binding, kind: "desktop", screenshotResource: "native-desktop:p13", windowSize: { width: 560, height: 308 } }, binding: p13Binding,
+    modelImage: { mimeType: "image/jpeg", sha256: "b".repeat(64), sourceScreenshotId: "d".repeat(64), width: 1120, height: 616 }, foregroundHandoff: "explicit-manual-return" } },
+  "call-click": { isError: false, structuredContent: { source: "owned-macos-desktop", proof: "native-input-execution-only",
+    execution: { operationId: "00000000-0000-5000-8000-000000000000", outcome: "completed", executed: true, reason: "input-dispatched; application-result-unverified" },
+    target: { observationId: "observation-p13", screenshotId: "d".repeat(64), coordinateSpace: "screenshot-pixels", x: 248, y: 336, image: { width: 1120, height: 616 }, windowPoint: { x: 124, y: 168 }, space: "window-points-top-left" },
+    limitation: "Native input execution is not application acceptance or a completed business outcome." } },
+  "call-verify": { isError: false, structuredContent: { source: "owned-macos-desktop", verification: { expectation: { elementId: "ax-counter", property: "value", equals: "Counter: 1" }, actual: "Counter: 1", outcome: "passed" } } },
+};
+function desktopFixture(reviewReply: (request: SemanticReviewRequest) => string | Promise<string>, port?: SemanticReviewPort, shape: "basic" | "p13" = "basic") {
   const store = storeAt();
-  const calls: AgentToolRequest[] = [
+  const calls: AgentToolRequest[] = shape === "p13" ? [
+    { toolCallId: "call-read", tool: "desktop/readProperties", wireName: "agent_tool_0", arguments: { selection } },
+    { toolCallId: "call-observe", tool: "desktop/observe", wireName: "agent_tool_1", arguments: { selection, waitForForeground: true } },
+    { toolCallId: "call-click", tool: "desktop/click", wireName: "agent_tool_2", arguments: { binding: p13Binding, x: 248, y: 336, waitForForeground: true } },
+    { toolCallId: "call-verify", tool: "desktop/verifyProperty", wireName: "agent_tool_3", arguments: { selection, expectation: { elementId: "ax-counter", property: "value", equals: "Counter: 1" } } },
+  ] : [
     { toolCallId: "call-observe", tool: "desktop/observe", wireName: "agent_tool_0", arguments: { selection } },
     { toolCallId: "call-click", tool: "desktop/click", wireName: "agent_tool_1", arguments: { binding: { observationId: "frame-1" }, x: 120, y: 80, waitForForeground: true } },
     { toolCallId: "call-verify", tool: "desktop/verifyProperty", wireName: "agent_tool_2", arguments: { selection, expectation: { elementId: "ax-counter", property: "value", equals: "Counter: 1" } } },
@@ -75,7 +99,7 @@ function desktopFixture(reviewReply: (request: SemanticReviewRequest) => string 
     runtime.step("task", "step-1", { explicitUserAction: true }); await runtime.waitForIdle();
     const source = store.listDispatches("task")[0]!;
     const meta = { selection, observedAt: "2026-10-21T08:00:00.000Z", modelImage: { mimeType: "image/jpeg", sha256: "b".repeat(64) } };
-    const results: Record<string, unknown> = {
+    const results: Record<string, unknown> = shape === "p13" ? p13Results : {
       "call-observe": { isError: false, content: [{ type: "image", mimeType: "image/jpeg", data: "/9j/SYNTHETICPIXELS" }, { type: "text", text: JSON.stringify(meta) }], structuredContent: meta },
       "call-click": { isError: false, structuredContent: { outcome: "completed", limitation: "An input receipt is not an application outcome." } },
       "call-verify": { isError: false, structuredContent: { source: "owned-macos-desktop", verification: { expectation: { elementId: "ax-counter", property: "value", equals: "Counter: 1" }, actual: "Counter: 1", outcome: "passed" } } },
@@ -231,6 +255,91 @@ describe("DW9 independent semantic Goal review", () => {
     expect(reason("The deliverable looks complete.")).toBe("no_json_object");
     expect(reason("[1, 2]")).toBe("no_json_object");
     expect(reason(" \n ")).toBe("final_answer_empty");
+  });
+
+  test("DW9 live regression: the Web adapter's Markdown-escaped bare verdict is parsed strictly and normalized without loosening any rule", () => {
+    // Exact final_answer of attempt 4dd4560e on 6.1.33-nekodex.5: Turndown escaped every [ and ].
+    const escaped = readFileSync(join(import.meta.dir, "fixtures", "semantic-review-dw9-escaped-final-answer.txt"), "utf8");
+    expect(escaped).toContain('"requirements":\\[{"requirementId":"r1"');
+    expect(() => JSON.parse(escaped)).toThrow();
+    const receipts = { read: "tool:c928149683b4ae86134aed1a2882988115c99b9b5419490da059097431e7d205", observe: "tool:665d21f8cc9007f2053014a9638956ea3e4b3674851b232ee02ef1fef83dc3c8",
+      click: "tool:3b3676bd2722223416f0868165fb10addb8a830585a5410f4577be68d8883f71", verify: "tool:20f73b84894e0c4cc5cfaa99cb7bdcc0d6b2755a1da78f327d43185f6a277c26" };
+    const object = extractSemanticReviewObject(escaped) as { requirements: { requirementId: string; toolReceiptIds: string[]; missing: string[] }[] };
+    expect(object.requirements.map(row => row.requirementId)).toEqual(["r1", "r2"]);
+    expect(object.requirements[0]!.toolReceiptIds).toEqual(Object.values(receipts));
+    expect(object.requirements[1]!.missing).toEqual([]);
+    const packet = { task: { requirements: [{ id: "r1", text: "Counter 0, one click in the purple area, counter 1." }, { id: "r2", text: "A separate verifyProperty reads Counter: 1." }] }, observedEvidence: [],
+      toolReceipts: [{ receiptId: receipts.read, class: "observation", state: "completed" }, { receiptId: receipts.observe, class: "observation", state: "completed" },
+        { receiptId: receipts.click, class: "action-receipt", state: "completed" }, { receiptId: receipts.verify, class: "observation", state: "completed" }], completeInput: true } as unknown as SemanticReviewPacket;
+    const result = normalizeSemanticReview(packet, escaped);
+    expect(result.requirements.map(row => [row.requirementId, row.verdict, row.sufficiency])).toEqual([["r1", "unknown", "partial"], ["r2", "pass", "complete"]]);
+    expect(result.requirements[0]!.missing[0]).toContain("(248,336)");
+    expect(result.deliverable.verdict).toBe("unknown");
+    expect(result.hostAdjustments).toEqual([]);
+  });
+
+  test("the fenced verdict survives ChatGPT HTML-to-Markdown literally; escaped prose is unescaped only outside code and stays strict", () => {
+    const object = { protocol: SEMANTIC_REVIEW_PROTOCOL, ids: ["snake_case", "*starred*", "[bracketed]"], note: "a \"quoted\" C:\\path, `tick`, # not a heading" };
+    const json = JSON.stringify(object);
+    const html = json.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+    // Code is not escaped by the Web adapter: the fenced block is the exact reviewer text.
+    const fenced = chatGptHtmlToMarkdown(`<pre><code class="language-json">${html}</code></pre>`);
+    expect(fenced).toBe("```json\n" + json + "\n```");
+    expect(extractSemanticReviewObject(fenced)).toEqual(object);
+    // The same object as paragraph text is escaped by Turndown, and recovered exactly.
+    const paragraph = chatGptHtmlToMarkdown(`<p>${html}</p>`);
+    expect(paragraph).not.toBe(json);
+    expect(paragraph).toContain("\\[");
+    expect(extractSemanticReviewObject(paragraph)).toEqual(object);
+    const reason = (text: string) => { try { extractSemanticReviewObject(text); return "accepted"; } catch (error) { expect(error).toBeInstanceOf(SemanticReviewOutputError); return (error as SemanticReviewOutputError).reason; } };
+    // A literal reading wins: a valid bare object keeps its own JSON escapes.
+    expect(extractSemanticReviewObject(json)).toEqual(object);
+    // Escaped prose cannot hide a second verdict beside a fenced one, or duplicate itself.
+    expect(reason(`${paragraph}\n\n${fenced}`)).toBe("multiple_json_objects");
+    expect(reason(`${paragraph}\n${paragraph}`)).toBe("multiple_json_objects");
+    // Code spans and fences stay literal, so an escape inside them is not removed.
+    expect(reason("`{\"protocol\":\\[1\\]}`")).toBe("no_json_object");
+    expect(reason("```\n{\"protocol\":\\[1\\]}\n```")).toBe("no_json_object");
+    // Only ASCII punctuation escapes are removed; the result is still parsed strictly.
+    expect(reason("{\"protocol\":\\[1,\\]}")).toBe("no_json_object");
+    expect(reason("{\"protocol\":\"\\q\"}")).toBe("no_json_object");
+    expect(reason("{\"protocol\":\\[1\\]")).toBe("unterminated_json_object");
+  });
+
+  test("P13 from recorded facts alone: a click target and AX frames let r1 pass without the screenshot; the click receipt alone never does", async () => {
+    let key: (id: string) => string = () => ""; let cite: "facts" | "click" = "facts";
+    const f = desktopFixture(() => reply([
+      { requirementId: "r1", verdict: "pass", sufficiency: "complete", toolReceiptIds: cite === "facts" ? [key("call-read"), key("call-observe"), key("call-click"), key("call-verify")] : [key("call-click")] },
+      { requirementId: "r2", verdict: "pass", sufficiency: "complete", toolReceiptIds: [key("call-verify")] },
+    ]), undefined, "p13");
+    ({ key } = await f.settle());
+    const reviewer = { provider: "local-responses" as const, model: "synthetic-reviewer" };
+    const task = await f.runtime.semanticReview("task", "semantic-p13", f.scope(), reviewer, true);
+    const prompt = JSON.parse(f.reviews[0]!.prompt) as { packet: SemanticReviewPacket };
+    const receipt = (id: string) => prompt.packet.toolReceipts.find(row => row.receiptId === key(id))! as { class: string; result: any };
+    // Structured geometry reaches the text reviewer; pixels do not.
+    expect(receipt("call-click").class).toBe("action-receipt");
+    expect(receipt("call-click").result.structuredContent.target).toMatchObject({ observationId: "observation-p13", x: 248, y: 336, windowPoint: { x: 124, y: 168 }, space: "window-points-top-left" });
+    expect(receipt("call-observe").result.structuredContent.observation).toMatchObject({ observationId: "observation-p13", width: 1120, height: 616, windowSize: { width: 560, height: 308 } });
+    expect(receipt("call-read").result.structuredContent.snapshot.properties[0]).toMatchObject({ identifier: "nekodex.fixture.pixel-counter-area", frame: { x: 24, y: 116, width: 200, height: 96 } });
+    expect(f.reviews[0]!.prompt).not.toContain("SYNTHETICPIXELS");
+    expect(prompt.packet.omitted.images).toBe(1);
+    expect(prompt.packet.completeInput).toBe(true);
+    expect(f.reviews[0]!.instructions).toContain("target.windowPoint");
+    expect(f.reviews[0]!.instructions).toContain("fenced ```json code block");
+    expect(task.semanticReview!.requirements.map(row => [row.requirementId, row.verdict])).toEqual([["r1", "pass"], ["r2", "pass"]]);
+    expect(task.semanticReview!.hostAdjustments).toEqual([]);
+    expect(task.semanticReview!.deliverable.verdict).toBe("pass");
+    // The same pass citing only the click receipt is recorded unknown: an input receipt proves no effect.
+    cite = "click";
+    const packet = f.store.semanticReviewInput("task").packet;
+    const clickOnly = normalizeSemanticReview(packet, reply([
+      { requirementId: "r1", verdict: "pass", sufficiency: "complete", toolReceiptIds: [key("call-click")] },
+      { requirementId: "r2", verdict: "pass", sufficiency: "complete", toolReceiptIds: [key("call-verify")] },
+    ]));
+    expect(clickOnly.requirements.map(row => row.verdict)).toEqual(["unknown", "pass"]);
+    expect(clickOnly.hostAdjustments.join("\n")).toContain("r1: pass recorded as unknown because it cites no observed fact");
+    expect(clickOnly.deliverable.verdict).toBe("unknown");
   });
 
   test("an invalid output keeps bounded, redacted evidence and uses up no attempt; the same action is never resent", async () => {
