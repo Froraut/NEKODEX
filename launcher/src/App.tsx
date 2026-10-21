@@ -1033,7 +1033,7 @@ function LauncherShell({
             {surface === 'native-threads' ? <NativeThreadsSurface loadCopy={copy} language={language} api={api!} historyApi={historyApi} disabled={transitionBusy} /> : null}
             {surface === 'agent-mode' ? <AgentModeSurface loadCopy={copy} language={language} api={agentModeApi} disabled={transitionBusy} /> : null}
             {surface === 'external-usage' ? <ExternalUsageSurface loadCopy={copy} language={language} api={externalUsageApi} /> : null}
-            {surface === 'agent-tools' ? <AgentToolsSurface loadCopy={copy} language={language} api={agentToolsApi} oauthMcpRequest={api?.oauthMcpRequest} disabled={transitionBusy} /> : null}
+            {surface === 'agent-tools' ? <AgentToolsSurface loadCopy={copy} language={language} api={agentToolsApi} oauthMcpRequest={api?.oauthMcpRequest} nativeAccounts={agentModeApi.nativeAccounts} disabled={transitionBusy} /> : null}
             {surface === 'browser-companion' ? <BrowserCompanionSurface loadCopy={copy} language={language} api={browserCompanionApi} disabled={transitionBusy} /> : null}
             {surface === 'local-control-api' ? <LocalControlApiSurface loadCopy={copy} language={language} api={localControlApi} /> : null}
             {surface === "accounts" ? <AccountSettings loadCopy={copy} copy={copy} language={language} openBrowser={() => navigateSurface("browser")}

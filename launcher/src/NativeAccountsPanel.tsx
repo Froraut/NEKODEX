@@ -4,6 +4,8 @@ import type { Language } from './types';
 import type { NativeAccountsApi, NativeAccountsRequest, NativeInventoryRequest, NativeExecutionCloseRequest, NativeAccountsSnapshot, NativeAccountProfile } from './native-accounts-types';
 import type { NativeOwnerRecoveryPreview, NativeOwnerRecoveryReceipt } from '../electron/native-account-recovery.cjs';
 import { RemovalConfirmation } from './RemovalConfirmation';
+import { NativeModelsOfflineNotice } from './NativeModelsOfflineNotice';
+import { nativeModelsOfflineTarget } from './native-models-offline';
 import './surfaces/native-accounts.css';
 
 const verificationUrl = 'https://auth.openai.com/codex/device';
@@ -165,10 +167,14 @@ export function NativeAccountsPanel({ language, api, disabled = false, onChange 
     return copy[profile.state]?.[ru ? 0 : 1] ?? (ru ? 'Статус требует проверки.' : 'Status needs verification.');
   };
   const locked = disabled || busy || uncertain || !snapshot?.available;
+  const offline = nativeModelsOfflineTarget(snapshot);
 
   return <Panel title={ru ? 'Аккаунты Native Codex' : 'Native Codex accounts'} className="native-accounts"
     actions={<Button disabled={disabled || busy} busy={busy} onClick={() => void read()}>{ru ? 'Обновить статус' : 'Refresh status'}</Button>}>
     <PanelStack className="native-accounts__body">
+    {offline ? <NativeModelsOfflineNotice language={language} target={offline} disabled={locked} busy={busy && qualificationRequests.current.size > 0}
+      consequence={ru ? 'До этого Native Agent-задачи нельзя создать или запустить.' : 'Until then Native Agent tasks cannot be created or run.'}
+      onCheck={() => void mutate({ action: 'inspect-models', actionId: crypto.randomUUID(), profileId: offline.profileId, epoch: offline.epoch })} /> : null}
     <p>{ru ? 'Создайте отдельный профиль и явно запустите вход через OpenAI. Вход сам по себе не подтверждает доступные модели или возможность выполнения задач.' : 'Prepare a separate profile and explicitly start OpenAI sign-in. Sign-in alone does not establish model availability or task execution readiness.'}</p>
     {error ? <Notice tone="warning" title={ru ? 'Не удалось подтвердить актуальный статус.' : 'The current status could not be confirmed.'}>{ru ? 'Обновите статус. Не подтверждённое действие не повторяется автоматически.' : 'Refresh status. An unconfirmed action is never replayed automatically.'}</Notice> : null}
     {uncertain ? <Notice tone="warning" title={ru ? 'Результат действия пока неизвестен.' : 'The action outcome is still unknown.'}>{ru ? 'Сохранён идентификатор исходного действия. Обновление сверит его с журналом; новые изменения пока заблокированы.' : 'The original action identity has been retained. Refresh checks its receipt; further changes are blocked until reconciliation.'}</Notice> : null}

@@ -113,6 +113,8 @@ export interface AgentToolsStatus {
   activeCount: number;
   /** Protected OAuth owner identity only; never credentials or callback data. */
   oauthScope?: { accountId: string; epoch: string | number };
+  /** Safe OAuth registry state; `account_authority_offline` means the Native account has no ready execution. */
+  oauthRegistry?: { state: 'empty' | 'configured' | 'unavailable'; providerCount: number; reason?: string; reasonCode?: 'account_authority_offline' };
   descriptors: ToolDescriptor[];
   vmEnvironment?: { prepared: boolean; supported: boolean; reason?: string; runtimeDigest?: string; review?: AgentVmEnvironmentReview };
   vmTools?: AgentVmToolsStatus | null;
