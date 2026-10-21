@@ -20,7 +20,7 @@ for (const browser of ["chrome", "firefox"] as const) {
       const files = unzipSync(readFileSync(built.archive));
       expect(Object.keys(files).sort()).toEqual(["manifest.json", ...BROWSER_COMPANION_FILES].sort());
       const manifest = JSON.parse(strFromU8(files["manifest.json"]!));
-      expect(manifest).toMatchObject({ manifest_version: 3, name: "NEKODEX Browser Companion", version: "0.2.0",
+      expect(manifest).toMatchObject({ manifest_version: 3, name: "NEKODEX Browser Companion", version: "0.2.1",
         permissions: ["activeTab", "scripting", "storage"], host_permissions: ["http://127.0.0.1:17843/*"] });
       expect(manifest.content_scripts).toBeUndefined(); expect(manifest.background).toBeUndefined();
       expect(manifest.content_security_policy.extension_pages).toBe("script-src 'self'; object-src 'none'; connect-src http://127.0.0.1:17843");
