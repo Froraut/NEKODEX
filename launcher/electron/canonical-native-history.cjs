@@ -30,12 +30,13 @@ function createCanonicalNativeHistoryRecorder({sourceId,getClient,requestHistory
     /** One explicit action that walks the selected thread's canonical pages newest→oldest.
      * Each page takes and revalidates its own lease, so revoke/disable/quota stops it between
      * pages. It ends at the native start (`reachedStart`), the page bound, or a repeated cursor. */
-    async backfill(threadId,{maxPages=40,limit=100}={}){
-      thread(threadId);if(!Number.isInteger(maxPages)||maxPages<1||maxPages>MAX_BACKFILL_PAGES||!Number.isInteger(limit)||limit<1||limit>100)throw new Error('Invalid canonical history bounds');
+    async backfill(threadId,{maxPages=40,limit=100,cursor:start=null}={}){
+      thread(threadId);if(!Number.isInteger(maxPages)||maxPages<1||maxPages>MAX_BACKFILL_PAGES||!Number.isInteger(limit)||limit<1||limit>100||start!==null&&(typeof start!=='string'||!start||Buffer.byteLength(start)>4096))throw new Error('Invalid canonical history bounds');
       if(pending.has(threadId))throw new Error('A selected-thread canonical refresh is already pending');
       pending.add(threadId);
       const totals={recorded:0,duplicates:0,rejected:0,sourceExcluded:0,received:0},cursors=new Set();
-      let cursor=null,pages=0,last=null,stop='page-limit';
+      // A returned `nextCursor` resumes the walk with older pages in a later explicit action.
+      let cursor=start,pages=0,last=null,stop='page-limit';
       try{
         for(let attempts=0;attempts<maxPages;attempts++){
           last=await page(threadId,cursor,limit);if(last?.outcome==='captured')pages++;

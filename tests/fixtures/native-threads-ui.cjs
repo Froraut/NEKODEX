@@ -58,6 +58,14 @@ async function main() {
     await page.setViewportSize({ width: 640, height: 900 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     await page.getByRole('button', { name: /Read metadata: Fixture parent/ }).click();
+    // A draft belongs to its thread: switching selection clears it.
+    await page.getByLabel('Message for this thread', { exact: true }).fill('Draft for the parent');
+    await page.getByRole('button', { name: /Read metadata: Fork of fixture worker/ }).click();
+    await page.getByRole('heading', { name: 'Fork of fixture worker', exact: true }).waitFor();
+    assert.equal(await page.getByLabel('Message for this thread', { exact: true }).inputValue(), '');
+    await page.getByRole('button', { name: /Read metadata: Fixture parent/ }).click();
+    await page.getByRole('heading', { name: 'Fixture parent', exact: true }).waitFor();
+    assert.equal(await page.getByLabel('Message for this thread', { exact: true }).inputValue(), '');
     await page.getByLabel('Message for this thread', { exact: true }).fill('Fixture follow-up');
     await page.getByRole('button', { name: 'Take over and send', exact: true }).click();
     await page.getByText('Reply received; thread released to Codex', { exact: true }).waitFor();

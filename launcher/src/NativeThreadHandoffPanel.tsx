@@ -58,7 +58,13 @@ export function NativeThreadHandoffPanel({ language, disabled = false, api, thre
     } catch { /* Passive receipt state only; errors stay with the action that caused them. */ }
   };
   useEffect(() => { mounted.current = true; void refresh(); return () => { mounted.current = false; }; }, [api]);
-  useEffect(() => { setReceipt(null); setError(null); }, [thread.id]);
+  // The surface remounts this panel per thread (`key`), so drafts, receipts and busy state
+  // never carry over. This guard also covers a caller that reuses the instance.
+  const boundThread = useRef(thread.id);
+  useEffect(() => {
+    if (boundThread.current === thread.id) return;
+    boundThread.current = thread.id; setReceipt(null); setError(null); setMessage('');
+  }, [thread.id]);
   const unwrap = <T,>(result: NativeThreadsResult<T> | undefined): T => {
     if (!result || typeof result !== 'object' || !('ok' in result)) throw { code: 'handoff_unavailable', message: text.generic };
     if (!result.ok) throw result.error;
@@ -66,18 +72,21 @@ export function NativeThreadHandoffPanel({ language, disabled = false, api, thre
   };
   const perform = async (action: () => Promise<void>) => {
     if (disabled || locked.current) return;
+    const actionThread = thread.id;
+    // A late result belongs to the thread it was sent for, never to a newly selected one.
+    const current = () => mounted.current && boundThread.current === actionThread;
     locked.current = true; setBusy(true); setError(null);
     try { await action(); }
     catch (reason) {
       // Only the registrar's sanitized envelope may reach this view, never an IPC exception text.
       const safe = reason && typeof reason === 'object' && 'code' in reason && 'message' in reason
         && !(reason instanceof Error) ? reason as SafeError : { code: 'handoff_unavailable', message: text.generic };
-      if (mounted.current) setError(safe);
+      if (current()) setError(safe);
     } finally {
       await refresh();
       if (mounted.current) setBusy(false);
       locked.current = false;
-      onSettled?.(thread.id);
+      if (current()) onSettled?.(actionThread);
     }
   };
   const uncertain = snapshot?.uncertainHandoffs || [];
@@ -89,8 +98,9 @@ export function NativeThreadHandoffPanel({ language, disabled = false, api, thre
     if (!value.trim()) return;
     void perform(async () => {
       setReceipt(null);
-      const result = unwrap(await api.nativeThreadContinue?.({ threadId: thread.id, text: value }));
-      if (!mounted.current) return;
+      const target = thread.id;
+      const result = unwrap(await api.nativeThreadContinue?.({ threadId: target, text: value }));
+      if (!mounted.current || boundThread.current !== target) return;
       setReceipt(result); setMessage('');
     });
   };

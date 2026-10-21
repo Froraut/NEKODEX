@@ -170,7 +170,9 @@ Each read is limited to 100 native entries, 128 KiB per text message and
 100 per action (40 from the UI): each page takes and revalidates its own lease,
 so revoke, global disable or quota stops it between pages. It reports
 `reachedStart` only when Codex returns no further cursor, and stops on a repeated
-cursor. This is the full supported canonical text transcript; tool output,
+cursor. A walk that hits its page bound returns `nextCursor`; the next explicit
+action passes it back (`cursor`) and continues with older pages, so a long thread
+is never re-walked from the newest page. This is the full supported canonical text transcript; tool output,
 reasoning, hooks and attachments remain excluded by policy. Whole messages are
 omitted rather than truncated when a bound is reached. Missing completion
 times and excluded nontext parts remain explicit partial coverage. Compaction

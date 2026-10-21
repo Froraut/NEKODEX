@@ -88,6 +88,10 @@ test('explicit full-history capture walks canonical pages with a fresh lease eac
  expect(await recorder.backfill(THREAD)).toMatchObject({stop:'cursor-repeated',reachedStart:false,pages:2});
  repeat=false;reads.length=0;
  expect(await recorder.backfill(THREAD,{maxPages:1})).toMatchObject({stop:'page-limit',reachedStart:false,pages:1,nextCursor:'p2'});
+ reads.length=0;
+ expect(await recorder.backfill(THREAD,{cursor:'p2'})).toMatchObject({stop:'reached-start',reachedStart:true,pages:2,recorded:2});
+ expect(reads).toEqual(['p2','p3']);
+ await expect(recorder.backfill(THREAD,{cursor:''})).rejects.toThrow('bounds');
  await expect(recorder.backfill(THREAD,{maxPages:0})).rejects.toThrow('bounds');
  await expect(recorder.backfill('not-a-thread')).rejects.toThrow('UUID');
 });
