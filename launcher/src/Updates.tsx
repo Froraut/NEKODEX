@@ -1,14 +1,16 @@
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import { UpdateProgress } from "./UpdateProgress";
+import { RuntimeSwitchPanel } from "./RuntimeSwitchPanel";
 import { Button, Mark, Notice, Page, Panel, PhaseSteps, ProgressMeter, SurfaceHeader, type CatReaction, type PhaseStep } from "./design";
 import { updateCopyFor } from "./update-copy";
 import type { UpdateFeedback } from "./useUpdateControls";
-import type { Language, UpdateState } from "./types";
+import type { Language, RuntimeSwitchState, UpdateState } from "./types";
 import "./surfaces/tasks-updates.css";
 
 const installPhases: ReadonlyArray<UpdateState["status"]> = ["downloading", "verifying", "waiting", "installing", "cancelling"];
 
-export function Updates({ language, currentVersion, state, busy, checking, error, onCheck, onInstall, cancelling = false, onCancel, transitionBusy = false, platform }: {
+export function Updates({ language, currentVersion, state, busy, checking, error, onCheck, onInstall, cancelling = false, onCancel, transitionBusy = false, platform,
+  runtimeSwitch = null, onSwitchRuntime, switchRuntimeBusy = false }: {
   language: Language; currentVersion: string; state: UpdateState; busy: boolean;
   checking: boolean;
   /** The last action's outcome from useUpdateControls (a plain string is treated as a failed check). */
@@ -18,6 +20,10 @@ export function Updates({ language, currentVersion, state, busy, checking, error
   transitionBusy?: boolean;
   /** process.platform of the launcher; macOS adds the DMG note to the restart copy. */
   platform?: string;
+  /** A pending in-session switch to the installed runtime, with its countdown and "Switch now". */
+  runtimeSwitch?: RuntimeSwitchState | null;
+  onSwitchRuntime?: () => void;
+  switchRuntimeBusy?: boolean;
 }) {
   const copy = updateCopyFor(language);
   // An action's outcome describes the updater report it arrived with. A later report (another status) supersedes
@@ -128,6 +134,8 @@ export function Updates({ language, currentVersion, state, busy, checking, error
       </div>
       {state.status !== "disabled" ? <p className="updates-preserved">{copy.preserved}</p> : null}
     </Panel>
+    {runtimeSwitch && onSwitchRuntime ? <RuntimeSwitchPanel language={language} state={runtimeSwitch}
+      onSwitchNow={onSwitchRuntime} busy={switchRuntimeBusy} /> : null}
     <p className="updates-source">{copy.source}</p>
   </Page>;
 }

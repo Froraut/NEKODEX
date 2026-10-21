@@ -1649,6 +1649,10 @@ function registerIpc({ logger, stateStore }) {
 
   handle("launcher:doctor", () => IS_DEV_PROFILE ? runtimeHost.devDoctor() : runtimeHost.doctor());
   handle("launcher:route-diagnostics", () => runtimeHost.routeDiagnostics());
+  handle("launcher:runtime-switch-now", async () => {
+    if (IS_DEV_PROFILE) throw new Error("The DEV profile has no managed runtime switch");
+    return requestRuntimeSwitchNow();
+  });
   handle("launcher:cancel-turns", async () => {
     if (IS_DEV_PROFILE) throw new Error("DEV chat turns are owned by the repository CLI process");
     const translations = require('./task-control-copy.json');
@@ -2183,8 +2187,35 @@ const RUNTIME_ACTIVATION_LABEL = "the local runtime update";
 // Quit, signals and logout wait for these bounded transitions instead of failing.
 const DEFERRED_QUIT_TRANSITIONS = new Set(["local runtime startup", RUNTIME_ACTIVATION_LABEL]);
 const RUNTIME_ACTIVATION_POLL_MS = 1_000;
+// Bounded runtime switch. First look for a natural idle moment, which costs clients nothing. Then
+// drain: new requests wait briefly in the daemon while running turns may finish. At the deadline
+// the remaining turns are cancelled and the switch completes. It never waits forever for idleness.
+const RUNTIME_SWITCH_IDLE_WAIT_MS = 60_000;
+const RUNTIME_SWITCH_DRAIN_MS = 120_000;
+// Uncancellable launcher work (setup, account operations) defers the drain by this long.
+const RUNTIME_SWITCH_RETRY_MS = 30_000;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const launcherClosing = () => shutdownInProgress || quitting || exitCommitted;
+let runtimeSwitchNowRequested = false;
+let runtimeSwitchWake = null;
+
+// The Updates page shows this projection: phase, versions, countdown targets and active turns.
+function publishRuntimeSwitch(value) {
+  lifecycleProjection.update({ runtimeSwitch: value ? { ...value, updatedAt: new Date().toISOString() } : null });
+}
+
+function pauseRuntimeSwitch(ms) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { runtimeSwitchWake = null; resolve(); }, ms);
+    runtimeSwitchWake = () => { clearTimeout(timer); runtimeSwitchWake = null; resolve(); };
+  });
+}
+
+function runtimeSwitchPending() {
+  if (IS_DEV_PROFILE) return false;
+  const config = runtimeSupervisor?.readConfig();
+  return Boolean(config && config.releaseVersion !== app.getVersion());
+}
 
 function pruneInstalledRuntimeVersions(previousVersion) {
   if (IS_DEV_PROFILE) return;
@@ -2288,26 +2319,77 @@ async function activatePendingRuntime(reason) {
     }
   }
   const startedAt = Date.now();
-  logger.info("runtime.activation_waiting", { reason, fromVersion: runtimeSupervisor.readConfig()?.releaseVersion,
-    toVersion: app.getVersion() });
+  const fromVersion = runtimeSupervisor.readConfig()?.releaseVersion ?? null;
+  const toVersion = app.getVersion();
+  const iso = ms => new Date(ms).toISOString();
+  let drainAt = startedAt + RUNTIME_SWITCH_IDLE_WAIT_MS;
+  let deadlineAt = drainAt + RUNTIME_SWITCH_DRAIN_MS;
+  const project = (phase, extra = {}) => publishRuntimeSwitch({ phase, reason, fromVersion, toVersion,
+    startedAt: iso(startedAt), drainAt: iso(drainAt), deadlineAt: iso(deadlineAt), activeTurns: null, detail: null, ...extra });
+  // "Switch now" moves both targets to the present: drain at once, cancel what still runs.
+  const takeSwitchNow = () => {
+    if (!runtimeSwitchNowRequested) return false;
+    runtimeSwitchNowRequested = false;
+    drainAt = Date.now();
+    deadlineAt = drainAt;
+    return true;
+  };
+  logger.info("runtime.activation_waiting", { reason, fromVersion, toVersion, drainAt: iso(drainAt), deadlineAt: iso(deadlineAt) });
+  project("waiting");
   for (let attempt = 0; ; attempt += 1) {
-    if (attempt > 0) await sleep(RUNTIME_ACTIVATION_POLL_MS);
+    if (attempt > 0) await pauseRuntimeSwitch(RUNTIME_ACTIVATION_POLL_MS);
     if (launcherClosing()) return;
-    if (!runtimeSupervisor.readConfig()) return;
-    if (!(await runtimeIdleForActivation())) continue;
+    const current = runtimeSupervisor.readConfig();
+    if (!current || current.releaseVersion === toVersion) return;
+    const forced = takeSwitchNow();
+    const drainDue = forced || Date.now() >= drainAt;
+    if (!drainDue && !(await runtimeIdleForActivation())) continue;
     if (lifecycleAdmission.busy()) continue;
     const owner = lifecycleAdmission.acquire(RUNTIME_ACTIVATION_LABEL);
+    let drain = null;
+    let switched = false;
     try {
-      if (currentGlobalOperation() || browserHost?.hasActiveTurns() || runtimeHost.currentOperation()) continue;
+      const operation = currentGlobalOperation() || runtimeHost.currentOperation();
+      if (operation) {
+        // Setup and account operations are not cancellable; the switch waits for them visibly.
+        if (drainDue) {
+          drainAt = Date.now() + RUNTIME_SWITCH_RETRY_MS;
+          deadlineAt = drainAt + RUNTIME_SWITCH_DRAIN_MS;
+          project("deferred", { detail: `Waiting for ${operation} to finish` });
+        }
+        continue;
+      }
+      if (drainDue) {
+        logger.info("runtime.switch_drain_started", { reason, forced, deadlineAt: iso(deadlineAt) });
+        project("draining");
+        drain = await runtimeSupervisor.drainForSwitch({
+          deadlineAt: () => { takeSwitchNow(); return deadlineAt; },
+          isCancelled: () => launcherClosing() || deferredQuit !== null,
+          busy: () => currentGlobalOperation() || runtimeHost.currentOperation()
+            || (browserHost?.hasActiveTurns() ? "browser tasks" : null),
+          onProgress: ({ activeTurns, cancelledAt }) => project(cancelledAt === null ? "draining" : "cancelling", { activeTurns }),
+        });
+        // Quit was requested: admission is resumed and the next launch resumes the switch.
+        if (drain.status === "cancelled") return;
+        if (drain.status === "deferred") {
+          logger.warn("runtime.switch_deferred", { reason, detail: drain.detail ?? null });
+          drainAt = Date.now() + RUNTIME_SWITCH_RETRY_MS;
+          deadlineAt = drainAt + RUNTIME_SWITCH_DRAIN_MS;
+          project("deferred", { detail: drain.detail ?? null });
+          continue;
+        }
+      } else if (browserHost?.hasActiveTurns()) continue;
+      project("switching", { activeTurns: 0 });
       let upgrade;
       try {
         invalidateAgentSourceOwners();
         upgrade = await runtimeHost.upgradeManagedRuntime();
       } catch (error) {
         // A turn that started after the idle check, or a transient status probe, refuses the
-        // drain while the old runtime keeps serving. Try again at the next idle moment.
+        // drain while the old runtime keeps serving. The bounded deadline still applies.
         if (retryableActivationRefusal(error)) {
           logger.info("runtime.activation_retry", { message: error instanceof Error ? error.message : String(error) });
+          project(drainDue ? "draining" : "waiting");
           continue;
         }
         throw error;
@@ -2318,6 +2400,7 @@ async function activatePendingRuntime(reason) {
         return;
       }
       const result = await startStagedRuntimeGeneration(upgrade);
+      switched = true;
       pruneInstalledRuntimeVersions(upgrade.fromVersion);
       const state = launcherStateStore.update({
         runtimeMigrationPending: false,
@@ -2327,11 +2410,18 @@ async function activatePendingRuntime(reason) {
       send("launcher:state-changed", state);
       if (result.bridgeRouteChanged) startCatalogVerificationMonitor({ logger, stateStore: launcherStateStore });
       logger.info("runtime.release_activated", { reason, fromVersion: upgrade.fromVersion, toVersion: upgrade.toVersion,
-        waitedMs: Date.now() - startedAt, generationId: upgrade.generationId });
+        waitedMs: Date.now() - startedAt, generationId: upgrade.generationId,
+        ...(drain?.cancelled ? { cancelledTurns: drain.cancelled } : {}) });
       publishOperation({ name: "runtime-upgrade", status: "completed",
         message: `NEKODEX switched to the new local runtime ${upgrade.toVersion}` });
       return;
     } finally {
+      // A held switch drain that did not end in a switch must never outlive this attempt.
+      if (drain?.status === "idle" && drain.held && !switched) {
+        await runtimeSupervisor.releaseSwitchDrain().catch((error) => {
+          logger.error("runtime.switch_drain_release_failed", { message: error instanceof Error ? error.message : String(error) });
+        });
+      }
       lifecycleAdmission.release(owner);
     }
   }
@@ -2339,16 +2429,62 @@ async function activatePendingRuntime(reason) {
 
 function scheduleRuntimeActivation(reason) {
   if (runtimeActivation || IS_DEV_PROFILE) return runtimeActivation;
+  let failure = null;
   runtimeActivation = activatePendingRuntime(reason).catch(async (error) => {
     const message = error instanceof Error ? error.message : String(error);
+    failure = message;
     logger.error("runtime.activation_failed", { reason, message });
     if (launcherClosing()) return;
     await recoverFromActivationFailure(message).catch((failure) => {
       logger.error("runtime.activation_recovery_failed", { message: failure instanceof Error ? failure.message : String(failure) });
     });
-  }).finally(() => { runtimeActivation = null; });
+  }).finally(() => {
+    runtimeActivation = null;
+    runtimeSwitchNowRequested = false;
+    if (launcherClosing()) return;
+    // A switch that is still pending stays visible with "Switch now"; a finished one disappears.
+    const pending = runtimeSwitchPending();
+    publishRuntimeSwitch(pending ? { phase: failure ? "failed" : "pending", reason,
+      fromVersion: runtimeSupervisor.readConfig()?.releaseVersion ?? null, toVersion: app.getVersion(),
+      detail: failure, activeTurns: null, drainAt: null, deadlineAt: null } : null);
+  });
   return runtimeActivation;
 }
+
+// "Switch now" from the Updates page: drain at once and cancel what still runs, after confirmation.
+async function requestRuntimeSwitchNow() {
+  if (!runtimeSwitchPending()) return { status: "current" };
+  if (launcherClosing()) throw new Error("NEKODEX is quitting");
+  const config = runtimeSupervisor.readConfig();
+  const health = await runtimeSupervisor.proxyHealthPayload(config).catch(() => null);
+  const activeTurns = [health?.active_http_turns, health?.active_browser_turns, health?.active_compaction_runs]
+    .reduce((total, value) => total + (Number.isInteger(value) && value > 0 ? value : 0), 0);
+  if (activeTurns > 0) {
+    const copy = runtimeSwitchCopy(launcherStateStore?.read().language);
+    const confirmation = await dialog.showMessageBox(mainWindow, {
+      type: "warning", title: copy.title, message: copy.title,
+      detail: copy.detail.replace("{count}", String(activeTurns)),
+      buttons: [copy.keep, copy.confirm], defaultId: 0, cancelId: 0, noLink: true,
+    });
+    if (confirmation.response !== 1) return { status: "kept" };
+  }
+  runtimeSwitchNowRequested = true;
+  if (runtimeActivation) runtimeSwitchWake?.();
+  else scheduleRuntimeActivation("user");
+  return { status: "started", activeTurns };
+}
+
+const RUNTIME_SWITCH_COPY = {
+  en: { title: "Switch the local runtime now?", detail: "{count} running turn(s) will be cancelled. Codex retries them on the updated runtime.",
+    keep: "Keep waiting", confirm: "Switch now" },
+  ru: { title: "Переключить локальный runtime сейчас?", detail: "Будет отменено выполняющихся ходов: {count}. Codex повторит их на обновлённом runtime.",
+    keep: "Подождать", confirm: "Переключить сейчас" },
+  ja: { title: "ローカルランタイムを今すぐ切り替えますか?", detail: "実行中の {count} 件のターンがキャンセルされます。Codex は更新後のランタイムで再試行します。",
+    keep: "待機を続ける", confirm: "今すぐ切り替え" },
+  ko: { title: "로컬 런타임을 지금 전환할까요?", detail: "실행 중인 턴 {count}개가 취소됩니다. Codex가 업데이트된 런타임에서 다시 시도합니다.",
+    keep: "계속 기다리기", confirm: "지금 전환" },
+};
+const runtimeSwitchCopy = language => RUNTIME_SWITCH_COPY[language] ?? RUNTIME_SWITCH_COPY.en;
 
 async function requestQuit({ admissionHeld = false, restart = false, stopRuntime = false, transitionOwner = null } = {}) {
   if (!transitionOwner && DEFERRED_QUIT_TRANSITIONS.has(lifecycleAdmission.currentLabel())) {

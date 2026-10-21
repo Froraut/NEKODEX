@@ -32,7 +32,7 @@ import { useUpdateControls } from "./useUpdateControls";
 import { useAppliedAppearance } from "./theme";
 import { rememberLanguage, shellCopy, startupLanguage } from "./shell-copy";
 
-import type { BrowserCapacitySettings, BrowserInteractionMode, BrowserState, Language, LauncherLifecycle as LifecycleProjection, LauncherSnapshot, LauncherState, LogRecord, OperationState, ProModelVersion, Surface } from "./types";
+import type { BrowserCapacitySettings, BrowserInteractionMode, BrowserState, Language, LauncherLifecycle as LifecycleProjection, LauncherSnapshot, LauncherState, LogRecord, OperationState, ProModelVersion, RuntimeSwitchState, Surface } from "./types";
 
 const ActivitySurface = deferredSurface(async () => ({ default: (await import('./ActivitySurface')).ActivitySurface }));
 const AccountSettings = deferredSurface(async () => ({ default: (await import('./AccountSettings')).AccountSettings }));
@@ -598,6 +598,10 @@ function LauncherShell({
     && snapshot.state.runtimeMigrationPending === true
     && typeof activeRuntimeVersion === 'string' && activeRuntimeVersion.length > 0
     && activeRuntimeVersion !== snapshot.version;
+  const runtimeSwitch: RuntimeSwitchState | null = snapshot.profile !== 'production' ? null
+    : snapshot.lifecycle?.runtimeSwitch ?? (agentRuntimeUpdatePending ? { phase: "pending", fromVersion: activeRuntimeVersion ?? null,
+      toVersion: snapshot.version, drainAt: null, deadlineAt: null, activeTurns: null, detail: null } : null);
+  const [runtimeSwitchBusy, setRuntimeSwitchBusy] = useState(false);
   const updateCopy = updateCopyFor(language);
   const {
     updateError, setUpdateError, updateCheckBusy, updateInstallPending, updateCancelPending,
@@ -1143,7 +1147,13 @@ function LauncherShell({
               state={snapshot.update} busy={updateBusy} checking={updateCheckBusy}
               error={updateError} transitionBusy={transitionBusy}
               onCheck={() => void recheckUpdate()} onInstall={() => void installUpdate()}
-              cancelling={updateCancelPending} onCancel={() => void cancelUpdate()} platform={snapshot.platform} /> : null}
+              cancelling={updateCancelPending} onCancel={() => void cancelUpdate()} platform={snapshot.platform}
+              runtimeSwitch={runtimeSwitch} switchRuntimeBusy={runtimeSwitchBusy} onSwitchRuntime={() => {
+                if (runtimeSwitchBusy) return;
+                setRuntimeSwitchBusy(true);
+                void api!.switchRuntimeNow().catch((error: unknown) => setUpdateError({ tone: "error", source: "install", message: messageOf(error) }))
+                  .finally(() => setRuntimeSwitchBusy(false));
+              }} /> : null}
             {surface === "settings" ? (
               <SettingsSurface loadCopy={copy}
                 browser={browser}

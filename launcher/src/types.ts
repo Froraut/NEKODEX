@@ -526,9 +526,24 @@ export interface RuntimeCapabilities {
   tunnelRepair?: { eligible: boolean; reason: string; active: boolean };
 }
 
+/** The in-session switch to the installed app's runtime (see scheduleRuntimeActivation). */
+export interface RuntimeSwitchState {
+  phase: "waiting" | "draining" | "cancelling" | "switching" | "deferred" | "pending" | "failed";
+  reason?: string;
+  fromVersion: string | null;
+  toVersion: string;
+  /** ISO times: new requests pause at drainAt; remaining turns are cancelled at deadlineAt. */
+  drainAt: string | null;
+  deadlineAt: string | null;
+  activeTurns: number | null;
+  detail: string | null;
+  updatedAt?: string;
+}
+
 export interface LauncherLifecycle extends RuntimeCapabilities {
   routeStatus: string;
   transition?: string | null;
+  runtimeSwitch?: RuntimeSwitchState | null;
   operation?: OperationState;
   catalog?: { status: string; request: number | null; at: string | null; failure: unknown };
 }
@@ -702,6 +717,8 @@ export interface LauncherApi extends NativeThreadsApi, NativePersistentApi, Work
   verifyMcp(): Promise<DoctorReport>;
   doctor(): Promise<DoctorReport>;
   routeDiagnostics(): Promise<RouteDiagnosticsReport>;
+  /** Switch to the installed runtime now; asks before cancelling running turns. */
+  switchRuntimeNow(): Promise<{ status: "current" | "kept" | "started"; activeTurns?: number }>;
   cancelTurns(): Promise<{ cancelled: true } | { cancelled: false; cancelledHttpTurns: number;
     cancelledBrowserTurns: number; cancelledCompactionRuns: number | null }>;
   uninstallIntegration(): Promise<{ cancelled: true } | { cancelled: false; state: LauncherState }>;

@@ -106,6 +106,21 @@ const MAX_RESTARTS_PER_WINDOW = 5;
 const MAX_CONTROL_OUTPUT_BYTES = 1024 * 1024;
 const DRAIN_IDLE_TIMEOUT_MS = 15_000;
 const DRAIN_POLL_INTERVAL_MS = 100;
+// Every drain carries a lease the daemon enforces: a drain whose owner dies (a launcher killed by the
+// updater, a crash) resumes admission by itself. A stop renews it while it waits for idleness and
+// then shuts the daemon down; a runtime switch renews its shorter lease on every poll.
+const STOP_DRAIN_LEASE_MS = 5 * 60_000;
+const SWITCH_DRAIN_LEASE_MS = 30_000;
+const SWITCH_DRAIN_POLL_MS = 500;
+// After the switch deadline cancelled the remaining turns, how long they may take to settle.
+const SWITCH_CANCEL_SETTLE_MS = 15_000;
+// A daemon from before drain leases refuses new requests at once instead of holding them, so its
+// drained window is kept short: the remaining turns are cancelled after this long.
+const LEGACY_SWITCH_DRAIN_MS = 30_000;
+// A drained owned daemon that no transition of this launcher owns (left by an older launcher, a
+// manual request or a daemon without lease support) is resumed after this grace period.
+const ORPHANED_DRAIN_GRACE_MS = 30_000;
+const DRAIN_WATCHDOG_INTERVAL_MS = 10_000;
 const TUNNEL_START_TIMEOUT_MS = 120_000;
 const RECOVERY_SHUTDOWN_SETTLEMENT_MS = 3_000;
 const TUNNEL_HEALTH_POLL_INTERVAL_MS = 1_000;
@@ -258,6 +273,12 @@ class RuntimeSupervisor {
     this.reportedTunnelReady = null;
     this.lastOwnedHealth = null;
     this.lastOwnedHealthAt = 0;
+    // The owned daemon object this launcher currently holds drained; null when it holds no drain.
+    this.drainHeldFor = null;
+    this.switchDrainHeldFor = null;
+    this.drainWatchdogTimer = null;
+    this.drainWatchdogInFlight = false;
+    this.orphanedDrainSince = null;
     this.tunnelRepairPromise = null;
     this.accountTunnelSupervisor = null;
     this.legacyTunnelTransitioning = false;
@@ -1796,6 +1817,7 @@ class RuntimeSupervisor {
       this.assertCanStart(recoverySignal);
       if (this.daemon !== child) throw new Error("Responses proxy exited immediately after becoming healthy");
       this.restartableChildren.add(child);
+      this.ensureDrainWatchdog();
     } catch (error) {
       if (recoverySignal?.aborted) throw error;
       let cleanupError;
@@ -2304,6 +2326,15 @@ class RuntimeSupervisor {
   }
 
   async control(config, action, options = {}) {
+    const result = await this.performControl(config, action, options);
+    if (action === "resume" && result?.status === "ok") {
+      this.drainHeldFor = null;
+      this.switchDrainHeldFor = null;
+    }
+    return result;
+  }
+
+  async performControl(config, action, options = {}) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 5_000);
     try {
@@ -2814,6 +2845,14 @@ class RuntimeSupervisor {
     await this.runtimeSession(config, "attach");
     await this.proxyHealth(config, 2_000, child.pid);
     this.logger.info("runtime.background_attached", { pid: child.pid });
+    // A previous launcher (or an aborted switch) may have left this runtime drained. Nothing in
+    // this launcher owns that drain yet, so serving again is the only consistent state.
+    try {
+      await this.reconcileOrphanedDrain({ graceMs: 0, phase: "adoption" });
+    } catch (error) {
+      this.logger.warn("runtime.orphaned_drain_check_failed", { phase: "adoption", message: errorMessage(error) });
+    }
+    this.ensureDrainWatchdog();
     return true;
   }
 
@@ -2976,7 +3015,8 @@ class RuntimeSupervisor {
       attempted = true;
       const deadline = Date.now() + timeoutMs;
       for (;;) {
-        const health = await this.control(config, "drain");
+        const health = await this.control(config, "drain", { body: { leaseMs: STOP_DRAIN_LEASE_MS, reason: "runtime-stop" } });
+        this.drainHeldFor = this.daemon;
         if (health.accepting_turns !== false
           || !Number.isInteger(health.active_http_turns)
           || health.active_http_turns < 0
@@ -3013,6 +3053,154 @@ class RuntimeSupervisor {
       failure.code = resumeError ? "RUNTIME_RESUME_FAILED" : busyAtDeadline ? "RUNTIME_NOT_IDLE" : "RUNTIME_DRAIN_FAILED";
       throw failure;
     }
+  }
+
+  /**
+   * Bounded drain for a runtime switch. New admissions stop at once (the daemon holds new requests
+   * briefly, see RUNTIME_SWITCH_HOLD_MS); running turns may finish until `deadlineAt`. At the
+   * deadline the remaining daemon turns are cancelled through the existing cancel-turns path, so
+   * the switch never waits for an idle moment that never comes. `busy` reports launcher work that
+   * cannot be cancelled (a setup operation); it defers the switch instead.
+   *
+   * Returns { status: "idle" } holding the drain (the caller stops the runtime or calls
+   * releaseSwitchDrain), or { status: "cancelled" | "deferred" } with admission resumed.
+   */
+  async drainForSwitch({ deadlineAt, cancelAtDeadline = true, isCancelled = () => false, busy = () => false,
+    onProgress = () => {} } = {}) {
+    const config = this.readConfig();
+    const daemon = this.daemon;
+    if (!config || !daemon || daemon.exitCode !== null || daemon.signalCode !== null) return { status: "idle", held: false };
+    // The deadline may move earlier while draining ("Switch now").
+    const requestedDeadline = () => typeof deadlineAt === "function" ? deadlineAt() : deadlineAt;
+    if (!Number.isFinite(requestedDeadline())) throw new Error("Runtime switch drain requires a deadline");
+    const drainStartedAt = Date.now();
+    let legacyDaemon = false;
+    const deadline = () => legacyDaemon
+      ? Math.min(requestedDeadline(), drainStartedAt + LEGACY_SWITCH_DRAIN_MS) : requestedDeadline();
+    let cancelledAt = null;
+    let cancelled = null;
+    const release = async (status, detail) => {
+      await this.releaseSwitchDrain(config);
+      return { status, ...(detail ? { detail } : {}), ...(cancelled ? { cancelled } : {}) };
+    };
+    try {
+      for (;;) {
+        if (isCancelled()) return await release("cancelled");
+        if (this.daemon !== daemon) throw new Error("The runtime changed while it was being drained for the switch");
+        const health = await this.control(config, "drain", {
+          body: { leaseMs: SWITCH_DRAIN_LEASE_MS, reason: "runtime-switch" },
+        });
+        this.switchDrainHeldFor = daemon;
+        legacyDaemon = !Object.hasOwn(health, "drain_reason");
+        if (health.accepting_turns !== false
+          || ![health.active_http_turns, health.active_browser_turns, health.active_compaction_runs]
+            .every(value => Number.isInteger(value) && value >= 0)) {
+          throw new Error("daemon did not acknowledge the drain contract");
+        }
+        const activeTurns = health.active_http_turns + health.active_browser_turns + health.active_compaction_runs;
+        const launcherBusy = busy();
+        onProgress({ activeTurns, launcherBusy: Boolean(launcherBusy), deadlineAt: deadline(), cancelledAt });
+        if (activeTurns === 0 && !launcherBusy) {
+          return { status: "idle", held: true, ...(cancelled ? { cancelled } : {}) };
+        }
+        const now = Date.now();
+        if (now >= deadline()) {
+          if (activeTurns === 0 && launcherBusy) {
+            return await release("deferred", typeof launcherBusy === "string" ? launcherBusy : "A launcher operation is still running");
+          }
+          if (!cancelAtDeadline) return await release("deferred", `${activeTurns} turn(s) are still running`);
+          if (cancelledAt === null) {
+            cancelledAt = now;
+            const result = await this.control(config, "cancel-turns", { timeoutMs: 15_000 });
+            cancelled = {
+              httpTurns: Number.isInteger(result.cancelled_http_turns) ? result.cancelled_http_turns : 0,
+              browserTurns: Number.isInteger(result.cancelled_browser_turns) ? result.cancelled_browser_turns : 0,
+              compactionRuns: Number.isInteger(result.cancelled_compaction_runs) ? result.cancelled_compaction_runs : 0,
+            };
+            this.logger.warn("runtime.switch_turns_cancelled", { ...cancelled });
+            continue;
+          }
+          if (now - cancelledAt >= SWITCH_CANCEL_SETTLE_MS) {
+            return await release("deferred", `${activeTurns} cancelled turn(s) did not settle`);
+          }
+        }
+        await sleep(SWITCH_DRAIN_POLL_MS);
+      }
+    } catch (error) {
+      try {
+        await this.releaseSwitchDrain(config);
+      } catch (resumeError) {
+        throw new Error(appendFailure(errorMessage(error), "compensating resume failed", resumeError));
+      }
+      throw error;
+    }
+  }
+
+  /** Ends a switch drain this launcher holds; a runtime that already changed or exited needs nothing. */
+  async releaseSwitchDrain(config = this.readConfig()) {
+    const held = this.switchDrainHeldFor;
+    this.switchDrainHeldFor = null;
+    if (!held || !config || held !== this.daemon || held.exitCode !== null || held.signalCode !== null) return false;
+    const resumed = await this.control(config, "resume");
+    return resumed?.status === "ok";
+  }
+
+  drainOwnedByThisLauncher() {
+    const daemon = this.daemon;
+    return Boolean(this.stopping || this.stopPromise || this.startPromise || this.shutdownRequested
+      || this.recoveryTasks.size > 0
+      || (daemon && (this.drainHeldFor === daemon || this.switchDrainHeldFor === daemon)));
+  }
+
+  ensureDrainWatchdog() {
+    if (this.drainWatchdogTimer || this.launcherProfile !== "production") return;
+    this.drainWatchdogTimer = setInterval(() => {
+      if (this.drainWatchdogInFlight) return;
+      this.drainWatchdogInFlight = true;
+      void this.reconcileOrphanedDrain().catch((error) => {
+        this.logger.warn("runtime.orphaned_drain_check_failed", { message: errorMessage(error) });
+      }).finally(() => { this.drainWatchdogInFlight = false; });
+    }, DRAIN_WATCHDOG_INTERVAL_MS);
+    this.drainWatchdogTimer.unref?.();
+  }
+
+  stopDrainWatchdog() {
+    if (this.drainWatchdogTimer) clearInterval(this.drainWatchdogTimer);
+    this.drainWatchdogTimer = null;
+    this.orphanedDrainSince = null;
+  }
+
+  /**
+   * Draining must never be left orphaned. An owned daemon that stays drained while no transition of
+   * this launcher holds the drain is resumed: immediately when adopted (`graceMs` 0), otherwise
+   * after ORPHANED_DRAIN_GRACE_MS of consecutive observations.
+   */
+  async reconcileOrphanedDrain({ graceMs = ORPHANED_DRAIN_GRACE_MS, phase = "watchdog" } = {}) {
+    const config = this.readConfig();
+    const daemon = this.daemon;
+    if (!config || !daemon || this.drainOwnedByThisLauncher()) {
+      this.orphanedDrainSince = null;
+      return { status: "not-applicable" };
+    }
+    const health = await this.proxyHealthPayload(config);
+    if (this.daemon !== daemon || this.drainOwnedByThisLauncher()) return { status: "not-applicable" };
+    const shuttingDown = typeof health?.shutdown_stage === "string" && health.shutdown_stage !== "none"
+      && health.shutdown_stage !== "idle";
+    if (!this.ownedHealthMatches(config, health, daemon) || health.draining !== true || shuttingDown) {
+      this.orphanedDrainSince = null;
+      return { status: "accepting" };
+    }
+    const now = Date.now();
+    this.orphanedDrainSince ??= now;
+    if (now - this.orphanedDrainSince < graceMs) return { status: "observing" };
+    this.orphanedDrainSince = null;
+    const resumed = await this.control(config, "resume");
+    if (resumed.status !== "ok") throw new Error("Orphaned drain could not be resumed");
+    this.logger.warn("runtime.orphaned_drain_resumed", { phase, pid: daemon.pid,
+      reason: typeof health.drain_reason === "string" ? health.drain_reason : null });
+    await this.proxyHealth(config, 2_000, daemon.pid).catch(() => false);
+    this.updateCapabilities(this.runtimeStatus, this.runtimeDetail, config);
+    return { status: "resumed" };
   }
 
   async cancelActiveTurns() {

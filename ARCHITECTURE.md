@@ -143,10 +143,20 @@ Existing-Chrome sign-in separates machine work from human consent: discovery and
    surviving runtime, then observes the worker's commit
    ([update-commit](launcher/electron/update-commit.cjs): journal `committed`, or
    a removed journal while its own executable is unchanged) and switches to the
-   new runtime generation at the next idle moment in the same session
-   (`scheduleRuntimeActivation`). It never changes the runtime before that commit,
-   so a rollback restores an app whose runtime generation is intact. A busy runtime
-   at ordinary startup uses the same idle-edge activation. After a generation
+   new runtime generation in the same session (`scheduleRuntimeActivation`) with a
+   bounded policy: up to 60 s for a natural idle moment, then a drain of up to
+   120 s (30 s for a daemon without drain leases) in which the daemon holds new
+   requests briefly and running turns may finish, then the remaining turns are
+   cancelled through `/admin/cancel-turns` and the switch completes. Uncancellable
+   launcher operations defer the drain visibly. The Updates page shows the phase,
+   countdown and **Switch now** (`launcher:runtime-switch-now`) from the
+   `runtimeSwitch` lifecycle projection. It never changes the runtime before that
+   commit, so a rollback restores an app whose runtime generation is intact. A busy
+   runtime at ordinary startup uses the same bounded activation. Every daemon drain
+   is a lease (`ServerAdmission`) that its owner renews; an unrenewed drain resumes
+   admission by itself, a launcher resumes an orphaned drain when it adopts a
+   background runtime and its drain watchdog resumes one that no transition owns.
+   Runtime bundle verification ignores Finder `.DS_Store` files. After a generation
    commit, `pruneRuntimeVersions` keeps the app's and configured versions, a pending
    generation's endpoints, one older release and any newer unknown install.
 

@@ -10,6 +10,8 @@ const OBSERVATION_CHANNELS = new Set([
   "launcher:codex-login-cancel", "launcher:browser-passkey-login-cancel",
   "launcher:browser-existing-chrome-login-cancel", "launcher:cancel-context-change",
   "launcher:update-cancel",
+  // "Switch now" only moves the running switch's own deadline; that transition owns the drain.
+  "launcher:runtime-switch-now",
   "launcher:conversation-history-revoke",
   "launcher:agent-tools-revoke",
   "launcher:agent-tools-observe",

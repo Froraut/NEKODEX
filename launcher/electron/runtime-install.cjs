@@ -107,6 +107,12 @@ function readRuntimeManifest(runtimeRoot, { version, platform, arch, bundleId })
   return { ...manifest, files };
 }
 
+// Finder writes `.DS_Store` into any folder a user opens (for example when the desktop helper is
+// revealed to grant a permission). It is never loaded or executed, so it must not make a verified
+// runtime unusable: a committed release that fails verification cannot start, which rolled back
+// an otherwise valid app update. Every other unmanifested file still fails closed.
+const IGNORED_RUNTIME_METADATA_FILES = new Set([".DS_Store"]);
+
 function runtimeFilePaths(runtimeRoot) {
   const paths = [];
   const visit = (directory) => {
@@ -114,6 +120,7 @@ function runtimeFilePaths(runtimeRoot) {
       const absolutePath = path.join(directory, entry.name);
       const relativePath = path.relative(runtimeRoot, absolutePath).split(path.sep).join("/");
       if (relativePath === "manifest.json") continue;
+      if (entry.isFile() && IGNORED_RUNTIME_METADATA_FILES.has(entry.name)) continue;
       if (entry.isDirectory()) {
         visit(absolutePath);
         continue;
