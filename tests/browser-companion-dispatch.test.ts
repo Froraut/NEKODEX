@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 // @ts-ignore Bundled extension sources are intentionally browser-native JavaScript.
 import { createCompanionDispatcher } from "../browser-companion/dispatch.js";
 // @ts-ignore Bundled extension sources are intentionally browser-native JavaScript.
-import { runCompanionSession } from "../browser-companion/transport.js";
+import { companionPairingState, companionRequest, runCompanionSession } from "../browser-companion/transport.js";
 
 const binding = { sessionId: "session", scopeId: "scope", tabId: 7, windowId: 3, frameId: 0, documentId: "document", documentEpoch: "epoch", observationId: "observation" };
 function browserFixture() {
@@ -114,4 +114,31 @@ test("session survives a refused ChatGPT operation but stops after an unknown se
   await runCompanionSession({ credentials: {}, dispatcher, signal: new AbortController().signal, say() {}, request });
   expect(polls).toBe(2);
   expect(delivered.map(row => row.outcome)).toEqual(["rejected", "unknown"]);
+});
+
+test("popup pairing state comes from the host: revoked, replaced or restarted pairings are never shown as retained", async () => {
+  const credentials = { hostId: "host", sessionId: "session", token: "t".repeat(43) };
+  const routes: string[] = [];
+  const answer = (reply: () => unknown) => async (_credentials: unknown, route: string) => { routes.push(route); return reply(); };
+  const refused = (status: number) => answer(() => { throw Object.assign(new Error("Companion session is not paired"), { status }); });
+  expect(await companionPairingState(credentials, answer(() => ({ paired: true, selected: false })))).toEqual({ state: "paired", selected: false });
+  // 403 revoked/foreign origin, 409 another host ID after a restart, 410 closed host: the pairing is dead.
+  for (const status of [403, 409, 410]) expect(await companionPairingState(credentials, refused(status))).toEqual({ state: "retired" });
+  // No HTTP answer proves nothing about the pairing.
+  expect(await companionPairingState(credentials, answer(() => { throw new TypeError("Failed to fetch"); }))).toEqual({ state: "unreachable" });
+  expect(await companionPairingState(credentials, refused(500))).toEqual({ state: "unreachable" });
+  // The probe only ever uses the read-only state route: it cannot poll, select or execute.
+  expect(new Set(routes)).toEqual(new Set(["state"]));
+  const previous = globalThis.fetch;
+  const sent: { url: string; body: any }[] = [];
+  globalThis.fetch = (async (url: string, init: RequestInit) => {
+    sent.push({ url, body: JSON.parse(String(init.body)) });
+    return Response.json({ error: "Companion session is not paired" }, { status: 403 });
+  }) as typeof fetch;
+  try {
+    await expect(companionRequest(credentials, "state")).rejects.toMatchObject({ status: 403, message: "Companion session is not paired" });
+    expect(await companionPairingState(credentials)).toEqual({ state: "retired" });
+    expect(sent.map(row => row.url)).toEqual(["http://127.0.0.1:17843/v1/companion/state", "http://127.0.0.1:17843/v1/companion/state"]);
+    expect(sent[0]!.body).toEqual({ version: 1, hostId: "host", sessionId: "session" });
+  } finally { globalThis.fetch = previous; }
 });

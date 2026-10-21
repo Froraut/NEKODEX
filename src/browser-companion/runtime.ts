@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { createBrowserCompanionHost, type BrowserCompanionHost } from "./host";
 import { COMPANION_ORIGIN } from "./protocol";
 import { createCompanionBrowserProvider } from "./providers";
-import { companionExtensionOrigin } from "./firefox-identity";
+import { reviewedCompanionExtensionOrigin } from "./firefox-identity";
 import { createCompanionChatGptTransport } from "./chatgpt-transport";
 
 export interface CompanionListener { stop(closeActiveConnections?: boolean): void | Promise<void> }
@@ -57,7 +57,9 @@ export function createBrowserCompanionRuntime(options: BrowserCompanionRuntimeOp
   async function enable(selectedId: unknown, selectedOrigin?: unknown) {
     if (closed) throw new Error("Companion runtime is closed");
     if (transitioning) throw new Error("Companion listener transition is already in progress");
-    const checkedOrigin = companionExtensionOrigin(selectedId, selectedOrigin);
+    // The application owner accepts only the reviewed artifact identity (fixed Chrome key ID, or
+    // the Firefox ID with its profile origin); the host leaf itself stays exact-identity generic.
+    const checkedOrigin = reviewedCompanionExtensionOrigin(selectedId, selectedOrigin);
     if (listener) {
       if (selectedId !== extensionId || checkedOrigin !== extensionOrigin) throw new Error("Disable the current listener before changing extension identity");
       return status();

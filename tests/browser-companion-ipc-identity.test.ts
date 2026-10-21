@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { createRequire } from "node:module";
 
-test("Electron companion enable and clipboard share exact Firefox identity authority", async () => {
-  const { registerBrowserCompanion } = createRequire(import.meta.url)("../launcher/electron/ipc/browser-companion.cjs");
+test("Electron companion enable and clipboard share the pinned Chrome and exact Firefox identity authority", async () => {
+  const { registerBrowserCompanion, CHROME_COMPANION_ID } = createRequire(import.meta.url)("../launcher/electron/ipc/browser-companion.cjs");
   const handlers = new Map<string, (...args: unknown[]) => Promise<unknown>>();
   const forwarded: unknown[] = [], copied: string[] = [];
   registerBrowserCompanion({ handle: (channel: string, handler: (...args: unknown[]) => Promise<unknown>) => handlers.set(channel, handler),
@@ -20,6 +20,9 @@ test("Electron companion enable and clipboard share exact Firefox identity autho
   expect(copied).toEqual([JSON.stringify(pairing)]);
 
   for (const invalid of [
+    // Chrome accepts only the reviewed key-derived ID; a path-derived or foreign ID is refused.
+    { extensionId: "c".repeat(32) },
+    { extensionId: CHROME_COMPANION_ID, extensionOrigin: `chrome-extension://${"c".repeat(32)}` },
     { extensionId: identity.extensionId },
     { ...identity, extensionOrigin: `${identity.extensionOrigin}/` },
     { ...identity, extensionId: "foreign@example.com" },
@@ -32,4 +35,8 @@ test("Electron companion enable and clipboard share exact Firefox identity autho
   await expect(copy({ ...pairing, hostId: "" })).rejects.toThrow("Invalid pairing text");
   expect(forwarded).toHaveLength(1);
   expect(copied).toHaveLength(1);
+  const chrome = { extensionId: CHROME_COMPANION_ID };
+  expect(await request({ action: "enable", ...chrome })).toEqual({ enabled: true });
+  expect(await copy({ version: 1, origin: "http://127.0.0.1:17843", hostId: "fixture-host", pairingCode: "p".repeat(43), ...chrome })).toEqual({ copied: true });
+  expect(forwarded).toHaveLength(2);
 });

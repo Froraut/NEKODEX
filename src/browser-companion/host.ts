@@ -103,7 +103,7 @@ export function createBrowserCompanionHost(options: BrowserCompanionHostOptions)
     const url = new URL(request.url);
     if (url.origin !== origin || url.search || url.hash || (request.headers.has("host") && request.headers.get("host") !== url.host) || request.headers.get("origin") !== extensionOrigin) return response({ error: "Companion origin or host identity mismatch" }, 403);
     const route = url.pathname;
-    if (!["pair", "poll", "select", "result", "revoke"].some(name => route === `${COMPANION_PATH}/${name}`)) return response({ error: "Unknown companion endpoint" }, 404);
+    if (!["pair", "poll", "select", "result", "revoke", "state"].some(name => route === `${COMPANION_PATH}/${name}`)) return response({ error: "Unknown companion endpoint" }, 404);
     if (request.method === "OPTIONS") return response({ version: COMPANION_VERSION });
     if (request.method !== "POST" || request.headers.get("content-type")?.split(";")[0] !== "application/json") return response({ error: "JSON POST is required" }, 415);
     if (closed) return response({ error: "Companion host is closed" }, 410);
@@ -123,6 +123,8 @@ export function createBrowserCompanionHost(options: BrowserCompanionHostOptions)
       const supplied = request.headers.get("authorization");
       if (!secretEqual(token, supplied?.startsWith("Bearer ") ? supplied.slice(7) : undefined) || body.sessionId !== sessionId) return response({ error: "Companion session is not paired" }, 403);
       if (route.endsWith("/revoke")) { revoke(); return response({ revoked: true }); }
+      // Read-only probe for the popup: a revoked or replaced pairing already failed the check above.
+      if (route.endsWith("/state")) return response({ paired: true, selected: !!selected });
       if (route.endsWith("/select")) {
         // The extension sends this only following the explicit Select current tab button.
         const selected = browserObservationSchema.parse(body.observation);

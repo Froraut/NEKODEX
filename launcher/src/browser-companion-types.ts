@@ -1,3 +1,7 @@
+/** The reviewed Chrome artifact pins its manifest key, so Chrome loads it with this ID from any path. */
+export const BROWSER_COMPANION_CHROME_ID = 'bocnhdmjkjcoedkephdeoeipmmfbanpc';
+/** The reviewed Firefox artifact ID; its moz-extension://UUID origin is per profile. */
+export const BROWSER_COMPANION_FIREFOX_ID = 'browser-companion@nekodex.local';
 export interface BrowserCompanionApi {
   request(body: { action: 'status' | 'enable' | 'disable' | 'create-pairing' | 'revoke' | 'unbind-chatgpt'; extensionId?: string; extensionOrigin?: string }
     | { action: 'bind-chatgpt'; chatgpt: BrowserCompanionChatGptBind }

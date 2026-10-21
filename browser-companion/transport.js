@@ -7,9 +7,21 @@ export async function companionRequest(credentials, route, payload = {}, signal)
     headers: { "content-type": "application/json", ...(credentials?.token ? { authorization: `Bearer ${credentials.token}` } : {}) },
     body: JSON.stringify({ version: 1, hostId: credentials.hostId, sessionId: credentials.sessionId, ...payload }), signal });
   const result = await response.json();
-  if (!response.ok) throw new Error(result.error || "Local companion request failed");
+  if (!response.ok) throw Object.assign(new Error(result.error || "Local companion request failed"), { status: response.status });
   return result;
 }
+/** Ask the paired host whether this exact session still holds. Read-only: never polls, selects or executes.
+ * "retired" means the host itself refused the session (revoked, replaced by new pairing details, or
+ * a restarted listener with another host ID); "unreachable" proves nothing about the pairing. */
+export async function companionPairingState(credentials, request = companionRequest) {
+  try {
+    const result = await request(credentials, "state", {}, AbortSignal.timeout(5000));
+    return result?.paired === true ? { state: "paired", selected: result.selected === true } : { state: "retired" };
+  } catch (error) {
+    return [403, 409, 410].includes(error?.status) ? { state: "retired" } : { state: "unreachable" };
+  }
+}
+export const PAIRING_RETIRED_TEXT = "NEKODEX revoked this pairing or restarted its local connection. Create new pairing details in NEKODEX and pair again.";
 export async function runCompanionSession({ credentials, dispatcher, signal, say, request = companionRequest }) {
   const consumed = new Set();
   while (!signal.aborted) {

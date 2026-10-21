@@ -37,7 +37,17 @@ test("private companion pairing pins extension, host, version and consumes its b
     expect((await f.post("select", { version: 2, observation: f.observed })).status).toBe(409);
     expect(JSON.stringify(f.host.status())).not.toContain(f.offer.pairingCode);
     expect((await f.post("execute-url", { url: "https://example.com", script: "anything" })).status).toBe(404);
+    // The popup's read-only state probe: authenticated, side-effect free, and refused once revoked.
+    const queued = f.host.observe(f.binding);
+    expect(await f.post("state")).toEqual({ status: 200, body: { paired: true, selected: true } });
+    expect((await f.post("state", {}, { token: "wrong" })).status).toBe(403);
+    expect((await f.post("state", {}, { origin: `chrome-extension://${"b".repeat(32)}` })).status).toBe(403);
+    expect(f.host.status().operation).toMatchObject({ phase: "queued" });
+    const delivered = (await f.post("poll")).body.commands[0];
+    expect((await f.post("result", { result: { operationId: delivered.operationId, outcome: "completed", executed: false, observation: { ...f.observed, observationId: "observation-probe" } } })).status).toBe(200);
+    expect((await queued).outcome).toBe("completed");
     f.host.revoke(); expect(f.host.status().paired).toBe(false);
+    expect((await f.post("state")).status).toBe(403);
     expect((await f.post("select", { observation: f.observed })).status).toBe(403);
   } finally { f.host.close(); }
 });

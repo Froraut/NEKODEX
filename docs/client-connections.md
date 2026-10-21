@@ -57,6 +57,13 @@ models currently allowed by the saved account observations.
 - The key cannot authorize Native Responses, launcher controls or admin routes.
   Prompt execution uses the same account pool. External clients keep ownership
   of their tool execution; a tool result must match the issued turn and call.
+- To send one plain-text Chat Completions request through a ChatGPT tab bound in
+  **Browser companion → ChatGPT send**, add
+  `X-NEKODEX-Companion-Account: <account fingerprint>` with the fingerprint shown for
+  that binding. Only such requests use the tab; everything else keeps the account
+  pool. A request for another account or model, or with functions, is refused
+  (`400`, `companion_*` code) and nothing is sent; the header is rejected on other
+  routes.
 
 Access is disabled by default. **Disable API** rejects subsequent requests;
 **Replace API key** invalidates the previous key. Refresh Claude settings after

@@ -37,7 +37,7 @@ import { createAgentWorkspaceSnapshots } from "./agent-workspace/store";
 import { createAgentWorkspaceEvidence } from "./agent-workspace/evidence";
 import { externalClientContext, type ExternalClientContext } from "./external-client-context";
 import { localApiKey } from "./local-api-access";
-import { chatCompletionApiKey, chatCompletionRequestGuard, chatCompletionErrorResponse, chatCompletionModels, chatCompletionRequest } from "./chat-completions/http";
+import { chatCompletionApiKey, chatCompletionRequestGuard, chatCompletionErrorResponse, chatCompletionModels, chatCompletionRequest, COMPANION_ACCOUNT_HEADER } from "./chat-completions/http";
 import { activeChatCompletionTurns, type ChatCompletionExecutor } from "./chat-completions/runtime";
 import { NativeChatCompletionBridge } from "./chat-completions/native-bridge";
 import { ChatCompletionError } from "./chat-completions/contract";
@@ -1305,6 +1305,11 @@ export function startServer(
       const policy = inferenceRoutePolicy(req.method, url.pathname);
       const rejection = localHttpRequestRejection(req, url, server.port!);
       if (rejection) return rejection;
+      // The browser-companion opt-in exists only for Chat Completions. Anywhere else it would be
+      // silently ignored and the turn would run in the built-in browser, so refuse it instead.
+      if (req.headers.has(COMPANION_ACCOUNT_HEADER) && url.pathname !== "/v1/chat/completions") {
+        return chatCompletionErrorResponse(new ChatCompletionError("X-NEKODEX-Companion-Account is supported only by POST /v1/chat/completions; nothing was sent", 400, "companion_route_unsupported", COMPANION_ACCOUNT_HEADER));
+      }
       if (url.pathname === "/admin/agent-loop-producers" || url.pathname.startsWith("/api/loop-events/v1/")
           || /^Bearer nk-loop-/i.test(req.headers.get("authorization") ?? "")) {
         // External observations use a separate scoped credential. Neither

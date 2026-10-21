@@ -3,6 +3,7 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createBrowserCompanionRuntime } from "../../src/browser-companion/runtime";
+import { CHROME_COMPANION_ID } from "../../src/browser-companion/firefox-identity";
 
 /** Inert stand-in for an exact HTTPS site, served only through this disposable context's routes. */
 export interface CompanionFixtureSite { url: string; routes: Record<string, { body: string; contentType: string }> }
@@ -38,7 +39,8 @@ export async function startBrowserCompanionExtensionFixture(site?: CompanionFixt
     await page.goto(site?.url ?? `http://127.0.0.1:${server.port}/fixture`);
     const browserCdp = await context.browser()!.newBrowserCDPSession();
     const installed = await browserCdp.send("Extensions.loadUnpacked", { path: extensionPath });
-    if (!/^[a-p]{32}$/.test(installed.id)) throw new Error("Invalid extension fixture identity");
+    // The manifest key, not the load path, fixes the ID the application pins.
+    if (installed.id !== CHROME_COMPANION_ID) throw new Error("The unpacked extension did not load with its pinned key-derived ID");
     const extensionEnabled = (await browserCdp.send("Extensions.getExtensions")).extensions.some(extension => extension.id === installed.id && extension.enabled && extension.path === extensionPath);
     if (!extensionEnabled) throw new Error("Exact fixture extension did not load");
     if (!(await runtime.enable(installed.id)).enabled) throw new Error("Owned fixture listener could not start");

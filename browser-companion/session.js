@@ -1,5 +1,5 @@
 import { createCompanionDispatcher } from "./dispatch.js";
-import { extensionApi as api, companionRequest, runCompanionSession } from "./transport.js";
+import { PAIRING_RETIRED_TEXT, extensionApi as api, companionPairingState, companionRequest, runCompanionSession } from "./transport.js";
 
 const say = text => { document.querySelector("#status").textContent = text; };
 const nonce = location.hash.slice(1);
@@ -32,9 +32,16 @@ else await navigator.locks.request("nekodex-companion-session", { ifAvailable: t
   document.querySelector("#host").textContent = `Paired host: ${credentials.hostId} · selected tab ${handoff.binding.tabId}`;
   say("Sharing selected tab. Keep this session tab open.");
   try { await runCompanionSession({ credentials, dispatcher, signal: controller.signal, say }); }
-  catch (error) { if (!controller.signal.aborted) say(`${error.message}. Sharing stopped; uncertain input is never retried.`); }
+  catch (error) {
+    if (!controller.signal.aborted) {
+      // When NEKODEX revoked or replaced this pairing, forget it so the popup cannot offer it again.
+      const retired = error?.status && (await companionPairingState(credentials)).state === "retired";
+      if (retired && (await api.storage.session.get("pairing")).pairing?.sessionId === credentials.sessionId) await api.storage.session.remove("pairing");
+      say(retired ? `${PAIRING_RETIRED_TEXT} Sharing stopped; nothing is retried.` : `${error.message}. Sharing stopped; uncertain input is never retried.`);
+    }
+  }
   finally {
-    // Release only this session marker. Pairing stays available for explicit selection after failure.
+    // Release only this session marker. A still-valid pairing stays available for explicit selection.
     const current = (await api.storage.session.get("companionOwner")).companionOwner;
     if (current?.scopeId === handoff.binding.scopeId) await api.storage.session.remove("companionOwner");
   }

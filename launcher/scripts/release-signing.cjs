@@ -3,6 +3,19 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
 const { isDeepStrictEqual } = require("node:util");
+const { CHROME_COMPANION_ID } = require("../electron/ipc/browser-companion.cjs");
+
+/** Chrome derives an unpacked extension's ID from its manifest key: SHA-256 of the DER SPKI, a-p digits. */
+function chromeExtensionIdFromKey(key) {
+  if (typeof key !== "string" || !/^[A-Za-z0-9+/]{100,1000}={0,2}$/.test(key)) return undefined;
+  return [...createHash("sha256").update(Buffer.from(key, "base64")).digest("hex").slice(0, 32)]
+    .map(digit => String.fromCharCode(97 + Number.parseInt(digit, 16))).join("");
+}
+
+// Every file both shipped companion directories load: the pages, every bundled script (chatgpt.js
+// runs the ChatGPT send) and the manifest icons. Kept equal to BROWSER_COMPANION_FILES by a test.
+const BROWSER_COMPANION_RESOURCES = Object.freeze(["popup.html", "popup.css", "popup.js", "page.js", "chatgpt.js", "dispatch.js", "transport.js",
+  "session.html", "session.js", "icons/icon-16.png", "icons/icon-32.png", "icons/icon-48.png", "icons/icon-128.png"]);
 
 // This checks the installed asset contract without launching any helper, browser
 // or VM. The outer runtime manifest additionally authenticates every file byte.
@@ -10,8 +23,7 @@ function validatePackagedRuntimeAssets(runtimeRoot, { platform = process.platfor
   const app = path.join(runtimeRoot, "app");
   const required = ["cli.js", "browser-helper.cjs", "browser-companion/manifest.json",
     "browser-companion/manifest.firefox.json", "browser-companion/firefox/manifest.json"];
-  const browserResources = ["popup.html", "popup.css", "popup.js", "page.js", "dispatch.js", "transport.js", "session.html", "session.js"];
-  for (const name of browserResources) required.push(`browser-companion/${name}`, `browser-companion/firefox/${name}`);
+  for (const name of BROWSER_COMPANION_RESOURCES) required.push(`browser-companion/${name}`, `browser-companion/firefox/${name}`);
   if (platform === "darwin") {
     for (const [directory, executable] of [["credential-helper", "nekodex-credential-helper"], ["oauth-vault-helper", "nekodex-oauth-vault-helper"],
       ["desktop-helper", "nekodex-desktop-helper"], ["skill-pdf-helper", "nekodex-skill-pdf-helper"]]) {
@@ -25,6 +37,10 @@ function validatePackagedRuntimeAssets(runtimeRoot, { platform = process.platfor
     return fs.readFileSync(file);
   };
   for (const name of required) read(path.join(app, name));
+  // A missing or changed key would give the unpacked Chrome extension a path-derived ID that the pinned app refuses.
+  let chromeManifest;
+  try { chromeManifest = JSON.parse(read(path.join(app, "browser-companion/manifest.json"))); } catch { chromeManifest = undefined; }
+  if (chromeExtensionIdFromKey(chromeManifest?.key) !== CHROME_COMPANION_ID) throw new Error("Packaged Chrome companion manifest key does not produce the pinned extension ID");
   if (platform === "darwin" && arch === "arm64") {
     const directory = path.join(app, "execution-vm", "darwin-arm64");
     const names = ["Image", "guest-manifest.json", "helper-manifest.json", "initrd.gz", "nekodex-execution-vm-helper", "runtime-manifest.json"];
@@ -180,4 +196,4 @@ function verifyWindowsTree(directory, env = process.env) {
     else if (entry.isFile() && /\.exe$/i.test(entry.name)) verifyWindowsPublisher(file, env);
   }
 }
-module.exports = { validatePackagedRuntimeAssets, validateOwnedNativePackagedAssets, signingConfiguration, assertMacPublisher, verifyMacPublisher, verifyWindowsPublisher, verifyWindowsTree, signEmbeddedRuntime, signOwnedNativeWorker, signCredentialHelper, signDesktopHelper, signSkillPdfHelper };
+module.exports = { BROWSER_COMPANION_RESOURCES, chromeExtensionIdFromKey, validatePackagedRuntimeAssets, validateOwnedNativePackagedAssets, signingConfiguration, assertMacPublisher, verifyMacPublisher, verifyWindowsPublisher, verifyWindowsTree, signEmbeddedRuntime, signOwnedNativeWorker, signCredentialHelper, signDesktopHelper, signSkillPdfHelper };

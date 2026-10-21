@@ -21,6 +21,9 @@ export const chatGptCompanionBindSchema = z.object({
 }).strict();
 export type ChatGptCompanionBindRequest = z.infer<typeof chatGptCompanionBindSchema>;
 
+/** The account fingerprint NEKODEX shows for a binding; a turn names it to opt in. */
+export const COMPANION_ACCOUNT_FINGERPRINT = /^[a-f0-9]{12}$/;
+
 type DocumentAnchor = Omit<BrowserBinding, "observationId">;
 interface Bound extends ChatGptCompanionBindRequest {
   document: DocumentAnchor; account: string; identityEpoch: string; modelLabel: string; boundAt: number;
@@ -55,9 +58,10 @@ const aborted = () => new DOMException("ChatGPT web turn aborted", "AbortError")
 
 /**
  * Companion ChatGPT transport leaf. `ChatGptBrowserWorker.run` admits each turn and keeps its
- * registry slot; this leaf owns only the bound document, its one send and the response read.
- * A dispatched send without a terminal receipt is held: no later turn is admitted until the
- * user explicitly releases it, and the same prompt is never offered to the page again.
+ * registry slot; only turns that explicitly name the bound account reach this leaf. It owns the
+ * bound document, its one send and the response read. A dispatched send without a terminal
+ * receipt is held: no later companion turn is admitted until the user explicitly releases it,
+ * and the same prompt is never offered to the page again.
  */
 export function createCompanionChatGptTransport(options: ChatGptCompanionTransportOptions) {
   const timing = { sendReceiptMs: 60_000, readMs: 15_000, pollMs: 1_000, responseMs: 30 * 60_000, stableReads: 2, ...options.timing };
@@ -119,14 +123,20 @@ export function createCompanionChatGptTransport(options: ChatGptCompanionTranspo
     if (held) throw heldError(`A previous companion ChatGPT send (${held.operationId}) has an unknown outcome. Inspect the ChatGPT tab, then release it in NEKODEX; it is never resent.`, "companion_outcome_held");
     if (active) throw refused("Another ChatGPT turn is using the browser companion", "companion_busy");
     const current = bound;
-    if (!current) throw refused("No ChatGPT tab is bound to the browser companion", "companion_unbound");
+    if (!current) throw refused("No ChatGPT tab is bound to the browser companion. Nothing was sent.", "companion_unbound");
+    // The opt-in names the exact bound account: a request meant for another account (or a tab
+    // re-bound to another account since) is refused, never sent to whichever account is bound.
+    const requested = turn.companionAccount;
+    if (typeof requested !== "string" || !COMPANION_ACCOUNT_FINGERPRINT.test(requested) || !current.account.startsWith(requested)) {
+      throw refused("This turn names another companion account than the one signed in on the bound ChatGPT tab. Nothing was sent.", "companion_account_mismatch");
+    }
     const unsupported = [
       turn.nativeConnector && "Codex Native connector", turn.externalProgress && "local tools", turn.completionFence && "local tools",
       turn.asyncToolOperations && "async tool operations", turn.onTunnelSelected && "account tunnel", turn.retainConversation && "retained conversations",
       turn.requireRetainedConversation && "retained conversations", turn.prepareResume && "conversation resume", turn.compaction && "compaction",
       turn.compactionExecution && "compaction", turn.captureLunaCheckpoint && "Luna checkpoints",
     ].filter(Boolean);
-    if (unsupported.length) throw refused(`The browser companion sends Browser-only text turns; this turn needs ${[...new Set(unsupported)].join(", ")}. Unbind the companion tab to use the embedded browser.`, "companion_turn_unsupported");
+    if (unsupported.length) throw refused(`The browser companion sends Browser-only text turns; this turn needs ${[...new Set(unsupported)].join(", ")}. Send it without the companion opt-in to use the built-in browser. Nothing was sent.`, "companion_turn_unsupported");
     const reasoning = turn.reasoning ?? (turn.modelId === CHATGPT_WEB_LUNA_MODEL_ID ? "low" : "high");
     if (turn.modelId !== current.modelId || reasoning !== current.reasoning || (turn.modelFamily ?? undefined) !== current.modelFamily) {
       throw refused(`This turn requests ${turn.modelId} ${reasoning}${turn.modelFamily ? ` (${turn.modelFamily})` : ""}; the companion tab is bound to ${current.modelId} ${current.reasoning}${current.modelFamily ? ` (${current.modelFamily})` : ""}. Nothing was sent.`, "companion_model_mismatch");
@@ -260,9 +270,9 @@ export function createCompanionChatGptTransport(options: ChatGptCompanionTranspo
     };
   }
 
-  // An in-flight companion turn keeps the port engaged even if Unbind/Disable runs meanwhile,
-  // so no later admission can start the embedded sender beside it.
-  const port: ChatGptCompanionTransportPort = { engaged: () => !!bound || !!held || !!active, run };
+  // Routing is the turn's explicit opt-in (see companion-transport-port.ts), not this state. An
+  // in-flight turn stays active through Unbind/Disable, so a later opted-in turn is refused as busy.
+  const port: ChatGptCompanionTransportPort = { run };
   return { port, bind, unbind, release, status };
 }
 export type CompanionChatGptTransport = ReturnType<typeof createCompanionChatGptTransport>;
