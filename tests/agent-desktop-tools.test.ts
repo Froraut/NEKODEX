@@ -144,7 +144,18 @@ test("desktop controller is passive/off until explicit controls and binds bounde
     const foregroundBinding = (foreground.result as any).structuredContent.binding;
     expect((await invoke("click", { binding: foregroundBinding, x: 0, y: 0, waitForForeground: true })).state).toBe("completed");
     expect(dispatchedAction).toEqual({ kind: "click", x: 0, y: 0, waitForForeground: true });
-    const fresh = await invoke("observe", { selection });
+    // A background observation can never match the post-handoff foreground recapture
+    // (inactive vs active window chrome), so waitForForeground input refuses it early.
+    const background = await invoke("observe", { selection });
+    const backgroundBinding = (background.result as any).structuredContent.binding;
+    const actsBeforeRefusal = calls.filter(row => row === "act").length;
+    const refused = await invoke("click", { binding: backgroundBinding, x: 0, y: 0, waitForForeground: true });
+    expect(refused.state).toBe("failed");
+    expect(JSON.stringify(refused)).toContain("observe-with-foreground-required");
+    expect(calls.filter(row => row === "act")).toHaveLength(actsBeforeRefusal);
+    const description = (await controller.discover(scope)).find(row => row.id === "desktop/click")?.description;
+    expect(description).toContain("observe-with-foreground-required");
+    const fresh = await invoke("observe", { selection, waitForForeground: true });
     const freshBinding = (fresh.result as any).structuredContent.binding;
     expire = true;
     const request = { scope: { ...scope, toolCallId: "retained-call" }, tool: "desktop/type", arguments: { binding: freshBinding, text: "offered text", waitForForeground: true }, idempotencyKey: "retained-exact-desktop-op" };
