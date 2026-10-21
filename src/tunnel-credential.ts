@@ -73,6 +73,8 @@ export function tunnelLaunchEnvironment(config: AppConfig,
   if (!config.tunnel) throw new Error("Tunnel credential launch requires a configured tunnel");
   const env: NodeJS.ProcessEnv = { ...process.env, MCP_STDIO_SEND_INITIALIZED_NOTIFICATION: "true" };
   delete env[TUNNEL_RUNTIME_KEY_ENV];
+  // The daemon's listener admission key never belongs to the tunnel client or its MCP children.
+  delete env.CODEX_CHATGPT_WEB_API_KEY;
   if (config.tunnel.credential) env[TUNNEL_RUNTIME_KEY_ENV] = provider.resolve(config.tunnel.credential, tunnelCredentialScope(config));
   return env;
 }

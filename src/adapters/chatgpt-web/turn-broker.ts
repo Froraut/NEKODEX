@@ -1240,7 +1240,10 @@ export class TurnBroker implements TurnBrokerOwner {
           ? `${contract === "safe" ? "This request_id" : "This turn_token"} was issued for ${retiredTurnLabel(retiredTurn.traceId)}, which ${retiredTurnEnding(retiredTurn)}.`
           + " This Codex Native action can no longer run."
           + (contract === "safe" ? "" : " A newer request carries its own turn_token in its latest codex_transport_resume block.")
-          : `${contract === "safe" ? "request id" : "turn token"} is invalid, expired, or revoked`);
+          // Never echo the value: the model only needs to know where the exact token lives.
+          : `${contract === "safe" ? "request id" : "turn token"} is invalid, expired, or revoked.`
+            + ` Copy ${contract === "safe" ? "request_id" : "turn_token"} exactly from the current request;`
+            + " do not guess or reuse an earlier value.");
       }
       if (activeChannel.safe) {
         if (contract !== "safe") throw new Error("Manual mode request id requires the Manual mode MCP contract");

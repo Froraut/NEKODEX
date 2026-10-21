@@ -38,7 +38,8 @@ class BrowserTurnLifecycle {
   taskSnapshot() {
     return (this.context.ledger?.snapshot() ?? []).map(record => {
       const tab = this.tabs.get(record.tabId);
-      const live = tab?.taskRecordId === record.id && !tab.view.webContents.isDestroyed();
+      const contents = tab?.view.webContents;
+      const live = tab?.taskRecordId === record.id && Boolean(contents) && !contents.isDestroyed();
       return { ...record, canOpen: live, canCancel: live && tab.status === 'running',
         canDismiss: record.terminal && (!live || tab.status !== 'running'),
         retrySafe: record.terminal && record.submission === 'not-sent' };
@@ -565,7 +566,8 @@ class BrowserTurnLifecycle {
     this.presentation.syncPowerSaveBlocker();
     tab.message = status === "completed" ? "Task completed" : message || `ChatGPT turn ${status}`;
     tab.loading = false;
-    if (!tab.view.webContents.isDestroyed()) tab.view.webContents.setBackgroundThrottling(true);
+    const contents = tab.view.webContents;
+    if (contents && !contents.isDestroyed()) contents.setBackgroundThrottling(true);
     if (status === "completed") {
       this.logger.info("browser.tab_completed", { tabId: tab.id, traceId });
     }

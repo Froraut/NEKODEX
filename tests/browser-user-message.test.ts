@@ -22,11 +22,17 @@ test("collapsed rich-text submission expands and matches only its prepared token
       <button type="button" aria-expanded="false" data-thread-find-skip="true" data-markdown-copy="exclude">Show more</button>
       </div></section>`);
     await page.locator("button").evaluate((button, text) => button.addEventListener("click", () => {
-      button.setAttribute("aria-expanded", "true");
-      document.querySelector("#message")!.textContent = `Rich-text presentation changed. ${text}`;
+      const open = button.getAttribute("aria-expanded") !== "true";
+      button.setAttribute("aria-expanded", String(open));
+      // Only the first expansion loads the full text; later cases replace it directly.
+      if (open && !button.dataset.loaded) {
+        button.dataset.loaded = "true";
+        document.querySelector("#message")!.textContent = `Rich-text presentation changed. ${text}`;
+      }
     }), token);
     expect(await matcher.userMessageMatchesSubmission(page.locator("#turn"), submitted, undefined, token)).toBeTrue();
-    expect(await page.locator("button").getAttribute("aria-expanded")).toBe("true");
+    // Verification restores the collapsed presentation after reading the full text.
+    expect(await page.locator("button").getAttribute("aria-expanded")).toBe("false");
     await page.locator("#message").evaluate((node, foreign) => { node.textContent = foreign; }, `turn_${"b".repeat(32)}`);
     expect(await matcher.userMessageMatchesSubmission(page.locator("#turn"), submitted, undefined, token)).toBeFalse();
     await page.locator("#message").evaluate((node, repeated) => { node.textContent = `${repeated} ${repeated}`; }, token);
@@ -68,5 +74,54 @@ test("suggestion sizing-label hydration cannot contaminate an answer or its fing
     const second = await responseDomSnapshot(page.locator("#turn"), {});
     expect(second.visibleText).toBe(first.visibleText);
     expect(second.fullHtml).toBe(first.fullHtml);
+  } finally { await browser.close(); }
+});
+
+test("auto-linked URLs preserve exact prompt text and reject changed labels or destinations", async () => {
+  const browser = await launch();
+  try {
+    const page = await browser.newPage();
+    const url = "https://example.com/report?q=one&lang=en";
+    const prompt = `Keep  spaces\n${url}\nEnd.`;
+    for (const scenario of ["exact", "changed-label", "changed-destination", "extra-content"]) {
+      await page.setContent('<div id="group"><div data-user-message-bubble><div data-search-result-target></div></div></div>');
+      await page.locator("[data-search-result-target]").evaluate((node, { url, scenario }) => {
+        node.append("Keep  spaces\n");
+        const link = document.createElement("a");
+        link.href = scenario === "changed-destination" ? "https://example.org/other" : url;
+        link.setAttribute("data-search-result-target", "");
+        link.textContent = scenario === "changed-label" ? "report" : url;
+        node.append(link, scenario === "extra-content" ? " extra\nEnd." : "\nEnd.");
+      }, { url, scenario });
+      expect(await matcher.userMessageMatchesSubmission(page.locator("#group"), prompt)).toBe(scenario === "exact");
+    }
+  } finally { await browser.close(); }
+});
+
+test("reading a collapsed message restores the viewport, focus and its virtualized active answer", async () => {
+  const browser = await launch();
+  try {
+    const page = await browser.newPage();
+    const text = "Large history\n".repeat(2000);
+    await page.setContent('<div id="scroll" style="height:300px;overflow:auto"><div id="group"><div data-user-message-bubble>'
+      + '<div data-search-result-target style="white-space:pre-wrap">Preview</div>'
+      + '<button type="button" aria-expanded="false" data-thread-find-skip="true" data-markdown-copy="exclude">Show more</button>'
+      + '</div></div><div style="height:1000px"></div><div id="answer">Active answer</div></div><input id="composer">');
+    await page.locator("button").evaluate((button, text) => {
+      const answer = document.querySelector("#answer")!;
+      button.addEventListener("click", () => {
+        const open = button.getAttribute("aria-expanded") !== "true";
+        button.setAttribute("aria-expanded", String(open));
+        button.parentElement!.querySelector("[data-search-result-target]")!.textContent = open ? text : "Preview";
+        if (open) answer.remove(); else document.querySelector("#scroll")!.append(answer);
+      });
+    }, text);
+    await page.locator("#composer").focus();
+    await page.locator("#scroll").evaluate(node => { node.scrollTop = node.scrollHeight; });
+    expect(await matcher.userMessageMatchesSubmission(page.locator("#group"), text)).toBeTrue();
+    expect(await page.locator("button").getAttribute("aria-expanded")).toBe("false");
+    expect(await page.locator("#answer").count()).toBe(1);
+    expect(await page.locator("#scroll").evaluate(node => node.scrollHeight - node.clientHeight - node.scrollTop)).toBeLessThanOrEqual(1);
+    expect(await page.locator("#composer").evaluate(node => document.activeElement === node)).toBeTrue();
   } finally { await browser.close(); }
 });

@@ -19,6 +19,7 @@ import {
   chatGptRateLimitDialog,
   dismissChatGptTemporaryChatOnboarding,
   resolveChatGptToolConfirmation,
+  chatGptMessageTooLongAlert,
   throwIfChatGptEffortCapabilityDialog,
   throwIfChatGptRateLimitDialog,
   throwIfChatGptSessionFailureAlert,
@@ -32,6 +33,7 @@ import {
   chatGptNewTurnIdentity,
   chatGptReboundTurnIdentity,
   chatGptStagedBaselineIdentities,
+  chatGptExchangeIdentities,
   chatGptSubmissionEvidence,
   promptEquivalentPrefixLength,
   promptTextEquivalent,
@@ -90,6 +92,7 @@ import {
   CHATGPT_SEND_BUTTON_SELECTOR,
   CHATGPT_STOP_BUTTON_SELECTOR,
   chatGptAssistantTurnSelector,
+  chatGptTurnContainerSelector,
   detectChatGptAccountCapabilities,
 } from "../../chatgpt-session";
 import {
@@ -350,6 +353,18 @@ export function readChatGptUserMessage(
       return "";
     }
     if (node.tagName === "BR") return "\n";
+    // ChatGPT auto-links bare URLs (#866). Only accept links whose complete label is
+    // the URL itself; formatted labels and link chrome cannot replace source text.
+    if (node instanceof HTMLAnchorElement) {
+      try {
+        const url = new URL(node.textContent ?? "");
+        if (!["https:", "http:"].includes(url.protocol) || url.href !== node.href) {
+          unsupported = true;
+          return "";
+        }
+      } catch { unsupported = true; return ""; }
+      return [...node.childNodes].map(text).join("");
+    }
     if (node.matches('pre[data-markdown-copy="code-block"]')) {
       const code = node.querySelector('code[data-markdown-copy-content="true"][data-language]');
       if (!code || node.children.length !== 1) { unsupported = true; return ""; }
@@ -380,6 +395,8 @@ export function readChatGptUserMessage(
 
 interface ChatGptSubmissionBaseline {
   initialTurnIdentities: readonly string[];
+  /** Earlier acknowledged exchanges that may be unmounted now; see chatGptNewTurnIdentity. */
+  historicalTurnIdentities?: readonly string[];
   initialGenerationRunning?: boolean;
   acknowledgedStages?: readonly string[];
   domCache: ChatGptSubmissionDomCache;
@@ -988,16 +1005,17 @@ export class ChatGptBrowserWorker {
     signal?: AbortSignal,
   ): Promise<ChatGptSubmissionEvidence | undefined> {
     const state = await submissionDomState(page, baseline.domCache, signal);
-    baseline.initialTurnIdentities = chatGptStagedBaselineIdentities(baseline.initialTurnIdentities, baseline.acknowledgedStages, state.acknowledgementTurns);
+    baseline.historicalTurnIdentities = chatGptStagedBaselineIdentities(baseline.historicalTurnIdentities ?? [], baseline.acknowledgedStages, state.acknowledgementTurns);
     const evidence = chatGptSubmissionEvidence({
       initialTurnIdentities: baseline.initialTurnIdentities,
+      historicalTurnIdentities: baseline.historicalTurnIdentities,
       userIdentities: state.userIdentities,
       responseIdentities: state.responseIdentities,
       // A pre-existing Stop control belongs to earlier work, not this send.
       generationRunning: state.visibleStopButtonCount > 0 && !baseline.initialGenerationRunning,
     });
     if (evidence === "user_turn") {
-      const identity = chatGptNewTurnIdentity(baseline.initialTurnIdentities, state.userIdentities)!;
+      const identity = chatGptNewTurnIdentity(baseline.initialTurnIdentities, state.userIdentities, baseline.historicalTurnIdentities)!;
       if (baseline.acceptedUserIdentity && baseline.acceptedUserIdentity !== identity) {
         throw new Error("ChatGPT changed the user turn that acknowledged the submission");
       }
@@ -1012,10 +1030,11 @@ export class ChatGptBrowserWorker {
     signal?: AbortSignal,
   ): Promise<string> {
     const state = await submissionDomState(page, baseline.domCache, signal);
-    baseline.initialTurnIdentities = chatGptStagedBaselineIdentities(baseline.initialTurnIdentities, baseline.acknowledgedStages, state.acknowledgementTurns);
+    baseline.historicalTurnIdentities = chatGptStagedBaselineIdentities(baseline.historicalTurnIdentities ?? [], baseline.acknowledgedStages, state.acknowledgementTurns);
     const identity = chatGptNewTurnIdentity(
       baseline.initialTurnIdentities,
       state.responseIdentities,
+      baseline.historicalTurnIdentities,
     );
     if (!identity) return "";
     const locator = chatGptTurnLocator(page, identity);
@@ -1125,7 +1144,7 @@ export class ChatGptBrowserWorker {
       }
       recoveryAttempts = 0;
       liveProbeWaits = 0;
-      observationBaseline.initialTurnIdentities = chatGptStagedBaselineIdentities(observationBaseline.initialTurnIdentities, observationBaseline.acknowledgedStages, state.acknowledgementTurns);
+      observationBaseline.historicalTurnIdentities = chatGptStagedBaselineIdentities(observationBaseline.historicalTurnIdentities ?? [], observationBaseline.acknowledgedStages, state.acknowledgementTurns);
       // A tool batch can arrive while the DOM probe is in flight. Read progress again before
       // acknowledging its boundary; the pre-probe snapshot can otherwise leave the broker waiting
       // despite this exact iteration having successfully observed the page.
@@ -1133,6 +1152,7 @@ export class ChatGptBrowserWorker {
       const identity = chatGptNewTurnIdentity(
         observationBaseline.initialTurnIdentities,
         state.responseIdentities,
+        observationBaseline.historicalTurnIdentities,
       );
       if (progress
         && externalProgress
@@ -1190,13 +1210,15 @@ export class ChatGptBrowserWorker {
       throw new Error(`ChatGPT exposed ${boundCount} DOM nodes for the bound assistant turn`);
     }
     const state = await submissionDomState(page, baseline.domCache, signal);
-    baseline.initialTurnIdentities = chatGptStagedBaselineIdentities(baseline.initialTurnIdentities, baseline.acknowledgedStages, state.acknowledgementTurns);
-    const acceptedTurns = new Set(binding.acceptedTurnIdentities);
+    baseline.historicalTurnIdentities = chatGptStagedBaselineIdentities(baseline.historicalTurnIdentities ?? [], baseline.acknowledgedStages, state.acknowledgementTurns);
+    // A remounted earlier context stage is not another user turn.
+    const acceptedTurns = new Set([...binding.acceptedTurnIdentities, ...(baseline.historicalTurnIdentities ?? [])]);
     const hasNewUserTurn = state.userIdentities.some(identity => !acceptedTurns.has(identity));
     const identity = chatGptReboundTurnIdentity(
       baseline.initialTurnIdentities,
       binding.identity,
       state.responseIdentities,
+      baseline.historicalTurnIdentities,
     );
     if (hasNewUserTurn && !allowMcpContinuationUserTurn) {
       const newUsers = state.userIdentities.filter(user => !acceptedTurns.has(user));
@@ -1240,36 +1262,85 @@ export class ChatGptBrowserWorker {
     };
   }
 
-  private async userMessageMatchesSubmission(group: Locator, submitted: string, signal?: AbortSignal, turnToken?: string): Promise<boolean> {
+  private async withExpandedUserMessage<T>(
+    group: Locator,
+    read: (content: Locator) => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T | undefined> {
     const bubble = group.locator("[data-user-message-bubble]");
-    if (await bubble.count() !== 1) return false;
+    if (await bubble.count() !== 1) return undefined;
     const content = bubble.locator("[data-search-result-target]:not([data-search-result-target] [data-search-result-target])");
-    if (await content.count() !== 1) return false;
+    if (await content.count() !== 1) return undefined;
     // Current ChatGPT removes the collapsed text from the DOM, rather than only clipping it.
     const expand = bubble.locator('button[type="button"][aria-expanded][data-thread-find-skip="true"][data-markdown-copy="exclude"]');
     const count = await expand.count();
-    if (count > 1) return false;
-    if (count === 1 && await expand.getAttribute("aria-expanded") === "false") {
+    if (count > 1) return undefined;
+    if (count !== 1 || await expand.getAttribute("aria-expanded") !== "false") return read(content);
+    // Expanding a large message can move the viewport far enough to unmount the active answer
+    // (upstream #866). Read it temporarily, then restore the collapse, focus and scroll position.
+    const view = await group.evaluateHandle(element => {
+      const scroll: { node: Element; top: number; left: number; bottom: boolean }[] = [];
+      for (let node: Element | null = element.parentElement; node; node = node.parentElement) {
+        if (node.scrollHeight > node.clientHeight || node.scrollWidth > node.clientWidth) {
+          scroll.push({ node, top: node.scrollTop, left: node.scrollLeft,
+            bottom: node.scrollHeight - node.clientHeight - node.scrollTop <= 1 });
+        }
+      }
+      return { scroll, focus: document.activeElement };
+    });
+    try {
+      await expand.evaluate(node => (node as HTMLElement).focus({ preventScroll: true }));
       await expand.press("Enter", { signal, timeout: CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS });
       await expand.locator('xpath=self::*[@aria-expanded="true"]').waitFor({
         state: "attached", signal, timeout: CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS,
       });
+      return await read(content);
+    } finally {
+      // Cleanup owns a separate bounded window even when the read was cancelled.
+      try {
+        if (await expand.count() === 1 && await expand.getAttribute("aria-expanded") === "true") {
+          await expand.evaluate(node => (node as HTMLElement).focus({ preventScroll: true }));
+          await expand.press("Enter", { timeout: CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS });
+          await expand.locator('xpath=self::*[@aria-expanded="false"]').waitFor({
+            state: "attached", timeout: CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS,
+          });
+        }
+      } catch {
+        // Collapsing is presentation cleanup; the verified read already completed or failed.
+      } finally {
+        try {
+          await withChatGptBrowserObservationTimeout(view.evaluate(async saved => {
+            if (saved.focus instanceof HTMLElement && saved.focus.isConnected) saved.focus.focus({ preventScroll: true });
+            for (const { node, top, left, bottom } of saved.scroll) {
+              if (node.isConnected) node.scrollTo({ left, top: bottom ? node.scrollHeight - node.clientHeight : top, behavior: "instant" });
+            }
+            await new Promise<void>(resolveFrame => requestAnimationFrame(() => requestAnimationFrame(() => resolveFrame())));
+          }));
+        } catch {
+          // A detached page cannot restore its viewport; nothing else depends on it.
+        } finally { await view.dispose().catch(() => {}); }
+      }
     }
-    if (turnToken && /^turn_[A-Za-z0-9_-]{32}$/.test(turnToken) && submitted.includes(turnToken)) {
-      // Rich-text rendering may change link labels after the composer was checked.
-      // The exact compiler-owned token identifies this submission without equating
-      // presentation text to the complete original JSON payload.
-      return withChatGptBrowserObservationTimeout(withBrowserTurnAbort(content.evaluate((element, token) => {
-        const tokens = (element.textContent ?? "").match(/(?<![A-Za-z0-9_-])turn_[A-Za-z0-9_-]{32}(?![A-Za-z0-9_-])/g) ?? [];
-        return tokens.length === 1 && tokens[0] === token;
-      }, turnToken), signal));
-    }
-    const observed = await withChatGptBrowserObservationTimeout(withBrowserTurnAbort(
-      content.evaluate(readChatGptUserMessage, this.config.appName), signal,
-    ));
-    return observed !== undefined && promptTextEquivalent(
-      submitted.replace(/\r\n?/g, "\n"), observed.text.replace(/\r\n?/g, "\n"),
-    );
+  }
+
+  private async userMessageMatchesSubmission(group: Locator, submitted: string, signal?: AbortSignal, turnToken?: string): Promise<boolean> {
+    return (await this.withExpandedUserMessage(group, async content => {
+      if (turnToken && /^turn_[A-Za-z0-9_-]{32}$/.test(turnToken) && submitted.includes(turnToken)) {
+        // Rich-text rendering may change link labels after the composer was checked.
+        // The exact compiler-owned token identifies this submission without equating
+        // presentation text to the complete original JSON payload.
+        return withChatGptBrowserObservationTimeout(withBrowserTurnAbort(content.evaluate((element, token) => {
+          const tokens = (element.textContent ?? "").match(/(?<![A-Za-z0-9_-])turn_[A-Za-z0-9_-]{32}(?![A-Za-z0-9_-])/g) ?? [];
+          return tokens.length === 1 && tokens[0] === token;
+        }, turnToken), signal));
+      }
+      const observed = await withChatGptBrowserObservationTimeout(withBrowserTurnAbort(
+        content.evaluate(readChatGptUserMessage, this.config.appName), signal,
+      ));
+      return observed !== undefined && promptTextEquivalent(
+        submitted.replace(/\r\n?/g, "\n"), observed.text.replace(/\r\n?/g, "\n"),
+      );
+    }, signal)) ?? false;
   }
 
   private async attachedPromptText(page: Page, abortSignal?: AbortSignal): Promise<string> {
@@ -1910,7 +1981,8 @@ export class ChatGptBrowserWorker {
         throw new Error("ChatGPT Bigger Context transaction timed out while awaiting a stage acknowledgement");
       }
       await throwIfChatGptSessionFailureAlert(page);
-      await throwIfChatGptTerminalErrorAlert(responseTurn.locator);
+      // ChatGPT can replace the assistant part with its error, so scope to the whole turn.
+      await throwIfChatGptTerminalErrorAlert(page.locator(chatGptTurnContainerSelector(responseTurn.identity)));
       let snapshot = await responseDomSnapshot(responseTurn.locator, responseDomCache, abortSignal);
       if (!snapshot.responsePresent && await responseTurn.locator.count() !== 1) {
         const rebound = await this.reconcileAssistantTurnBinding(
@@ -2219,7 +2291,8 @@ export class ChatGptBrowserWorker {
     if (files.length === 0) return;
     const composer = await this.activeComposer(page, 30_000, abortSignal);
     const composerForm = composer.locator("xpath=ancestor::form[1]");
-    const input = page.locator('input[data-testid="upload-photos-input"], form[data-chatgpt-composer] input[type="file"][multiple]:not([accept])');
+    // Saved chats can keep a hidden home composer mounted; upload only through the active form (#866).
+    const input = composerForm.locator('input[data-testid="upload-photos-input"], input[type="file"][multiple]:not([accept])');
     await withBrowserTurnAbort(input.waitFor({ state: "attached", timeout: 20_000 }), abortSignal);
     // Send must wait until ChatGPT has processed every file, not only shown its card.
     const uploads = await observeChatGptAttachmentUploads(page, files.map(file => file.name));
@@ -2790,6 +2863,9 @@ export class ChatGptBrowserWorker {
       await diagnostics.capture(page, "effort-selection-complete");
 
       let finalPrompt = prepared.text;
+      // Exchanges proven when each earlier stage was acknowledged. A saved-chat virtualizer can
+      // unmount and remount them, so later baselines must not depend on them being mounted.
+      const acknowledgedStageIdentities = new Set<string>();
       if (prepared.multipart && multipartStages && multipartTransactionId && multipartFinalPrompt) {
         for (let index = 0; index < multipartStages.length; index += 1) {
           // ChatGPT may rewrite or reset the effort control after accepting a staged message. Reopen
@@ -2824,6 +2900,8 @@ export class ChatGptBrowserWorker {
           }
           const stage = multipartStages[index]!;
           let stageBaseline = await this.captureSubmissionBaseline(page, stage.text, turn.abortSignal);
+          stageBaseline.historicalTurnIdentities = [...acknowledgedStageIdentities];
+          stageBaseline.acknowledgedStages = multipartStages.slice(0, index).map(earlier => earlier.acknowledgement);
           await runBrowserStage(
             turn.traceId,
             `multipart_stage_${index + 1}_attachment`,
@@ -2906,6 +2984,7 @@ export class ChatGptBrowserWorker {
                 acknowledgementSignal,
                 turn.externalProgress,
               );
+              for (const identity of chatGptExchangeIdentities(responseTurn.identity)) acknowledgedStageIdentities.add(identity);
             },
           );
           const stageRejection = await submissionRejection.failure();
@@ -2941,6 +3020,7 @@ export class ChatGptBrowserWorker {
 
       let submissionBaseline = await this.captureSubmissionBaseline(page, finalPrompt, turn.abortSignal, prepared.turnToken);
       submissionBaseline.acknowledgedStages = multipartStages?.map(stage => stage.acknowledgement);
+      if (acknowledgedStageIdentities.size) submissionBaseline.historicalTurnIdentities = [...acknowledgedStageIdentities];
       let catalogRefreshAvailable = mode.localTools && !reuseConversation && !prepared.multipart;
       const connectorAttemptBudget: ChatGptConnectorAttemptBudget = { triggerAttempts: 0 };
       for (;;) {
@@ -3139,7 +3219,8 @@ export class ChatGptBrowserWorker {
           throw new DOMException("ChatGPT web turn aborted", "AbortError");
         }
         await throwIfChatGptSessionFailureAlert(page);
-        await throwIfChatGptTerminalErrorAlert(responseTurn.locator);
+        // ChatGPT can replace the assistant part with its error, so scope to the whole turn.
+        await throwIfChatGptTerminalErrorAlert(page.locator(chatGptTurnContainerSelector(responseTurn.identity)));
 
         let approvalVisibleAt: number | undefined;
         if (mode.localTools && await resolveChatGptToolConfirmation(
@@ -3530,6 +3611,11 @@ export class ChatGptBrowserWorker {
       } else if (!(error instanceof DOMException && error.name === "AbortError")
         && !(error instanceof ChatGptWebAdapterError && error.code === "client_cancelled")) {
         error = await submissionRejection.failure() ?? error;
+        // Only an unclassified failure may be explained by ChatGPT's visible size rejection.
+        if (!(error instanceof ChatGptWebAdapterError) && diagnosticPage && !diagnosticPage.isClosed()) {
+          error = await withChatGptBrowserObservationTimeout(chatGptMessageTooLongAlert(diagnosticPage), 3_000)
+            .catch(() => undefined) ?? error;
+        }
       }
       const reportedError = chatGptSubmittedProviderFailure(error, providerSubmissionStage);
       console.error(

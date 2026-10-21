@@ -25,6 +25,12 @@ import type {
 
 type RolloutIdentity = ChatGptRootThreadMetadata | ChatGptThreadSpawnLineage;
 
+export interface CodexRolloutEnvironment {
+  environment: ChatGptTurnEnvironment;
+  /** False when the turn context omitted workspace_roots and `roots` fell back to [cwd]. */
+  workspaceRootsDeclared: boolean;
+}
+
 /** Authenticate a cross-task delivery against the native current-turn journal.
  * HTTP input is only a claim; neither a matching tool name nor XML is authority. */
 export function verifyNativeDelegation(codexHome: string, threadId: string, turnId: string,
@@ -674,6 +680,7 @@ function environmentFromTurnContext(
 function validateMetadataConsistency(
   lineage: RolloutIdentity,
   environment: ChatGptTurnEnvironment,
+  workspaceRootsDeclared: boolean,
 ): void {
   // Request sandbox/workspace fields are diagnostic only. They narrow a rollout-derived authority
   // here and never create or expand it.
@@ -687,9 +694,11 @@ function validateMetadataConsistency(
     && !lineage.workspaceRoots.some(root => contains(root, environment.cwd))) {
     throw new Error(`ChatGPT Web ${owner} workspace metadata does not contain its Codex rollout cwd`);
   }
-  if (lineage.workspaceRoots.some(root => !environment.roots.some(rolloutRoot => (
-    contains(rolloutRoot, root) || contains(root, rolloutRoot)
-  )))) {
+  // A full-access record without workspace_roots grants no workspace restriction to conflict with.
+  if ((workspaceRootsDeclared || environment.sandboxPolicy.type !== "dangerFullAccess")
+    && lineage.workspaceRoots.some(root => !environment.roots.some(rolloutRoot => (
+      contains(rolloutRoot, root) || contains(root, rolloutRoot)
+    )))) {
     throw new Error(`ChatGPT Web ${owner} workspace metadata conflicts with its Codex rollout roots`);
   }
 }
@@ -702,7 +711,7 @@ export function resolveCurrentCodexRolloutEnvironment(options: {
   compactionSourceTurnId?: string;
   tools?: readonly CodexTool[];
   historicalEnvironmentMessages?: ChatGptUnattributedEnvironmentMessage[];
-}): ChatGptTurnEnvironment | undefined {
+}): CodexRolloutEnvironment | undefined {
   const { codexHome, lineage, turnId, tools, compactionSourceTurnId } = options;
   const nativeThreadId = CODEX_ID.test(lineage.threadId);
   const nativeTurnId = CODEX_ID.test(turnId);
@@ -721,7 +730,7 @@ export function resolveCurrentCodexRolloutEnvironment(options: {
     throw new Error("Codex has no canonical rollout for the requested subagent thread");
   }
 
-  const matching: ChatGptTurnEnvironment[] = [];
+  const matching: CodexRolloutEnvironment[] = [];
   for (const candidate of candidates) {
     const rolloutPath = validateRolloutPath(codexHome, candidate, lineage.threadId);
     const fd = openSync(rolloutPath, "r");
@@ -738,11 +747,12 @@ export function resolveCurrentCodexRolloutEnvironment(options: {
         continue;
       }
       const environment = environmentFromTurnContext(latest, latest.turn_id as string, tools);
-      validateMetadataConsistency(lineage, environment);
+      const workspaceRootsDeclared = latest.workspace_roots !== undefined;
+      validateMetadataConsistency(lineage, environment, workspaceRootsDeclared);
       if (options.historicalEnvironmentMessages) {
         verifyHistoricalEnvironmentMessages(fd, size, turnId, options.historicalEnvironmentMessages);
       }
-      matching.push(environment);
+      matching.push({ environment, workspaceRootsDeclared });
     } finally {
       closeSync(fd);
     }

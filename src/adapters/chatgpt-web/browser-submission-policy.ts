@@ -2,12 +2,14 @@ export type ChatGptSubmissionEvidence = "user_turn" | "assistant_turn" | "genera
 
 export function chatGptSubmissionEvidence(state: {
   initialTurnIdentities: readonly string[];
+  historicalTurnIdentities?: readonly string[];
   userIdentities: readonly string[];
   responseIdentities: readonly string[];
   generationRunning: boolean;
 }): ChatGptSubmissionEvidence | undefined {
-  if (chatGptNewTurnIdentity(state.initialTurnIdentities, state.userIdentities)) return "user_turn";
-  if (chatGptNewTurnIdentity(state.initialTurnIdentities, state.responseIdentities)) return "assistant_turn";
+  const historical = state.historicalTurnIdentities ?? [];
+  if (chatGptNewTurnIdentity(state.initialTurnIdentities, state.userIdentities, historical)) return "user_turn";
+  if (chatGptNewTurnIdentity(state.initialTurnIdentities, state.responseIdentities, historical)) return "assistant_turn";
   if (state.generationRunning) return "generation_running";
   return undefined;
 }
@@ -23,6 +25,12 @@ export function chatGptConnectorAttachmentMode(
   return reuseConversation ? "retained" : "mention";
 }
 
+/** A grouped assistant identity and the user message of the same exchange. */
+export function chatGptExchangeIdentities(identity: string): string[] {
+  const prefix = "group:assistant:";
+  return identity.startsWith(prefix) ? [identity, `group:user:${identity.slice(prefix.length)}`] : [identity];
+}
+
 export function chatGptStagedBaselineIdentities(
   initial: readonly string[],
   acknowledgedStages: readonly string[] = [],
@@ -33,16 +41,26 @@ export function chatGptStagedBaselineIdentities(
   for (const acknowledgement of acknowledgedStages) {
     const matching = observed.filter(turn => turn.text === acknowledgement);
     if (matching.length > 1) throw new Error("ChatGPT exposed duplicate acknowledged context stages");
-    if (matching[0]) identities.add(matching[0].identity);
+    // The stage's own user message is history too; otherwise it can look like the next Send.
+    if (matching[0]) for (const identity of chatGptExchangeIdentities(matching[0].identity)) identities.add(identity);
   }
   return [...identities];
 }
 
+
+
+/**
+ * `historical` identities are known earlier exchanges that were not mounted, in order, when the
+ * baseline was captured: acknowledged context stages a saved-chat virtualizer can unmount and later
+ * remount above retained history (upstream #866). They are never new, but carry no order anchor.
+ */
 export function chatGptNewTurnIdentity(
   initial: readonly string[],
   current: readonly string[],
+  historical: readonly string[] = [],
 ): string | undefined {
   const previous = new Set(initial);
+  const known = new Set([...initial, ...historical]);
   const observed = new Set(current);
   const retainedInitial = initial.filter(identity => observed.has(identity));
   const retainedCurrent = current.filter(identity => previous.has(identity));
@@ -54,7 +72,7 @@ export function chatGptNewTurnIdentity(
   // Without that anchor, every unknown identity remains a possible new turn.
   const anchor = retainedInitial.at(-1);
   const boundary = anchor === undefined ? -1 : current.lastIndexOf(anchor);
-  const added = current.slice(boundary + 1).filter(identity => !previous.has(identity));
+  const added = current.slice(boundary + 1).filter(identity => !known.has(identity));
   if (added.length > 1) {
     throw new Error(`ChatGPT exposed ${added.length} new conversation turns for one submitted message`);
   }
@@ -65,9 +83,10 @@ export function chatGptReboundTurnIdentity(
   initial: readonly string[],
   boundIdentity: string,
   current: readonly string[],
+  historical: readonly string[] = [],
 ): string | undefined {
   if (current.includes(boundIdentity)) return boundIdentity;
-  return chatGptNewTurnIdentity(initial, current);
+  return chatGptNewTurnIdentity(initial, current, historical);
 }
 
 /**

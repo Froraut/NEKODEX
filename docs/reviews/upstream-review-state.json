@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "upstream": "miuuyy/codex-chatgpt-web",
   "fork": "Froraut/NEKODEX",
-  "updatedAt": "2026-10-16T13:21:02.284658+00:00",
+  "updatedAt": "2026-10-21T00:18:30.029656+00:00",
   "lastCompleteScan": {
     "at": "2026-10-16T13:16:33.777888+00:00",
     "repository": "miuuyy/codex-chatgpt-web",
@@ -29,26 +29,27 @@
   },
   "lastReviewed": {
     "pull": {
-      "number": 840,
-      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/840",
-      "reviewedAt": "2026-10-16T13:16:33.777888+00:00"
+      "number": 881,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/881",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
     },
     "issue": {
-      "number": 832,
-      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/832",
-      "reviewedAt": "2026-10-16T13:16:33.777888+00:00"
+      "number": 875,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/875",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
     }
   },
   "maxReviewedNumber": {
-    "pull": 842,
-    "issue": 844
+    "pull": 881,
+    "issue": 875
   },
   "notes": [
     "Exact records and historical gaps are retained. A maximum number is a navigation hint, not coverage proof.",
     "v6.0.0 commit 212ceef2acac9d6ee0f3c9037abfaf4ad8ff9827 and follow-up 757942251222ee0f71953c35636679c6d92dd636 reviewed against fork base afd9e5a.",
     "Current source implementation and verification: 115792667386478cd1fd5c391b8795cede90a8e7. No installed app, production account, tunnel or release changed.",
     "Last actually revisited PR is 604 (replacement socket proof); highest reviewed PR is 658. Last issue is 663, including the final comment/attachment refresh.",
-    "2026-10-01: Scoped release review of v6.1.1 a13cd099, v6.1.2 2d73f626 and v6.1.3 fa2d2c6c completed against fork 5fd97c1d; selected adaptations and exclusions recorded in docs/reviews/2026-10-01-upstream-6.1.1-6.1.3.md. Existing PR/issue high-water marks and lastCompleteScan are unchanged; this was not a complete new inventory."
+    "2026-10-01: Scoped release review of v6.1.1 a13cd099, v6.1.2 2d73f626 and v6.1.3 fa2d2c6c completed against fork 5fd97c1d; selected adaptations and exclusions recorded in docs/reviews/2026-10-01-upstream-6.1.1-6.1.3.md. Existing PR/issue high-water marks and lastCompleteScan are unchanged; this was not a complete new inventory.",
+    "2026-10-21: Review of upstream v6.1.10-v6.1.12 (f137c2f8..cdfceafd), PRs #837-#881 and issues #843-#875 against NEKODEX 2d8ada3a. Ported items, follow-ups and exclusions: docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md. lastCompleteScan is unchanged; this was a delta review, not a whole-repository sweep."
   ],
   "items": {
     "issue:339": {
@@ -3180,57 +3181,75 @@
       "number": 844,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/844",
       "title": "[Bug] v6.1.9 (macOS arm64): Bigger Context turns fail with \"ChatGPT changed an acknowledged Bigger Context exchange\" — ChatGPT now collapses large stage messages to a mid-payload slice after re-keying",
-      "sourceUpdatedAt": "2026-10-16T11:04:43Z",
+      "sourceUpdatedAt": "2026-10-18T16:49:06Z",
       "headSha": null,
-      "state": "open",
+      "state": "closed",
       "merged": null,
       "status": "reviewed",
-      "decision": "needs_evidence",
-      "rationale": "New acknowledged multipart re-key/collapsed mid-payload variant; keep stage hash/transaction ownership and review separately from ordinary response rebind.",
+      "decision": "already_equivalent",
+      "rationale": "NEKODEX matches acknowledged stages by ACK text and never re-reads collapsed stage bodies.",
       "evidence": [
-        "docs/reviews/2026-10-16-browser-upstream-review.md"
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
       ],
-      "sourceRevision": "e820daa1a9b2665dc27eadb419f7ac18a78d3951",
-      "limitations": "Read-only source/discussion review. No runtime/reporter-account reproduction. Historical equivalence labels require no claim of newly tested fix.",
-      "reviewedAt": "2026-10-16T13:21:02.284658+00:00"
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00",
+      "previous": {
+        "decision": "needs_evidence",
+        "rationale": "New acknowledged multipart re-key/collapsed mid-payload variant; keep stage hash/transaction ownership and review separately from ordinary response rebind.",
+        "reviewedAt": "2026-10-16T13:21:02.284658+00:00",
+        "status": "reviewed"
+      }
     },
     "issue:843": {
       "kind": "issue",
       "number": 843,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/843",
       "title": "[Bug][Windows][v6.1.9] Read-only MCP call rejected with no approval prompt",
-      "sourceUpdatedAt": "2026-10-16T08:22:04Z",
+      "sourceUpdatedAt": "2026-10-21T00:17:40Z",
       "headSha": null,
-      "state": "open",
+      "state": "closed",
       "merged": null,
       "status": "reviewed",
       "decision": "external_boundary",
-      "rationale": "Codex tool returns user rejected MCP tool call without prompt; no evidence local bridge issued rejection. Needs actual policy/core decision evidence.",
+      "rationale": "No new bridge evidence; prior decision stands.",
       "evidence": [
-        "docs/reviews/2026-10-16-browser-upstream-review.md"
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
       ],
-      "sourceRevision": "e820daa1a9b2665dc27eadb419f7ac18a78d3951",
-      "limitations": "Read-only source/discussion review. No runtime/reporter-account reproduction. Historical equivalence labels require no claim of newly tested fix.",
-      "reviewedAt": "2026-10-16T13:21:02.284658+00:00"
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00",
+      "previous": {
+        "decision": "external_boundary",
+        "rationale": "Codex tool returns user rejected MCP tool call without prompt; no evidence local bridge issued rejection. Needs actual policy/core decision evidence.",
+        "reviewedAt": "2026-10-16T13:21:02.284658+00:00",
+        "status": "reviewed"
+      }
     },
     "pull:842": {
       "kind": "pull",
       "number": 842,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/842",
       "title": "fix: accept worker inventories in native calendar updates",
-      "sourceUpdatedAt": "2026-10-16T04:17:45Z",
+      "sourceUpdatedAt": "2026-10-17T02:43:31Z",
       "headSha": "9355777b94d58ed3350396400531f9190bf1cd36",
-      "state": "open",
-      "merged": false,
+      "state": "merged",
+      "merged": true,
       "status": "reviewed",
-      "decision": "adapt_candidate",
-      "rationale": "Optional name-only worker inventory in native midnight delta; local trailing policy parser differs, require fixture comparison with current-rollout authority.",
+      "decision": "already_equivalent",
+      "rationale": "NEKODEX calendar delta parser already accepts the <subagents> worker inventory.",
       "evidence": [
-        "docs/reviews/2026-10-16-browser-upstream-review.md"
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
       ],
-      "sourceRevision": "e820daa1a9b2665dc27eadb419f7ac18a78d3951",
-      "limitations": "Read-only source/discussion review. No runtime/reporter-account reproduction. Historical equivalence labels require no claim of newly tested fix.",
-      "reviewedAt": "2026-10-16T13:21:02.284658+00:00"
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00",
+      "previous": {
+        "decision": "adapt_candidate",
+        "rationale": "Optional name-only worker inventory in native midnight delta; local trailing policy parser differs, require fixture comparison with current-rollout authority.",
+        "reviewedAt": "2026-10-16T13:21:02.284658+00:00",
+        "status": "reviewed"
+      }
     },
     "issue:841": {
       "kind": "issue",
@@ -3256,19 +3275,25 @@
       "number": 840,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/840",
       "title": "fix: complete shared stdio handshakes atomically",
-      "sourceUpdatedAt": "2026-10-16T00:30:10Z",
+      "sourceUpdatedAt": "2026-10-17T02:36:55Z",
       "headSha": "377ee4c002600e36026751f1a35a4b0e7b3ad17a",
-      "state": "open",
+      "state": "closed",
       "merged": false,
       "status": "reviewed",
-      "decision": "dependency_review_required",
-      "rationale": "SDK atomic stdio handshake shim is absent from local pinned/installed 0.0.12; official 0.0.16 implements option. Requires SDK compatibility review, not env-only fix.",
+      "decision": "already_equivalent",
+      "rationale": "SDK 0.0.16 and MCP_STDIO_SEND_INITIALIZED_NOTIFICATION on every tunnel connect path already landed; upstream folded #840 into 6.1.10.",
       "evidence": [
-        "docs/reviews/2026-10-16-browser-upstream-review.md"
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
       ],
-      "sourceRevision": "e820daa1a9b2665dc27eadb419f7ac18a78d3951",
-      "limitations": "Read-only source/discussion review. No runtime/reporter-account reproduction. Historical equivalence labels require no claim of newly tested fix.",
-      "reviewedAt": "2026-10-16T13:21:02.284658+00:00"
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00",
+      "previous": {
+        "decision": "dependency_review_required",
+        "rationale": "SDK atomic stdio handshake shim is absent from local pinned/installed 0.0.12; official 0.0.16 implements option. Requires SDK compatibility review, not env-only fix.",
+        "reviewedAt": "2026-10-16T13:21:02.284658+00:00",
+        "status": "reviewed"
+      }
     },
     "issue:838": {
       "kind": "issue",
@@ -3294,19 +3319,25 @@
       "number": 837,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/837",
       "title": "fix: preserve native task identity through compaction",
-      "sourceUpdatedAt": "2026-10-16T00:45:47Z",
+      "sourceUpdatedAt": "2026-10-17T02:43:27Z",
       "headSha": "4144c0742e7e12fc90397a34c28025887b576258",
-      "state": "open",
-      "merged": false,
+      "state": "merged",
+      "merged": true,
       "status": "reviewed",
-      "decision": "adapt_candidate",
-      "rationale": "Metadata-proven AGENTS refresh and dropped synthetic delegation need exact checkpoint source identity; local memory-bounded registry must be preserved.",
+      "decision": "partially_adapted",
+      "rationale": "AGENTS.md refresh exclusion (4144c074) ported; delegation recovery (c1682868, 4a9035f1) is a follow-up: NEKODEX skips compaction requests in normalizeNativeDelegation.",
       "evidence": [
-        "docs/reviews/2026-10-16-browser-upstream-review.md"
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
       ],
-      "sourceRevision": "e820daa1a9b2665dc27eadb419f7ac18a78d3951",
-      "limitations": "Read-only source/discussion review. No runtime/reporter-account reproduction. Historical equivalence labels require no claim of newly tested fix.",
-      "reviewedAt": "2026-10-16T13:21:02.284658+00:00"
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00",
+      "previous": {
+        "decision": "adapt_candidate",
+        "rationale": "Metadata-proven AGENTS refresh and dropped synthetic delegation need exact checkpoint source identity; local memory-bounded registry must be preserved.",
+        "reviewedAt": "2026-10-16T13:21:02.284658+00:00",
+        "status": "reviewed"
+      }
     },
     "issue:836": {
       "kind": "issue",
@@ -6461,6 +6492,674 @@
       "sourceRevision": "e820daa1a9b2665dc27eadb419f7ac18a78d3951",
       "limitations": "Read-only source/discussion review. No runtime/reporter-account reproduction. Historical equivalence labels require no claim of newly tested fix.",
       "triagedAt": "2026-10-16T13:21:02.284658+00:00"
+    },
+    "pull:845": {
+      "kind": "pull",
+      "number": 845,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/845",
+      "title": "fix: Codex 0.163 rollout root conflict and rebind long persisted prompts",
+      "sourceUpdatedAt": "2026-10-17T01:40:02Z",
+      "headSha": "31035b3511de4d2d3f73ab44aa12d2af8bd2aa2a",
+      "state": "closed",
+      "merged": false,
+      "status": "reviewed",
+      "decision": "adapted",
+      "rationale": "Codex 0.163 output roots ported as exact-grant subset in sameAuthority; fuzzy prompt rebind part superseded by NEKODEX turn tokens.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "pull:852": {
+      "kind": "pull",
+      "number": 852,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/852",
+      "title": "fix(chatgpt-web): recover trusted CLI rollouts across opt-in Codex homes",
+      "sourceUpdatedAt": "2026-10-18T16:53:07Z",
+      "headSha": "d2ead24ef13ca3eed8c44039611a30b8ae03f12f",
+      "state": "closed",
+      "merged": false,
+      "status": "reviewed",
+      "decision": "skip",
+      "rationale": "Additional trusted CODEX_HOMEs is an opt-in upstream feature with no NEKODEX user; null workspace_roots stays invalid.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "pull:856": {
+      "kind": "pull",
+      "number": 856,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/856",
+      "title": "Fix retained compaction retries and conversation serialization",
+      "sourceUpdatedAt": "2026-10-19T03:21:28Z",
+      "headSha": "040594fb941e8692140971f9896c3c93ec65a07c",
+      "state": "closed",
+      "merged": false,
+      "status": "reviewed",
+      "decision": "skip",
+      "rationale": "Rejected upstream as too broad; NEKODEX owns compaction retries and conversation serialization separately.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "pull:876": {
+      "kind": "pull",
+      "number": 876,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/876",
+      "title": "Fix Browser Smoke on sliderless default model pickers",
+      "sourceUpdatedAt": "2026-10-20T18:14:35Z",
+      "headSha": "8c22bd1ed819fee248489d8540cae578bb00e970",
+      "state": "open",
+      "merged": false,
+      "status": "reviewed",
+      "decision": "watch",
+      "rationale": "Upstream fix forces a GPT-5.6 switch that conflicts with NEKODEX restoring the user's model; failure not seen locally.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "pull:877": {
+      "kind": "pull",
+      "number": 877,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/877",
+      "title": "Preserve staged JSON through renderer escapes without trimming history",
+      "sourceUpdatedAt": "2026-10-21T00:17:57Z",
+      "headSha": "9006c70432c66814a2bca28c7852bf44f6c49ff7",
+      "state": "closed",
+      "merged": false,
+      "status": "reviewed",
+      "decision": "watch",
+      "rationale": "Draft held by upstream owner until a real DOM sample exists; same serializer in NEKODEX.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "pull:879": {
+      "kind": "pull",
+      "number": 879,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/879",
+      "title": "Fix certificate-free macOS signing in PR verification",
+      "sourceUpdatedAt": "2026-10-20T23:47:43Z",
+      "headSha": "030cfc88e228573df25cd50e6769199950222578",
+      "state": "open",
+      "merged": false,
+      "status": "reviewed",
+      "decision": "skip",
+      "rationale": "NEKODEX CI packages only on manual dispatch; macOS arm64 packaging requires the Developer ID.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "pull:880": {
+      "kind": "pull",
+      "number": 880,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/880",
+      "title": "Decline optional comparison survey only within the bound response",
+      "sourceUpdatedAt": "2026-10-21T00:10:56Z",
+      "headSha": "94b763709d0976a58ef84c8ffa9140dd78b9f79c",
+      "state": "open",
+      "merged": false,
+      "status": "reviewed",
+      "decision": "watch",
+      "rationale": "Draft with changes requested (unbounded re-click loop).",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "pull:881": {
+      "kind": "pull",
+      "number": 881,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/881",
+      "title": "fix: preserve automatic tool approval opt-in during launcher upgrades",
+      "sourceUpdatedAt": "2026-10-20T23:47:40Z",
+      "headSha": "77ccf7bbf2cefadf24d068c233e21cb2dd735158",
+      "state": "open",
+      "merged": false,
+      "status": "reviewed",
+      "decision": "skip",
+      "rationale": "NEKODEX upgrades rebind saved configuration, so the auto-approval flag survives.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:847": {
+      "kind": "issue",
+      "number": 847,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/847",
+      "title": "[Bug] 6.1.9: compaction continuation rejected with \"environment conflicts with its current Codex rollout (fields: workspace_roots, writable_roots)\" after Codex stops writing `workspace_roots` to turn_context",
+      "sourceUpdatedAt": "2026-10-19T03:43:06Z",
+      "headSha": null,
+      "state": "closed",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "adapted",
+      "rationale": "Full-access rollout without workspace_roots keeps envelope roots (adoptFullAccessClaimRoots).",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:848": {
+      "kind": "issue",
+      "number": 848,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/848",
+      "title": "[Bug] v6.1.10 Linux: compaction model picker click times out (3000ms) in retained and multipart fallback tabs",
+      "sourceUpdatedAt": "2026-10-19T03:43:04Z",
+      "headSha": null,
+      "state": "closed",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "skip",
+      "rationale": "Closed upstream; not reproduced.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:849": {
+      "kind": "issue",
+      "number": 849,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/849",
+      "title": "[Bug] stream disconnected before completion: Compaction continuation environment conflicts with its current Codex rollout (fields: workspace_roots, writable_roots)",
+      "sourceUpdatedAt": "2026-10-19T03:43:07Z",
+      "headSha": null,
+      "state": "closed",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "adapted",
+      "rationale": "Same as #847.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:850": {
+      "kind": "issue",
+      "number": 850,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/850",
+      "title": "[False Positive / Security Alert] Detected as PDM:Trojan.Win32.Generic by Kaspersky",
+      "sourceUpdatedAt": "2026-10-18T17:10:50Z",
+      "headSha": null,
+      "state": "closed",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "skip",
+      "rationale": "Antivirus heuristic on the unsigned Windows build.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:851": {
+      "kind": "issue",
+      "number": 851,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/851",
+      "title": "[Bug] Trusted rollout recovery fails for an explicitly separate CODEX_HOME in CLI sessions",
+      "sourceUpdatedAt": "2026-10-19T03:43:09Z",
+      "headSha": null,
+      "state": "closed",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "skip",
+      "rationale": "Additional CODEX_HOME feature not used by NEKODEX.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:853": {
+      "kind": "issue",
+      "number": 853,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/853",
+      "title": "[Bug] 6.1.9: GET /v1/responses always returns 426 although the server advertises Responses WebSocket support",
+      "sourceUpdatedAt": "2026-10-18T16:39:50Z",
+      "headSha": null,
+      "state": "closed",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "skip",
+      "rationale": "426 on GET /v1/responses is intentional; NEKODEX matches.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:854": {
+      "kind": "issue",
+      "number": 854,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/854",
+      "title": "[Bug] 6.1.9: launcher helper takeover duplicates a running browser turn instead of reattaching to it",
+      "sourceUpdatedAt": "2026-10-19T14:20:54Z",
+      "headSha": null,
+      "state": "closed",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "follow_up",
+      "rationale": "Queued path already refuses the takeover; legacy direct /v1/turn/start path still reaches it. Port typed turn_owner_lost separately.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:855": {
+      "kind": "issue",
+      "number": 855,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/855",
+      "title": "[Bug] v6.1.10 macOS GPT-6 Sol High: model picker label drift aborts a valid continuation before send",
+      "sourceUpdatedAt": "2026-10-18T16:38:13Z",
+      "headSha": null,
+      "state": "closed",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "skip",
+      "rationale": "Seen only on a modified build.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:857": {
+      "kind": "issue",
+      "number": 857,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/857",
+      "title": "[Question] v6.1.10: Codex Native2 PC2 verification times out in Temporary Chat after reconnect (Windows)",
+      "sourceUpdatedAt": "2026-10-19T03:43:10Z",
+      "headSha": null,
+      "state": "closed",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "already_equivalent",
+      "rationale": "NEKODEX verifies connectors in saved chats (#101).",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:858": {
+      "kind": "issue",
+      "number": 858,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/858",
+      "title": "[Bug] v6.1.10 Windows: approving the Codex Native2 card while the tool request is still streaming fails with \"Invalid conversation body\" (saved chats)",
+      "sourceUpdatedAt": "2026-10-19T14:20:46Z",
+      "headSha": null,
+      "state": "closed",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "adapted",
+      "rationale": "Automatic approval waits until Stop disappears.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:859": {
+      "kind": "issue",
+      "number": 859,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/859",
+      "title": "[Bug] v6.1.10 (macOS arm64): every fresh Temporary Chat fails with \"personalization preflight exceeded its readiness deadline\" — ChatGPT removed the Personalized toggle and plugin access from Temporary Chats (follow-up to #181)",
+      "sourceUpdatedAt": "2026-10-19T12:53:53Z",
+      "headSha": null,
+      "state": "closed",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "already_equivalent",
+      "rationale": "Saved chats already used for connector turns (#101).",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:860": {
+      "kind": "issue",
+      "number": 860,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/860",
+      "title": "[Feature] Safely manage Codex-created saved ChatGPT chats after Temporary Chat lost Native2 access",
+      "sourceUpdatedAt": "2026-10-20T04:38:25Z",
+      "headSha": null,
+      "state": "open",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "watch",
+      "rationale": "Feature request; not built upstream.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:861": {
+      "kind": "issue",
+      "number": 861,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/861",
+      "title": "[Bug] v6.1.10/v6.1.11 (macOS arm64): post-compaction continuation fails with \"missing cwd in trusted Codex environment context\" (6 retries, no browser turn)",
+      "sourceUpdatedAt": "2026-10-20T15:37:51Z",
+      "headSha": null,
+      "state": "open",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "follow_up",
+      "rationale": "Diagnostics ported; native compaction missing-cwd reproduced locally, scoped fix deferred until upstream releases its own.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:863": {
+      "kind": "issue",
+      "number": 863,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/863",
+      "title": "[Bug] v6.1.11 (macOS arm64): long conversations loop on auto-compaction — compaction reply has no summary (\"compaction_handoff_missing\"), 6-part fallback handoff times out (10 s locator)",
+      "sourceUpdatedAt": "2026-10-20T23:49:27Z",
+      "headSha": null,
+      "state": "open",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "partially_adapted",
+      "rationale": "Handoff deadline now refunds system sleep; missing-summary cause remains under upstream investigation.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:864": {
+      "kind": "issue",
+      "number": 864,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/864",
+      "title": "[Bug] 6.1.11 personalization preflight fails in Temporary Chat: proof menu missing after ChatGPT DOM change (checkpoint 12/13)",
+      "sourceUpdatedAt": "2026-10-19T14:20:58Z",
+      "headSha": null,
+      "state": "closed",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "already_equivalent",
+      "rationale": "Temporary Chat preflight is unreachable for connector turns after #101.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:865": {
+      "kind": "issue",
+      "number": 865,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/865",
+      "title": "[Bug] stream disconnected before completion: ChatGPT response DOM disappeared while the browser turn was active",
+      "sourceUpdatedAt": "2026-10-20T04:44:05Z",
+      "headSha": null,
+      "state": "open",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "watch",
+      "rationale": "Waiting for alert text; #874 classification covers the too-long alert.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:866": {
+      "kind": "issue",
+      "number": 866,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/866",
+      "title": "[Bug] v6.1.11 (macOS arm64) saved chats: Bigger Context turns fail (duplicate file input, auto-linked URLs break message verification, expanding the stage message unmounts the conversation)",
+      "sourceUpdatedAt": "2026-10-19T14:20:50Z",
+      "headSha": null,
+      "state": "closed",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "adapted",
+      "rationale": "Active-composer uploads, auto-linked URLs, collapse/viewport restore and remounted-stage baseline ported.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:867": {
+      "kind": "issue",
+      "number": 867,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/867",
+      "title": "[Bug] ChatGPT web current user message conflicts with native Codex turn_id metadata",
+      "sourceUpdatedAt": "2026-10-20T15:42:21Z",
+      "headSha": null,
+      "state": "open",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "follow_up",
+      "rationale": "turn_id conflict unexplained (watch); older-launcher runtime downgrade guard needs a product decision.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:868": {
+      "kind": "issue",
+      "number": 868,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/868",
+      "title": "[Bug / fix proposal] v6.1.12 multipart JSON: preserve decoded data while neutralizing link lexemes",
+      "sourceUpdatedAt": "2026-10-21T00:17:43Z",
+      "headSha": null,
+      "state": "closed",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "watch",
+      "rationale": "Upstream requests a real failing example.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:869": {
+      "kind": "issue",
+      "number": 869,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/869",
+      "title": "[Bug / fix proposal] v6.1.12 response rekeying: reject late competing native request IDs",
+      "sourceUpdatedAt": "2026-10-21T00:17:47Z",
+      "headSha": null,
+      "state": "closed",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "watch",
+      "rationale": "Rejected upstream pending evidence.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:870": {
+      "kind": "issue",
+      "number": 870,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/870",
+      "title": "[Bug]",
+      "sourceUpdatedAt": "2026-10-20T23:49:28Z",
+      "headSha": null,
+      "state": "open",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "watch",
+      "rationale": "Root cause unknown; same install flow.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:871": {
+      "kind": "issue",
+      "number": 871,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/871",
+      "title": "las herramientas de Codex Native2 no proporciona un token valido",
+      "sourceUpdatedAt": "2026-10-21T00:17:50Z",
+      "headSha": null,
+      "state": "closed",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "skip",
+      "rationale": "No failed tool call shown.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:872": {
+      "kind": "issue",
+      "number": 872,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/872",
+      "title": "MCP deadline expires during native authorization; late acceptance can execute after binding retirement",
+      "sourceUpdatedAt": "2026-10-21T00:17:54Z",
+      "headSha": null,
+      "state": "closed",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "skip",
+      "rationale": "Soft-deadline promotion already keeps approval-waiting native calls alive.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:873": {
+      "kind": "issue",
+      "number": 873,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/873",
+      "title": "[Retracted report]",
+      "sourceUpdatedAt": "2026-10-20T02:06:58Z",
+      "headSha": null,
+      "state": "closed",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "skip",
+      "rationale": "Retracted.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:874": {
+      "kind": "issue",
+      "number": 874,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/874",
+      "title": "[Bug] Large Codex context can exceed ChatGPT Web message limits before compaction and break the bridge",
+      "sourceUpdatedAt": "2026-10-20T16:11:30Z",
+      "headSha": null,
+      "state": "open",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "adapted",
+      "rationale": "Visible too-long alert becomes context_length_exceeded; the limit itself is unchanged.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
+    },
+    "issue:875": {
+      "kind": "issue",
+      "number": 875,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/875",
+      "title": "[Bug] v6.1.11/6.1.12: every GPT-5.6 Sol Pro turn fails \"model 5.6 could not be selected and verified\" — picker header now reads \"5.6 Sol 5.6 Pro\"",
+      "sourceUpdatedAt": "2026-10-20T15:42:13Z",
+      "headSha": null,
+      "state": "open",
+      "merged": null,
+      "status": "reviewed",
+      "decision": "skip",
+      "rationale": "NEKODEX verifies model state through aria-describedby and never reads the picker header.",
+      "evidence": [
+        "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md"
+      ],
+      "sourceRevision": "2d8ada3a",
+      "limitations": "Source/discussion review against NEKODEX main with focused tests for ported items. No live reporter-account reproduction.",
+      "reviewedAt": "2026-10-21T00:18:30.029656+00:00"
     }
+  },
+  "lastReleaseReview": {
+    "at": "2026-10-21T00:18:30.029656+00:00",
+    "from": "f137c2f84da5df214c1e228d74f5ff43e7641c48",
+    "upstreamHead": "cdfceafd51df9ab6f19818c145eac5a99c593a3d",
+    "releases": [
+      "v6.1.10",
+      "v6.1.11",
+      "v6.1.12"
+    ],
+    "commits": [
+      "c1682868",
+      "4a9035f1",
+      "4144c074",
+      "9355777b",
+      "8645a89e",
+      "9fe005ee",
+      "cdfceafd"
+    ],
+    "localBase": "2d8ada3a",
+    "evidence": "docs/reviews/2026-10-21-upstream-6.1.10-6.1.12-enhanced.md",
+    "scope": "All upstream commits after f137c2f8, every PR after #842 and every issue #843-#875; the Enhanced fork from de76195c to 2a2bd234 is recorded in docs/reviews/2026-10-21-evanlau-review.json. lastCompleteScan (whole-repository sweep) is unchanged."
   }
 }

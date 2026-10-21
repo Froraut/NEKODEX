@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 import {
+  chatGptExchangeIdentities,
   chatGptNewTurnIdentity,
   chatGptReboundTurnIdentity,
+  chatGptStagedBaselineIdentities,
   chatGptSubmissionEvidence,
 } from "../src/adapters/chatgpt-web/browser-submission-policy";
 
@@ -53,4 +55,33 @@ test("first turns and a retained bound response keep their existing identity beh
   expect(chatGptNewTurnIdentity(["visible"], [])).toBeUndefined();
   expect(chatGptReboundTurnIdentity(["visible"], "accepted", ["restored", "accepted", "foreign"]))
     .toBe("accepted");
+});
+
+test("an acknowledged stage remembers both halves of its exchange", () => {
+  expect(chatGptExchangeIdentities("group:assistant:stage")).toEqual(["group:assistant:stage", "group:user:stage"]);
+  expect(chatGptExchangeIdentities("legacy-turn")).toEqual(["legacy-turn"]);
+  expect(chatGptStagedBaselineIdentities([], ["ACK 1"], [{ identity: "group:assistant:stage", text: "ACK 1" }]))
+    .toEqual(["group:assistant:stage", "group:user:stage"]);
+});
+
+test("a remounted acknowledged stage cannot acknowledge the next Send", () => {
+  const historical = ["group:user:earlier", "group:assistant:earlier"];
+  // Unmounted when the baseline was captured, remounted after Send.
+  expect(chatGptSubmissionEvidence({ initialTurnIdentities: [], historicalTurnIdentities: historical,
+    userIdentities: ["group:user:earlier"], responseIdentities: ["group:assistant:earlier"], generationRunning: false }))
+    .toBeUndefined();
+  expect(chatGptNewTurnIdentity([], ["group:user:earlier", "group:user:next"], historical)).toBe("group:user:next");
+  // Without the remembered identities the remounted stage looked like the submitted turn.
+  expect(chatGptNewTurnIdentity([], ["group:user:earlier"])).toBe("group:user:earlier");
+});
+
+test("a stage remounted above retained history keeps the order check on mounted history only", () => {
+  const initial = ["group:user:later-stage", "group:assistant:later-stage"];
+  const historical = ["group:user:first-stage", "group:assistant:first-stage"];
+  const users = ["group:user:first-stage", "group:user:later-stage", "group:user:next"];
+  expect(chatGptNewTurnIdentity(initial, users, historical)).toBe("group:user:next");
+  expect(chatGptReboundTurnIdentity(initial, "detached",
+    ["group:assistant:first-stage", "group:assistant:later-stage", "group:assistant:next"], historical))
+    .toBe("group:assistant:next");
+  expect(() => chatGptNewTurnIdentity(initial, [...users, "group:user:foreign"], historical)).toThrow("2 new conversation turns");
 });
