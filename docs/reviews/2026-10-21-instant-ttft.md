@@ -110,6 +110,35 @@ completed with the expected text. Focused tests cover the poll schedule against 
 control server, the tail timing (two cases fail on base), the boundary regression and the
 stream-close wake-up.
 
+## Installed check: local 6.1.33-nekodex.2
+
+A signed local build of `origin/main` 2916c021 (6.1.33-nekodex.1 plus #107 and #108) with
+this branch merged was installed and measured the same way as the baseline, six runs:
+
+| Run | CLI start → request | Page acquired | Picker done | Stream closed | First text | Completed |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 2.90 s | +0.67 | +3.40 | +9.40 | **+9.75** | +11.56 |
+| 2 | 2.73 s | +0.31 | +2.91 | +8.66 | **+9.02** | +10.76 |
+| 3 | 2.44 s | +0.33 | +2.93 | +8.64 | **+9.11** | +10.84 |
+| 4 | 2.46 s | +0.34 | +2.90 | +9.34 | **+9.65** | +11.11 |
+| 5 | 2.55 s | +0.35 | +2.99 | +10.08 | **+10.45** | +12.18 |
+| 6 | 2.38 s | +0.35 | +3.30 | +11.93 | **+12.37** | +14.10 |
+
+| Median | Installed .20 | Local .33.2 |
+| --- | ---: | ---: |
+| Gateway request → page acquired | 0.72 s | 0.35 s |
+| Stream closed → first text | 0.86 s | 0.37 s |
+| Gateway request → first text | 10.53 s | 9.70 s |
+| CLI start → first text | 13.45 s | 12.38 s |
+
+Run 1 followed the restart by a few seconds. After the restart the new-chat page also
+loaded faster (DOMContentLoaded 0.5 s after navigation instead of 1.6–2.2 s, composer ready
+1.2 s after navigation instead of 2.4 s); this branch does not touch navigation, and the
+alternating harness above saw equal page loads on both sides, so that gain is not
+attributed here. ChatGPT itself was slower in these runs (response visible → stream
+closed 4.0–6.9 s against 3.4–4.3 s), which offsets it in the totals. The admission and
+tail savings reproduce on the installed build.
+
 ## What bounds the latency
 
 With this change a new-thread instant turn spends, from the gateway request:
