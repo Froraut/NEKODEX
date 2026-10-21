@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -193,6 +193,7 @@ test('oversized native protocol payload is refused before resolving or launching
   expect(client.activeCount).toBe(0); await client.close();
 });
 
+const swiftCompilerPresent = process.platform === 'darwin' && spawnSync('/usr/bin/xcrun', ['--find', 'swiftc'], { encoding: 'utf8', timeout: 15000 }).status === 0;
 const helper = join(import.meta.dir, '..', 'launcher', 'electron', 'desktop-helper', `darwin-${process.arch}`, 'NEKODEX Desktop Helper.app', 'Contents', 'MacOS', 'nekodex-desktop-helper');
 test.skipIf(process.platform !== 'darwin' || !existsSync(helper))('compiled native helper reports passive permissions/metadata and closes without capture or input', async () => {
   const executable = realpathSync(helper); const client = new NativeDesktopHelperClient({ executable, sha256: digest(readFileSync(executable)), requestTimeoutMs: 3000 });
@@ -211,6 +212,43 @@ test.skipIf(process.platform !== 'darwin' || !existsSync(helper))('compiled nati
   await expect(client.request('status')).rejects.toThrow('closed');
 }, 5000);
 
+
+// Live 6.1.33-nekodex.8: under NEKODEX the helper's responsibility record named itself by pid but
+// NEKODEX.app by path, so a pid-only check skipped the disclaim and TCC judged NEKODEX for screen
+// capture. This launcher reproduces that record (disclaimed spawn, then exec of the helper).
+test.skipIf(process.platform !== 'darwin' || !existsSync(helper) || !swiftCompilerPresent)('helper disclaims when its responsible pid is itself but its responsible path is another binary', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'nekodex-stale-responsibility-')));
+  try {
+    const source = join(root, 'stale.swift'), launcher = join(root, 'stale');
+    writeFileSync(source, `import Darwin
+typealias Disclaim = @convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>, Int32) -> Int32
+let arguments = CommandLine.arguments
+if arguments.count == 3, arguments[1] == "exec" {
+    var argv: [UnsafeMutablePointer<CChar>?] = [strdup(arguments[2]), nil]; execv(arguments[2], &argv); exit(1)
+}
+let disclaim = unsafeBitCast(dlsym(UnsafeMutableRawPointer(bitPattern: -2), "responsibility_spawnattrs_setdisclaim")!, to: Disclaim.self)
+var attributes: posix_spawnattr_t?; posix_spawnattr_init(&attributes); _ = disclaim(&attributes, 1)
+var argv: [UnsafeMutablePointer<CChar>?] = [strdup(arguments[0]), strdup("exec"), strdup(arguments[1]), nil]; var child: pid_t = 0
+guard posix_spawn(&child, arguments[0], nil, &attributes, &argv, environ) == 0 else { exit(1) }
+var status: Int32 = 0; waitpid(child, &status, 0); exit(0)
+`);
+    const built = spawnSync('/usr/bin/xcrun', ['swiftc', '-O', source, '-o', launcher], { encoding: 'utf8', timeout: 170000 });
+    if (built.status !== 0) throw new Error(`launcher compilation failed: ${built.stderr}`);
+    const child = spawn(launcher, [realpathSync(helper)], { stdio: ['pipe', 'pipe', 'ignore'] });
+    try {
+      const reply = await new Promise<Record<string, any>>((resolve, reject) => {
+        let bytes = ''; child.stdout.on('data', chunk => { bytes += chunk; if (bytes.includes('\n')) resolve(JSON.parse(bytes.slice(0, bytes.indexOf('\n')))); });
+        child.once('exit', () => reject(new Error('launcher exited before replying')));
+        child.stdin.write(JSON.stringify({ version: 1, id: randomUUID(), command: 'status' }) + '\n');
+      });
+      expect(reply.value.permissionClient.selfResponsible).toBe(true);
+      // The exec'd helper (the launcher's own child) became a supervisor of a disclaimed helper.
+      const exec = spawnSync('/usr/bin/pgrep', ['-P', String(child.pid)], { encoding: 'utf8' }).stdout.trim();
+      expect(exec).toMatch(/^\d+$/);
+      expect(spawnSync('/usr/bin/pgrep', ['-P', exec], { encoding: 'utf8' }).stdout.trim()).toMatch(/^\d+$/);
+    } finally { child.stdin.end(); child.kill('SIGTERM'); }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}, 180000);
 
 test('explicit foreground handoff remains in native payload and operation identity without replacing the observation binding', async () => {
   const f = fixture(); await f.provider.setEnabled(true, true); await f.provider.selectWindow(f.selection, true);
