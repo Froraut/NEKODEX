@@ -65,12 +65,13 @@ func ownedHelperBundle() -> Bundle? {
 /// The TCC grant now belongs to this helper, so speaking its stdio protocol must not be enough
 /// to use it: any same-user process could spawn the bundle. The first enable of each helper
 /// process therefore needs the user's answer to a system alert this process shows; a caller
-/// without its own input rights cannot answer it. The default button refuses, and a timeout or
-/// failure refuses. The answer is kept only in this process, whose stdio belongs to the owner
+/// without its own input rights cannot answer it. The default button and any failure refuse.
+/// Waiting for the person has no expiry; the owner watch still stops the helper if its caller exits.
+/// The answer is kept only in this process, whose stdio belongs to the owner
 /// that started it; nothing is persisted, so every new helper process asks again.
 func userConfirmedEnable() -> Bool {
     var response: CFOptionFlags = 0
-    let shown = CFUserNotificationDisplayAlert(120, CFOptionFlags(kCFUserNotificationCautionAlertLevel), nil, nil, nil,
+    let shown = CFUserNotificationDisplayAlert(0, CFOptionFlags(kCFUserNotificationCautionAlertLevel), nil, nil, nil,
         "Allow NEKODEX desktop control?" as CFString,
         ("NEKODEX Desktop Helper will capture the window you attach and send the clicks and text you approve to it, until NEKODEX releases "
          + "desktop access or restarts. Allow only if you just chose Enable desktop provider in NEKODEX.") as CFString,

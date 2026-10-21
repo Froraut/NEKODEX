@@ -150,6 +150,9 @@ The exact AX focused window, process instance, frame, original image and focused
 control checks remain in force.
 
 The Bun owner waits for this answer without its 12-second request deadline.
+The alert itself also has no expiry, so a person returning later finds the same
+pending decision. Refusal, caller closure and helper shutdown still end the
+request; no approval is saved beyond that exact helper process.
 The launcher's explicit enable request also waits for that same terminal answer,
 instead of aborting the HTTP request after five seconds. Only this human enable
 uses the trusted supervisor's `timeoutMs: null`; ordinary controls retain their
