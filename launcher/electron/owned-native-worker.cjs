@@ -282,7 +282,7 @@ function createWorkerService(options = {}, shared) {
     if (journal.snapshot().some(row => row.actionId === actionId)) throw fail('intent_already_recorded', 'Inspect the recorded native action instead of replaying it');
     if (journal.snapshot().some(row => row.state === 'unknown' && !row.retired)) throw fail('reconciliation_required', 'Retire the previous uncertain worker before creating another');
     busy = 'Creating private native worker'; state = 'creating';
-    let row;
+    let row, creationWritten = false;
     try {
       const admitted = shared ? null : admission.prestart(); journal.acquire();
       const handle = randomUUID();
@@ -301,7 +301,7 @@ function createWorkerService(options = {}, shared) {
         developerInstructions: textMode ? TEXT_DEVELOPER_INSTRUCTIONS : `${NEKO_DEVELOPER_INSTRUCTIONS}\n${NEKO_OUTPUT_FORMAT}`,
         ...(resumeThreadId || forkThreadId ? { threadId: resumeThreadId || forkThreadId, excludeTurns: true } : {}),
         ...(forkThreadId && shared.persistent.lastTurnId ? { lastTurnId: shared.persistent.lastTurnId } : {}) },
-      requestId => { row = update(actionId, { state: 'offered', ownerHeld: true, requestId }); });
+      requestId => { row = update(actionId, { state: 'offered', ownerHeld: true, requestId }); creationWritten = true; });
       if (!safeId(result?.thread?.id) || resumeThreadId && result.thread.id !== resumeThreadId || result.thread.ephemeral !== !shared?.persistent
         || result.thread.forkedFromId !== (resumeThreadId ? shared.persistent.forkedFromThreadId : forkThreadId ?? null)
         || result.thread.parentThreadId !== null || result.thread.status?.type !== 'idle'
@@ -315,16 +315,20 @@ function createWorkerService(options = {}, shared) {
       const receipt = update(actionId, { state: 'completed', ownerHeld: false, threadId: worker.threadId }); state = 'ready';
       return { workerHandle: handle, threadId: worker.threadId, admissionId: admission.admissionId, receipt };
     } catch (reason) {
+      const knownNotWritten = Boolean(row && !creationWritten);
       if (row) {
-        try { update(actionId, { state: reason.authoritative ? 'failed' : 'unknown', ownerHeld: !reason.authoritative && !worker?.rpc.closed, reasonCode: reason.code || 'create_failed' }); } catch { /* earlier offered receipt remains uncertain */ }
+        try { update(actionId, { state: knownNotWritten || reason.authoritative ? 'failed' : 'unknown',
+          ownerHeld: !knownNotWritten && !reason.authoritative && !worker?.rpc.closed, reasonCode: reason.code || 'create_failed',
+          ...(knownNotWritten ? { writeDisposition: 'not-written', ...(reason.preflightFailure ? { preflightFailure: reason.preflightFailure } : {}) } : {}) }); } catch { /* earlier offered receipt remains uncertain */ }
       }
-      state = row && !reason.authoritative ? 'unknown' : 'retired';
+      state = row && !knownNotWritten && !reason.authoritative ? 'unknown' : 'retired';
       await worker?.rpc.destroy();
-      if (row && !reason.authoritative) {
+      if (row && !knownNotWritten && !reason.authoritative) {
         try { update(actionId, { state: 'unknown', ownerHeld: false, reasonCode: reason.code || 'create_failed' }); } catch { /* Preserve the earlier held receipt if reconciliation cannot be saved. */ }
       }
       throw Object.assign(fail(reason.code || 'native_unavailable', 'Private native worker creation is unavailable'),
-        typeof reason.field === 'string' ? { field: reason.field } : {});
+        { ...(typeof reason.field === 'string' ? { field: reason.field } : {}),
+          ...(knownNotWritten && reason.preflightFailure ? { preflightFailure: reason.preflightFailure } : {}) });
     } finally { busy = null; }
   }
   async function offerOwnedTurn({ workerHandle, actionId, text, images, outputSchema } = {}) {
@@ -566,8 +570,30 @@ function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 30000, t
             const creation = ['thread/start', 'thread/fork', 'thread/resume'].includes(method);
             if (creation || method === 'turn/start') {
               if (uncertainOwner()) throw fail('worker_busy', 'Native account has an uncertain owner');
-              admission.checkAccount(await rpc.request('account/read', { refreshToken: false }), await rpc.request('account/rateLimits/read', {}));
-              if (stopped || fault) throw fault || fail('client_closed', 'Native account server is closing');
+              const ensureCurrent = () => {
+                if (stopped || fault || listener.locallyClosed) throw fault || fail('client_closed', 'Native account owner is closing');
+                if (persistent ? !persistentGates.has(persistent.token) : persistentGates.size) throw fail('worker_busy', 'Native account conversation operation changed');
+              };
+              let phase = 'account-read';
+              // Retry only the read-only pair, once, before creating a thread. No
+              // thread/start, turn/start or startup request can enter this loop.
+              for (let attempt = 0; ; attempt++) {
+                try {
+                  ensureCurrent(); phase = 'account-read';
+                  const account = await rpc.request('account/read', { refreshToken: false });
+                  ensureCurrent(); phase = 'account-rate-limits';
+                  const usage = await rpc.request('account/rateLimits/read', {});
+                  ensureCurrent(); phase = 'account-check'; admission.checkAccount(account, usage);
+                  break;
+                } catch (reason) {
+                  ensureCurrent();
+                  if (creation && attempt === 0 && reason.code === 'rpc_timeout') continue;
+                  const codes = ['rpc_timeout', 'rpc_rejected', 'client_closed', 'worker_busy', 'account_changed'];
+                  throw Object.assign(reason, { preflightFailure: { phase,
+                    reasonCode: codes.includes(reason.code) ? reason.code : 'account_preflight_failed' } });
+                }
+              }
+              ensureCurrent();
               if (uncertainOwner()) throw fail('worker_busy', 'Native account has an uncertain owner');
             }
             let result;

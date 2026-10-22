@@ -57,6 +57,9 @@ export interface AgentNativeReceipt {
   nativeTurnReceiptId: string | null;
   acceptanceReceipt: string | null;
   inputAuthorship: "automatic-host";
+  /** Bounded metadata diagnostics; never a raw provider error or permission to resend. */
+  preflightFailure?: { phase: "account-read" | "account-rate-limits" | "account-check";
+    reasonCode: "rpc_timeout" | "rpc_rejected" | "client_closed" | "worker_busy" | "account_changed" | "account_preflight_failed" };
   /** Main obtains this only from the exact owned canonical final assistant item/turn. */
   assistantText?: string;
   /** Native-issued identity/time plus main-owned source; optional history never changes execution. */

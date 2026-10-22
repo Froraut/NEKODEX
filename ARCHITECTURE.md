@@ -449,6 +449,12 @@ policy and source/binary identity are checked together. Same-owner reads and
 bounded waits observe the existing operation without a new offer. Qualification
 prepares and checks the account server before advertising models, without opening
 a thread or sending inference. A saved login or old receipt is not fresh admission.
+Before a new thread creation, only the read-only account/usage pair may retry once
+on `rpc_timeout`; each attempt rereads account identity and checks fresh usage.
+A timeout before the creation write records a failed, not-written create and
+bounded phase/code diagnostics in the bridge's `not_sent` receipt. Cancellation
+stops that retry. Written creation and turn requests never use this retry path;
+their exact pending owner and late acknowledgement remain authoritative.
 
 Core shutdown retains one cleanup-attempt owner across repeated signals. A failed
 Native cleanup keeps admission draining and preserves unknown receipts, but retires

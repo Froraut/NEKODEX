@@ -25,6 +25,8 @@ export interface OwnedNativeReceipt {
   observations: Array<{ state: OwnedNativeReceipt['state']; ownerHeld: boolean; turnId: string | null;
     timestampMs: number; reasonCode?: string }>;
   inputAuthorship: 'automatic-host' | 'direct-user'; usage: OwnedNativeUsage | null;
+  writeDisposition?: 'not-written';
+  preflightFailure?: import('../../src/agent-mode/native-protocol').AgentNativeReceipt['preflightFailure'];
   reasonCode?: string; nativeStatus?: 'completed' | 'failed' | 'interrupted';
   canonicalItems?: OwnedNativeCanonicalItem[];
   structuredOutput?: unknown;
