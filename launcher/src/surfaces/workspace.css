@@ -26,7 +26,7 @@
 .nk-workspace__oids { display: flex; flex-wrap: wrap; gap: var(--space-3); color: var(--text-tertiary); font-size: 12px; }
 .nk-workspace__oids span { min-width: 0; overflow-wrap: anywhere; }
 .nk-workspace__oids code { font: 11px/1.5 var(--font-mono); }
-@media (max-width: 850px) {
+@container workspace (max-width: 850px) {
   .nk-workspace__layout { grid-template-columns: minmax(0, 1fr); }
   .nk-workspace__files { max-height: 380px; overflow: auto; }
   .nk-workspace__text { min-height: 300px; }

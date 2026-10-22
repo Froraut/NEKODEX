@@ -28,5 +28,5 @@
 .agent-mode-records p { margin-block: var(--space-2); }
 .agent-mode-records pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; font-size: 12px; }
 .agent-mode-detail h2:focus { outline: none; }
-@media (max-width: 860px) { .agent-mode-workspace { grid-template-columns: 1fr; } }
-@media (max-width: 560px) { .agent-mode-columns, .agent-mode-meta { grid-template-columns: 1fr; } }
+@container workspace (max-width: 860px) { .agent-mode-workspace { grid-template-columns: 1fr; } }
+@container workspace (max-width: 560px) { .agent-mode-columns, .agent-mode-meta { grid-template-columns: 1fr; } }

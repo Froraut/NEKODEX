@@ -99,6 +99,7 @@ export function NativeThreadsSurface({ language, disabled = false, api, historyA
   const [loaded, setLoaded] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState<'list' | 'read' | 'fork' | 'acknowledge' | null>(null);
   const [error, setError] = useState<SafeError | null>(null);
   const [forkedId, setForkedId] = useState<string | null>(null);
@@ -227,12 +228,12 @@ export function NativeThreadsSurface({ language, disabled = false, api, historyA
       <Panel title={text.rows} titleId={listId} className="native-threads__list-panel"
         actions={<Badge>{text.metadataOnly}</Badge>}>
         <PanelStack className="native-threads__panel-body">
-        {threads.length ? <TextField type="search" label={text.search} value={query}
+        {threads.length ? <TextField ref={searchRef} type="search" label={text.search} value={query}
           onChange={event => setQuery(event.target.value)} /> : null}
         {!loaded && !threads.length ? <EmptyState icon="activity" title={text.initialTitle}>{text.initialBody}</EmptyState>
           : !threads.length ? <EmptyState icon="activity" title={text.emptyTitle}>{text.emptyBody}</EmptyState>
             : !visible.length ? <EmptyState title={text.noMatch}
-              action={<Button size="sm" onClick={() => setQuery('')}>{text.clear}</Button>} />
+              action={<Button size="sm" onClick={() => { setQuery(''); searchRef.current?.focus(); }}>{text.clear}</Button>} />
               : <ul className="native-threads__list" aria-labelledby={listId} aria-busy={busy === 'list'}>
                 {visible.map(({ thread, depth, parentMissing }) => <li key={thread.id}
                   className={`native-threads__row${selectedId === thread.id ? ' is-selected' : ''}`}

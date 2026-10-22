@@ -46,7 +46,7 @@ function copy(language: Language) {
     optIn: 'Заголовок запроса',
     chatgptMode: 'Модель, выбранная во вкладке', chatgptFamily: 'Версия модели', chatgptFamilyHint: 'Заполняется по выбранной модели: уровни GPT-5.6 Sol — 5.6, Pro (GPT-6 Astra) — 6. Меняйте, только если запросы закрепляют другую версию. У Luna версии нет.',
     chatgptFamilyRequired: 'Укажите версию модели, например 5.6: запросы к этой модели её передают, и без неё каждая отправка будет отклонена.',
-    bind: 'Привязать вкладку ChatGPT', unbind: 'Отвязать', bound: 'Вкладка ChatGPT привязана', sending: 'Идёт отправка', held: 'Исход удержан',
+    bind: 'Привязать вкладку ChatGPT', unbind: 'Отвязать', bound: 'Вкладка ChatGPT привязана', unbound: 'Вкладка ChatGPT не привязана', sending: 'Идёт отправка', held: 'Исход удержан',
     account: 'Аккаунт (отпечаток)', visibleModel: 'Видимая модель', release: 'Я проверил вкладку, снять удержание',
     heldText: 'У отправленного через companion сообщения нет подтверждённого исхода. Оно никогда не отправляется повторно; новые запросы к этой вкладке отклоняются, пока вы не проверите её и не снимете удержание. Остальные задачи идут через встроенный браузер.',
     lastTurn: 'Последний ход', userMessage: 'Сообщение', assistantMessage: 'Ответ',
@@ -78,7 +78,7 @@ function copy(language: Language) {
     optIn: 'Request header',
     chatgptMode: 'Model selected in the tab', chatgptFamily: 'Model version', chatgptFamilyHint: 'Filled in from the selected model: GPT-5.6 Sol levels are 5.6 and Pro (GPT-6 Astra) is 6. Change it only if your requests pin another version. Luna has no version.',
     chatgptFamilyRequired: 'Enter the model version, for example 5.6: requests for this model carry it, and without it every send is refused.',
-    bind: 'Bind ChatGPT tab', unbind: 'Unbind', bound: 'ChatGPT tab bound', sending: 'Sending', held: 'Outcome held',
+    bind: 'Bind ChatGPT tab', unbind: 'Unbind', bound: 'ChatGPT tab bound', unbound: 'ChatGPT tab not bound', sending: 'Sending', held: 'Outcome held',
     account: 'Account (fingerprint)', visibleModel: 'Visible model', release: 'I checked the tab, release the hold',
     heldText: 'A message sent through the companion has no confirmed outcome. It is never resent; new requests for this tab are refused until you inspect it and release the hold. Other tasks keep using the built-in browser.',
     lastTurn: 'Last turn', userMessage: 'Message', assistantMessage: 'Answer',
@@ -213,7 +213,7 @@ export function BrowserCompanionSurface({ language, api, disabled = false }: { l
     <Panel title={text.chatgpt}>
       <p>{text.chatgptHint}</p>
       <p>{text.chatgptRouting}</p>
-      {chat ? <BadgeRow aria-live="polite"><Badge>{chat.state === 'held' ? text.held : chat.state === 'sending' ? text.sending : chat.state === 'bound' ? text.bound : text.noScope}</Badge></BadgeRow> : null}
+      {chat ? <BadgeRow aria-live="polite"><Badge>{chat.state === 'held' ? text.held : chat.state === 'sending' ? text.sending : chat.state === 'bound' ? text.bound : text.unbound}</Badge></BadgeRow> : null}
       {chat?.held ? <Notice tone="warning">{text.heldText} <code>{chat.held.operationId}</code> · {chat.held.reason}
         <div className="browser-companion-actions"><Button disabled={locked} busy={pending === 'release-chatgpt-held'} onClick={() => releaseHeld(chat.held!.operationId)}>{text.release}</Button></div></Notice> : null}
       {chat?.bound ? <dl className="browser-companion-data">

@@ -628,6 +628,18 @@ new physical network interruption acceptance.
 
 ### Tools, skill environments and isolated builds
 
+The Agent tools renderer keeps the selected task context above six mounted
+section groups. Switching sections hides presentation without unmounting drafts
+or transferring execution ownership. `AgentToolsCallSummary.tsx` projects saved
+arguments into localized action, target and effect text; the original request
+remains inspectable and the existing exact-call approval handler remains the
+only invocation path. Desktop read availability is checked against the call's
+own attached selection, while input still requires the current selected window.
+The projection owns no IPC, permission or lifecycle state. Shared dialogs bound
+their scrollable body to the viewport and retain reachable actions; loading,
+failed initial reads and confirmed empty inventories remain distinct in feature
+surfaces.
+
 `StandaloneMcpHost` and ToolJournal own discovery, exact schemas/arguments,
 approval, durable unknown-before-effect and result reconciliation. Configured
 servers and builtin browser/desktop/remote/VM tools use that same owner.

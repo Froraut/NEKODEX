@@ -77,7 +77,7 @@ export function useModalFocus(
       const style = window.getComputedStyle(element);
       return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
     };
-    const selector = 'button:not(:disabled), select:not(:disabled), input:not(:disabled), video[controls], [href], [tabindex]:not([tabindex="-1"])';
+    const selector = 'button:not(:disabled), select:not(:disabled), input:not(:disabled), textarea:not(:disabled), video[controls], [href], [tabindex]:not([tabindex="-1"])';
     const focusable = () => [...modal.querySelectorAll<HTMLElement>(selector)].filter(visible);
     const toastControls = () => [...(document.querySelector(TOAST_STACK)?.querySelectorAll<HTMLElement>(selector) ?? [])].filter(visible);
     const inToasts = (node: Node | null) => Boolean(node && document.querySelector(TOAST_STACK)?.contains(node));

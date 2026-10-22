@@ -41,7 +41,8 @@ test('rendered tools Refresh replaces selected task calls and rejects stale task
       expect(await task.inputValue()).toBe('task');
       expect(await call.locator('option').count()).toBe(1);
     }
-    expect(await page.evaluate(() => ({ mutations: (window as any).fixture.mutations, requests: (window as any).fixture.requests.filter((x: string) => !['status', 'remoteStatus'].includes(x)) })))
+    // Allow only known passive observations; every other request still fails the mutation assertion.
+    expect(await page.evaluate(() => ({ mutations: (window as any).fixture.mutations, requests: (window as any).fixture.requests.filter((x: string) => !['status', 'remoteStatus', 'vmNetworkStatus'].includes(x)) })))
       .toEqual({ mutations: 0, requests: [] });
     expect(errors).toEqual([]);
   } finally { await browser?.close(); server.stop(true); }

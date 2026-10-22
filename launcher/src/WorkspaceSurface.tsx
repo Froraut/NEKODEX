@@ -13,6 +13,7 @@ const copy = {
   en: {
     title: "Workspace", subtitle: "Open a local folder, edit files and review its Git changes.", pick: "Choose folder",
     folder: "Folder", remove: "Remove from list", files: "Files", empty: "Choose a folder to open its files.",
+    loadingFolders: "Loading saved folders…", foldersFailed: "Saved folders could not be loaded", retryFolders: "Retry loading folders",
     selectFile: "Select a file from the tree or open a relative path.", open: "Open file", path: "File path within this folder",
     editor: "Editor", close: "Close file", save: "Save file", dirty: "Unsaved changes", saved: "Saved", retained: "Draft saved locally",
     drafts: "Recoverable drafts", discard: "Discard draft", discardTitle: "Discard this draft?",
@@ -34,6 +35,7 @@ const copy = {
   ru: {
     title: "Рабочая область", subtitle: "Откройте локальную папку, изменяйте файлы и просматривайте изменения Git.", pick: "Выбрать папку",
     folder: "Папка", remove: "Убрать из списка", files: "Файлы", empty: "Выберите папку, чтобы открыть её файлы.",
+    loadingFolders: "Загрузка сохранённых папок…", foldersFailed: "Не удалось загрузить сохранённые папки", retryFolders: "Повторить загрузку папок",
     selectFile: "Выберите файл в дереве или откройте относительный путь.", open: "Открыть файл", path: "Путь к файлу внутри папки",
     editor: "Редактор", close: "Закрыть файл", save: "Сохранить файл", dirty: "Есть изменения", saved: "Сохранено", retained: "Черновик сохранён локально",
     drafts: "Сохранённые черновики", discard: "Удалить черновик", discardTitle: "Удалить этот черновик?",
@@ -174,6 +176,12 @@ function GitReview({ workspaceId, c, language, dirtyPaths, onChanged, onOpenFile
 export function WorkspaceSurface({ language }: { language: Language }) {
   const c = language === "ru" ? copy.ru : copy.en;
   const [roots, setRoots] = useState<LocalWorkspaceRoot[]>([]);
+  const [rootsKnown, setRootsKnown] = useState(false);
+  const [rootsLoading, setRootsLoading] = useState(true);
+  const [rootsError, setRootsError] = useState("");
+  const rootsRequest = useRef(0);
+  const folderButton = useRef<HTMLButtonElement>(null);
+  const retryFoldersButton = useRef<HTMLButtonElement>(null);
   const [selected, setSelected] = useState("");
   const [opened, setOpened] = useState("");
   const [pathInput, setPathInput] = useState("");
@@ -194,11 +202,32 @@ export function WorkspaceSurface({ language }: { language: Language }) {
   }
   const mounted = useRef(true);
   const selectedRef = useRef(selected); selectedRef.current = selected;
+  async function loadRoots(returnFocus = false) {
+    const request = ++rootsRequest.current;
+    setRootsLoading(true); setRootsError("");
+    try {
+      const value = await api().workspaceRoots();
+      if (!mounted.current || request !== rootsRequest.current) return;
+      setRoots(value); setRootsKnown(true);
+      setSelected(previous => previous || value[0]?.id || "");
+    } catch (reason) {
+      // A failed refresh does not discard already known folders, the selected file or its draft.
+      if (mounted.current && request === rootsRequest.current) setRootsError(message(reason));
+    } finally {
+      if (mounted.current && request === rootsRequest.current) {
+        setRootsLoading(false);
+        if (returnFocus) requestAnimationFrame(() => {
+          if (mounted.current && document.activeElement === document.body) {
+            (retryFoldersButton.current ?? folderButton.current)?.focus();
+          }
+        });
+      }
+    }
+  }
   useEffect(() => {
     mounted.current = true;
-    api().workspaceRoots().then((value) => { if (mounted.current) { setRoots(value); setSelected((previous) => previous || value[0]?.id || ""); } })
-      .catch((reason) => { if (mounted.current) setError(message(reason)); });
-    return () => { mounted.current = false; };
+    void loadRoots();
+    return () => { mounted.current = false; rootsRequest.current++; };
   }, []);
   async function refreshDrafts() {
     const id = selectedRef.current; if (!id) return;
@@ -209,7 +238,7 @@ export function WorkspaceSurface({ language }: { language: Language }) {
   async function pick() {
     setPicking(true); setError("");
     try { const root = await api().workspacePick(); if (mounted.current && root) {
-      await navigate(() => { setRoots((previous) => previous.some((item) => item.id === root.id) ? previous : [...previous, root]); setOpened(""); setSelected(root.id); });
+      await navigate(() => { setRoots((previous) => previous.some((item) => item.id === root.id) ? previous : [...previous, root]); setRootsKnown(true); setOpened(""); setSelected(root.id); });
     } } catch (reason) { if (mounted.current) setError(message(reason)); }
     finally { if (mounted.current) setPicking(false); }
   }
@@ -231,14 +260,17 @@ export function WorkspaceSurface({ language }: { language: Language }) {
   };
   const open = (path: string) => { void navigate(() => { setDirtyPaths([]); setOpened(path); setPathInput(path); }); };
   return <Page width="wide" className="nk-workspace" >
-    <SurfaceHeader title={c.title} subtitle={c.subtitle} actions={<Button variant="primary" busy={picking} onClick={() => void pick()}>{c.pick}</Button>} />
+    <SurfaceHeader title={c.title} subtitle={c.subtitle} actions={<Button ref={folderButton} variant="primary" busy={picking} disabled={rootsLoading} onClick={() => void pick()}>{c.pick}</Button>} />
     {error && <Notice tone="error">{error}</Notice>}
+    {rootsLoading && <p role="status">{c.loadingFolders}</p>}
+    {rootsError && <Notice tone="error" title={c.foldersFailed}
+      action={<Button ref={retryFoldersButton} size="sm" busy={rootsLoading} disabled={picking} onClick={() => void loadRoots(true)}>{c.retryFolders}</Button>}>{rootsError}</Notice>}
     {roots.length > 0 && <div className="nk-workspace__root-bar">
       <Select label={c.folder} value={selected} onChange={(id) => { void navigate(() => { setOpened(""); setSelected(id); }); }} options={[{ value: "", label: c.folder }, ...roots.map((item) => ({ value: item.id, label: item.name }))]} />
       {root && <><code className="nk-workspace__root-path">{root.path}</code>
         <Button size="sm" onClick={() => void forget()} disabled={Boolean(opened)} title={opened ? c.close : undefined}>{c.remove}</Button></>}
     </div>}
-    {!root && <Panel><p>{c.empty}</p></Panel>}
+    {rootsKnown && !root && <Panel><p>{c.empty}</p></Panel>}
     {root && <>
       {drafts.length > 0 && <Panel title={c.drafts} padding="compact"><div className="nk-workspace__drafts">
         {drafts.map((draft) => <Button size="sm" key={draft.id} onClick={() => open(draft.path)}>{draft.path}</Button>)}

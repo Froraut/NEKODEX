@@ -296,6 +296,8 @@ body {
 .nk-select--sm select { height: var(--size-control-sm); }
 .nk-select select:is(:disabled, [aria-disabled="true"]), .nk-input:is(:disabled, [aria-disabled="true"]) { color: var(--text-disabled); opacity: 0.62; }
 .nk-input { padding: 0 var(--space-3); }
+/* Multiline controls use their rows instead of the single-line control height. */
+textarea.nk-input { height: auto; min-height: calc(2 * 20px + 2 * var(--space-2) + 2px); padding-block: var(--space-2); resize: vertical; }
 .nk-input::placeholder { color: var(--text-tertiary); }
 .nk-input[aria-invalid="true"] { border-color: var(--text-error); }
 /* App: a search field's clear button is the system's close icon (1.7 stroke, icon tokens) instead of Chromium's
@@ -615,10 +617,13 @@ button.nk-stat:hover .nk-stat__label .nk-icon { color: var(--text-accent); }
 /* ---------- Dialog ---------- */
 .nk-dialog-backdrop { position: fixed; z-index: var(--z-toast); inset: 0; display: grid; place-items: center; padding: var(--space-4); background: var(--bg-scrim); }
 .nk-dialog-backdrop.is-inline { position: absolute; }
-.nk-dialog { width: min(480px, 100%); padding: var(--space-6); border: 1px solid var(--border-heavy); border-radius: var(--radius-lg); background: var(--bg-elevated); box-shadow: var(--shadow-overlay); }
+.nk-dialog { display: flex; flex-direction: column; width: min(480px, 100%); max-height: calc(100dvh - 2 * var(--space-4)); min-height: 0; padding: var(--space-6); overflow: hidden; border: 1px solid var(--border-heavy); border-radius: var(--radius-lg); background: var(--bg-elevated); box-shadow: var(--shadow-overlay); }
+.nk-dialog-backdrop.is-inline > .nk-dialog { max-height: 100%; }
+.nk-dialog > header, .nk-dialog > footer { flex: none; overflow-wrap: anywhere; }
 .nk-dialog > header small { display: block; margin-bottom: var(--space-1); color: var(--text-accent); font-size: 13px; line-height: 18px; font-weight: 500; }
 .nk-dialog > header h2 { margin: 0; font-size: 20px; line-height: 26px; font-weight: 600; letter-spacing: -0.02em; }
-.nk-dialog__body { margin-top: var(--space-3); color: var(--text-secondary); font-size: 15px; line-height: 22px; }
+.nk-dialog__body { min-height: 0; margin-top: var(--space-3); overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; scroll-padding-block: var(--space-1); color: var(--text-secondary); font-size: 15px; line-height: 22px; overflow-wrap: anywhere; }
+.nk-dialog__body:focus-visible { outline-offset: -2px; }
 .nk-dialog__body > p { margin: 0 0 var(--space-3); }
 .nk-dialog > footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-6); }
 
