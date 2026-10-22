@@ -59,7 +59,7 @@ function makeNativeAccountAdmission({ authority, lease, profile, inventory, inve
     thread_unload_delay_secs: 0,
     web_search: 'disabled', notify: [], project_root_markers: [], project_doc_max_bytes: 0,
     include_environment_context: false, include_environment_context_time: false, check_for_update_on_startup: false,
-    cli_auth_credentials_store: 'file', features: Object.fromEntries([...DISABLED_FEATURES.map(key => [key, false]), ['skip_host_skill_discovery', true]]),
+    cli_auth_credentials_store: 'file', features: Object.fromEntries([...DISABLED_FEATURES.map(key => [key, false]), ['skip_host_skill_discovery', true], ['respect_system_proxy', true]]),
     tools: { update_plan: { enabled: false }, experimental_request_user_input: { enabled: false } }, agents: { enabled: false },
     memories: { use_memories: false, generate_memories: false }, skills: { include_instructions: false, bundled: { enabled: false } },
     cloud: { skills: { enabled: false } }, analytics: { enabled: false }, feedback: { enabled: false }, history: { persistence: 'none' } };

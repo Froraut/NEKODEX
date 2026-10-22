@@ -168,6 +168,9 @@ macTest('one owner continues exact thread with durable ACK, early canonical even
   const f = fixture();
   try {
     expect(f.admission.config.thread_unload_delay_secs).toBe(0);
+    expect(() => f.admission.checkEffective({ config: { ...f.admission.config,
+      features: { ...f.admission.config.features, respect_system_proxy: false } }, layers: [] }, { requirements: null }))
+      .toThrow('Native effective configuration differs from admission');
     expect(() => f.admission.checkEffective({ config: { ...f.admission.config, thread_unload_delay_secs: 1800 }, layers: [] }, { requirements: null }))
       .toThrow('Native effective configuration differs from admission');
     expect(f.service.inspectOwnedWorker().state).toBe('disconnected'); expect(f.launches).toHaveLength(0);

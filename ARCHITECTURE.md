@@ -364,6 +364,8 @@ not a chronological build log or a claim that the complete program is accepted.
 
 ### Tasks, Native workers and human waits
 
+Owned Native inventory and account execution pin `features.respect_system_proxy=true`: use the user's system route on the first metadata request. The upstream fallback otherwise cancels a bootstrap GET at five seconds and retries inside a fifteen-second workspace-routing deadline. Metadata RPCs allow thirty seconds so the host receives the Native result instead of racing that deadline; this changes neither OS proxy settings nor account/routing validation.
+
 `AgentModeStore` owns task families, requirement/plan revisions, mailbox packets,
 commands, dispatch claims, canonical pending calls and immutable receipt history.
 The runtime/runner owns live scheduling and one durable sender. Dependency-ready
