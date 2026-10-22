@@ -937,7 +937,7 @@ function LauncherShell({
           </SidebarGroup>
           <SidebarGroup label={copy.configuration}>
             <SidebarItem active={surface === 'agent-tools'} icon="mcp" label={language === 'ru' ? 'Инструменты агентов' : 'Agent tools'} onClick={() => navigateSurface('agent-tools')} />
-            <SidebarItem active={surface === 'browser-companion'} icon="browser" label={language === 'ru' ? 'Расширение Chrome' : 'Chrome companion'} onClick={() => navigateSurface('browser-companion')} />
+            <SidebarItem active={surface === 'browser-companion'} icon="browser" label={language === 'ru' ? 'Браузерный companion' : 'Browser companion'} onClick={() => navigateSurface('browser-companion')} />
             <SidebarItem active={surface === 'local-control-api'} icon="setup" label={language === 'ru' ? 'Локальный API' : 'Local API'} onClick={() => navigateSurface('local-control-api')} />
             <SidebarItem
               active={surface === "setup" || surface === "mcp"}

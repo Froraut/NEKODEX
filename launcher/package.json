@@ -1,8 +1,8 @@
 {
   "name": "codex-web-gpt-launcher",
-  "version": "6.1.33-nekodex.17",
+  "version": "6.1.33-nekodex.18",
   "private": true,
-  "description": "NEKODEX \u2014 a desktop workspace for ChatGPT accounts, coding agents, and local tools.",
+  "description": "NEKODEX — a desktop workspace for ChatGPT accounts, coding agents, and local tools.",
   "author": "FroRaut",
   "updateRepository": "Froraut/NEKODEX",
   "type": "module",
@@ -145,7 +145,7 @@
       "createStartMenuShortcut": true,
       "runAfterFinish": true
     },
-    "copyright": "Copyright \u00a9 FroRaut and upstream contributors",
+    "copyright": "Copyright © FroRaut and upstream contributors",
     "dmg": {
       "artifactName": "NEKODEX-${version}-mac-${arch}.${ext}",
       "title": "NEKODEX ${version}"

@@ -143,7 +143,7 @@ export function Dialog({ open, title, eyebrow, actions, onClose, role = "dialog"
           {eyebrow ? <small>{eyebrow}</small> : null}
           <h2 id={labelId}>{title}</h2>
         </header>
-        <div className="nk-dialog__body">{children}</div>
+        <div aria-labelledby={labelId} className="nk-dialog__body" role="region" tabIndex={0}>{children}</div>
         {actions ? <footer>{actions}</footer> : null}
       </section>
     </div>

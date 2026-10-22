@@ -32,4 +32,4 @@
 .native-persistent__history-messages { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-4, 16px); min-width: 0; }
 .native-persistent__history-messages > li { display: grid; gap: var(--space-2, 8px); min-width: 0; }
 .native-persistent__history-messages small, .native-persistent__first-recording small { color: var(--text-secondary); overflow-wrap: anywhere; }
-@media (max-width: 720px) { .native-persistent__layout { grid-template-columns: minmax(0, 1fr); } }
+@container workspace (max-width: 720px) { .native-persistent__layout { grid-template-columns: minmax(0, 1fr); } }

@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Button, Checkbox, Notice, Page, Panel, Select, TextField } from './design';
+import { Button, Checkbox, Notice, Page, Panel, Select, SurfaceHeader, TextField } from './design';
 import type { Language } from './types';
 import type { ExternalUsageApi, ExternalUsageClient, ExternalUsageEstimate, ExternalUsageScope, ExternalUsageSnapshot } from './external-usage-types';
 import { externalUsageCopy } from './external-usage-copy';
@@ -14,7 +14,7 @@ export function ExternalUsageSurface({ api, language = 'en' }: { api: ExternalUs
   const [account, setAccount] = useState('local-account');
   const [scope, setScope] = useState<ExternalUsageScope>('unknown');
   const [consent, setConsent] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(true);
   const [error, setError] = useState('');
   const [deleting, setDeleting] = useState<string | null>(null);
   const owner = useRef(0), inFlight = useRef(false);
@@ -41,11 +41,12 @@ export function ExternalUsageSurface({ api, language = 'en' }: { api: ExternalUs
     {value.pricingScenario ? <> <span>{value.pricingScenario}</span></> : null}
     {value.unmappedModels.length ? <> <span>{c.unmappedModels}: {value.unmappedModels.join(', ')}</span></> : null}
   </div>;
-  return <Page width="wide"><section className="external-usage" aria-label={c.title}>
-    <Panel title={c.title} actions={<Button disabled={busy} onClick={() => void run(() => api.request({action:'status'}))}>{c.refresh}</Button>}>
-      <p className="external-usage__intro">{c.intro}</p>
+  return <Page width="wide"><SurfaceHeader title={c.title} subtitle={c.intro} actions={<Button busy={busy} onClick={() => void run(() => api.request({action:'status'}))}>{c.refresh}</Button>} />
+    <section className="external-usage" aria-label={c.title}>
+    <Panel title={language === 'ru' ? 'Источники и импорт' : 'Sources and import'}>
+      {busy ? <Notice>{language === 'ru' ? 'Загрузка данных источников…' : 'Loading source data…'}</Notice> : null}
       <details className="external-usage__details"><summary>{c.importDetails}</summary><p>{c.description}</p><p>{c.formats}</p><p className="external-usage__muted">{c.coverage}</p></details>
-      {error ? <Notice tone="error" title={error} role="alert" /> : null}
+      {error ? <Notice tone="error" title={language === 'ru' ? 'Данные источников недоступны' : 'Source data is unavailable'} meta={snapshot ? (language === 'ru' ? 'Показаны ранее загруженные данные; их актуальность не подтверждена.' : 'Previously loaded data is shown; its current state is unconfirmed.') : undefined}>{error}</Notice> : null}
       <div className="external-usage__form">
         <div className="external-usage__field"><label htmlFor={`${baseId}-client`}>{c.client}</label><Select id={`${baseId}-client`} label={c.client} value={client} onChange={value => setClient(value as ExternalUsageClient)} options={[{value:'codex',label:'Codex'},{value:'claude',label:'Claude Code'},{value:'gemini',label:'Gemini CLI'}]} disabled={busy} /></div>
         <TextField label={c.account} hint={c.accountHint} value={account} onChange={event => setAccount(event.target.value)} pattern="[A-Za-z0-9_-]{1,40}" maxLength={40} disabled={busy} />
@@ -56,7 +57,7 @@ export function ExternalUsageSurface({ api, language = 'en' }: { api: ExternalUs
         <Button variant="primary" disabled={busy || !consent || !/^[A-Za-z0-9_-]{1,40}$/.test(account)} onClick={() => void run(() => api.selectRoot({client,accountPseudonym:account,scope,consent:true}).then(next => { setConsent(false); return next; }))}>{c.pick}</Button>
       </div>
     </Panel>
-    {!snapshot?.sources.length ? <Panel title={c.recorded}><p>{c.empty}</p></Panel> : snapshot.sources.map(source => <Panel key={source.id} title={`${{codex:'Codex',claude:'Claude Code',gemini:'Gemini CLI'}[source.client]} · ${source.accountPseudonym}`}>
+    {snapshot && !snapshot.sources.length ? <Panel title={c.recorded}><p>{c.empty}</p></Panel> : snapshot?.sources.map(source => <Panel key={source.id} title={`${{codex:'Codex',claude:'Claude Code',gemini:'Gemini CLI'}[source.client]} · ${source.accountPseudonym}`}>
       <p>{source.enabled ? c.active : c.paused} · {c.unknownCoverage} · {source.adapter}</p>
       <div className="external-usage__stats">
         <div><span>{c.input}</span> <strong>{source.reportedRecords ? source.inputTokens.toLocaleString(language) : '—'}</strong></div>
@@ -79,6 +80,6 @@ export function ExternalUsageSurface({ api, language = 'en' }: { api: ExternalUs
       {deleting === source.id ? <div className="external-usage__confirmation" role="group" aria-label={c.confirm}><p>{c.confirm}</p><div className="external-usage__actions"><Button variant="danger" disabled={busy} onClick={() => void run(async () => {const next=await api.request({action:'forget-source',sourceId:source.id});setDeleting(null);return next;})}>{c.yes}</Button><Button disabled={busy} onClick={() => setDeleting(null)}>{c.cancel}</Button></div></div> : null}
     </Panel>)}
     {snapshot?.sources.length ? <Panel title={c.externalTotal}><p>{c.excluded}: {snapshot.aggregate.excludedSources}</p>{estimate(snapshot.aggregate)}</Panel> : null}
-    <UsagePricingPanel catalog={snapshot?.catalog ?? null} recordedModels={[...new Set(snapshot?.sources.flatMap(source => source.models).filter(model => model !== 'unknown') ?? [])]} language={language} disabled={busy} onApply={async catalog => { await run(() => api.request({action:'set-catalog',catalog}), true); }} />
+    {snapshot ? <UsagePricingPanel catalog={snapshot.catalog} recordedModels={[...new Set(snapshot.sources.flatMap(source => source.models).filter(model => model !== 'unknown'))]} language={language} disabled={busy} onApply={async catalog => { await run(() => api.request({action:'set-catalog',catalog}), true); }} /> : null}
   </section></Page>;
 }

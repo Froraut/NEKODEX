@@ -104,7 +104,7 @@ export function TitleBar({
     'remote-workspace': language === 'ru' ? 'Удалённые проекты' : 'Remote projects',
     'external-usage': language === 'ru' ? 'Расход клиентов' : 'Client usage',
     'agent-tools': language === 'ru' ? 'Инструменты агентов' : 'Agent tools',
-    'browser-companion': language === 'ru' ? 'Расширение Chrome' : 'Chrome companion',
+    'browser-companion': language === 'ru' ? 'Браузерный companion' : 'Browser companion',
     'local-control-api': language === 'ru' ? 'Локальный API' : 'Local API',
     'native-threads': language === 'ru' ? 'Чаты Codex' : 'Codex threads', 'agent-mode': 'Agent mode',
     setup: copy.connectionsNav, mcp: copy.connectionsNav, activity: copy.activity, settings: copy.settings, updates: updateCopyFor(language).title })[surface];

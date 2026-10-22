@@ -16,6 +16,8 @@ const api: AgentToolsApi = {
     state.requests.push(body.action);
     if (body.action === 'status') return status;
     if (body.action === 'remoteStatus') return null;
+    // The mounted host-network panel observes status; this does not grant or send anything.
+    if (body.action === 'vmNetworkStatus') return { mode: 'separately-approved-host-broker', guestNic: false, available: false, grants: [] };
     state.mutations++; throw new Error('No mutations are available in this fixture');
   },
   pickSkillRoot: async () => ({ cancelled: true }),
