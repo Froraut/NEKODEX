@@ -19,6 +19,8 @@ export interface OwnedNativeReceipt {
   state: 'prepared' | 'offered' | 'acknowledged' | 'completed' | 'failed' | 'unknown';
   retired: boolean; ownerHeld: boolean; createdAt: number; updatedAt: number;
   retirementActionId?: string;
+  interruptActionId?: string;
+  interruptState?: 'requested' | 'acknowledged' | 'unknown' | 'rejected';
   /** Passive observation only; another service object never proves owner loss. */
   ownerState?: 'current' | 'elsewhere-or-unverified' | 'lost';
   /** Append-only bounded state facts; held uncertainty is retained after exact reconciliation. */
@@ -70,6 +72,10 @@ export function createOwnedNativeWorkerService(options: {
   offerOwnedTurn(input: { workerHandle: string; actionId: string; text: string;
     images?: import('./owned-native-images.cjs').OwnedNativeImage[];
     outputSchema?: Record<string, unknown> }): Promise<OwnedNativeReceipt>;
+  /** Exact owned acknowledged turn only. Persists before write; repeated identity observes without replay.
+   * ACK alone is stopping; only the original terminal receipt settles inference. Cleanup remains separate. */
+  interruptOwnedTurn(input: { workerHandle: string; actionId: string; targetActionId: string; turnId: string }):
+    Promise<{ state: 'stopping' | 'settled' | 'unknown'; receipt: OwnedNativeReceipt }>;
   /** Only available on explicitly versioned owned text conversations; no new subscription or sender. */
   observeCanonical(observer:(event:{actionId:string;threadId:string;item:OwnedNativeCanonicalItem})=>void):()=>void;
   readCanonicalPage(input:{threadId:string;turnId?:string;cursor?:string|null;limit?:number}):Promise<{threadId:string;items:Array<Omit<OwnedNativeCanonicalItem,'timestampMs'> & {threadId:string;timestampMs:number|null;coverage:'complete'|'partial';coverageReason?:string}>;nextCursor:string|null;excludedItems:number;complete:boolean}>;

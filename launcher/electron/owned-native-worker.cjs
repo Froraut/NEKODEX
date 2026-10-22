@@ -389,6 +389,35 @@ function createWorkerService(options = {}, shared) {
       state = 'retired'; await worker.rpc.destroy(); throw reason;
     } finally { busy = null; }
   }
+  async function interruptOwnedTurn({ workerHandle, actionId, targetActionId, turnId } = {}) {
+    uuid(workerHandle); uuid(actionId); uuid(targetActionId); uuid(turnId);
+    const find = () => journal.snapshot().find(row => row.actionId === targetActionId && row.workerHandle === workerHandle && row.turnId === turnId);
+    const observation = receipt => ({ state: receipt.nativeStatus ? 'settled' : receipt.interruptState === 'unknown' || receipt.interruptState === 'rejected' ? 'unknown' : 'stopping', receipt });
+    let receipt = find();
+    if (!receipt || !worker || worker.handle !== workerHandle || receipt.threadId !== worker.threadId) throw fail('invalid_intent', 'Stop requires the exact owned acknowledged turn');
+    if (receipt.interruptActionId) {
+      if (receipt.interruptActionId !== actionId) throw fail('intent_already_recorded', 'Inspect the recorded Stop instead of repeating it');
+      return observation(receipt);
+    }
+    if (receipt.nativeStatus) return observation(receipt); // Completion won the race; send nothing.
+    if (destroyed || !active || active.row.actionId !== targetActionId || active.row.turnId !== turnId || !receipt.ownerHeld || worker.rpc.closed) throw fail('worker_not_ready', 'The exact active turn owner is unavailable');
+    if (journal.snapshot().some(row => row.actionId === actionId || row.interruptActionId === actionId)) throw fail('intent_already_recorded', 'Stop requires its own action identity');
+    // Persist on the existing offer: Stop remains available at the action quota.
+    // Repeated calls observe this consumed intent; no timeout permits a replay.
+    receipt = update(targetActionId, { interruptActionId: actionId, interruptState: 'requested' });
+    active.row = receipt;
+    try {
+      await worker.rpc.request('turn/interrupt', { threadId: worker.threadId, turnId });
+      receipt = find();
+      if (!receipt.nativeStatus) receipt = update(targetActionId, { interruptState: 'acknowledged' });
+    } catch (reason) {
+      receipt = find();
+      if (!receipt.nativeStatus) receipt = update(targetActionId, { interruptState: reason.authoritative ? 'rejected' : 'unknown' });
+      // Neither rejection nor a missing ACK settles the original inference owner.
+    }
+    if (active?.row.actionId === targetActionId) active.row = receipt;
+    return observation(receipt);
+  }
   async function retireOwnedWorker({ workerHandle, actionId } = {}) {
     uuid(workerHandle); uuid(actionId);
     if (busy && !active) throw fail('worker_busy', 'Native creation or admission is still pending');
@@ -454,7 +483,7 @@ function createWorkerService(options = {}, shared) {
     }
     return { threadId, items, nextCursor: page.nextCursor, excludedItems, complete: cursor === null && page.nextCursor === null && excludedItems === 0 && items.every(item => item.coverage === 'complete') };
   }
-  return Object.freeze({ createOwnedWorker, offerOwnedTurn, inspectOwnedWorker, retireOwnedWorker, observeCanonical, readCanonicalPage,
+  return Object.freeze({ createOwnedWorker, offerOwnedTurn, interruptOwnedTurn, inspectOwnedWorker, retireOwnedWorker, observeCanonical, readCanonicalPage,
     currentOperation: () => busy || (worker?.rpc.cleanupPending ? 'Awaiting exact native process cleanup' : active ? 'Awaiting private native inference outcome' : null), destroy });
 }
 function createOwnedNativeWorkerService(options = {}) { return createWorkerService(options); }
@@ -561,6 +590,13 @@ function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 30000, t
             await ready();
           },
           request: async (method, params, beforeWrite, onWaitTimeout) => {
+            if (method === 'turn/interrupt') {
+              // Cancellation is a control operation on this facade's exact existing
+              // subscription; it must not acquire an idle gate or start a process.
+              if (!id() || params?.threadId !== id() || !safeId(params.turnId) || listener.locallyClosed || threads.get(id())?.closed || threads.get(id())?.requested) throw fail('invalid_intent', 'Stop requires the exact live owned subscription');
+              if (stopped || fault) throw fault || fail('client_closed', 'Native account server is closing');
+              return rpc.request(method, params, beforeWrite, onWaitTimeout);
+            }
             const reading = persistent?.mode === CANONICAL_TEXT_MODE && ['thread/read', 'thread/items/list', 'thread/turns/list'].includes(method);
             const allowed = persistent ? ['config/read', 'configRequirements/read', 'thread/start', 'thread/fork', 'thread/resume', 'turn/start', ...(persistent.mode === CANONICAL_TEXT_MODE ? ['thread/read', 'thread/items/list', 'thread/turns/list'] : [])] : ['config/read', 'configRequirements/read', 'thread/start', 'turn/start'];
             if (!allowed.includes(method)) throw fail('unsupported_method', 'Native account facade method is unavailable');
