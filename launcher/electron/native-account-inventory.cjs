@@ -33,11 +33,13 @@ function boundedPrivate(file, max, modeMask = 0o077, normalizePrivate = false) {
   } finally { fs.closeSync(fd); }
 }
 function configFor(p, catalogPath) {
+  // Use the user's system route immediately. The upstream fallback cancels a
+  // bootstrap GET at 5s, leaving only 10s of account/read's routing budget.
   return { model_provider: 'openai', ...(catalogPath ? { model_catalog_json: catalogPath } : {}), sqlite_home: p.sqliteHome,
     log_dir: path.join(p.root, 'log'), approval_policy: 'never', approvals_reviewer: 'user', sandbox_mode: 'read-only',
     web_search: 'disabled', notify: [], project_root_markers: [], project_doc_max_bytes: 0,
     include_environment_context: false, include_environment_context_time: false, check_for_update_on_startup: false,
-    cli_auth_credentials_store: 'file', features: Object.fromEntries([...DISABLED_FEATURES.map(key => [key, false]), ['skip_host_skill_discovery', true]]),
+    cli_auth_credentials_store: 'file', features: Object.fromEntries([...DISABLED_FEATURES.map(key => [key, false]), ['skip_host_skill_discovery', true], ['respect_system_proxy', true]]),
     tools: { update_plan: { enabled: false }, experimental_request_user_input: { enabled: false } }, agents: { enabled: false },
     memories: { use_memories: false, generate_memories: false }, skills: { include_instructions: false, bundled: { enabled: false } },
     cloud: { skills: { enabled: false } }, analytics: { enabled: false }, feedback: { enabled: false }, history: { persistence: 'none' } };
@@ -130,7 +132,7 @@ function childOwner({ executable, args, p, spawnProcess, terminateProcess, timeo
 }
 
 function createNativeAccountInventoryService({ authority, getWrapperPin, acquireProfileOwner, storageRoot, onChange,
-  requestTimeoutMs = 15000, stopGraceMs = 1000, testHooks = {} } = {}) {
+  requestTimeoutMs = 30000, stopGraceMs = 1000, testHooks = {} } = {}) {
   if (!authority?.resolveProfile || !authority?.publishProfileConfig || typeof getWrapperPin !== 'function' || typeof acquireProfileOwner !== 'function'
     || typeof storageRoot !== 'string' || !path.isAbsolute(storageRoot)) throw fail('invalid_inventory_owner', 'Trusted Native inventory dependencies are required');
   for (const v of [requestTimeoutMs, stopGraceMs]) if (!Number.isSafeInteger(v) || v < 1 || v > 120000) throw fail('invalid_inventory_owner', 'Invalid Native observation bound');

@@ -39,6 +39,7 @@ test.skipIf(process.platform !== 'darwin' || !existsSync(actualBootstrap))('stag
     const spawnProcess = (_exe:string, args:string[], options:any) => {
       expect(held).toBe(true); expect(children).toBe(0); children++; stage++; const n=stage, classifier=args.includes('--account-info'), online=!classifier && Bun.TOML.parse(readFileSync(p.config,'utf8')).model_catalog_json === undefined;
       expect(options.env.CODEX_HOME).toBe(p.codexHome); expect(options.env.OPENAI_API_KEY).toBeUndefined();
+      if (!classifier) expect(Bun.TOML.parse(readFileSync(p.config, 'utf8')).features.respect_system_proxy).toBe(true);
       const c:any = new EventEmitter(); c.stdout=new PassThrough(); c.stderr=new PassThrough();
       const close = () => { if(c.closed)return; c.closed=true; children--; events.push('close'+n);
         // A cache file intentionally doesn't exist until exact online-owner close.

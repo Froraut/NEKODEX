@@ -458,7 +458,7 @@ function createOwnedNativeWorkerService(options = {}) { return createWorkerServi
 /** Trusted account owner. One private sender/AuthManager process; Agent facades
  * retain their fresh ephemeral contract. Explicit persistent facades own only
  * created/forked or registry-proven resumed contexts, each with a new journal. */
-function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 15000, terminalTimeoutMs = 120000,
+function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 30000, terminalTimeoutMs = 120000,
   stopGraceMs = 1000, maxConcurrentThreads = 2, onChange, testHooks = {} } = {}) {
   if (!admission?.prestart || !admission?.forBinding || !admission?.checkAccount || !Number.isInteger(maxConcurrentThreads)
     || maxConcurrentThreads < 1 || maxConcurrentThreads > 32) throw fail('invalid_admission', 'Qualified Native account admission is required');
