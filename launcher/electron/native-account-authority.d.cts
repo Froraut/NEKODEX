@@ -10,7 +10,7 @@ export interface NativeProfileProjection {
 }
 export interface NativeProfileOwnerLease { readonly id: string; readonly profileId: string; readonly epoch: string; readonly actionId: string; readonly kind: 'inventory' | 'execution'; }
 export interface NativeAccountReceipt {
-  actionId: string; kind: 'prepare-profile' | 'device-login' | 'cancel-login' | 'profile-config'; profileId: string; epoch: string;
+  actionId: string; kind: 'prepare-profile' | 'device-login' | 'cancel-login' | 'profile-config' | 'remove-profile' | 'rename-profile'; profileId: string; epoch: string;
   loginAttemptId?: string; state: string; reasonCode?: string; beforeConfigSha256?: string; candidateConfigSha256?: string;
 }
 export interface NativeAccountSnapshot {
@@ -32,6 +32,7 @@ export function createNativeAccountAuthority(options: {
   previewRecovery(): Promise<import('./native-account-recovery.cjs').NativeOwnerRecoveryPreview>;
   recoverOwner(input: {actionId: string; reviewDigest: string}): Promise<import('./native-account-recovery.cjs').NativeOwnerRecoveryReceipt>;
   inspectRecovery(actionId: string): import('./native-account-recovery.cjs').NativeOwnerRecoveryReceipt | undefined;
+  renameProfile(input:{actionId:string;profileId:string;epoch:string;expectedLabel:string;label:string}): NativeProfileProjection;
   prepareProfile(input: {actionId: string; label: string}): NativeProfileProjection;
   beginDeviceLogin(input: {profileId: string; epoch: string; actionId: string}): NativeLoginProjection;
   inspectLogin(loginAttemptId: string): NativeLoginProjection;

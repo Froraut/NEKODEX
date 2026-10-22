@@ -79,3 +79,22 @@ test('Native account shutdown closes the transport while a conversation awaits i
     { async destroy() { events.push('other-settled'); } })).rejects.toThrow('retained-owner');
   expect(events.at(-1)).toBe('other-settled');
 });
+
+test('archive IPC preserves known receipt after row leaves active list and pages metadata without renderer capabilities', async () => {
+  let handler: Function = () => {}; const context = { profileId: randomUUID(), epoch: randomUUID(), serverGeneration: randomUUID() };
+  const id = randomUUID(), actionId = randomUUID(), archiveCursor = randomUUID();
+  const calls: any[] = [], action = { actionId, kind: 'archive', conversationId: id, state: 'completed' };
+  const source = { conversations: [], actions: [], archivedConversations: [{ id, revision: 2, status: 'archived', createdAt: 1, updatedAt: 2,
+    model: 'fixture', threadId: randomUUID(), archivedAt: 2, lastSummary: 'Retained preview', ownerAvailable: false, resumeAvailable: false, archiveAvailable: false,
+    historySource: { private: 'not-renderer-authority' } }], archivedCount: 1, archivedConversationIds: [id], archiveNextCursor: null,
+    quota: { conversations: 0, conversationLimit: 128, actions: 0, actionLimit: 512 } };
+  registerPersistentNativeConversations({ handle: (_: string, value: Function) => { handler = value; }, getContext: () => context,
+    getService: () => ({ list: (input: any) => { calls.push(input); return source; }, inspectAction: () => action,
+      archive: async (input: any) => { calls.push(input); return source; } }) });
+  const result = await handler(null, { action: 'archive', actionId, conversationId: id, revision: 1, expectedContext: context });
+  expect(result).toMatchObject({ ok: true, value: { observedAction: action, conversations: [], archivedCount: 1, quota: { actions: 0 } } });
+  expect(JSON.stringify(result)).not.toContain('not-renderer-authority');
+  await handler(null, { action: 'snapshot', archiveCursor }); expect(calls.at(-1)).toEqual({ archiveCursor });
+  const invalid = await handler(null, { action: 'archive', actionId: randomUUID(), conversationId: id, revision: 2, expectedContext: context, threadId: randomUUID() });
+  expect(invalid).toMatchObject({ ok: false, error: { knownNotStarted: true, code: 'invalid_request' } });
+});
