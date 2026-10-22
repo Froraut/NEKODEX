@@ -756,7 +756,13 @@ purchase or arbitrary business success.
 macOS14+ desktop controller owns explicit enable, permission inspection, selected
 window/process epoch and serialized helper operations. AX property reads work
 without screen capture permission, exclude secure/hidden subtrees and invalidate
-old screenshot input bindings. Generic CG input checks complete stacking order,
+old screenshot input bindings. Each task generation may explicitly attach up to
+eight windows. An approved read chooses an exact member of that set and switches
+the one native selection without activating a window or renewing helper consent;
+the switch retires earlier screenshot and AX-element bindings. Individual removal
+and whole-task revocation preserve other tasks and retained receipts. Foreground
+handoff waits for stable owner/focus and equal consecutive bounded captures before
+binding an observation or comparing it to the original input frame. Generic CG input checks complete stacking order,
 held mouse buttons/focus and intervening input immediately before dispatch.
 `desktop-outcome.ts` resolves separately approved exact AX scalar properties;
 missing is unknown and differing is failed. Canonical journal evidence plus

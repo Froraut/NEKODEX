@@ -527,7 +527,7 @@ export class AgentToolsComposition {
     if (readToolsConfig(this.configPath).servers.some(server => server.id === this.options.desktopTools?.serverId)) throw new Error("Reserved desktop namespace conflicts with an existing MCP server; no source was replaced");
     return this.track(async () => { await this.desktopControl(explicitUserAction).selectAndBind(scope, expectedSelection, explicitUserAction); return this.status().desktopTools; });
   }
-  revokeDesktopTools(scope: ToolScope, explicitUserAction: boolean) { validateToolScope(scope); return this.desktopControl(explicitUserAction).revoke(scope); }
+  revokeDesktopTools(scope: ToolScope, explicitUserAction: boolean, expectedSelection?: MacosWindowSelection) { validateToolScope(scope); return this.desktopControl(explicitUserAction).revoke(scope, expectedSelection); }
   terminalReference(idempotencyKey: string, requirementId: string) { return this.getHost().terminalReference(idempotencyKey, requirementId); }
   prepareInstall(actionId: string, catalogId: string, allowedRoot: string, explicitUserAction: boolean) {
     if (!explicitUserAction || this.closing || this.changing) throw new Error("Explicit managed package preparation required");

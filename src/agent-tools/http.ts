@@ -42,7 +42,7 @@ const requestBody = z.discriminatedUnion("action", [
   z.object({ action: z.literal("listDesktopWindows"), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("setDesktopEnabled"), enabled: z.boolean(), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("selectDesktopWindow"), scope, expectedSelection: macosWindowSelectionSchema, explicitUserAction: z.literal(true) }).strict(),
-  z.object({ action: z.literal("revokeDesktopTools"), scope, explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("revokeDesktopTools"), scope, expectedSelection: macosWindowSelectionSchema.optional(), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("remoteStatus"), scope: scope.optional() }).strict(),
   z.object({ action: z.literal("bindRemoteTools"), hostId: z.string().uuid(), scope: remoteTaskScopeSchema, explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("revokeRemoteTools"), scope, explicitUserAction: z.literal(true) }).strict(),
@@ -119,7 +119,7 @@ export function createAgentToolsRoutes(composition: AgentToolsComposition, path 
         case "listDesktopWindows": value = await composition.listDesktopWindows(body.explicitUserAction); break;
         case "setDesktopEnabled": value = await composition.setDesktopEnabled(body.enabled, body.explicitUserAction); break;
         case "selectDesktopWindow": value = await composition.selectDesktopWindow(body.scope, body.expectedSelection, body.explicitUserAction); break;
-        case "revokeDesktopTools": value = await composition.revokeDesktopTools(body.scope, body.explicitUserAction); break;
+        case "revokeDesktopTools": value = await composition.revokeDesktopTools(body.scope, body.explicitUserAction, body.expectedSelection); break;
         case "remoteStatus": value = await composition.remoteStatus(body.scope); break;
         case "bindRemoteTools": value = await composition.bindRemoteTools(body.scope, body.hostId, body.explicitUserAction); break;
         case "revokeRemoteTools": value = await composition.revokeRemoteTools(body.scope, body.explicitUserAction); break;

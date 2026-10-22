@@ -358,6 +358,7 @@ func lastInputTime() -> TimeInterval {
     // An exact approved call may explicitly wait for a human to return this window.
     // This loop never captures, activates, accepts a caller clock or expires consent.
     func waitForForeground(_ original: WindowRow, expectedFocus: AXUIElement? = nil, enforceFocus: Bool = false) async throws {
+        var readySince: TimeInterval?
         while true {
             try Task.checkCancellation()
             guard ownerIntact(), enabled, !uncertain else { try reject("foreground-owner-unavailable") }
@@ -374,9 +375,15 @@ func lastInputTime() -> TimeInterval {
                 && !CGEventSource.buttonState(.combinedSessionState, button: .right)
                 && !CGEventSource.buttonState(.combinedSessionState, button: .center)
                 && CGEventSource.flagsState(.combinedSessionState).intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift]).isEmpty
+            let now = ProcessInfo.processInfo.systemUptime
             if NSWorkspace.shared.frontmostApplication?.processIdentifier == row.pid,
                let focused = focused, CFEqual(focused, target), foregroundWindowOrder(row),
-               matchingFocus, released, ProcessInfo.processInfo.systemUptime - lastInputTime() >= 0.15 { return }
+               matchingFocus, released, now - lastInputTime() >= 0.15 {
+                // AX/Dock activation need not advance the physical-input clock. Require the
+                // exact owner and focus to stay ready while AppKit changes active chrome.
+                if let since = readySince, now - since >= 0.25 { return }
+                if readySince == nil { readySince = now }
+            } else { readySince = nil }
             try await Task.sleep(nanoseconds: 100_000_000)
         }
     }
@@ -556,6 +563,31 @@ func lastInputTime() -> TimeInterval {
             "coordinateSpace": "screenshot-pixels", "width": width, "height": height]
         return Captured(binding: binding, png: png, resource: resource, frame: row.frame, lastInput: lastInputTime(), focusedElement: AXIsProcessTrusted() ? focusElement(row) : nil, targets: targets)
     }
+    // A foreground handoff can still have an in-flight AppKit/share-accessory redraw.
+    // Observe a settled frame rather than binding one transitional screenshot. These are
+    // capture-only samples; an input is never retried or rebound to different content.
+    func captureStable(_ row: WindowRow, scope: String) async throws -> Captured {
+        try await settledCapture { try await self.capture(row, scope: scope) }
+    }
+    func settledCapture(_ read: () async throws -> Captured) async throws -> Captured {
+        var previous: Captured?
+        for _ in 0..<5 {
+            try Task.checkCancellation()
+            let value: Captured
+            do { value = try await read() }
+            catch let error as PortError where error.code == "ax-state-changed-during-capture" { previous = nil; continue }
+            if let before = previous, sameCapture(before, value) { return value }
+            previous = value
+        }
+        try reject("screen-not-stable")
+    }
+    func sameCapture(_ before: Captured, _ after: Captured) -> Bool {
+        before.png == after.png && sameFrame(before.frame, after.frame)
+            && before.binding["frameEpoch"] as? String == after.binding["frameEpoch"] as? String
+            && before.targets.count == after.targets.count
+            && zip(before.targets, after.targets).allSatisfy { CFEqual($0.element, $1.element) && $0.signature == $1.signature }
+            && (before.focusedElement == nil ? after.focusedElement == nil : after.focusedElement.map { CFEqual(before.focusedElement!, $0) } == true)
+    }
     func perform(_ request: [String: Any]) async throws -> [String: Any] {
         guard number(request["version"]) == 1, let command = string(request["command"], max: 32) else { try reject("invalid-request") }
         let base = ["version", "id", "command"]
@@ -624,7 +656,7 @@ func lastInputTime() -> TimeInterval {
             let row = try currentWindow()
             if waits { try await waitForForeground(row) }
             let foregroundBaseline = lastInputTime()
-            var value = try await capture(try currentWindow(), scope: scope)
+            var value = try await (waits ? captureStable(try currentWindow(), scope: scope) : capture(try currentWindow(), scope: scope))
             value.foregroundObserved = waits
             if waits {
                 try inputOwner(try currentWindow(), expectedFocus: value.focusedElement, requirePostEvent: false)
@@ -662,7 +694,7 @@ func lastInputTime() -> TimeInterval {
             if waits && !sameFrame(row.frame, original.frame) { return receipt("rejected", false, "owner-or-frame-changed") }
             if waits { try await waitForForeground(row, expectedFocus: original.focusedElement, enforceFocus: true) }
             let foregroundBaseline = lastInputTime()
-            let fresh = try await capture(try currentWindow(), scope: binding["scopeId"] as! String)
+            let fresh = try await (waits ? captureStable(try currentWindow(), scope: binding["scopeId"] as! String) : capture(try currentWindow(), scope: binding["scopeId"] as! String))
             guard fresh.binding["screenshotId"] as? String == binding["screenshotId"] as? String,
                   fresh.binding["frameEpoch"] as? String == binding["frameEpoch"] as? String else { return receipt("rejected", false, "screen-or-frame-changed") }
             let current = try currentWindow()

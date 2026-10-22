@@ -16,6 +16,7 @@ export interface AgentDesktopStatus {
   nativeStatus: MacosDesktopStatus | null;
   windows: MacosWindowMetadata[];
   selected: MacosWindowSelection | null;
+  maxWindowsPerTask?: number;
   bindings: { taskId: string; generation: number; selection: MacosWindowSelection; observed: boolean; active: boolean }[];
   reason: string | null;
   restartPolicy: 'off';
