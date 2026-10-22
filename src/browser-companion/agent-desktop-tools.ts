@@ -247,6 +247,7 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
       if (latestOwner === key) { native?.invalidate(); latestOwner = undefined; }
       return status(scope);
     },
+    waitsForUser: (request: Request) => ["desktop/observe", "desktop/click", "desktop/type"].includes(request.tool) && request.arguments.waitForForeground === true,
     async discover(scope: ToolScope, control: { signal?: AbortSignal } = {}): Promise<ToolDescriptor[]> {
       active(scope); control.signal?.throwIfAborted();
       const attached = (attachments.get(scopeKey(scope)) ?? []).map(selectionOf);

@@ -20,6 +20,7 @@ import { AgentBrowserTools } from './AgentBrowserTools';
 import { AgentDesktopTools } from './AgentDesktopTools';
 import { AgentRemoteTools } from './AgentRemoteTools';
 import { AgentToolOutcomeView } from './AgentToolOutcomeView';
+import { AgentToolAvailability } from './AgentToolAvailability';
 
 /** The current owner supplies actionable calls separately from bounded image/history rows.
  * An explicitly empty projection must never resurrect old dispatch calls. */
@@ -204,7 +205,7 @@ export function AgentToolsSurface({ api, language, disabled = false, oauthMcpReq
       </div> : null}
       <Button className="agent-tools-button" variant="secondary" disabled={locked || !actionableTask || !discoveryEnabled} onClick={() => void act(async () => { await transport.current.request({ action: 'discover', scope: scope(), explicitUserAction: true }); await refresh(); })}>{choose('Connect and discover tools', 'Подключить и найти инструменты')}</Button>
       {resourceEnabledForTask ? <Notice>{choose('Attached skill resources are available for exact, separately approved reads. Import previews stay private; each skill-resource/read sends only the requested immutable resource to the model.', 'Прикреплённые skill-ресурсы доступны для точного чтения с отдельным подтверждением. Просмотр импорта остаётся частным; каждый skill-resource/read передаёт модели только запрошенный неизменяемый ресурс.')}</Notice> : null}
-      {status?.descriptors.length ? <ul className="agent-tools-records agent-tools-main-records">{status.descriptors.map(tool => <li key={tool.id}><BadgeRow><strong>{tool.id}</strong><Badge tone={tool.supported ? 'neutral' : 'warning'}>{tool.supported ? choose('Schema available; approval required', 'Схема доступна; требуется подтверждение') : choose('Unsupported schema', 'Схема не поддерживается')}</Badge></BadgeRow><span>{tool.description ?? tool.unsupportedReason}</span></li>)}</ul> : null}
+      {status?.descriptors.length ? <ul className="agent-tools-records agent-tools-main-records">{status.descriptors.map(tool => <li key={tool.id}><AgentToolAvailability tool={tool} language={language} /></li>)}</ul> : null}
       <Select label={choose('Saved model tool request', 'Сохранённый запрос инструмента модели')} value={callId} disabled={locked || !calls.length} onChange={value => { setCallId(value); setResult(null); }} options={[{ value: '', label: choose('Select an exact pending call', 'Выберите точный ожидающий вызов') }, ...calls.map(call => ({ value: call.toolCallId, label: `${call.tool} · ${call.toolCallId}` }))]} />
       {pendingCallsTruncated ? <Notice tone="warning">{choose('The current pending-call projection is bounded. Additional retained calls are outside this view; the saved task history is preserved.', 'Список текущих вызовов ограничен. Дополнительные сохранённые вызовы не входят в эту выборку; история задачи сохранена.')}</Notice> : null}
       {selectedCall ? <>

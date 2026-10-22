@@ -125,7 +125,8 @@ export class StandaloneMcpHost implements StandaloneToolsPort {
           try {
             if (Buffer.byteLength(JSON.stringify(tool.inputSchema)) > 64 * 1024) throw new Error("Schema too large");
             validate = compileToolInputSchema(tool.inputSchema);
-          } catch { descriptor.supported = false; descriptor.unsupportedReason = "Input schema is unsupported by the host validator"; }
+            descriptor.schemaSupported = true;
+          } catch { descriptor.supported = false; descriptor.schemaSupported = false; descriptor.unsupportedReason = "Input schema is unsupported by the host validator"; }
           next.set(tool.name, { descriptor, validate }); descriptors.push(structuredClone(descriptor));
         }
         cursor = result.nextCursor;
@@ -146,8 +147,8 @@ export class StandaloneMcpHost implements StandaloneToolsPort {
         const descriptor = structuredClone(raw); descriptor.description = descriptor.description?.slice(0, 4000);
         descriptorBytes += Buffer.byteLength(JSON.stringify(descriptor)); if (descriptors.length >= 256 || descriptorBytes > 1024 * 1024) throw new Error("Aggregate builtin discovery limit exceeded");
         let validate: ValidateFunction | undefined;
-        try { if (Buffer.byteLength(JSON.stringify(descriptor.inputSchema)) > 64 * 1024) throw new Error("Schema too large"); validate = compileToolInputSchema(descriptor.inputSchema); }
-        catch { descriptor.supported = false; descriptor.unsupportedReason = "Builtin input schema is unsupported by the host validator"; }
+        try { if (Buffer.byteLength(JSON.stringify(descriptor.inputSchema)) > 64 * 1024) throw new Error("Schema too large"); validate = compileToolInputSchema(descriptor.inputSchema); descriptor.schemaSupported = true; }
+        catch { descriptor.supported = false; descriptor.schemaSupported = false; descriptor.unsupportedReason = "Builtin input schema is unsupported by the host validator"; }
         builtinEntries.set(descriptor.id, { descriptor, validate, builtin: provider }); descriptors.push(descriptor);
       }
     }
@@ -202,6 +203,10 @@ export class StandaloneMcpHost implements StandaloneToolsPort {
           } catch { return this.journal.get(request.idempotencyKey)!; }
         })();
         this.pendingBuiltinWork.add(work); void work.then(() => this.pendingBuiltinWork.delete(work), () => this.pendingBuiltinWork.delete(work));
+        // An exact approved foreground handoff retains its task owner until the
+        // person returns or revokes it. Recording an observation timeout here
+        // would pause the task and invalidate the very scope that is waiting.
+        if (entry.builtin.waitsForUser?.(request)) return await work;
         let timer: ReturnType<typeof setTimeout> | undefined;
         try { return await Promise.race([work, new Promise<ToolOutcome>(resolve => { timer = setTimeout(() => resolve(this.journal.get(request.idempotencyKey)!), this.timeout); })]); }
         finally { if (timer) clearTimeout(timer); }

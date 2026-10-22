@@ -7,6 +7,8 @@ export interface ToolDescriptor {
   description?: string;
   inputSchema: Record<string, unknown>;
   supported: boolean;
+  /** Validator support is separate from the current task's attachment/readiness. */
+  schemaSupported?: boolean;
   unsupportedReason?: string;
 }
 export interface ToolInvocation {
@@ -32,6 +34,8 @@ export interface StandaloneToolsPort {
 /** A trusted built-in implementation. The tool host remains the approval/journal owner. */
 export interface StandaloneBuiltinToolsProvider {
   serverId: string;
+  /** Trusted built-in only: an already approved human handoff has no observation deadline. */
+  waitsForUser?(request: Omit<ToolInvocation, "grantId">): boolean;
   discover(scope: ToolScope, options?: { signal?: AbortSignal }): Promise<ToolDescriptor[]>;
   execute(request: Omit<ToolInvocation, "grantId">, options?: { signal?: AbortSignal }): Promise<Pick<ToolOutcome, "state" | "result" | "reason">>;
   /** Reads an exact owned late receipt. It must never dispatch/observe/input during reconciliation. */

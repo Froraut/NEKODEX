@@ -764,7 +764,11 @@ the one native selection without activating a window or renewing helper consent;
 the switch retires earlier screenshot and AX-element bindings. Individual removal
 and whole-task revocation preserve other tasks and retained receipts. Foreground
 handoff waits for stable owner/focus and equal consecutive bounded captures before
-binding an observation or comparing it to the original input frame. Generic CG input checks complete stacking order,
+binding an observation or comparing it to the original input frame. A trusted
+desktop provider marks exact approved foreground waits as human handoffs: neither
+the generic tool observation deadline nor launcher IPC converts that wait into an
+unknown outcome and pauses its task. Ordinary tools keep their deadline; Stop or
+window revocation still cancels the handoff through its existing owner. Generic CG input checks complete stacking order,
 held mouse buttons/focus and intervening input immediately before dispatch.
 `desktop-outcome.ts` resolves separately approved exact AX scalar properties;
 missing is unknown and differing is failed. Canonical journal evidence plus
