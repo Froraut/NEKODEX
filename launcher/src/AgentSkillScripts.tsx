@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Badge, BadgeRow, Button, Checkbox, Notice, Panel, PanelStack, Select } from './design';
 import type { AgentToolsApi, AgentToolsStatus, ToolScope } from './agent-tools-types';
 import { AgentPythonBuilds } from './AgentPythonBuilds';
@@ -12,6 +12,22 @@ export function AgentSkillScripts({ api, status, scope, locked, choose, act, onC
   act: (operation: () => Promise<void>) => Promise<void>; onChanged: () => Promise<void>;
 }) {
   const accessId = useId();
+  const alive = useRef(true), revoking = useRef(new Set<string>());
+  const [revokingIds, setRevokingIds] = useState<string[]>([]);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  async function revoke(taskId: string, generation: number, grantId: string) {
+    const key = JSON.stringify([taskId, generation, grantId]);
+    if (revoking.current.has(key)) return;
+    revoking.current.add(key); setRevokingIds(ids => [...ids, key]); setRevokeError(null);
+    try {
+      // Independent revocation must remain reachable while approveInvoke awaits the
+      // script executor. Revocation cancels only runs owned by this exact grant.
+      await api.request({ action: 'revokeScriptWorkspace', scope: { taskId, generation, toolCallId: 'script-workspace-revocation' }, grantId, explicitUserAction: true });
+      if (alive.current) await onChanged();
+    } catch (cause) { if (alive.current) setRevokeError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { revoking.current.delete(key); if (alive.current) setRevokingIds(ids => ids.filter(id => id !== key)); }
+  }
   const [root, setRoot] = useState('');
   const [access, setAccess] = useState<'read-only' | 'read-write'>('read-only');
   const [acknowledged, setAcknowledged] = useState<string | null>(null);
@@ -46,15 +62,13 @@ export function AgentSkillScripts({ api, status, scope, locked, choose, act, onC
       await api.request({ action: 'grantScriptWorkspace', scope, root, access, acknowledgeRestrictions: true, explicitUserAction: true });
       setAcknowledged(null); await onChanged();
     })}>{choose('Grant this exact workspace access', 'Разрешить этот точный доступ к каталогу')}</Button></div></div>
+    {revokeError ? <Notice tone="error" role="alert">{revokeError}</Notice> : null}
     {grants.length ? <ul className="agent-tools-records">{grants.map(grant => <li key={grant.id}>
       <strong>{choose('Workspace grant', 'Разрешение на рабочий каталог')}</strong><code>{grant.id}</code><span>{grant.root}</span>
       <small>{grant.access} · {grant.taskId} · gen {grant.generation}</small>
       <p className="agent-tools-muted">{choose('Use this exact grant ID for a separately approved script call. Workspace paths are not shared with the model automatically.', 'Используйте этот точный ID разрешения в отдельно подтверждаемом вызове скрипта. Пути рабочих каталогов автоматически не передаются модели.')}</p>
-      <Button size="sm" disabled={locked || !scope} onClick={() => void act(async () => {
-        if (!scope) return;
-        await api.request({ action: 'revokeScriptWorkspace', scope, grantId: grant.id, explicitUserAction: true }); await onChanged();
-      })}>{choose('Revoke this workspace grant', 'Отозвать это разрешение на каталог')}</Button>
+      <Button size="sm" disabled={revokingIds.includes(JSON.stringify([grant.taskId, grant.generation, grant.id]))} onClick={() => void revoke(grant.taskId, grant.generation, grant.id)}>{choose('Stop scripts and revoke this workspace grant', 'Остановить скрипты и отозвать это разрешение на каталог')}</Button>
     </li>)}</ul> : <p className="agent-tools-muted">{choose('No workspace grants for this task generation.', 'Для этого поколения задачи нет разрешений на рабочий каталог.')}</p>}
-    {operations.length ? <div className="agent-script-form__step"><h3>{choose('Owned active script operations', 'Свои активные операции скриптов')}</h3><ul className="agent-tools-records">{operations.map(operation => <li key={operation.operationId}><code>{operation.operationId}</code><small>{choose('Workspace grant', 'Разрешение на каталог')}: {operation.workspaceGrantId}</small></li>)}</ul></div> : null}
+    {operations.length ? <div className="agent-script-form__step"><h3>{choose('Owned active script operations', 'Свои активные операции скриптов')}</h3><ul className="agent-tools-records">{operations.map(operation => <li key={operation.operationId}><code>{operation.operationId}</code><small>{choose('Workspace grant', 'Разрешение на каталог')}: {operation.workspaceGrantId}</small><Button size="sm" disabled={revokingIds.includes(JSON.stringify([operation.taskId, operation.generation, operation.workspaceGrantId]))} onClick={() => void revoke(operation.taskId, operation.generation, operation.workspaceGrantId)}>{choose('Stop and revoke exact workspace', 'Остановить и отозвать точный каталог')}</Button></li>)}</ul></div> : null}
   </Panel><AgentPythonEnvironments api={api} status={status} scope={scope} locked={locked} choose={choose} act={act} onChanged={onChanged} />{api.pickPythonBuild ? <AgentPythonBuilds api={api} scope={scope} locked={locked} choose={choose} act={act} onChanged={onChanged} /> : null}</PanelStack>;
 }

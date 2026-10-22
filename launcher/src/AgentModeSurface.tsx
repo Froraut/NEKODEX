@@ -68,6 +68,10 @@ export function AgentModeSurface({ language, api, disabled = false }: {
   const selectedRef = useRef('');
   const heading = useRef<HTMLHeadingElement>(null);
   const [status, setStatus] = useState<AgentModeStatus | null>(null);
+  const [taskQuery, setTaskQuery] = useState('');
+  const [taskView, setTaskView] = useState<'active' | 'archived'>('active');
+  const [taskOffset, setTaskOffset] = useState(0);
+  const listingRef = useRef({ query: '', view: 'active' as 'active' | 'archived', offset: 0 });
   const [detail, setDetail] = useState<AgentModeDetail | null>(null);
   const [selected, setSelected] = useState('');
   const [pending, setPending] = useState<string | null>(null);
@@ -145,9 +149,10 @@ export function AgentModeSurface({ language, api, disabled = false }: {
     } catch (cause) { if (mounted.current) setWorkspaceError(errorText(cause)); }
   };
   const refresh = async (preferredId = selectedRef.current) => {
-    const result = await transport.current.request({ action: 'status' }) as AgentModeStatus;
+    const result = await transport.current.request({ action: 'status', listing: listingRef.current }) as AgentModeStatus;
     if (!mounted.current) return;
     setStatus(result);
+    if (result.offset !== undefined) { listingRef.current.offset = result.offset; setTaskOffset(result.offset); }
     setModel(current => result.models.some(row => modelChoice(row) === current) ? current : result.models[0] ? modelChoice(result.models[0]) : '');
     const id = result.tasks.some(row => row.id === preferredId) ? preferredId : result.tasks[0]?.id ?? '';
     if (selectedRef.current !== id) setDetail(null);
@@ -216,6 +221,7 @@ export function AgentModeSurface({ language, api, disabled = false }: {
     await mutate({ action: 'create', input, ...(workspaceSelection ? { workspaceSelection } : {}) });
     const created = createId.current; createId.current = crypto.randomUUID();
     if (mounted.current) { setRequest(''); setRequirements(''); setStages(''); setStageOrder('sequence'); setStageDependencies({}); setRecurring(false); setSnapshotOptIn(false); setSnapshotPaths(''); setNativeAttachments([]); }
+    listingRef.current = { query: '', view: 'active', offset: 0 }; setTaskQuery(''); setTaskView('active'); setTaskOffset(0);
     await refresh(created);
     if (mounted.current) {
       setNotice(text.saved);
@@ -379,7 +385,14 @@ export function AgentModeSurface({ language, api, disabled = false }: {
     setWorkKey(''); setWorkText(''); workId.current = crypto.randomUUID();
     void act('get', async () => { await getDetail(id); });
   };
+  const browseTasks = (view: 'active' | 'archived', offset = 0, query = taskQuery.trim()) => {
+    if (actionPending.current || disabled) return;
+    listingRef.current = { query, view, offset };
+    setTaskView(view); setTaskOffset(offset);
+    void act('list', () => refresh(''));
+  };
   const task = detail?.task;
+  const readOnlyArchive = task?.archivedAt !== undefined;
   const selectedModel = status?.models.find(row => modelChoice(row) === model);
   const nativeSelection = selectedModel?.provider === 'owned-native';
   const concurrentLimit = nativeSelection ? selectedModel.maxConcurrent ?? 1 : 32;
@@ -417,7 +430,7 @@ export function AgentModeSurface({ language, api, disabled = false }: {
   const loopAuthority = detail?.loopSourceAuthority;
   const loopRunActive = Boolean(task && loopAuthority?.active && loopAuthority.familyId === task.familyId
     && loopAuthority.generation === task.generation && loopAuthority.revision === task.revision && loopAuthority.ownerId === status?.ownerId);
-  const taskState = (value: AgentTask) => text.taskStates[value.status] ?? value.status;
+  const taskState = (value: Pick<AgentTask, 'status'>) => text.taskStates[value.status] ?? value.status;
   const date = (value: number) => new Intl.DateTimeFormat(language === 'ru' ? 'ru-RU' : 'en-US', { dateStyle: 'medium', timeStyle: 'short', hourCycle: 'h23' }).format(value);
   const modeOptions = [{ value: 'manual', label: text.manual }, { value: 'goal', label: text.goal }, { value: 'loop', label: text.loop }];
 
@@ -511,38 +524,49 @@ export function AgentModeSurface({ language, api, disabled = false }: {
     </li>)}</RecordList></Panel> : null}
     <div className="agent-mode-workspace">
       <Panel title={text.tasks} className="agent-mode-task-list">
+        <form className="agent-mode-form" onSubmit={event => { event.preventDefault(); browseTasks(taskView); }}>
+          <TextField label={language === 'ru' ? 'Найти задачу по запросу, ID или состоянию' : 'Find task by request, ID or status'} value={taskQuery} maxLength={200} disabled={locked} onChange={event => setTaskQuery(event.target.value)} />
+          <Select label={language === 'ru' ? 'Список задач' : 'Task list'} value={taskView} disabled={locked} onChange={value => browseTasks(value === 'archived' ? 'archived' : 'active')} options={[{ value: 'active', label: language === 'ru' ? 'Текущие задачи' : 'Current tasks' }, { value: 'archived', label: language === 'ru' ? 'Архив · только чтение' : 'Archive · read only' }]} />
+          <Button type="submit" disabled={locked}>{language === 'ru' ? 'Найти' : 'Search'}</Button>
+        </form>
         {status?.truncated ? <p className="agent-mode-muted">{text.truncated} ({status.tasks.length}/{status.total})</p> : null}
         {status?.archived ? <p className="agent-mode-muted">{text.archivedCount}: {status.archived}</p> : null}
-        {!status?.tasks.length ? <EmptyState icon="logs" title={text.empty}>{text.emptyBody}</EmptyState>
+        {!status ? <Notice>{pending ? (language === 'ru' ? 'Загрузка списка задач…' : 'Loading tasks…') : (language === 'ru' ? 'Список задач недоступен. Обновите состояние.' : 'Task list unavailable. Refresh to retry.')}</Notice> : !status.tasks.length ? <EmptyState icon="logs" title={text.empty}>{text.emptyBody}</EmptyState>
           : <ul>{status.tasks.map(row => <li key={row.id}><button className="agent-mode-task" type="button" disabled={locked} aria-current={selected === row.id ? 'true' : undefined} onClick={() => selectTask(row.id)}>
             <strong>{row.originalRequest}</strong><span>{taskState(row)} · {row.mode} · {row.turns}/{row.bounds.maxTurns}</span><code>{row.id}</code>
           </button></li>)}</ul>}
+        {status ? <div className="agent-mode-actions">
+          <Button size="sm" disabled={locked || taskOffset === 0} onClick={() => browseTasks(taskView, Math.max(0, taskOffset - 25), listingRef.current.query)}>{language === 'ru' ? 'Назад' : 'Previous'}</Button>
+          <span>{status.total ? `${taskOffset + 1}–${taskOffset + status.tasks.length} / ${status.total}` : '0'}</span>
+          <Button size="sm" disabled={locked || status.nextOffset == null} onClick={() => browseTasks(taskView, status.nextOffset!, listingRef.current.query)}>{language === 'ru' ? 'Далее' : 'Next'}</Button>
+        </div> : null}
       </Panel>
       <div className="agent-mode-detail" aria-busy={pending === 'get' || undefined}>
         {api.loopFileWatcherRequest ? <AgentLoopFileWatcher task={task ?? null} projects={workspaceRoots.map(root => ({ id: root.id, label: root.name }))}
-          request={api.loopFileWatcherRequest} language={language} disabled={locked}
+          request={api.loopFileWatcherRequest} language={language} disabled={locked || readOnlyArchive}
           observationKey={JSON.stringify([task?.id, task?.familyId, task?.generation, task?.revision, task?.status, task?.updatedAt, loopAuthority?.runId])} /> : null}
         {api.loopProducerRequest ? <AgentLoopExternalProducer task={task ?? null} authority={loopAuthority}
-          request={api.loopProducerRequest} language={language} disabled={locked}
+          request={api.loopProducerRequest} language={language} disabled={locked || readOnlyArchive}
           observationKey={JSON.stringify([task?.id, task?.familyId, task?.generation, task?.revision, task?.status, task?.updatedAt, loopAuthority?.runId])} /> : null}
         {!task ? <p className="agent-mode-muted">{text.noSelection}</p> : <>
           <Panel>
             <h2 tabIndex={-1} ref={heading}>{text.open}</h2>
+            {readOnlyArchive ? <Notice>{language === 'ru' ? 'Архивная задача: результаты и квитанции доступны только для чтения.' : 'Archived task: results and receipts are read only.'}</Notice> : null}
             <div className="agent-mode-actions">
               <Badge>{taskState(task)}</Badge>
-              <Button size="sm" disabled={locked || terminal(task) || task.status === 'paused'} busy={pending === 'pause'} onClick={() => control('pause')}>{text.pause}</Button>
-              <Button size="sm" disabled={locked || terminal(task) || task.status !== 'paused'} busy={pending === 'resume'} onClick={() => control('resume')}>{text.resume}</Button>
-              <Button size="sm" variant="danger" disabled={locked || terminal(task)} busy={pending === 'stop'} onClick={() => control('stop')}>{text.stop}</Button>
-              {terminal(task) && task.archivedAt === undefined ? <Button size="sm" variant="ghost" disabled={locked || detail?.dispatches.some(row => ['offered', 'admitted', 'acked'].includes(row.state) || row.state === 'unknown' && !dispositionOf(row.id))}
+              <Button size="sm" disabled={locked || readOnlyArchive || terminal(task) || task.status === 'paused'} busy={pending === 'pause'} onClick={() => control('pause')}>{text.pause}</Button>
+              <Button size="sm" disabled={locked || readOnlyArchive || terminal(task) || task.status !== 'paused'} busy={pending === 'resume'} onClick={() => control('resume')}>{text.resume}</Button>
+              <Button size="sm" variant="danger" disabled={locked || readOnlyArchive || terminal(task)} busy={pending === 'stop'} onClick={() => control('stop')}>{text.stop}</Button>
+              {terminal(task) && task.archivedAt === undefined ? <Button size="sm" variant="ghost" disabled={locked || readOnlyArchive || detail?.dispatches.some(row => ['offered', 'admitted', 'acked'].includes(row.state) || row.state === 'unknown' && !dispositionOf(row.id))}
                 onClick={() => { setArchiveError(null); setArchiving(true); }}>{text.archive}</Button> : null}
-              <Button size="sm" variant="primary" disabled={locked || !canExecute}
+              <Button size="sm" variant="primary" disabled={locked || readOnlyArchive || !canExecute}
                 busy={pending === 'step'} onClick={() => execute('step')}>{text.step}</Button>
-              {task.mode !== 'manual' ? <Button size="sm" disabled={locked || (!canExecute && !canRunLoop) || !status?.capabilities.autoSchedule} busy={pending === 'run'} onClick={() => execute('run')}>{task.mode === 'loop' ? text.loopRun : text.run}</Button> : null}
+              {task.mode !== 'manual' ? <Button size="sm" disabled={locked || readOnlyArchive || (!canExecute && !canRunLoop) || !status?.capabilities.autoSchedule} busy={pending === 'run'} onClick={() => execute('run')}>{task.mode === 'loop' ? text.loopRun : text.run}</Button> : null}
             </div>
             <p className="agent-mode-muted">{task.execution?.provider === 'owned-native' ? text.nativeStepHint : text.stepHint}</p>
             {staleNativeAdmission && !terminal(task) && <Notice tone="warning">
               <p>{language === 'ru' ? 'Для этой модели доступен новый допуск. Можно продолжить через текущий подключённый аккаунт: завершённые этапы сохранятся, а доступ к файлам потребуется подтвердить заново.' : 'A fresh admission is available for this model. Continue through the currently connected account; completed stages are retained and file access must be granted again.'}</p>
-              <Button size="sm" disabled={locked || status?.accepting === false || detail.dispatches.some(row => ['unknown', 'offered', 'admitted', 'acked'].includes(row.state))}
+              <Button size="sm" disabled={locked || readOnlyArchive || status?.accepting === false || detail.dispatches.some(row => ['unknown', 'offered', 'admitted', 'acked'].includes(row.state))}
                 busy={pending === 'refresh-execution'} onClick={refreshExecution}>{language === 'ru' ? `Обновить допуск ${currentNativeModel?.label ?? task.execution?.model}` : `Refresh admission for ${currentNativeModel?.label ?? task.execution?.model}`}</Button>
             </Notice>}
             {task.execution?.provider === 'owned-native' ? <p className="agent-mode-muted">{nativeTurnHint(task.bounds.maxConcurrent)}</p> : null}
@@ -578,28 +602,28 @@ export function AgentModeSurface({ language, api, disabled = false }: {
             <p>{language === 'ru' ? 'Прочитайте вопрос в результате этапа. Сохранение ответа не запускает модель автоматически.' : 'Read the question in the stage result. Saving your reply does not automatically run the model.'}</p>
             {task.stages.some(stage => stage.waitingFor === 'tools') ? <Notice tone="warning">{language === 'ru' ? 'Сначала подтвердите ожидающие вызовы инструментов и дождитесь их точных результатов. Затем сохраните ответ.' : 'First resolve pending tool approvals and wait for their exact results, then save your reply.'}</Notice> : null}
             <form className="agent-mode-form" onSubmit={event => { event.preventDefault(); if (!locked && userReply.trim() && !task.stages.some(stage => stage.waitingFor === 'tools')) reply(); }}>
-              <TextArea label={language === 'ru' ? 'Ответ' : 'Reply'} value={userReply} onChange={setUserReply} disabled={locked} required />
-              <div><Button type="submit" disabled={locked || !userReply.trim() || task.stages.some(stage => stage.waitingFor === 'tools') || detail.dispatches.some(row => ['admitted', 'offered', 'acked', 'unknown'].includes(row.state))} busy={pending === 'reply'}>{language === 'ru' ? 'Сохранить ответ' : 'Save reply'}</Button></div>
+              <TextArea label={language === 'ru' ? 'Ответ' : 'Reply'} value={userReply} onChange={setUserReply} disabled={locked || readOnlyArchive} required />
+              <div><Button type="submit" disabled={locked || readOnlyArchive || !userReply.trim() || task.stages.some(stage => stage.waitingFor === 'tools') || detail.dispatches.some(row => ['admitted', 'offered', 'acked', 'unknown'].includes(row.state))} busy={pending === 'reply'}>{language === 'ru' ? 'Сохранить ответ' : 'Save reply'}</Button></div>
             </form>
           </Panel> : null}
-          {task.execution?.provider === 'owned-native' && api.nativeHistory ? <OwnedNativeHistoryPanel language={language} task={task} api={api.nativeHistory} disabled={disabled} /> : null}
+          {task.execution?.provider === 'owned-native' && api.nativeHistory ? <OwnedNativeHistoryPanel language={language} task={task} api={api.nativeHistory} disabled={disabled || readOnlyArchive} /> : null}
           {task.mode === 'loop' ? <Panel title={text.loopMailbox}>
             <p className="agent-mode-muted">{text.loopSourceHint}</p>
             <Notice tone={loopRunActive ? 'info' : 'warning'} title={task.reason === 'waiting_for_mailbox_work' ? text.waitingMailbox : undefined}>{loopRunActive ? text.loopRunActive : text.loopRunInactive}</Notice>
             <form className="agent-mode-form" onSubmit={event => { event.preventDefault(); if (!locked) enqueueWork(); }}>
-              <TextField label={text.workKey} value={workKey} onChange={event => setWorkKey(event.target.value)} maxLength={128} required disabled={locked || terminal(task)} />
-              <TextArea label={text.workText} value={workText} onChange={setWorkText} required disabled={locked || terminal(task)} />
-              <div><Button type="submit" disabled={locked || terminal(task) || !workKey.trim() || !workText.trim()} busy={pending === 'enqueue-work'}>{text.enqueueWork}</Button></div>
+              <TextField label={text.workKey} value={workKey} onChange={event => setWorkKey(event.target.value)} maxLength={128} required disabled={locked || readOnlyArchive || terminal(task)} />
+              <TextArea label={text.workText} value={workText} onChange={setWorkText} required disabled={locked || readOnlyArchive || terminal(task)} />
+              <div><Button type="submit" disabled={locked || readOnlyArchive || terminal(task) || !workKey.trim() || !workText.trim()} busy={pending === 'enqueue-work'}>{text.enqueueWork}</Button></div>
             </form>
             <RecordList empty={text.none}>{(detail.workPackets ?? []).map(row => <li key={row.workId}><Badge>{row.state === 'pending' ? text.packetPending : row.state === 'claimed' ? text.packetClaimed : text.packetHeld}</Badge> <strong>{row.workKey}</strong><p className="agent-mode-prose">{row.text}</p><small>{text.generation}: {row.enqueuedGeneration} · <code>{row.workId}</code></small>
-              {row.state !== 'claimed' && task.status === 'review_required' ? <div><Button size="sm" disabled={locked || terminal(task) || task.turns >= task.bounds.maxTurns || detail.dispatches.some(dispatch => ['unknown', 'offered', 'admitted', 'acked'].includes(dispatch.state))} busy={pending === `cycle:${row.workId}`} onClick={() => loadPacket(row.workId)}>{text.loadPacket}</Button></div> : null}</li>)}</RecordList>
+              {row.state !== 'claimed' && task.status === 'review_required' ? <div><Button size="sm" disabled={locked || readOnlyArchive || terminal(task) || task.turns >= task.bounds.maxTurns || detail.dispatches.some(dispatch => ['unknown', 'offered', 'admitted', 'acked'].includes(dispatch.state))} busy={pending === `cycle:${row.workId}`} onClick={() => loadPacket(row.workId)}>{text.loadPacket}</Button></div> : null}</li>)}</RecordList>
           </Panel> : null}
           <Panel title={text.grants}>
             <p className="agent-mode-muted">{text.snapshotHint} {text.snapshotGeneration}</p>
             <RecordList empty={text.none}>{workspaceGrants.filter(row => row.taskId === task.id).map(row => <li key={row.id}><Badge tone={row.state === 'active' ? 'success' : 'neutral'}>{row.state === 'active' ? text.active : text.revoked}</Badge> {text.generation}: {row.generation}<p>{workspaceRoots.find(root => root.id === row.workspaceId)?.name ?? row.workspaceId}</p><p className="agent-mode-prose">{row.paths.join('\n')}</p></li>)}</RecordList>
             {workspaceControls && !terminal(task) ? <form className="agent-mode-form" onSubmit={event => { event.preventDefault(); if (!locked) renewWorkspace(); }}>
               {workspaceFields('renew', renewRoot, setRenewRoot, renewPaths, setRenewPaths)}
-              <div><Button type="submit" disabled={locked || !renewRoot || !renewPaths.trim() || detail.dispatches.some(row => ['admitted', 'offered', 'acked', 'unknown'].includes(row.state))} busy={pending === 'workspace-grant'}>{text.renewSnapshot}</Button></div>
+              <div><Button type="submit" disabled={locked || readOnlyArchive || !renewRoot || !renewPaths.trim() || detail.dispatches.some(row => ['admitted', 'offered', 'acked', 'unknown'].includes(row.state))} busy={pending === 'workspace-grant'}>{text.renewSnapshot}</Button></div>
             </form> : null}
           </Panel>
           <Panel title={text.snapshotReceipts}>
@@ -609,10 +633,10 @@ export function AgentModeSurface({ language, api, disabled = false }: {
           <Panel title={text.corrections}>
             <RecordList empty={text.none}>{task.corrections.map(row => <li key={row.revision}>{text.revision} {row.revision}: {row.text}</li>)}</RecordList>
             <form className="agent-mode-form" onSubmit={event => { event.preventDefault(); if (!locked) correct(); }}>
-              <TextArea label={text.correction} value={correction} onChange={setCorrection} disabled={locked || terminal(task)} required hint={text.correctionHint} />
-              <TextArea label={text.correctionRequirements} value={replacementRequirements} onChange={setReplacementRequirements} disabled={locked || terminal(task)} />
-              <TextArea label={text.correctionStages} value={replacementStages} onChange={setReplacementStages} disabled={locked || terminal(task)} />
-              <div><Button type="submit" disabled={locked || terminal(task) || !correction.trim()} busy={pending === 'correct'}>{text.correct}</Button></div>
+              <TextArea label={text.correction} value={correction} onChange={setCorrection} disabled={locked || readOnlyArchive || terminal(task)} required hint={text.correctionHint} />
+              <TextArea label={text.correctionRequirements} value={replacementRequirements} onChange={setReplacementRequirements} disabled={locked || readOnlyArchive || terminal(task)} />
+              <TextArea label={text.correctionStages} value={replacementStages} onChange={setReplacementStages} disabled={locked || readOnlyArchive || terminal(task)} />
+              <div><Button type="submit" disabled={locked || readOnlyArchive || terminal(task) || !correction.trim()} busy={pending === 'correct'}>{text.correct}</Button></div>
             </form>
           </Panel>
           <Panel title={text.workers}>
@@ -624,15 +648,15 @@ export function AgentModeSurface({ language, api, disabled = false }: {
           <Panel title={text.dispatches}>
             <RecordList empty={text.none}>{detail.dispatches.map(row => <li key={row.id}><code>{row.id}</code> · {row.state} · {row.stageId}
               {row.state === 'unknown' && dispositionOf(row.id) ? <p><Badge>{text.recordedOutcome}: {dispositionOf(row.id)!.kind === 'abandoned' ? text.reconcileAbandoned : text.reconcileDelivered}</Badge>{dispositionOf(row.id)!.note ? <span className="agent-mode-prose"> {dispositionOf(row.id)!.note}</span> : null}</p>
-                : row.state === 'unknown' && canReconcileDispatch ? <div><p className="agent-mode-muted">{text.reconcileDispatchHint}</p><Button size="sm" disabled={locked} onClick={() => { setReconcileError(null); setReconciling(row.id); }}>{text.reconcileDispatch}</Button></div> : null}
+                : row.state === 'unknown' && canReconcileDispatch ? <div><p className="agent-mode-muted">{text.reconcileDispatchHint}</p><Button size="sm" disabled={locked || readOnlyArchive} onClick={() => { setReconcileError(null); setReconciling(row.id); }}>{text.reconcileDispatch}</Button></div> : null}
               {row.result ? <><p className="agent-mode-prose">{row.result.summary}</p><small>{row.result.outcome} · <code>{row.result.receiptId}</code></small></> : null}
-              {row.result?.continuation && row.generation !== task.generation && task.stages.some(stage => stage.continuationFrom === row.id && stage.continuationGeneration !== task.generation) ? <div><p className="agent-mode-muted">{text.adoptToolsHint}</p><Button size="sm" disabled={locked || terminal(task)} busy={pending === `adopt:${row.id}`} onClick={() => adoptContinuation(row.id)}>{text.adoptTools}</Button></div> : null}</li>)}</RecordList>
+              {row.result?.continuation && row.generation !== task.generation && task.stages.some(stage => stage.continuationFrom === row.id && stage.continuationGeneration !== task.generation) ? <div><p className="agent-mode-muted">{text.adoptToolsHint}</p><Button size="sm" disabled={locked || readOnlyArchive || terminal(task)} busy={pending === `adopt:${row.id}`} onClick={() => adoptContinuation(row.id)}>{text.adoptTools}</Button></div> : null}</li>)}</RecordList>
           </Panel>
           <Panel title={text.toolReceipts}>
             <p className="agent-mode-muted">{text.reconcileToolHint}</p>
             <RecordList empty={text.none}>{(detail.toolOutcomes ?? []).map(row => <li key={row.idempotencyKey}><strong>{row.tool}</strong> · {row.state}
               {row.state === 'outcome_unknown' ? <p><Badge tone="warning">{text.originalUnknown}</Badge></p> : null}<p><code>{row.idempotencyKey}</code></p><small>{text.generation}: {row.scope.generation} · {row.scope.toolCallId}</small>{row.reason ? <p>{row.reason}</p> : null}
-              {row.state === 'outcome_unknown' && !(detail.effectiveToolOutcomes ?? []).some(effective => effective.idempotencyKey === row.idempotencyKey && effective.state !== 'outcome_unknown') && !(detail.toolReconciliations ?? []).some(event => event.idempotencyKey === row.idempotencyKey) ? <div><Button size="sm" disabled={locked} busy={pending === `reconcile:${row.idempotencyKey}`} onClick={() => reconcileTool(row.idempotencyKey)}>{text.reconcileTool}</Button></div> : null}
+              {row.state === 'outcome_unknown' && !(detail.effectiveToolOutcomes ?? []).some(effective => effective.idempotencyKey === row.idempotencyKey && effective.state !== 'outcome_unknown') && !(detail.toolReconciliations ?? []).some(event => event.idempotencyKey === row.idempotencyKey) ? <div><Button size="sm" disabled={locked || readOnlyArchive} busy={pending === `reconcile:${row.idempotencyKey}`} onClick={() => reconcileTool(row.idempotencyKey)}>{text.reconcileTool}</Button></div> : null}
             </li>)}</RecordList>
             {(detail.toolReconciliations ?? []).length ? <><h3>{text.lateToolOutcome}</h3><RecordList empty={text.none}>{(detail.toolReconciliations ?? []).map(event => <li key={event.id}>
               <Badge tone={event.outcome.state === 'completed' ? 'success' : 'error'}>{event.outcome.state}</Badge> <strong>{event.outcome.tool}</strong>
@@ -645,14 +669,14 @@ export function AgentModeSurface({ language, api, disabled = false }: {
             <h3>{text.artifactEvidence}</h3>
             <p className="agent-mode-muted">{text.evidenceHint}</p>
             <form className="agent-mode-form" onSubmit={event => { event.preventDefault(); if (!locked) observeArtifact(); }}>
-              <div className="nk-field"><label htmlFor="agent-artifact-root">{text.workspaceRoot}</label><Select id="agent-artifact-root" value={evidenceRoot} options={rootOptions} onChange={value => { setEvidenceRoot(value); setEvidenceMapped(false); }} disabled={locked || !workspaceRoots.length} /></div>
-              <TextField label={text.evidenceFile} value={evidenceFile} onChange={event => { setEvidenceFile(event.target.value); setEvidenceMapped(false); }} maxLength={4096} required disabled={locked || terminal(task)} />
-              <div className="nk-field"><label htmlFor="agent-artifact-requirement">{text.evidenceRequirement}</label><Select id="agent-artifact-requirement" value={evidenceRequirement} options={task.requirements.map(row => ({ value: row.id, label: `${row.id}: ${row.text}` }))} onChange={value => { setEvidenceRequirement(value); setEvidenceMapped(false); }} disabled={locked || terminal(task)} /></div>
-              <div className="nk-field"><label htmlFor="agent-artifact-property">{text.evidenceProperty}</label><Select id="agent-artifact-property" value={evidenceProperty} options={[{ value: 'file-exists', label: text.evidenceExists }, { value: 'file-sha256', label: text.evidenceSha }]} onChange={value => { setEvidenceProperty(value as typeof evidenceProperty); setEvidenceMapped(false); }} disabled={locked || terminal(task)} /></div>
-              {evidenceProperty === 'file-sha256' ? <TextField label={text.evidenceExpectedHash} value={evidenceExpectedHash} onChange={event => { setEvidenceExpectedHash(event.target.value); setEvidenceMapped(false); }} maxLength={64} pattern="[a-fA-F0-9]{64}" required disabled={locked || terminal(task)} /> : null}
-              <Checkbox label={text.evidenceMapping} checked={evidenceMapped} onChange={setEvidenceMapped} disabled={locked || terminal(task)} />
-              <div className="agent-mode-actions"><Button type="submit" disabled={locked || terminal(task) || !status?.capabilities.observedEvidence || !evidenceRoot || !evidenceFile.trim() || !evidenceRequirement || !evidenceMapped || (evidenceProperty === 'file-sha256' && !/^[a-f0-9]{64}$/i.test(evidenceExpectedHash.trim()))} busy={pending === 'workspace-evidence'}>{text.evidenceObserve}</Button>
-                <Button disabled={locked || terminal(task)} onClick={() => {
+              <div className="nk-field"><label htmlFor="agent-artifact-root">{text.workspaceRoot}</label><Select id="agent-artifact-root" value={evidenceRoot} options={rootOptions} onChange={value => { setEvidenceRoot(value); setEvidenceMapped(false); }} disabled={locked || readOnlyArchive || !workspaceRoots.length} /></div>
+              <TextField label={text.evidenceFile} value={evidenceFile} onChange={event => { setEvidenceFile(event.target.value); setEvidenceMapped(false); }} maxLength={4096} required disabled={locked || readOnlyArchive || terminal(task)} />
+              <div className="nk-field"><label htmlFor="agent-artifact-requirement">{text.evidenceRequirement}</label><Select id="agent-artifact-requirement" value={evidenceRequirement} options={task.requirements.map(row => ({ value: row.id, label: `${row.id}: ${row.text}` }))} onChange={value => { setEvidenceRequirement(value); setEvidenceMapped(false); }} disabled={locked || readOnlyArchive || terminal(task)} /></div>
+              <div className="nk-field"><label htmlFor="agent-artifact-property">{text.evidenceProperty}</label><Select id="agent-artifact-property" value={evidenceProperty} options={[{ value: 'file-exists', label: text.evidenceExists }, { value: 'file-sha256', label: text.evidenceSha }]} onChange={value => { setEvidenceProperty(value as typeof evidenceProperty); setEvidenceMapped(false); }} disabled={locked || readOnlyArchive || terminal(task)} /></div>
+              {evidenceProperty === 'file-sha256' ? <TextField label={text.evidenceExpectedHash} value={evidenceExpectedHash} onChange={event => { setEvidenceExpectedHash(event.target.value); setEvidenceMapped(false); }} maxLength={64} pattern="[a-fA-F0-9]{64}" required disabled={locked || readOnlyArchive || terminal(task)} /> : null}
+              <Checkbox label={text.evidenceMapping} checked={evidenceMapped} onChange={setEvidenceMapped} disabled={locked || readOnlyArchive || terminal(task)} />
+              <div className="agent-mode-actions"><Button type="submit" disabled={locked || readOnlyArchive || terminal(task) || !status?.capabilities.observedEvidence || !evidenceRoot || !evidenceFile.trim() || !evidenceRequirement || !evidenceMapped || (evidenceProperty === 'file-sha256' && !/^[a-f0-9]{64}$/i.test(evidenceExpectedHash.trim()))} busy={pending === 'workspace-evidence'}>{text.evidenceObserve}</Button>
+                <Button disabled={locked || readOnlyArchive || terminal(task)} onClick={() => {
                   // This prepares a new explicit read-only observation identity;
                   // it neither recaptures a failed attempt nor sends anything.
                   for (const key of uncertain.current.keys()) {
@@ -670,8 +694,8 @@ export function AgentModeSurface({ language, api, disabled = false }: {
             </dl> : null}
           </Panel>
           <Panel title={text.review} actions={<div className="agent-mode-actions">
-            <Button size="sm" disabled={locked || terminal(task)} busy={pending === 'review'} onClick={() => review()}>{text.reviewAction}</Button>
-            {task.review ? <Button size="sm" disabled={locked || terminal(task) || !task.review.completeInput || !semanticPassed(task) || task.review.generation !== task.generation || task.review.taskRevision !== task.revision || task.review.evidenceRevision !== task.evidenceRevision} busy={pending === 'verify'} onClick={() => review(true)}>{text.verify}</Button> : null}
+            <Button size="sm" disabled={locked || readOnlyArchive || terminal(task)} busy={pending === 'review'} onClick={() => review()}>{text.reviewAction}</Button>
+            {task.review ? <Button size="sm" disabled={locked || readOnlyArchive || terminal(task) || !task.review.completeInput || !semanticPassed(task) || task.review.generation !== task.generation || task.review.taskRevision !== task.revision || task.review.evidenceRevision !== task.evidenceRevision} busy={pending === 'verify'} onClick={() => review(true)}>{text.verify}</Button> : null}
           </div>}>
             {!task.review ? <p className="agent-mode-muted">{text.noReview}</p> : <>
               <h3>{text.recommendation}</h3><p className="agent-mode-prose">{task.review.recommendation}</p>
@@ -685,8 +709,8 @@ export function AgentModeSurface({ language, api, disabled = false }: {
             <p className="agent-mode-muted">{text.semanticHint}</p>
             {!status?.capabilities.semanticReview?.available ? <Notice tone="warning">{text.semanticUnavailable}</Notice> : <form className="agent-mode-form" onSubmit={event => { event.preventDefault(); if (!locked) semanticReview(); }}>
               <div className="nk-field"><label htmlFor="agent-semantic-reviewer">{text.semanticModel}</label><Select id="agent-semantic-reviewer" value={reviewerModel}
-                options={[{ value: '', label: text.semanticChoose }, ...(status?.models.filter(row => (row.provider ?? 'local-responses') === 'local-responses' && row.available !== false) ?? []).map(row => ({ value: row.id, label: row.label ?? row.id }))]} onChange={setReviewerModel} disabled={locked || terminal(task)} /></div>
-              <div className="agent-mode-actions"><Button type="submit" disabled={locked || terminal(task) || task.status !== 'review_required' || task.mode === 'loop' || !reviewerModel} busy={pending === 'semantic-review'}>{text.semanticAction}</Button></div>
+                options={[{ value: '', label: text.semanticChoose }, ...(status?.models.filter(row => (row.provider ?? 'local-responses') === 'local-responses' && row.available !== false) ?? []).map(row => ({ value: row.id, label: row.label ?? row.id }))]} onChange={setReviewerModel} disabled={locked || readOnlyArchive || terminal(task)} /></div>
+              <div className="agent-mode-actions"><Button type="submit" disabled={locked || readOnlyArchive || terminal(task) || task.status !== 'review_required' || task.mode === 'loop' || !reviewerModel} busy={pending === 'semantic-review'}>{text.semanticAction}</Button></div>
             </form>}
             {!task.semanticReview ? <p className="agent-mode-muted">{text.semanticNone}</p> : <>
               {!semanticCurrent(task) ? <Notice tone="warning">{text.semanticStale}</Notice> : null}

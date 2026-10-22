@@ -46,10 +46,18 @@ function boundedRows<T>(rows: T[], max = 100, byteLimit = 128 * 1024): { rows: T
   for (const row of rows.slice(-max).reverse()) { const size = Buffer.byteLength(JSON.stringify(row)); if (bytes + size > byteLimit) break; selected.push(row); bytes += size; }
   return { rows: selected.reverse(), total: rows.length, truncated: selected.length !== rows.length };
 }
-function listing(runtime: AgentModeRuntime) {
-  const all = runtime.store.listTasks(), visible = all.filter(task => task.archivedAt === undefined);
-  const result = boundedRows(visible, 50, 512 * 1024);
-  return { tasks: result.rows, total: result.total, truncated: result.truncated, archived: all.length - visible.length };
+const taskListing = z.object({ query: z.string().trim().max(200).optional(), view: z.enum(["active", "archived"]).optional(), offset: z.number().int().min(0).max(1_000_000).optional() }).strict();
+function listing(runtime: AgentModeRuntime, options?: z.infer<typeof taskListing>) {
+  const all = runtime.store.listTasks(), archived = all.filter(task => task.archivedAt !== undefined).length;
+  const visible = all.filter(task => options?.view === "archived" ? task.archivedAt !== undefined : task.archivedAt === undefined);
+  // Keep the legacy projection for existing consumers. Explicit browsing sends small
+  // summaries, so even a task with a large ledger cannot block pagination.
+  if (!options) { const result = boundedRows(visible, 50, 512 * 1024); return { tasks: result.rows, total: result.total, truncated: result.truncated, archived }; }
+  const query = options.query?.toLocaleLowerCase() ?? "";
+  const matches = visible.filter(task => !query || [task.id, task.originalRequest, task.status, task.mode].some(value => value.toLocaleLowerCase().includes(query))).reverse();
+  const offset = Math.min(options.offset ?? 0, matches.length ? Math.floor((matches.length - 1) / 25) * 25 : 0);
+  const tasks = matches.slice(offset, offset + 25).map(({ id, originalRequest, status, mode, generation, turns, bounds, archivedAt }) => ({ id, originalRequest: originalRequest.length > 1000 ? `${originalRequest.slice(0, 1000)}…` : originalRequest, status, mode, generation, turns, bounds, archivedAt }));
+  return { tasks, total: matches.length, archived, offset, nextOffset: offset + tasks.length < matches.length ? offset + tasks.length : null, truncated: offset > 0 || offset + tasks.length < matches.length };
 }
 /** Approval metadata must survive exclusion of large, immutable canonical history rows. */
 function pendingToolCalls(runtime: AgentModeRuntime, task: AgentTask, dispatches: AgentDispatch[]) {
@@ -79,10 +87,10 @@ export function createAgentModeRoutes(options: AgentModeRouteOptions): (request:
     if (!options.authorize(request)) return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
     if (request.method !== "POST") return Response.json({ ok: false, error: "method_not_allowed" }, { status: 405, headers: { allow: "POST" } });
     try {
-      const envelope = z.object({ action: z.enum(["status", "list", "get", "create", "control", "step", "run", "review", "evidence", "verify", "workspace-grant", "resume-continuation", "enqueue-work", "cycle", "workspace-evidence", "reconcile-tool", "refresh-execution", "archive", "reconcile-dispatch", "semantic-review"]), taskId: identity.optional(), actionId: identity.optional(), idempotencyKey: identity.optional(), dispatchId: identity.optional(), workId: identity.optional(), work: z.unknown().optional(), input: z.unknown().optional(), control: z.unknown().optional(), scope: taskScope.optional(), loopSourceRunId: identity.optional(), grant: z.unknown().optional(), proof: z.unknown().optional(), explicitUserAction: z.boolean().optional(), workerName: identity.optional(), reviewId: identity.optional(), evidence: z.unknown().optional(), reviewer: z.unknown().optional(), disposition: z.unknown().optional() }).strict().parse(await readJsonRequestBody(request, 512 * 1024, 512 * 1024));
+      const envelope = z.object({ action: z.enum(["status", "list", "get", "create", "control", "step", "run", "review", "evidence", "verify", "workspace-grant", "resume-continuation", "enqueue-work", "cycle", "workspace-evidence", "reconcile-tool", "refresh-execution", "archive", "reconcile-dispatch", "semantic-review"]), taskId: identity.optional(), actionId: identity.optional(), idempotencyKey: identity.optional(), dispatchId: identity.optional(), workId: identity.optional(), work: z.unknown().optional(), input: z.unknown().optional(), control: z.unknown().optional(), scope: taskScope.optional(), loopSourceRunId: identity.optional(), grant: z.unknown().optional(), proof: z.unknown().optional(), explicitUserAction: z.boolean().optional(), workerName: identity.optional(), reviewId: identity.optional(), evidence: z.unknown().optional(), reviewer: z.unknown().optional(), disposition: z.unknown().optional(), listing: taskListing.optional() }).strict().parse(await readJsonRequestBody(request, 512 * 1024, 512 * 1024));
       const runtime = options.runtime;
-      if (envelope.action === "status") return success({ ...runtime.status(), ...listing(runtime), capabilities: { ...runtime.status().capabilities, observedEvidence: Boolean(options.resolveEvidence || options.observeWorkspaceEvidence) } });
-      if (envelope.action === "list") return success(listing(runtime));
+      if (envelope.action === "status") return success({ ...runtime.status(), ...listing(runtime, envelope.listing), capabilities: { ...runtime.status().capabilities, observedEvidence: Boolean(options.resolveEvidence || options.observeWorkspaceEvidence) } });
+      if (envelope.action === "list") return success(listing(runtime, envelope.listing));
       if (envelope.action === "create") {
         const task = runtime.create(identity.parse(envelope.actionId), create.parse(envelope.input));
         return success({ task: runtime.store.getTask(task.id) }, 201);
