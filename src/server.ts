@@ -1170,7 +1170,8 @@ export function startServer(
         if (task.workspaceSnapshotGrant === undefined || task.workspaceSnapshotGrant === null) return;
         await getAgentSnapshots().beforeTurn({ task, generation: dispatch.generation, dispatchId: dispatch.id });
       }, snapshotReceipts: task => task.workspaceSnapshotGrant === undefined ? [] : getAgentSnapshots().listTask(task.id),
-      lookupToolOutcome: key => getAgentTools().taskOutcome(key),
+      lookupToolOutcome: key => getAgentTools().receipt(key),
+      isToolHandoffPending: key => getAgentTools().isHumanHandoffPending(key),
       reconcileToolReceipt: request => getAgentTools().reconcileReceipt(request),
       onTaskScopeInvalidated: taskId => {
         agentTools?.invalidateTaskTools(taskId);

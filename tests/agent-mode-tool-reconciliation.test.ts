@@ -44,7 +44,7 @@ test("retained late tool receipts reconcile without replay, while correction inv
       tools: [{ type: "function", name: "browser_input", parameters: { type: "object" } }], toolMap: [{ wireName: "browser_input", tool: "browser/input" }],
       pending: [{ toolCallId: callId, tool: "browser/input", wireName: "browser_input", arguments: { text: callId } }],
     } };
-  } }, lookupToolOutcome: key => tools.taskOutcome(key), reconcileToolReceipt: request => tools.reconcileReceipt(request), onTaskScopeInvalidated: taskId => tools.invalidateTaskTools(taskId) });
+  } }, lookupToolOutcome: key => tools.receipt(key), isToolHandoffPending: key => tools.isHumanHandoffPending(key), reconcileToolReceipt: request => tools.reconcileReceipt(request), onTaskScopeInvalidated: taskId => tools.invalidateTaskTools(taskId) });
   const authorize = (request: Request) => request.headers.get("authorization") === "Bearer fixture-control";
   tools = createAgentToolsComposition({ home, authorize, builtins: [builtin], isScopeActive: scope => {
     const task = store.getTask(scope.taskId); return task.generation === scope.generation && ["ready", "running", "awaiting_input"].includes(task.status);
@@ -117,7 +117,7 @@ test("task GET and duplicate approval preserve one live human handoff until its 
   const humanReturn = new Promise<void>(resolve => { release = resolve; });
   let tools!: ReturnType<typeof createAgentToolsComposition>;
   const runtime = new AgentModeRuntime({ store, ownerId: "human-wait-owner", models: () => [{ id: "fixture-model" }],
-    lookupToolOutcome: key => tools.taskOutcome(key),
+    lookupToolOutcome: key => tools.receipt(key), isToolHandoffPending: key => tools.isHumanHandoffPending(key),
     executionPort: { async execute(request, acknowledge) {
       acknowledge("fixture-ack");
       return { receiptId: "fixture-result", outcome: "awaiting_input", actualSpend: null, summary: "One selected-window handoff.", continuation: {
@@ -157,6 +157,9 @@ test("task GET and duplicate approval preserve one live human handoff until its 
       expect(detail.task.status).toBe("awaiting_input"); expect(detail.pendingToolCalls).toHaveLength(1);
       expect(detail.effectiveToolOutcomes).toEqual([]);
     }
+    const task = store.getTask("task");
+    expect(() => runtime.refreshExecution("task", "do-not-refresh-live-wait", { familyId: task.familyId, generation: task.generation, revision: task.revision }, true)).toThrow("unknown tool outcome");
+    expect(store.getTask("task").generation).toBe(task.generation);
     const duplicate = tools.approveInvoke(scope, true);
     await Promise.resolve(); expect(executions).toBe(1); expect(effects).toBe(0);
     release(); expect((await pending).state).toBe("completed"); expect((await duplicate).state).toBe("completed");
