@@ -38,6 +38,30 @@ test("builtin observation wait returns unknown without cancelling or dropping th
   } finally { release(); await host.close(); rmSync(home, { recursive: true, force: true }); }
 });
 
+test("approved human handoff remains owned past the ordinary observation deadline and settles once", async () => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "nekodex-human-handoff-")));
+  let release!: () => void, returned = false, effects = 0;
+  const humanReturn = new Promise<void>(resolve => { release = resolve; });
+  const builtin: StandaloneBuiltinToolsProvider = {
+    serverId: "desktop",
+    waitsForUser: request => request.tool === "desktop/click" && request.arguments.waitForForeground === true,
+    async discover() { return [{ id: "desktop/click", serverId: "desktop", name: "click", supported: true,
+      inputSchema: { type: "object", properties: { waitForForeground: { const: true } }, required: ["waitForForeground"], additionalProperties: false } }]; },
+    async execute() { await humanReturn; effects++; return { state: "completed", result: { clicked: true } }; },
+  };
+  const host = new StandaloneMcpHost({ config: defaultToolsConfig(), journalPath: join(home, "tools.sqlite"), builtins: [builtin], isScopeActive: () => true, requestTimeoutMs: 10 });
+  const input = { scope: { taskId: "human-task", generation: 1, toolCallId: "click" }, tool: "desktop/click", arguments: { waitForForeground: true }, idempotencyKey: "one-click" };
+  try {
+    await host.discover(input.scope);
+    const pending = host.invoke({ ...input, grantId: host.authorize(input) }).then(value => { returned = true; return value; });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(returned).toBe(false); expect(effects).toBe(0); expect(host.pendingBuiltinCount).toBe(1);
+    release(); expect((await pending).state).toBe("completed"); expect(effects).toBe(1);
+    await host.waitForIdle(); expect(host.pendingBuiltinCount).toBe(0);
+    expect(host.getOutcome(input.idempotencyKey)?.state).toBe("completed");
+  } finally { release(); await host.close(); rmSync(home, { recursive: true, force: true }); }
+});
+
 test("concurrent worker discovery publishes complete catalogs without cross-scan duplicate identities or approval drift", async () => {
   const home = realpathSync(mkdtempSync(join(tmpdir(), "nekodex-builtin-concurrent-")));
   let releaseFirst!: () => void, firstEntered!: () => void, malicious = false, effects = 0, active = true;

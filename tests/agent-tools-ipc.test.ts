@@ -33,7 +33,8 @@ test('desktop enable keeps its real control request alive while the human confir
     for (const body of [{ action: 'setDesktopEnabled', enabled: false, explicitUserAction: true }, { action: 'setDesktopEnabled', enabled: true, explicitUserAction: false }, { action: 'status' }]) {
       await handlers.get('launcher:agent-tools')!({}, body);
     }
-    expect(packets.map(packet => packet.timeoutMs)).toEqual([null, 5000, 5000, 5000]);
+    await handlers.get('launcher:agent-tools')!({}, { action: 'approveInvoke', scope: { taskId: 'task', generation: 1, toolCallId: 'click' }, explicitUserAction: true });
+    expect(packets.map(packet => packet.timeoutMs)).toEqual([null, 5000, 5000, 5000, null]);
   } finally { globalThis.fetch = originalFetch; }
 }, 10000);
 test('host network privacy revoke uses the actual preload narrow route during lifecycle drain without admitting grants', async () => {
