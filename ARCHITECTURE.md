@@ -549,6 +549,24 @@ export/search retain provenance and explicit partial coverage. Selected external
 page reads are not an authenticated event feed: full client transcript/background
 subscription for independently owned external clients remains unavailable.
 
+### Owned Native profile labels and local conversation archives
+
+`rename-profile` changes only the authority registry's user label under an exact
+profile/epoch and expected-label check. Its receipt is atomic with that metadata;
+physical epoch metadata, credentials, configuration and execution admissions stay
+owned by their existing services.
+
+The persistent Native registry version 3 retains archived rows and every action
+fingerprint/receipt in the same atomic file. Explicit `archive` is exempt from the
+128-conversation/512-action operational quotas and retires an exact loaded idle
+subscription before marking the row archived. Prepared, unknown and owner-held
+obligations prevent archival. Archived history and known nonheld failed actions
+stop consuming active count slots; they remain idempotency evidence. The existing
+4 MiB byte limit remains, so this is bounded local retention, not unlimited storage.
+No provider thread or captured transcript is deleted. There is no archive restore
+or implicit Resume. Main projects exact selected-account tombstones plus pages of
+50 archived metadata/preview rows; an opaque last-row cursor reads later pages.
+
 ### Owned canonical text conversations
 
 New retained conversations can explicitly select `canonical-text-v1`; existing

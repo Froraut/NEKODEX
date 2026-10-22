@@ -672,7 +672,7 @@ function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 30000, t
         uuid(conversationId);
         const registry = JSON.parse(regular(registryPath, 4 * 1024 * 1024));
         const row = Array.isArray(registry.conversations) && registry.conversations.find(value => value.id === conversationId);
-        if (!row || ![2, 3].includes(row.contextVersion) || row.contextVersion === 3 && row.conversationMode !== CANONICAL_TEXT_MODE || row.revision !== revision || !['idle', 'unloaded'].includes(row.status)
+        if (!row || row.archivedAt || ![2, 3].includes(row.contextVersion) || row.contextVersion === 3 && row.conversationMode !== CANONICAL_TEXT_MODE || row.revision !== revision || !['idle', 'unloaded'].includes(row.status)
           || !isAgentNativeHistorySource(row.historySource) || canonical(row.historySource) !== canonical(admission.historySource)
           || row.profileId !== row.historySource.profileId || row.epoch !== row.historySource.authEpoch
           || !Array.isArray(registry.actions) || registry.actions.some(value => value.conversationId === conversationId && (['prepared', 'unknown'].includes(value.state) || value.ownerHeld === true))

@@ -5,6 +5,7 @@ const ACTION_KEYS = {
   status: ['action', 'actionId'],
   'preview-owner-recovery': ['action'],
   'recover-owner': ['action', 'actionId', 'reviewDigest'],
+  'rename-profile': ['action', 'actionId', 'profileId', 'epoch', 'expectedLabel', 'label'],
   'prepare-profile': ['action', 'actionId', 'label'],
   'begin-device-login': ['action', 'actionId', 'profileId', 'epoch'],
   'cancel-login': ['action', 'actionId', 'loginAttemptId'],
@@ -35,6 +36,9 @@ function registerNativeAccounts({ handle, getAuthority, getInventory, getExecuti
     } else if (body.action === 'prepare-profile') {
       if (typeof body.label !== 'string' || !body.label.trim() || body.label.length > 80 || /\p{C}/u.test(body.label)) throw new Error('Invalid Native profile label');
       authority.prepareProfile({ actionId: body.actionId, label: body.label });
+    } else if (body.action === 'rename-profile') {
+      if (!UUID.test(body.profileId) || !UUID.test(body.epoch) || typeof body.expectedLabel !== 'string' || typeof body.label !== 'string') throw new Error('Invalid Native profile rename');
+      authority.renameProfile({ actionId: body.actionId, profileId: body.profileId, epoch: body.epoch, expectedLabel: body.expectedLabel, label: body.label });
     } else if (body.action === 'begin-device-login') {
       if (!UUID.test(body.profileId) || !UUID.test(body.epoch)) throw new Error('Invalid Native profile identity');
       authority.beginDeviceLogin({ actionId: body.actionId, profileId: body.profileId, epoch: body.epoch });

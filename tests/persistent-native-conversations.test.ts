@@ -22,6 +22,7 @@ async function fixture(capacity = 3, terminalTimeoutMs = 50) {
   const profileId = randomUUID(), epoch = randomUUID();
   const historySource = { profileId, authEpoch: epoch, backendAccountId: 'synthetic-account', sourceId: 'c'.repeat(64) };
   const forkParents = new Map<string, string | null>();
+  let holdClose = false, closeSeen: (() => void) | undefined;
   let emitThreadClose: ((id: string) => void) | undefined, holdResume = false, resumeSeen: (() => void) | undefined;
   const admission: any = { paths, historySource, provider: 'openai', serverGeneration: randomUUID(), compileOutputSchema: compileAgentNativeOutputSchema,
     prestart: () => ({ executable: '/inert-owned-wrapper', args: ['--stdio'], paths, environment: {} }),
@@ -65,7 +66,7 @@ async function fixture(capacity = 3, terminalTimeoutMs = 50) {
             if (holdNext) { holdNext = false; held.set(threadId, finish); } else finish();
             turnWaiters.get(params.input[0].text)?.(); turnWaiters.delete(params.input[0].text);
           }
-          if (request.method === 'thread/unsubscribe') { response(request, {}); event('thread/closed', { threadId: request.params.threadId }); }
+          if (request.method === 'thread/unsubscribe') { response(request, {}); if (holdClose) { closeSeen?.(); } else event('thread/closed', { threadId: request.params.threadId }); }
         }); done();
       } });
       child.stdin.on('finish', () => { processClosed = true; child.emit('close', 0, null); });
@@ -81,6 +82,13 @@ async function fixture(capacity = 3, terminalTimeoutMs = 50) {
   let service = createPersistentNativeConversations({ getExecution: () => context, storageRoot });
   const create = (text = 'first') => ({ actionId: randomUUID(), model, text, retainContext: true, expectedContext });
   return { root, get server() { return server; }, get service() { return service; }, methods, histories, get expectedContext() { return expectedContext; }, create, storageRoot, launches: () => launches, hold: () => { holdNext = true; },
+    async rewriteRegistry(edit: (state: any) => void) {
+      await service.destroy();
+      const file = join(storageRoot, 'registry.json'), value = JSON.parse(readFileSync(file, 'utf8')); edit(value);
+      writeFileSync(file, JSON.stringify(value), { mode: 0o600 });
+      service = createPersistentNativeConversations({ getExecution: () => context, storageRoot });
+    },
+    holdClose: () => { holdClose = true; return new Promise<void>(resolve => { closeSeen = resolve; }); },
     emitOldClose: (threadId: string) => emitThreadClose!(threadId),
     holdResume: () => { holdResume = true; return new Promise<void>(resolve => { resumeSeen = resolve; }); },
     async restart() {
@@ -93,7 +101,7 @@ async function fixture(capacity = 3, terminalTimeoutMs = 50) {
     },
     rejectCreate: () => { rejectNextCreate = true; }, aliasCreate: () => { aliasNextCreate = true; },
     waitForTurn: (text: string) => new Promise<void>(resolve => { turnWaiters.set(text, resolve); }),
-    release: (threadId = held.keys().next().value) => { const finish = held.get(threadId!); held.delete(threadId!); finish!(); }, switchContext: () => { context = { ...context, epoch: randomUUID() }; },
+    release: (threadId = held.keys().next().value) => { const finish = held.get(threadId!); held.delete(threadId!); finish!(); }, switchContext: () => { context = { ...context, epoch: randomUUID() }; }, restoreContext: () => { context = { ...context, epoch }; },
     async close() { await Promise.all([service.destroy(), server.destroy()]); expect(processClosed || launches === 0).toBe(true); rmSync(root, { recursive: true, force: true }); } };
 }
 
@@ -354,5 +362,90 @@ test('legacy retained rows remain readable metadata but cannot Resume without pr
     expect(f.service.list().conversations[0]).toMatchObject({ id: original.id, resumeAvailable: false, resumeReason: 'legacy_identity_unproven' });
     await expect(f.service.resume({ actionId: randomUUID(), conversationId: original.id, revision: 1, expectedContext: f.expectedContext })).rejects.toMatchObject({ actionRecorded: false });
     expect(f.methods.filter(row => row.method === 'thread/resume')).toHaveLength(0);
+  } finally { await f.close(); }
+});
+
+test('Archive releases both full active quotas, preserves receipts/context and retries never send after restart', async () => {
+  const f = await fixture();
+  try {
+    const first = f.create('retained first'); await f.service.create(first);
+    const original = f.service.list().conversations[0];
+    await f.rewriteRegistry(value => {
+      const row = value.conversations[0];
+      for (let i = 1; i < 128; i++) value.conversations.push({ ...row, id: randomUUID(), threadId: randomUUID(), status: 'unloaded' });
+      for (let i = 1; i < 512; i++) value.actions.push({ ...value.actions[0], actionId: randomUUID(), fingerprint: 'fixture-only' });
+    });
+    expect(f.service.list().quota).toMatchObject({ conversations: 128, actions: 512 });
+    await expect(f.service.create(f.create('refused'))).rejects.toMatchObject({ code: 'registry_quota', actionRecorded: false });
+    const action = { actionId: randomUUID(), conversationId: original.id, revision: original.revision, expectedContext: f.expectedContext };
+    const before = f.methods.length;
+    const archived = await f.service.archive(action);
+    expect(f.methods).toHaveLength(before); // Unloaded registry metadata never opens a subscription.
+    expect(archived.quota).toMatchObject({ conversations: 127, actions: 0 });
+    expect(archived.archivedConversations[0]).toMatchObject({ id: original.id, status: 'archived', threadId: original.threadId,
+      lastSummary: 'Observed retained first', resumeAvailable: false, archiveAvailable: false });
+    expect(archived.archivedConversationIds).toEqual([original.id]);
+    expect(f.service.inspectAction(first.actionId)).toMatchObject({ state: 'completed', ownerHeld: false });
+    const disk = JSON.parse(readFileSync(join(f.storageRoot, 'registry.json'), 'utf8'));
+    expect(disk.actions).toHaveLength(513); expect(disk.conversations).toHaveLength(128);
+    await f.service.create(f.create('after archive'));
+    const sent = f.methods.filter(row => row.method === 'turn/start').length;
+    await f.restart();
+    await f.service.create(first); await f.service.archive(action);
+    expect(f.methods.filter(row => row.method === 'turn/start')).toHaveLength(sent);
+    expect(f.service.list().archivedCount).toBe(1);
+    await expect(f.service.resume({ ...action, actionId: randomUUID(), revision: original.revision + 1, expectedContext: f.expectedContext })).rejects.toMatchObject({ code: 'stale_conversation', actionRecorded: false });
+  } finally { await f.close(); }
+});
+
+test('Archive retires only the exact idle subscription and keeps other loaded conversations usable', async () => {
+  const f = await fixture();
+  try {
+    await f.service.create(f.create('one')); await f.service.create(f.create('two'));
+    const [one, two] = f.service.list().conversations;
+    const before = f.methods.filter(row => row.method === 'turn/start').length;
+    await f.service.archive({ actionId: randomUUID(), conversationId: one.id, revision: one.revision, expectedContext: f.expectedContext });
+    expect(f.methods.filter(row => row.method === 'thread/unsubscribe').map(row => row.params.threadId)).toEqual([one.threadId]);
+    expect(f.methods.filter(row => row.method === 'turn/start')).toHaveLength(before);
+    expect(f.service.list().conversations[0]).toMatchObject({ id: two.id, ownerAvailable: true });
+    await f.service.send({ actionId: randomUUID(), conversationId: two.id, revision: two.revision, text: 'continued', expectedContext: f.expectedContext });
+    expect(f.histories.get(two.threadId)).toEqual(['two', 'continued']);
+  } finally { await f.close(); }
+});
+
+test('Archive retains uncertain intent across account change and passive retry; prepared/unknown/owner-held cannot archive', async () => {
+  const f = await fixture();
+  try {
+    await f.service.create(f.create()); const row = f.service.list().conversations[0];
+    const seen = f.holdClose();
+    const input = { actionId: randomUUID(), conversationId: row.id, revision: row.revision, expectedContext: f.expectedContext };
+    const work = f.service.archive(input); await seen;
+    expect(f.service.inspectAction(input.actionId)).toMatchObject({ state: 'prepared', ownerHeld: true });
+    f.switchContext(); f.emitOldClose(row.threadId);
+    await expect(work).rejects.toMatchObject({ code: 'stale_account', actionRecorded: true });
+    expect(f.service.inspectAction(input.actionId)).toMatchObject({ state: 'unknown', ownerHeld: false });
+    const calls = f.methods.length; await f.service.archive(input); expect(f.methods).toHaveLength(calls);
+    const disk = JSON.parse(readFileSync(join(f.storageRoot, 'registry.json'), 'utf8'));
+    expect(disk.conversations[0].archivedAt).toBeUndefined();
+    f.restoreContext(); await f.restart();
+    expect(f.service.list().conversations[0].archiveAvailable).toBe(false);
+    await expect(f.service.archive({ ...input, actionId: randomUUID(), revision: row.revision + 1, expectedContext: f.expectedContext })).rejects.toMatchObject({ code: 'archive_unavailable', actionRecorded: false });
+  } finally { await f.close(); }
+});
+
+test('Archive listing is account scoped and paginated; settled failed receipts do not permanently spend active slots', async () => {
+  const f = await fixture();
+  try {
+    await f.service.create(f.create());
+    await f.rewriteRegistry(value => {
+      const row = value.conversations[0];
+      for (let i = 0; i < 51; i++) value.conversations.push({ ...row, id: randomUUID(), archivedAt: Date.now() - i, status: 'unloaded' });
+      value.conversations.push({ ...row, id: randomUUID(), epoch: randomUUID(), archivedAt: Date.now(), status: 'unloaded' });
+      for (let i = 0; i < 512; i++) value.actions.push({ actionId: randomUUID(), conversationId: randomUUID(), kind: 'create', state: 'failed', ownerHeld: false, fingerprint: 'failed-fixture' });
+    });
+    const first = f.service.list(); expect(first.archivedCount).toBe(51); expect(first.archivedConversations).toHaveLength(50);
+    expect(first.quota.actions).toBe(1);
+    expect(f.service.list({ archiveCursor: first.archiveNextCursor }).archivedConversations).toHaveLength(1);
+    await f.service.create(f.create('not blocked by failed history'));
   } finally { await f.close(); }
 });
