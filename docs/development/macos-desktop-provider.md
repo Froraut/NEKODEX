@@ -165,6 +165,29 @@ stack; a sharing accessory or other surface covering that point is still refused
 The exact AX focused window, process instance, frame, original image and focused
 control checks remain in force.
 
+Foreground observation requires at least 200ms of unchanged full PNG, exact frame
+epoch and AX/focus signatures, sampled with 100ms pauses. The capture-only
+sampler permits at most 12 attempts within 2s (a late capture cannot authorize
+input). For an explicitly foreground action, that same sampler accepts only the
+original approved full PNG/frame, permitting a transient compositor image to
+settle back to the original. Geometry/scale, owner, focus, held-button or new
+physical-input changes fail closed. The fixed physical-input baseline never
+advances while sampling. Cancellation and unrelated capture errors propagate;
+no input is retried, no binding is replaced, and nonforeground capture remains
+the immediate path. The unbounded manual foreground/consent waits are unchanged.
+
+After a capture-comparison rejection, optional `status.captureRejection` holds
+the operation/observation identity, separate screenshot/frame mismatch flags,
+old/fresh SHA256/frame epochs, geometry, pixel dimensions, scale and monotonic
+capture/sample times. It contains no image bytes and grants no new image/input
+resource. It clears at the next enable/selection/observation/action/invalidation
+or shutdown. Legacy status without it and the existing four-field receipt
+remain valid; the TypeScript controller strictly validates this optional shape.
+The in-memory native harness covers delayed A,A→B frames, stable original return,
+persistent image/frame changes, owner/focus/selection/input failures, deadline,
+clock rewind and cancellation without capturing or posting input.
+
+
 The Bun owner waits for this answer without its 12-second request deadline.
 The alert itself also has no expiry, so a person returning later finds the same
 pending decision. Refusal, caller closure and helper shutdown still end the

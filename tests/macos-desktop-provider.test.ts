@@ -14,6 +14,7 @@ function fixture() {
   let enabled = false; let selected = false; let uncertain = false; let active = true; let corrupt = false;
   let foreign = false; let foreignProperties = false; let closed = 0; const calls: string[] = [];
   const requests: { command: string; body: Record<string, unknown> }[] = [];
+  let captureRejection: unknown;
   let holdForeground = false; let expired = false; let pendingOperation: { operationId: string; binding: unknown } | undefined; let lateReceipt: unknown;
   // Marker-only synthetic bytes exercise dimension/hash ownership; native codec/rendering is a separate Cua flow.
   const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0, 8, 8, 0, 1, 0, 1, 0, 0xff, 0xd9]);
@@ -31,7 +32,8 @@ function fixture() {
       if (command === 'enable') { enabled = body.enabled as boolean; return { enabled }; }
       if (command === 'status') return { providerId: 'nekodex-macos-desktop-v1', enabled, uncertain: false,
         selected: selected ? window : null, selectionCurrent: selected, inputWindowBound: selected,
-        screenCaptureGranted: true, accessibilityGranted: true, postEventGranted: false, permissionClient };
+        screenCaptureGranted: true, accessibilityGranted: true, postEventGranted: false, permissionClient,
+        ...(captureRejection === undefined ? {} : { captureRejection }) };
       if (command === 'listWindows') return { windows: [window] };
       if (command === 'openPermissionSettings') return { screenCaptureGranted: true, accessibilityGranted: true, postEventGranted: false, permissionClient,
         pane: body.permission === 'screenCapture' ? 'Privacy_ScreenCapture' : 'Privacy_Accessibility', registered: true };
@@ -56,6 +58,7 @@ function fixture() {
   const provider = createMacosDesktopProvider({ helperExecutable: '/unlaunched-fixture-helper', helperSha256: 'a'.repeat(64),
     platform: 'darwin', isScopeActive: () => active, transportFactory: () => transport });
   return { provider, calls, requests, selection, unknown: () => { uncertain = true; }, foreign: () => { foreign = true; },
+    captureDiagnostic: (value: unknown) => { captureRejection = value; },
     corrupt: () => { corrupt = true; }, foreignProperties: () => { foreignProperties = true; }, stop: () => { active = false; }, closed: () => closed,
     holdForeground: () => { holdForeground = true; }, expireWait: () => { expired = true; }, completeLate: () => { lateReceipt = { operationId: pendingOperation!.operationId, outcome: 'completed', executed: true, reason: 'late ax dispatch receipt; result-unverified' }; } };
 }
@@ -285,7 +288,7 @@ const swiftCompiler = process.platform === 'darwin' ? spawnSync('/usr/bin/xcrun'
 // was dropped. The real helper source is compiled with an inert entry point that only encodes
 // events and checks capture settling with in-memory frames; it never selects a window,
 // captures or posts input. Target-side delivery is live evidence.
-test.skipIf(!swiftCompiler)('pixel click events address the selected window with its window-relative point, never a bare global point', () => {
+test.skipIf(!swiftCompiler)('pixel click events address the selected window with its window-relative point, never a bare global point', async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'nekodex-pixel-events-')));
   try {
     const harness = join(root, 'harness.swift'); const executable = join(root, 'harness');
@@ -319,14 +322,81 @@ test.skipIf(!swiftCompiler)('pixel click events address the selected window with
             Captured(binding: ["frameEpoch": "same-frame"], png: Data(text.utf8), resource: "inert", frame: selected.frame,
                 lastInput: 0, focusedElement: nil, targets: [])
         }
-        var reads = 0
-        let settled = try! await port.settledCapture {
+        // Two old frames arrive back-to-back before the compositor's delayed redraw.
+        // The foreground observer must bind the later time-separated stable image.
+        var delayedNow: TimeInterval = 0; var delayedReads = 0
+        let delayed = try! await port.settledCapture({
+            delayedReads += 1
+            var value = frame(delayedReads <= 2 ? "old" : "new")
+            value.captureStartedAt = delayedNow; value.captureFinishedAt = delayedNow
+            return value
+        }, clock: { delayedNow }, pause: { delayedNow += delayedReads == 1 ? 0.01 : 0.1 })
+        let delayedChecks: [String: Any] = ["returned": String(data: delayed.png, encoding: .utf8)!, "reads": delayedReads,
+            "returnedAt": delayed.captureFinishedAt, "stableDuration": delayed.captureFinishedAt - 0.11]
+        func diagnosticFrame(_ text: String, epoch: String, x: Double, at: TimeInterval) -> Captured {
+            Captured(binding: ["scopeId": "owned-task\0" + "1", "observationId": "11111111-1111-4111-8111-111111111111",
+                "screenshotId": digest(Data(text.utf8)), "frameEpoch": epoch, "width": 1120, "height": 624],
+                png: Data(text.utf8), resource: "inert-not-diagnostic", frame: CGRect(x: x, y: 0, width: 560, height: 312),
+                lastInput: 0, focusedElement: nil, targets: [], captureScale: 2, captureStartedAt: at,
+                captureFinishedAt: at + 0.01, captureAttempts: 2, sampleTimes: [at, at + 0.01])
+        }
+        let original = diagnosticFrame("original", epoch: String(repeating: "a", count: 64), x: 0, at: 1)
+        let pixelChange = diagnosticFrame("fresh", epoch: String(repeating: "a", count: 64), x: 0, at: 2)
+        let frameChange = diagnosticFrame("original", epoch: String(repeating: "b", count: 64), x: 0.25, at: 3)
+        let operation = "22222222-2222-4222-8222-222222222222"
+        port.recordCaptureRejection(operation, original: original, fresh: pixelChange)
+        let pixelDiagnostic = port.captureRejection!
+        port.recordCaptureRejection(operation, original: original, fresh: frameChange)
+        let frameDiagnostic = port.captureRejection!
+        let retainedInput = port.captured != nil || port.image != nil
+        _ = try! await port.perform(["version": 1, "id": "clear-inert-diagnostic", "command": "invalidate"])
+        let diagnostics: [String: Any] = ["pixel": pixelDiagnostic, "frame": frameDiagnostic,
+            "retainedInput": retainedInput, "cleared": port.captureRejection == nil]
+        // The foreground-action matcher never authorizes its final diagnostic sample.
+        // Virtual time makes delayed compositor frames/cancellation deterministic.
+        func matchingCase(_ mode: String) async -> [String: Any] {
+            var now: TimeInterval = 0; var captures = 0; var checks = 0; var accepted = false
+            var reason = ""; var baseline: TimeInterval = 0; var inputAt: TimeInterval = 0
+            do {
+                let result = try await port.matchApprovedCapture(original, validate: { _ in
+                    checks += 1
+                    if ["owner", "focus", "selection"].contains(mode), checks >= 3 { throw PortError(code: mode + "-changed") }
+                    if mode == "input", inputAt > baseline { throw PortError(code: "human-input-changed") }
+                }, read: {
+                    captures += 1
+                    if mode == "ax-error", captures == 1 { throw PortError(code: "ax-state-changed-during-capture") }
+                    if mode == "unrelated-error" { throw PortError(code: "selected-ax-window-changed") }
+                    if mode == "late" { now = 2.1 }
+                    if mode == "input" { inputAt = 0.05 }
+                    let changed = mode == "persistent" || (mode == "transient" && captures <= 2)
+                        || (mode == "reset" && captures == 2) || (mode == "delayed-old" && captures >= 3)
+                    let frameEpoch = mode == "frame" ? String(repeating: "b", count: 64) : String(repeating: "a", count: 64)
+                    return diagnosticFrame(changed ? "fresh" : "original", epoch: frameEpoch, x: 0, at: now)
+                }, clock: { now }, pause: {
+                    if mode == "cancel" { throw CancellationError() }
+                    if mode == "rewind" { now = -0.1 }
+                    else { now += mode == "short" && captures >= 2 ? 2 : 0.1 }
+                })
+                accepted = result.matched != nil; reason = result.failureReason
+                if accepted { precondition(result.matched!.png == original.png && result.matched!.binding["frameEpoch"] as? String == original.binding["frameEpoch"] as? String) }
+            } catch is CancellationError { reason = "cancelled" }
+            catch let error as PortError { reason = error.code }
+            catch { reason = "unexpected" }
+            return ["accepted": accepted, "reason": reason, "captures": captures, "checks": checks, "elapsed": now,
+                "baseline": baseline, "inputAt": inputAt]
+        }
+        var matchChecks: [String: Any] = [:]
+        for mode in ["original", "transient", "reset", "persistent", "delayed-old", "short", "frame", "owner", "focus", "selection", "input", "late", "cancel", "ax-error", "unrelated-error", "rewind"] {
+            matchChecks[mode] = await matchingCase(mode)
+        }
+        var reads = 0; var sampleNow: TimeInterval = 0
+        let settled = try! await port.settledCapture({
             reads += 1
             if reads == 1 { throw PortError(code: "ax-state-changed-during-capture") }
             return frame(reads == 2 ? "transitional" : "settled")
-        }
+        }, clock: { sampleNow }, pause: { sampleNow += 0.1 })
         var movingReads = 0; var movingReason = ""
-        do { _ = try await port.settledCapture { movingReads += 1; return frame(String(movingReads)) } }
+        do { _ = try await port.settledCapture({ movingReads += 1; return frame(String(movingReads)) }, clock: { sampleNow }, pause: { sampleNow += 0.1 }) }
         catch let error as PortError { movingReason = error.code } catch { movingReason = "unexpected" }
         var failedReads = 0; var failedReason = ""
         do { _ = try await port.settledCapture { failedReads += 1; throw PortError(code: "selected-ax-window-changed") } }
@@ -334,7 +404,7 @@ test.skipIf(!swiftCompiler)('pixel click events address the selected window with
         let captureChecks: [String: Any] = ["settled": String(data: settled.png, encoding: .utf8)!, "reads": reads,
             "movingReads": movingReads, "movingReason": movingReason, "failedReads": failedReads, "failedReason": failedReason,
             "changedContentMatches": port.sameCapture(frame("before"), frame("after"))]
-        let value: [String: Any] = ["capture": captureChecks, "order": orderChecks, "point": pointChecks, "display": CGDisplayBounds(CGMainDisplayID()).height > 0, "center": encode(CGPoint(x: 124, y: 168)),
+        let value: [String: Any] = ["approvedMatch": matchChecks, "delayedCapture": delayedChecks, "diagnostics": diagnostics, "capture": captureChecks, "order": orderChecks, "point": pointChecks, "display": CGDisplayBounds(CGMainDisplayID()).height > 0, "center": encode(CGPoint(x: 124, y: 168)),
             "fractional": encode(CGPoint(x: 0.5, y: 311.5)), "negative": encode(CGPoint(x: -1, y: 4)), "infinite": encode(CGPoint(x: CGFloat.infinity, y: 4))]
         print(String(data: try! JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), encoding: .utf8)!)
     }
@@ -346,8 +416,40 @@ test.skipIf(!swiftCompiler)('pixel click events address the selected window with
     const run = spawnSync(executable, [], { encoding: 'utf8', timeout: 15000 });
     if (run.status !== 0) throw new Error(`harness failed: ${run.stderr}`);
     const value = JSON.parse(run.stdout) as Record<string, unknown>;
-    expect(value.capture).toEqual({ settled: 'settled', reads: 4, movingReads: 5, movingReason: 'screen-not-stable',
+    expect(value.capture).toEqual({ settled: 'settled', reads: 5, movingReads: 12, movingReason: 'screen-not-stable',
       failedReads: 1, failedReason: 'selected-ax-window-changed', changedContentMatches: false });
+    const matching = value.approvedMatch as Record<string, { accepted: boolean; reason: string; captures: number; checks: number; elapsed: number; baseline: number }>;
+    for (const mode of ['original', 'transient', 'reset', 'ax-error']) {
+      expect(matching[mode].accepted).toBe(true); expect(matching[mode].elapsed).toBeGreaterThanOrEqual(0.2);
+    }
+    expect(matching.transient.elapsed).toBeGreaterThanOrEqual(0.4);
+    expect(matching.reset.elapsed).toBeGreaterThanOrEqual(0.4);
+    for (const mode of ['persistent', 'delayed-old', 'short', 'frame', 'owner', 'focus', 'selection', 'input', 'late', 'cancel', 'unrelated-error', 'rewind']) expect(matching[mode].accepted).toBe(false);
+    expect(matching.persistent.reason).toBe('screen-or-frame-changed');
+    expect(matching.short.reason).toBe('screen-not-stable');
+    expect(matching.frame.captures).toBe(1);
+    for (const mode of ['owner', 'focus', 'selection']) expect(matching[mode].reason).toBe(mode + '-changed');
+    expect(matching.input.reason).toBe('human-input-changed'); expect(matching.input.baseline).toBe(0);
+    expect(matching.late.reason).toBe('screen-not-stable'); expect(matching.late.captures).toBe(1);
+    expect(matching.cancel.reason).toBe('cancelled');
+    expect(matching['unrelated-error'].reason).toBe('selected-ax-window-changed');
+    expect(matching.rewind.reason).toBe('capture-clock-changed');
+    expect(value.delayedCapture).toMatchObject({ returned: 'new', reads: 5 });
+    expect((value.delayedCapture as { stableDuration: number }).stableDuration).toBeGreaterThanOrEqual(0.2);
+    const diagnostics = value.diagnostics as { pixel: any; frame: any; retainedInput: boolean; cleared: boolean };
+    expect(diagnostics.pixel).toMatchObject({ screenshotChanged: true, frameChanged: false,
+      original: { scale: 2, startedAtUptime: 1, finishedAtUptime: 1.01, sampleTimesUptime: [1, 1.01] },
+      fresh: { scale: 2, startedAtUptime: 2, finishedAtUptime: 2.01, sampleTimesUptime: [2, 2.01] } });
+    expect(diagnostics.frame).toMatchObject({ screenshotChanged: false, frameChanged: true,
+      original: { frame: { x: 0 } }, fresh: { frame: { x: 0.25 } } });
+    expect(diagnostics.retainedInput).toBe(false); expect(diagnostics.cleared).toBe(true);
+    const wire = fixture();
+    expect((await wire.provider.status()).captureRejection).toBeUndefined(); // older status stays valid
+    wire.captureDiagnostic(diagnostics.pixel);
+    expect((await wire.provider.status()).captureRejection).toEqual(diagnostics.pixel); // actual Swift JSON crosses the TS boundary
+    wire.captureDiagnostic({ ...diagnostics.pixel, fresh: { ...diagnostics.pixel.fresh, base64: 'not-allowed' } });
+    await expect(wire.provider.status()).rejects.toThrow(); // no image bytes accepted on the metadata channel
+    await wire.provider.close();
     expect(value.order).toEqual({ sharingAccessory: true, selectedFirst: true, otherAXWindow: false, foreignWindow: false, missing: false, reusedProcess: false });
     expect(value.point).toEqual({ bodyUnobstructed: true, accessoryStillBlocked: true, foreignStillBlocked: true });
     expect(value.negative).toBeNull(); expect(value.infinite).toBeNull();
