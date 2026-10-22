@@ -434,7 +434,10 @@ export class AgentToolsComposition {
     return this.track(async () => {
       const host = this.getHost();
       const prior = host.existingOutcome({ scope, ...call });
-      if (prior) { await this.options.onOutcome?.(prior); return prior; }
+      if (prior) {
+        const outcome = await (host.pendingHumanHandoff(call.idempotencyKey) ?? prior);
+        await this.options.onOutcome?.(outcome); return outcome;
+      }
       this.scope(scope);
       await host.discover(scope);
       this.scope(scope);
@@ -459,6 +462,13 @@ export class AgentToolsComposition {
     } finally { db.close(); }
   }
   receipt(idempotencyKey: string): ToolOutcome | undefined { return this.getHost().getOutcome(idempotencyKey); }
+  /** A live approved human wait is still pending, not an unknown terminal outcome.
+   * Keep its journal intent visible to explicit receipt inspection, while task
+   * polling must not pause the owner that is waiting for the person. */
+  taskOutcome(idempotencyKey: string): ToolOutcome | undefined {
+    const host = this.getHost();
+    return host.pendingHumanHandoff(idempotencyKey) ? undefined : host.getOutcome(idempotencyKey);
+  }
   /** Passive cross-process proof of the exact already-approved journal intent. */
   validateBegunRemoteInvocation(request: Omit<ToolInvocation, "grantId">): void {
     if (!request.tool.startsWith("remote/")) throw new Error("Unsupported remote tool source");

@@ -767,7 +767,10 @@ handoff waits for stable owner/focus and equal consecutive bounded captures befo
 binding an observation or comparing it to the original input frame. A trusted
 desktop provider marks exact approved foreground waits as human handoffs: neither
 the generic tool observation deadline nor launcher IPC converts that wait into an
-unknown outcome and pauses its task. Ordinary tools keep their deadline; Stop or
+unknown outcome and pauses its task. Task polling excludes the intermediate
+journal intent while that exact human handoff is still owned in memory; explicit
+receipt inspection retains it, and duplicate approval joins the existing work.
+After ownership ends or is lost, an unresolved intent is still unknown. Ordinary tools keep their deadline; Stop or
 window revocation still cancels the handoff through its existing owner. Generic CG input checks complete stacking order,
 held mouse buttons/focus and intervening input immediately before dispatch.
 `desktop-outcome.ts` resolves separately approved exact AX scalar properties;
