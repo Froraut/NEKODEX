@@ -23,6 +23,8 @@ export interface AgentModeRuntimeOptions {
   toolsAvailable?: () => boolean;
   snapshotReceipts?: (task: AgentTask) => unknown[];
   lookupToolOutcome?: (idempotencyKey: string) => AgentToolOutcome | undefined;
+  /** A trusted live human-wait owner prevents polling from importing its interim intent. */
+  isToolHandoffPending?: (idempotencyKey: string) => boolean;
   /** Reads/reconciles an exact retained provider receipt. This port must never authorize, start or execute a tool. */
   reconcileToolReceipt?: (request: AgentToolReceiptRequest) => Promise<AgentToolOutcome | undefined> | AgentToolOutcome | undefined;
   /** Trusted synchronous host observation immediately before final verification, including receipt retries. */
@@ -405,6 +407,7 @@ export class AgentModeRuntime {
       const key = this.store.toolCallReceiptKey(dispatch.id, call.toolCallId);
       if (known.some(outcome => outcome.idempotencyKey === key)) continue;
       const outcome = this.options.lookupToolOutcome(key);
+      if (outcome?.state === "outcome_unknown" && this.options.isToolHandoffPending?.(key)) continue;
       if (outcome) {
         this.store.recordToolOutcome(outcome);
         if (outcome.state === "outcome_unknown") this.automaticRuns.delete(taskId);
