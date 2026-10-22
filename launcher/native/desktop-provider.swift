@@ -64,20 +64,136 @@ func ownedHelperBundle() -> Bundle? {
 }
 /// The TCC grant now belongs to this helper, so speaking its stdio protocol must not be enough
 /// to use it: any same-user process could spawn the bundle. The first enable of each helper
-/// process therefore needs the user's answer to a system alert this process shows; a caller
+/// process therefore needs the user's answer to an owned AppKit alert this process shows; a caller
 /// without its own input rights cannot answer it. The default button and any failure refuse.
 /// Waiting for the person has no expiry; the owner watch still stops the helper if its caller exits.
 /// The answer is kept only in this process, whose stdio belongs to the owner
 /// that started it; nothing is persisted, so every new helper process asks again.
-func userConfirmedEnable() -> Bool {
-    var response: CFOptionFlags = 0
-    let shown = CFUserNotificationDisplayAlert(0, CFOptionFlags(kCFUserNotificationCautionAlertLevel), nil, nil, nil,
-        "Allow NEKODEX desktop control?" as CFString,
-        ("NEKODEX Desktop Helper will capture the window you attach and send the clicks and text you approve to it, until NEKODEX releases "
-         + "desktop access or restarts. Allow only if you just chose Enable desktop provider in NEKODEX.") as CFString,
-        "Don't Allow" as CFString, "Allow" as CFString, nil, &response)
-    return shown == 0 && response & 0x3 == CFOptionFlags(kCFUserNotificationAlternateResponse)
+@MainActor func runDesktopConsentApplication(_ operation: @escaping @MainActor () async -> Void) {
+    // The serving child owns one actual AppKit application loop. Its async stdio
+    // task yields during reads; AppKit keeps painting and dispatching the local consent window's events.
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    Task { @MainActor in
+        await operation()
+        // Only terminal stdio EOF/shutdown (or the inert preview result) reaches
+        // here. The current request and its cleanup have already completed.
+        application.terminate(nil)
+    }
+    application.run()
 }
+
+@MainActor final class DesktopConsentBackground: NSView {
+    override var isOpaque: Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.windowBackgroundColor.setFill()
+        dirtyRect.fill()
+    }
+}
+
+@MainActor final class DesktopConsentWindow: NSWindow {
+    var onCancel: (() -> Void)?
+    override func cancelOperation(_ sender: Any?) { onCancel?() }
+}
+
+/// One helper-owned local window. Awaiting its one-shot answer yields the main
+/// actor to AppKit; no synchronous modal loop blocks queued presentation work.
+@MainActor final class DesktopEnableConsent: NSObject, NSWindowDelegate {
+    let window: DesktopConsentWindow
+    private var answer: CheckedContinuation<Bool, Never>?
+
+    init(previewNote: String? = nil) {
+        window = DesktopConsentWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: previewNote == nil ? 280 : 350),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        super.init()
+        window.title = "NEKODEX Desktop Helper"
+        window.isReleasedWhenClosed = false
+        window.isOpaque = true
+        window.backgroundColor = .windowBackgroundColor
+        window.alphaValue = 1
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        window.level = .modalPanel
+        window.delegate = self
+        window.onCancel = { [weak self] in self?.finish(false) }
+
+        let background = DesktopConsentBackground()
+        window.contentView = background
+        let title = NSTextField(wrappingLabelWithString: "Allow NEKODEX desktop control?")
+        title.font = .systemFont(ofSize: 20, weight: .semibold)
+        title.textColor = .labelColor
+        title.preferredMaxLayoutWidth = 512
+        let body = NSTextField(wrappingLabelWithString: "NEKODEX Desktop Helper will capture the window you attach and send the clicks and text you approve to it, until NEKODEX releases "
+            + "desktop access or restarts. Allow only if you just chose Enable desktop provider in NEKODEX.")
+        body.font = .systemFont(ofSize: 14)
+        body.textColor = .labelColor
+        body.preferredMaxLayoutWidth = 512
+        let deny = NSButton(title: "Don't Allow", target: self, action: #selector(denyConsent))
+        deny.bezelStyle = .rounded
+        deny.keyEquivalent = "\r"
+        let allow = NSButton(title: "Allow", target: self, action: #selector(allowConsent))
+        allow.bezelStyle = .rounded
+        allow.keyEquivalent = ""
+        window.defaultButtonCell = deny.cell as? NSButtonCell
+        let buttons = NSStackView(views: [deny, allow])
+        buttons.orientation = .horizontal
+        buttons.spacing = 12
+        let spacer = NSView()
+        let row = NSStackView(views: [spacer, buttons])
+        row.orientation = .horizontal
+        let stack = NSStackView(views: [title, body])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 18
+        if let previewNote {
+            let note = NSTextField(wrappingLabelWithString: previewNote)
+            note.font = .systemFont(ofSize: 12, weight: .semibold)
+            note.textColor = .secondaryLabelColor
+            note.preferredMaxLayoutWidth = 512
+            stack.addArrangedSubview(note)
+        }
+        stack.addArrangedSubview(row)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        background.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 24),
+            stack.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -24),
+            stack.topAnchor.constraint(equalTo: background.topAnchor, constant: 24),
+            stack.bottomAnchor.constraint(equalTo: background.bottomAnchor, constant: -24),
+            title.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            body.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            row.widthAnchor.constraint(equalTo: stack.widthAnchor),
+        ])
+    }
+
+    func present() async -> Bool {
+        await withCheckedContinuation { continuation in
+            answer = continuation
+            guard Thread.isMainThread, NSApplication.shared.isRunning else { finish(false); return }
+            window.contentView?.layoutSubtreeIfNeeded()
+            window.center()
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
+        }
+    }
+
+    @objc private func denyConsent() { finish(false) }
+    @objc private func allowConsent() { finish(true) }
+    func windowShouldClose(_ sender: NSWindow) -> Bool { finish(false); return false }
+    private func finish(_ allowed: Bool) {
+        guard let continuation = answer else { return }
+        answer = nil
+        window.orderOut(nil)
+        window.delegate = nil
+        window.onCancel = nil
+        continuation.resume(returning: allowed)
+    }
+}
+
+@MainActor func userConfirmedEnable() async -> Bool {
+    await DesktopEnableConsent().present()
+}
+
 func selfResponsible() -> Bool {
     guard let record = responsibleProcess(getpid()), record.pid == getpid(), let own = ownExecutable() else { return false }
     return canonicalPath(record.path) == own
@@ -625,7 +741,8 @@ func lastInputTime() -> TimeInterval {
             guard exact(request, base + ["enabled"]), let value = request["enabled"] as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() else { try reject("invalid-request") }
             enabled = false; selected = nil; selectedAX = nil; captured = nil; image = nil; propertyElements = []
             if value.boolValue, !enableConfirmed {
-                guard userConfirmedEnable() else { try reject("enable-not-confirmed") }
+                guard await userConfirmedEnable() else { try reject("enable-not-confirmed") }
+                guard ownerIntact() else { try reject("parent-owner-exited") }
                 enableConfirmed = true
             }
             enabled = value.boolValue
@@ -809,9 +926,13 @@ final class Lines: @unchecked Sendable {
 // harness as its entry point instead.
 #if !NEKODEX_DESKTOP_HELPER_HARNESS
 @main struct Main {
-    @MainActor static func main() async {
+    @MainActor static func main() {
         becomeOwnPermissionClient()
         _ = (initialParent, initialOwner) // Globals are lazy: pin the owner chain at start, not at first use.
+        runDesktopConsentApplication { await serveRequests() }
+    }
+
+    @MainActor static func serveRequests() async {
         let port = DesktopPort(); let lines = Lines()
         let ownerWatch = DispatchSource.makeTimerSource(queue: .global(qos: .background))
         ownerWatch.schedule(deadline: .now() + 1, repeating: 1)

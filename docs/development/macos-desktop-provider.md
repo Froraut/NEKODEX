@@ -126,16 +126,32 @@ keeps its checkout path. Details and the evidence are in
 Because the grant now belongs to the helper rather than to whoever spawned it,
 speaking the helper's stdio protocol must not be enough to use it: any
 same-user process could exec the bundle. So the first `enable` of each helper
-process shows a system alert from the helper itself
-(`CFUserNotificationDisplayAlert`, "Allow NEKODEX desktop control?"). It is not
-a TCC prompt and changes no TCC state. The default button refuses, a
-120-second timeout refuses, and only **Allow** enables the provider (otherwise
-`enable-not-confirmed`). The answer is kept only in that process, whose stdio
-belongs to the owner that started it; it is never persisted, because a stored
-answer would serve whoever starts the helper next. "Disable and release desktop
-access" and a restart end the process, so the next enable asks again. A
-caller without its own Accessibility or post-event rights cannot answer that
-alert, and before a confirmed enable the helper cannot capture, select or input.
+process shows an opaque, helper-owned AppKit `NSWindow`
+("Allow NEKODEX desktop control?"). The serving child initializes an accessory
+`NSApplication` after the responsibility hop and starts its one outer `run()`
+event loop. A MainActor task reads stdio sequentially through detached blocking
+reads. The local consent window uses wrapping text fields and standard buttons;
+its checked continuation yields the main actor while the person decides. No
+synchronous alert, nested modal loop, semaphore or consent timer blocks presentation.
+Only terminal EOF/shutdown ends the request task and terminates the application.
+The pending window joins all Spaces, supports fullscreen auxiliary presentation,
+and orders its own window in front once after activation.
+
+This is not a TCC prompt and changes no TCC state. **Don't Allow** is the default
+Return action. The window's cancel responder maps Escape to refusal, window
+close refuses, and Allow has no key equivalent. Only an explicit **Allow**
+response enables the provider; every refusal returns `enable-not-confirmed`.
+The answer is kept only in that process, whose stdio belongs to the owner that
+started it; it is never persisted, because a stored answer would serve whoever
+starts the helper next. "Disable and release desktop access" and a restart end
+the process, so the next enable asks again. A caller without its own Accessibility
+or post-event rights cannot answer that window, and before a confirmed enable
+the helper cannot capture, select or input.
+
+The caller ownership chain is checked again after the awaited result before
+the process records consent. The background owner watchdog and exact host-close
+signal path remain live throughout the wait. The helper reads requests serially,
+so a queued protocol command cannot race a pending consent window.
 `listWindows` before a confirmed enable returns owner names and identities with
 empty titles, because titles depend on the helper's screen recording grant.
 
@@ -320,3 +336,22 @@ Primary API grounding is the selected Apple SDK's ScreenCaptureKit headers
 (`SCStream.h`, `SCShareableContent.h`, `SCScreenshotManager.h`), CoreGraphics
 `CGWindow.h`/`CGEvent.h`, AppKit `NSEvent.h` and HIServices public AX headers. No
 private window-ID lookup, event field or permission-control symbol is used.
+
+## Inert consent presentation check
+
+`tests/fixtures/desktop-consent-preview.swift` compiles with the real helper
+source and `NEKODEX_DESKTOP_HELPER_HARNESS`. Its synchronous MainActor entry starts
+the same outer application loop and resumes a MainActor task after a detached
+await before creating and awaiting the actual local-window consent presenter, matching the production
+stdin-await boundary. It creates no `DesktopPort`, reads no
+protocol commands, requests no TCC grants and performs no capture or input. An
+accessory disclaimer distinguishes the preview; Allow records only a choice.
+Wrap the binary in a task-local `NEKODEX Consent Preview.app` with the separate
+identifier `dev.nekodex.desktop-consent-preview.20261022` and `LSUIElement=true`.
+The preview writes a one-turn window visibility/occlusion snapshot to
+`consent-preview-window.json`, and writes `consent-preview-last-result.json`
+beside its bundle after the choice, with
+its PID, choice, main-thread/application-running status and `desktopEnabled:false`. Visually check
+text/buttons and independently exercise Don't Allow, Return, Escape, close and
+Allow. Each preview run must exit, and this evidence never substitutes for the
+normal release's signed helper and explicit real consent.
