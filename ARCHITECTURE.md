@@ -781,8 +781,14 @@ eight windows. An approved read chooses an exact member of that set and switches
 the one native selection without activating a window or renewing helper consent;
 the switch retires earlier screenshot and AX-element bindings. Individual removal
 and whole-task revocation preserve other tasks and retained receipts. Foreground
-handoff waits for stable owner/focus and equal consecutive bounded captures before
-binding an observation or comparing it to the original input frame. A trusted
+handoff waits for stable owner/focus and at least 200ms of time-separated equal
+full-image/frame/AX captures before binding an observation. An explicitly foreground
+action may sample for up to 2s/12 attempts at 100ms intervals for the immutable
+approved PNG/frame to return and remain equal for 200ms. Owner/focus/frame/buttons
+and a fixed physical-input baseline are checked throughout; no input is retried
+or rebound. Nonforeground capture remains immediate. Optional process-local
+status diagnostics retain only old/fresh hashes, geometry, scale and monotonic
+sample times after capture rejection, with no image bytes or new durable journal. A trusted
 desktop provider marks exact approved foreground waits as human handoffs: neither
 the generic tool observation deadline nor launcher IPC converts that wait into an
 unknown outcome and pauses its task. Task polling excludes the intermediate

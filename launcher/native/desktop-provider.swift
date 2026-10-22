@@ -323,6 +323,24 @@ struct Captured {
     // inactive window chrome differ, so a background screenshot can never match a fresh
     // post-handoff capture.
     var foregroundObserved = false
+    // Metadata only: these clocks describe capture sampling, never action authority.
+    var captureScale: Double = 1
+    var captureStartedAt: TimeInterval = 0
+    var captureFinishedAt: TimeInterval = 0
+    var captureAttempts = 1
+    var sampleTimes: [TimeInterval] = []
+    var diagnostic: [String: Any] {
+        ["screenshotId": binding["screenshotId"] ?? NSNull(), "frameEpoch": binding["frameEpoch"] ?? NSNull(),
+         "frame": ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height],
+         "pixelWidth": binding["width"] ?? NSNull(), "pixelHeight": binding["height"] ?? NSNull(), "scale": captureScale,
+         "startedAtUptime": captureStartedAt, "finishedAtUptime": captureFinishedAt, "attempts": captureAttempts,
+         "sampleTimesUptime": sampleTimes.isEmpty ? [captureFinishedAt] : sampleTimes]
+    }
+}
+struct ApprovedCaptureMatch {
+    let matched: Captured?
+    let lastSample: Captured?
+    let failureReason: String
 }
 struct AXTarget {
     let element: AXUIElement; let frame: CGRect; let signature: String; let press: Bool
@@ -360,6 +378,8 @@ func lastInputTime() -> TimeInterval {
     var selectedAX: AXUIElement?
     var captured: Captured?
     var image: Captured?
+    // One bounded metadata record. No PNG/resource, persistence, or input binding.
+    var captureRejection: [String: Any]?
     var uncertain = false
     var pixelClicks = 0
     let session = UUID().uuidString.lowercased()
@@ -650,6 +670,7 @@ func lastInputTime() -> TimeInterval {
         return result
     }
     func capture(_ row: WindowRow, scope: String) async throws -> Captured {
+        let captureStartedAt = ProcessInfo.processInfo.systemUptime
         guard enabled, CGPreflightScreenCaptureAccess() else { try reject("screen-capture-unavailable") }
         _ = try boundWindow(row)
         let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
@@ -677,25 +698,31 @@ func lastInputTime() -> TimeInterval {
             "windowId": String(row.id), "processId": row.processID, "windowEpoch": row.epoch,
             "frameId": "window-\(row.id)", "frameEpoch": frameEpoch, "screenshotId": digest(png),
             "coordinateSpace": "screenshot-pixels", "width": width, "height": height]
-        return Captured(binding: binding, png: png, resource: resource, frame: row.frame, lastInput: lastInputTime(), focusedElement: AXIsProcessTrusted() ? focusElement(row) : nil, targets: targets)
+        return Captured(binding: binding, png: png, resource: resource, frame: row.frame, lastInput: lastInputTime(), focusedElement: AXIsProcessTrusted() ? focusElement(row) : nil, targets: targets,
+            captureScale: scale, captureStartedAt: captureStartedAt, captureFinishedAt: ProcessInfo.processInfo.systemUptime)
     }
     // A foreground handoff can still have an in-flight AppKit/share-accessory redraw.
     // Observe a settled frame rather than binding one transitional screenshot. These are
     // capture-only samples; an input is never retried or rebound to different content.
-    func captureStable(_ row: WindowRow, scope: String) async throws -> Captured {
-        try await settledCapture { try await self.capture(row, scope: scope) }
+    func settledCapture(_ read: () async throws -> Captured,
+        validate: (Captured?) throws -> Void = { _ in },
+        clock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        pause: () async throws -> Void = { try await Task.sleep(nanoseconds: 100_000_000) }
+    ) async throws -> Captured {
+        let result = try await stableCapture(approved: nil, validate: validate, read: read, clock: clock, pause: pause)
+        guard let matched = result.matched else { try reject(result.failureReason) }
+        return matched
     }
-    func settledCapture(_ read: () async throws -> Captured) async throws -> Captured {
-        var previous: Captured?
-        for _ in 0..<5 {
-            try Task.checkCancellation()
-            let value: Captured
-            do { value = try await read() }
-            catch let error as PortError where error.code == "ax-state-changed-during-capture" { previous = nil; continue }
-            if let before = previous, sameCapture(before, value) { return value }
-            previous = value
-        }
-        try reject("screen-not-stable")
+    func validateForegroundCapture(frame: CGRect, focus: AXUIElement?, baseline: TimeInterval, sample: Captured?) throws {
+        guard ownerIntact(), enabled, !uncertain else { try reject("foreground-owner-unavailable") }
+        let current = try currentWindow()
+        guard current.frame == frame else { try reject("owner-or-frame-changed") }
+        try inputOwner(current, expectedFocus: focus, requirePostEvent: false)
+        guard !CGEventSource.buttonState(.combinedSessionState, button: .left),
+              !CGEventSource.buttonState(.combinedSessionState, button: .right),
+              !CGEventSource.buttonState(.combinedSessionState, button: .center) else { try reject("human-button-held") }
+        guard (sample?.lastInput ?? baseline) <= baseline + 0.005,
+              lastInputTime() <= baseline + 0.005 else { try reject("human-input-changed") }
     }
     func sameCapture(_ before: Captured, _ after: Captured) -> Bool {
         before.png == after.png && sameFrame(before.frame, after.frame)
@@ -703,6 +730,90 @@ func lastInputTime() -> TimeInterval {
             && before.targets.count == after.targets.count
             && zip(before.targets, after.targets).allSatisfy { CFEqual($0.element, $1.element) && $0.signature == $1.signature }
             && (before.focusedElement == nil ? after.focusedElement == nil : after.focusedElement.map { CFEqual(before.focusedElement!, $0) } == true)
+    }
+    // Capture-only handoff validation. Never replaces the approved observation or
+    // sends input. A different image can wait briefly; authority/frame changes cannot.
+    func matchApprovedCapture(_ original: Captured,
+        validate: (Captured?) throws -> Void,
+        read: () async throws -> Captured,
+        clock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        pause: () async throws -> Void = { try await Task.sleep(nanoseconds: 100_000_000) }
+    ) async throws -> ApprovedCaptureMatch {
+        try await stableCapture(approved: original, validate: validate, read: read, clock: clock, pause: pause)
+    }
+    // Both foreground reads and approved-image validation need time-separated samples.
+    // Only the latter may wait for an image, and always for the immutable original.
+    func stableCapture(approved original: Captured?,
+        validate: (Captured?) throws -> Void,
+        read: () async throws -> Captured,
+        clock: () -> TimeInterval,
+        pause: () async throws -> Void
+    ) async throws -> ApprovedCaptureMatch {
+        let began = clock()
+        var lastClock = began
+        var previous: Captured?
+        var stableSince: TimeInterval?
+        var last: Captured?
+        var sampleTimes: [TimeInterval] = []
+        func tick() throws -> TimeInterval {
+            let now = clock()
+            guard now.isFinite, now >= lastClock else { try reject("capture-clock-changed") }
+            lastClock = now
+            return now
+        }
+        for attempt in 1...12 {
+            try Task.checkCancellation()
+            try validate(nil)
+            if try tick() - began >= 2 { break }
+            var value: Captured?
+            do { value = try await read() }
+            catch let error as PortError where error.code == "ax-state-changed-during-capture" {
+                previous = nil; stableSince = nil
+            }
+            try Task.checkCancellation()
+            try validate(value)
+            let now = try tick()
+            sampleTimes.append(now)
+            if var current = value {
+                current.captureAttempts = attempt; current.sampleTimes = sampleTimes
+                last = current
+                // Even a matching late capture cannot authorize input after budget expiry.
+                if now - began >= 2 { break }
+                if let original {
+                    guard current.binding["frameEpoch"] as? String == original.binding["frameEpoch"] as? String,
+                          current.frame == original.frame, current.captureScale == original.captureScale else {
+                        return ApprovedCaptureMatch(matched: nil, lastSample: current, failureReason: "screen-or-frame-changed")
+                    }
+                }
+                let matches = original.map { current.png == $0.png
+                    && current.binding["screenshotId"] as? String == $0.binding["screenshotId"] as? String } ?? true
+                if matches {
+                    if let before = previous, sameCapture(before, current), let since = stableSince {
+                        if now - since >= 0.2 {
+                            return ApprovedCaptureMatch(matched: current, lastSample: current, failureReason: "")
+                        }
+                    } else { stableSince = now }
+                    previous = current
+                } else { previous = nil; stableSince = nil }
+            } else if now - began >= 2 { break }
+            try await pause()
+            try Task.checkCancellation()
+            try validate(nil)
+        }
+        let changed = original.flatMap { approved in last.map { $0.png != approved.png
+            || $0.binding["screenshotId"] as? String != approved.binding["screenshotId"] as? String
+            || $0.binding["frameEpoch"] as? String != approved.binding["frameEpoch"] as? String } } ?? false
+        return ApprovedCaptureMatch(matched: nil, lastSample: last,
+            failureReason: changed ? "screen-or-frame-changed" : "screen-not-stable")
+    }
+    func recordCaptureRejection(_ operationID: String, original: Captured, fresh: Captured,
+        reason: String = "screen-or-frame-changed") {
+        captureRejection = ["operationId": operationID, "reason": reason, "scopeId": original.binding["scopeId"] ?? NSNull(),
+            "observationId": original.binding["observationId"] ?? NSNull(),
+            "screenshotChanged": fresh.binding["screenshotId"] as? String != original.binding["screenshotId"] as? String,
+            "frameChanged": fresh.binding["frameEpoch"] as? String != original.binding["frameEpoch"] as? String,
+            "recordedAtUptime": ProcessInfo.processInfo.systemUptime,
+            "original": original.diagnostic, "fresh": fresh.diagnostic]
     }
     func perform(_ request: [String: Any]) async throws -> [String: Any] {
         guard number(request["version"]) == 1, let command = string(request["command"], max: 32) else { try reject("invalid-request") }
@@ -712,6 +823,7 @@ func lastInputTime() -> TimeInterval {
             guard exact(request, base) else { try reject("invalid-request") }
             var state = permissions(); state["enabled"] = enabled; state["providerId"] = providerID; state["uncertain"] = uncertain
             state["permissionClient"] = permissionClient()
+            if let captureRejection { state["captureRejection"] = captureRejection }
             let current = try? currentWindow()
             state["selected"] = selected?.json ?? NSNull(); state["selectionCurrent"] = current != nil
             state["inputWindowBound"] = current.flatMap { try? boundWindow($0) } != nil; return state
@@ -739,7 +851,7 @@ func lastInputTime() -> TimeInterval {
             return state
         case "enable":
             guard exact(request, base + ["enabled"]), let value = request["enabled"] as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() else { try reject("invalid-request") }
-            enabled = false; selected = nil; selectedAX = nil; captured = nil; image = nil; propertyElements = []
+            enabled = false; selected = nil; selectedAX = nil; captured = nil; image = nil; captureRejection = nil; propertyElements = []
             if value.boolValue, !enableConfirmed {
                 guard await userConfirmedEnable() else { try reject("enable-not-confirmed") }
                 guard ownerIntact() else { try reject("parent-owner-exited") }
@@ -752,7 +864,7 @@ func lastInputTime() -> TimeInterval {
                   let selection = request["selection"] as? [String: Any], exact(selection, ["windowId", "processId", "windowEpoch"]),
                   let row = windows().first(where: { $0.json["windowId"] as? String == selection["windowId"] as? String
                     && $0.processID == selection["processId"] as? String && $0.epoch == selection["windowEpoch"] as? String }) else { try reject("selection-unavailable-or-changed") }
-            selected = row; selectedAX = matchAX(row); captured = nil; image = nil; propertyElements = []
+            selected = row; selectedAX = matchAX(row); captured = nil; image = nil; captureRejection = nil; propertyElements = []
             return ["selected": row.json, "inputWindowBound": selectedAX != nil]
         case "properties":
             guard exact(request, base + ["selection"]), enabled, !uncertain, AXIsProcessTrusted(),
@@ -769,11 +881,18 @@ func lastInputTime() -> TimeInterval {
             let waits = try foregroundMode(request)
             guard exact(request, base + ["scopeId"] + (waits ? ["waitForForeground"] : [])), !uncertain,
                   let scope = string(request["scopeId"]) else { try reject("observation-unavailable") }
-            captured = nil; image = nil
+            captured = nil; image = nil; captureRejection = nil
             let row = try currentWindow()
             if waits { try await waitForForeground(row) }
             let foregroundBaseline = lastInputTime()
-            var value = try await (waits ? captureStable(try currentWindow(), scope: scope) : capture(try currentWindow(), scope: scope))
+            let valueRow = try currentWindow()
+            let expectedFocus = waits ? focusElement(valueRow) : nil
+            var value: Captured
+            if waits {
+                value = try await settledCapture({ try await self.capture(self.currentWindow(), scope: scope) }, validate: { sample in
+                    try self.validateForegroundCapture(frame: valueRow.frame, focus: expectedFocus, baseline: foregroundBaseline, sample: sample)
+                })
+            } else { value = try await capture(valueRow, scope: scope) }
             value.foregroundObserved = waits
             if waits {
                 try inputOwner(try currentWindow(), expectedFocus: value.focusedElement, requirePostEvent: false)
@@ -805,15 +924,30 @@ func lastInputTime() -> TimeInterval {
             }
             guard ownerIntact(), enabled, !uncertain, let original = captured, NSDictionary(dictionary: binding).isEqual(to: original.binding) else { return receipt("rejected", false, "stale-observation") }
             captured = nil // One attempt owns this observation even if later validation refuses input.
+            captureRejection = nil
             let row = try currentWindow()
             let waits = try foregroundMode(action)
             if waits && !original.foregroundObserved { return receipt("rejected", false, "observe-with-foreground-required") }
             if waits && !sameFrame(row.frame, original.frame) { return receipt("rejected", false, "owner-or-frame-changed") }
             if waits { try await waitForForeground(row, expectedFocus: original.focusedElement, enforceFocus: true) }
             let foregroundBaseline = lastInputTime()
-            let fresh = try await (waits ? captureStable(try currentWindow(), scope: binding["scopeId"] as! String) : capture(try currentWindow(), scope: binding["scopeId"] as! String))
+            let fresh: Captured
+            if waits {
+                let result = try await matchApprovedCapture(original, validate: { sample in
+                    try self.validateForegroundCapture(frame: original.frame, focus: original.focusedElement,
+                        baseline: foregroundBaseline, sample: sample)
+                }, read: { try await self.capture(self.currentWindow(), scope: binding["scopeId"] as! String) })
+                guard let matched = result.matched else {
+                    if let last = result.lastSample { recordCaptureRejection(operationID, original: original, fresh: last, reason: result.failureReason) }
+                    return receipt("rejected", false, result.failureReason)
+                }
+                fresh = matched
+            } else { fresh = try await capture(currentWindow(), scope: binding["scopeId"] as! String) }
             guard fresh.binding["screenshotId"] as? String == binding["screenshotId"] as? String,
-                  fresh.binding["frameEpoch"] as? String == binding["frameEpoch"] as? String else { return receipt("rejected", false, "screen-or-frame-changed") }
+                  fresh.binding["frameEpoch"] as? String == binding["frameEpoch"] as? String else {
+                recordCaptureRejection(operationID, original: original, fresh: fresh)
+                return receipt("rejected", false, "screen-or-frame-changed")
+            }
             let current = try currentWindow()
             guard sameFrame(current.frame, original.frame) else { return receipt("rejected", false, "owner-or-frame-changed") }
             // Only exact same-image/frame/focus handoff can establish a new private input
@@ -822,7 +956,7 @@ func lastInputTime() -> TimeInterval {
             if waits {
                 try inputOwner(current, expectedFocus: original.focusedElement, requirePostEvent: false)
                 guard fresh.lastInput <= foregroundBaseline + 0.005, lastInputTime() <= foregroundBaseline + 0.005 else { return receipt("rejected", false, "human-input-changed") }
-                inputBaseline = fresh.lastInput
+                inputBaseline = foregroundBaseline
             } else { inputBaseline = original.lastInput }
             if action["kind"] as? String == "click" {
                 guard exact(action, ["kind", "x", "y"] + (waits ? ["waitForForeground"] : [])), let x = number(action["x"]), let y = number(action["y"]),
@@ -896,10 +1030,10 @@ func lastInputTime() -> TimeInterval {
             return receipt("completed", true, "input-dispatched; application-result-unverified")
         case "invalidate":
             guard exact(request, base) else { try reject("invalid-request") }
-            captured = nil; image = nil; return ["invalidated": true]
+            captured = nil; image = nil; captureRejection = nil; return ["invalidated": true]
         case "shutdown":
             guard exact(request, base) else { try reject("invalid-request") }
-            captured = nil; image = nil; selected = nil; selectedAX = nil; propertyElements = []; return ["closing": true]
+            captured = nil; image = nil; captureRejection = nil; selected = nil; selectedAX = nil; propertyElements = []; return ["closing": true]
         default: try reject("unsupported-command")
         }
     }

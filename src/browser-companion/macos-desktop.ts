@@ -21,8 +21,19 @@ const windowSchema = macosWindowSelectionSchema.extend({ owner: z.string().max(1
 const permissionClientSchema = z.object({ selfResponsible: z.boolean(), bundleIdentifier: z.string().max(160).nullable(),
   name: z.string().max(160).nullable(), bundlePath: z.string().max(4096).nullable() }).strict();
 const permissionFlags = { screenCaptureGranted: z.boolean(), accessibilityGranted: z.boolean(), postEventGranted: z.boolean() };
+const captureFrameDiagnosticSchema = z.object({ screenshotId: z.string().regex(/^[a-f0-9]{64}$/), frameEpoch: z.string().regex(/^[a-f0-9]{64}$/),
+  frame: z.object({ x: z.number().finite(), y: z.number().finite(), width: z.number().positive().finite(), height: z.number().positive().finite() }).strict(),
+  pixelWidth: z.number().int().min(1).max(8192), pixelHeight: z.number().int().min(1).max(8192), scale: z.number().positive().finite(),
+  startedAtUptime: z.number().nonnegative().finite(), finishedAtUptime: z.number().nonnegative().finite(),
+  attempts: z.number().int().min(1).max(12), sampleTimesUptime: z.array(z.number().nonnegative().finite()).min(1).max(12),
+}).strict();
+const captureRejectionSchema = z.object({ operationId: z.string().uuid(), reason: z.enum(['screen-or-frame-changed', 'screen-not-stable']), scopeId: z.string().min(1).max(160), observationId: z.string().uuid(),
+  screenshotChanged: z.boolean(), frameChanged: z.boolean(), recordedAtUptime: z.number().nonnegative().finite(),
+  original: captureFrameDiagnosticSchema, fresh: captureFrameDiagnosticSchema,
+}).strict();
 const statusSchema = z.object({ enabled: z.boolean(), providerId: z.literal(PROVIDER_ID), uncertain: z.boolean(), selected: windowSchema.nullable(),
-  selectionCurrent: z.boolean(), inputWindowBound: z.boolean(), ...permissionFlags, permissionClient: permissionClientSchema }).strict();
+  selectionCurrent: z.boolean(), inputWindowBound: z.boolean(), ...permissionFlags, permissionClient: permissionClientSchema,
+  captureRejection: captureRejectionSchema.optional() }).strict();
 export const desktopPermissionSchema = z.enum(['screenCapture', 'accessibility', 'postEvent']);
 const permissionSettingsSchema = z.object({ ...permissionFlags, permissionClient: permissionClientSchema,
   pane: z.enum(['Privacy_ScreenCapture', 'Privacy_Accessibility']), registered: z.boolean() }).strict();
