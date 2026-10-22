@@ -18,14 +18,18 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
   const ru = language === 'ru';
   const promptId = useId();
   const mounted = useRef(false), reading = useRef(false);
-  const pending = useRef(new Map<string, { body: Mutation; uncertain: boolean; nativeTurnNotStarted?: boolean }>());
+  const pending = useRef(new Map<string, { body: Mutation; draftKey: string; uncertain: boolean; nativeTurnNotStarted?: boolean }>());
   const [, renderPending] = useState(0);
-  const draft = useRef({ selectedId: null as string | null, prompt: '' });
+  const draft = useRef({ selectedId: null as string | null, prompt: '', key: '' });
   const observedContext = useRef<string | null>(null);
   const [snapshot, setSnapshot] = useState<NativePersistentSnapshot | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [model, setModel] = useState('');
-  const [prompt, setPrompt] = useState('');
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  // Drafts follow the account identity and conversation, including a separate new-compose slot.
+  const draftKey = JSON.stringify([snapshot?.profileId ?? null, snapshot?.epoch ?? null, selectedId]);
+  const prompt = drafts[draftKey] ?? '';
+  const setPrompt = (text: string) => setDrafts(previous => ({ ...previous, [draftKey]: text }));
   const [consent, setConsent] = useState(false);
   const [conversationMode, setConversationMode] = useState<NativeConversationMode>('canonical-text-v1');
   const [recordFutureText, setRecordFutureText] = useState(false), [acknowledgeSecrets, setAcknowledgeSecrets] = useState(false);
@@ -37,7 +41,7 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
   const transport = useRef(api); transport.current = api;
   const historyTransport = useRef(historyApi); historyTransport.current = historyApi;
   const selected = snapshot?.conversations.find(row => row.id === selectedId);
-  draft.current = { selectedId, prompt };
+  draft.current = { selectedId, prompt, key: draftKey };
   const uncertain = [...pending.current.values()].some(row => row.uncertain)
     || snapshot?.actions.some(row => row.state === 'unknown' || settled.has(row.state) && row.ownerHeld === true) === true;
   const reserved = new Set([...pending.current.values()].flatMap(({ body }) => body.action === 'create' ? [] : [body.conversationId]));
@@ -73,14 +77,29 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
       if (settled.has(receipt.state) && receipt.ownerHeld !== true) {
         pending.current.delete(actionId);
         const sourceId = outstanding.body.action === 'create' ? null : outstanding.body.conversationId;
-        const sameDraft = draft.current.selectedId === sourceId
+        const sameDraft = draft.current.key === outstanding.draftKey && draft.current.selectedId === sourceId
           && (!('text' in outstanding.body) || draft.current.prompt === outstanding.body.text);
+        if (receipt.state === 'completed' && 'text' in outstanding.body) {
+          const submittedText = outstanding.body.text;
+          setDrafts(previous => {
+            if (previous[outstanding.draftKey] !== submittedText) return previous;
+            const next = { ...previous }; delete next[outstanding.draftKey]; return next;
+          });
+        }
         if (receipt.state === 'completed' && sameDraft) {
           if (receipt.conversationId) setSelectedId(value.conversations.some(row => row.id === receipt.conversationId) ? receipt.conversationId : null);
-          setPrompt(''); setConsent(false);
+          setConsent(false);
         }
         if (receipt.state === 'failed' && outstanding.nativeTurnNotStarted && sameDraft && receipt.conversationId
-          && value.conversations.some(row => row.id === receipt.conversationId)) setSelectedId(receipt.conversationId);
+          && value.conversations.some(row => row.id === receipt.conversationId)) {
+          const retainedKey = JSON.stringify([value.profileId, value.epoch, receipt.conversationId]);
+          setDrafts(previous => {
+            if (retainedKey === outstanding.draftKey || previous[retainedKey]) return previous;
+            const next = { ...previous, [retainedKey]: previous[outstanding.draftKey] ?? '' };
+            delete next[outstanding.draftKey]; return next;
+          });
+          setSelectedId(receipt.conversationId);
+        }
       } else outstanding.uncertain = receipt.state === 'unknown' || settled.has(receipt.state) && receipt.ownerHeld === true;
     }
     renderPending(revision => revision + 1);
@@ -117,7 +136,7 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
     if (disabled || uncertain || [...pending.current.values()].some(row =>
       body.action === 'create' ? row.body.action === 'create' : row.body.action !== 'create' && row.body.conversationId === targetId)) return;
     // Reserve synchronously before IPC; a second click cannot offer the same thread twice.
-    pending.current.set(body.actionId, { body, uncertain: false }); renderPending(revision => revision + 1); setError(null); setTurnNotStarted(false);
+    pending.current.set(body.actionId, { body, draftKey: draft.current.key, uncertain: false }); renderPending(revision => revision + 1); setError(null); setTurnNotStarted(false);
     try {
       const requestedContext = observedContext.current;
       const response = await transport.current.nativePersistentRequest(body);
@@ -189,12 +208,12 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
       : 'The original action needs a confirmed outcome; new sends are held.'}</Notice> : null}
     <div className="native-persistent__layout">
       <div className="native-persistent__sidebar">
-        <div className="native-persistent__actions"><Button size="sm" disabled={disabled} onClick={() => { setSelectedId(null); setPrompt(''); setConsent(false); setRecordFutureText(false); setAcknowledgeSecrets(false); setTurnNotStarted(false); }}>
+        <div className="native-persistent__actions"><Button size="sm" disabled={disabled} onClick={() => { setSelectedId(null); setConsent(false); setRecordFutureText(false); setAcknowledgeSecrets(false); setTurnNotStarted(false); }}>
           {ru ? 'Новый диалог' : 'New conversation'}</Button></div>
         {!snapshot?.conversations.length ? <EmptyState title={ru ? 'Сохранённых диалогов пока нет' : 'No retained conversations yet'} /> :
           <ul className="native-persistent__list">{snapshot.conversations.map(row => <li key={row.id}>
             <Button variant={row.id === selectedId ? 'secondary' : 'ghost'} disabled={disabled}
-              onClick={() => { setSelectedId(row.id); setPrompt(''); setConsent(false); setRecordFutureText(false); setAcknowledgeSecrets(false); setTurnNotStarted(false); }}>
+              onClick={() => { setSelectedId(row.id); setConsent(false); setRecordFutureText(false); setAcknowledgeSecrets(false); setTurnNotStarted(false); }}>
               <span className="native-persistent__conversation-label"><strong>{row.model}</strong>{' '}
                 <span><code>{row.id.slice(0, 8)}</code> <span>{statusText(row.status)}</span></span></span>
             </Button>
