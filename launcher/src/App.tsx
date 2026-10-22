@@ -13,6 +13,9 @@ import { currentToolProof, runtimeCapabilities } from './launcher-readiness';
 
 import { taskCenterSubtitle, taskCenterTitle } from './task-center-copy';
 import { QueueControls } from './QueueControls';
+import type { BrowserCompanionApi } from './browser-companion-types';
+import type { LocalControlApiAdminApi } from './local-control-api-types';
+import type { ExternalUsageApi } from './external-usage-types';
 import type { CompactionModel } from "./types";
 import { modelConnectionReadiness } from "./setup-progress";
 import { Button, Mark, Notice, StateDot } from "./design";
@@ -75,9 +78,15 @@ const agentToolsApi: import('./agent-tools-types').AgentToolsApi = {
   listTasks: () => api!.agentMode({ action: 'list' }) as ReturnType<import('./agent-tools-types').AgentToolsApi['listTasks']>,
   getTask: taskId => api!.agentMode({ action: 'get', taskId }) as ReturnType<import('./agent-tools-types').AgentToolsApi['getTask']>,
 };
-const browserCompanionApi = { request: api!.browserCompanion, copyPairing: api!.copyBrowserPairing };
-const localControlApi = { request: api!.localControlApiRequest };
-const externalUsageApi = { request: api!.externalUsageRequest, selectRoot: api!.externalUsagePick };
+// Defer bridge access until a mounted surface calls it: an absent preload must
+// reach App's startup fallback instead of throwing while this module imports.
+const browserCompanionApi: BrowserCompanionApi = {
+  request: body => api!.browserCompanion(body), copyPairing: text => api!.copyBrowserPairing(text),
+};
+const localControlApi: LocalControlApiAdminApi = { request: body => api!.localControlApiRequest(body) };
+const externalUsageApi: ExternalUsageApi = {
+  request: body => api!.externalUsageRequest(body), selectRoot: selection => api!.externalUsagePick(selection),
+};
 
 function smokePassedForState(state: LauncherState, version: string): boolean {
   return state.browserSmokePassed === true && state.browserSmokeVersion === version;
