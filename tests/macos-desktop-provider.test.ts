@@ -283,14 +283,15 @@ const helperSource = join(import.meta.dir, '..', 'launcher', 'native', 'desktop-
 const swiftCompiler = process.platform === 'darwin' ? spawnSync('/usr/bin/xcrun', ['--find', 'swiftc'], { encoding: 'utf8', timeout: 15000 }).status === 0 : false;
 // Live P13: postToPid of a CGEvent built from a global point reached the app without a window and
 // was dropped. The real helper source is compiled with an inert entry point that only encodes
-// events; it never selects a window, captures or posts input. Target-side delivery is live evidence.
+// events and checks capture settling with in-memory frames; it never selects a window,
+// captures or posts input. Target-side delivery is live evidence.
 test.skipIf(!swiftCompiler)('pixel click events address the selected window with its window-relative point, never a bare global point', () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'nekodex-pixel-events-')));
   try {
     const harness = join(root, 'harness.swift'); const executable = join(root, 'harness');
     writeFileSync(harness, `import AppKit
 @main struct PixelEventHarness {
-    @MainActor static func main() {
+    @MainActor static func main() async {
         let port = DesktopPort()
         func encode(_ local: CGPoint) -> Any {
             guard let events = port.pixelClickEvents(window: 4242, local: local) else { return NSNull() }
@@ -314,7 +315,26 @@ test.skipIf(!swiftCompiler)('pixel click events address the selected window with
         let pointChecks: [String: Bool] = ["bodyUnobstructed": port.stackedAbove(stack, row: selected, point: CGPoint(x: 124, y: 168)) == false,
             "accessoryStillBlocked": port.stackedAbove(stack, row: selected, point: CGPoint(x: 10, y: 10)) == true,
             "foreignStillBlocked": port.stackedAbove([surface(foreign, selected.frame)] + stack, row: selected, point: CGPoint(x: 124, y: 168)) == true]
-        let value: [String: Any] = ["order": orderChecks, "point": pointChecks, "display": CGDisplayBounds(CGMainDisplayID()).height > 0, "center": encode(CGPoint(x: 124, y: 168)),
+        func frame(_ text: String) -> Captured {
+            Captured(binding: ["frameEpoch": "same-frame"], png: Data(text.utf8), resource: "inert", frame: selected.frame,
+                lastInput: 0, focusedElement: nil, targets: [])
+        }
+        var reads = 0
+        let settled = try! await port.settledCapture {
+            reads += 1
+            if reads == 1 { throw PortError(code: "ax-state-changed-during-capture") }
+            return frame(reads == 2 ? "transitional" : "settled")
+        }
+        var movingReads = 0; var movingReason = ""
+        do { _ = try await port.settledCapture { movingReads += 1; return frame(String(movingReads)) } }
+        catch let error as PortError { movingReason = error.code } catch { movingReason = "unexpected" }
+        var failedReads = 0; var failedReason = ""
+        do { _ = try await port.settledCapture { failedReads += 1; throw PortError(code: "selected-ax-window-changed") } }
+        catch let error as PortError { failedReason = error.code } catch { failedReason = "unexpected" }
+        let captureChecks: [String: Any] = ["settled": String(data: settled.png, encoding: .utf8)!, "reads": reads,
+            "movingReads": movingReads, "movingReason": movingReason, "failedReads": failedReads, "failedReason": failedReason,
+            "changedContentMatches": port.sameCapture(frame("before"), frame("after"))]
+        let value: [String: Any] = ["capture": captureChecks, "order": orderChecks, "point": pointChecks, "display": CGDisplayBounds(CGMainDisplayID()).height > 0, "center": encode(CGPoint(x: 124, y: 168)),
             "fractional": encode(CGPoint(x: 0.5, y: 311.5)), "negative": encode(CGPoint(x: -1, y: 4)), "infinite": encode(CGPoint(x: CGFloat.infinity, y: 4))]
         print(String(data: try! JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), encoding: .utf8)!)
     }
@@ -326,6 +346,8 @@ test.skipIf(!swiftCompiler)('pixel click events address the selected window with
     const run = spawnSync(executable, [], { encoding: 'utf8', timeout: 15000 });
     if (run.status !== 0) throw new Error(`harness failed: ${run.stderr}`);
     const value = JSON.parse(run.stdout) as Record<string, unknown>;
+    expect(value.capture).toEqual({ settled: 'settled', reads: 4, movingReads: 5, movingReason: 'screen-not-stable',
+      failedReads: 1, failedReason: 'selected-ax-window-changed', changedContentMatches: false });
     expect(value.order).toEqual({ sharingAccessory: true, selectedFirst: true, otherAXWindow: false, foreignWindow: false, missing: false, reusedProcess: false });
     expect(value.point).toEqual({ bodyUnobstructed: true, accessoryStillBlocked: true, foreignStillBlocked: true });
     expect(value.negative).toBeNull(); expect(value.infinite).toBeNull();

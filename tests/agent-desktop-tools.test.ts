@@ -7,6 +7,62 @@ import { assertSemanticDesktopCitationsCurrent, desktopPropertyReference, deskto
 import type { AgentTask } from "../src/agent-mode/types";
 import type { ToolScope } from "../src/agent-tools/types";
 
+test("a task window set switches only approved reads, preserves the other windows and fences old input", async () => {
+  const scope = { taskId: "window-set", generation: 1, toolCallId: "control" };
+  const rows = Array.from({ length: 9 }, (_, index) => ({ windowId: String(index + 1), processId: `${100 + index}:123`, windowEpoch: String(index + 1).repeat(64),
+    owner: "Private owner", title: "Private title", foreground: index === 0, frame: { x: 0, y: 0, width: 1, height: 1 } }));
+  const selection = (index: number) => { const { windowId, processId, windowEpoch } = rows[index]!; return { windowId, processId, windowEpoch }; };
+  let enabled = false, selected = rows[0]!, sequence = 0, active = true;
+  const calls: string[] = [];
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0, 8, 8, 0, 1, 0, 1, 0, 0xff, 0xd9]);
+  const pngId = "c".repeat(64);
+  const transport: NativeDesktopTransport = {
+    async request(command, body = {}) {
+      calls.push(command);
+      if (command === "status") return { providerId: "nekodex-macos-desktop-v1", enabled, uncertain: false, selected, selectionCurrent: true, inputWindowBound: true,
+        screenCaptureGranted: true, accessibilityGranted: true, postEventGranted: true,
+        permissionClient: { selfResponsible: true, bundleIdentifier: "dev.nekodex.desktop-provider.v1", name: "NEKODEX Desktop Helper", bundlePath: "/fixture/helper.app" } };
+      if (command === "enable") { enabled = true; return { enabled: true }; }
+      if (command === "listWindows") return { windows: rows };
+      if (command === "select") { selected = rows.find(row => row.windowId === (body.selection as any).windowId)!; return { selected, inputWindowBound: true }; }
+      if (command === "observe") return { ...selection(rows.indexOf(selected)), kind: "desktop", providerId: "nekodex-macos-desktop-v1", platform: "darwin", scopeId: body.scopeId,
+        observationId: randomUUID(), frameId: "frame", frameEpoch: "b".repeat(64), screenshotId: pngId, coordinateSpace: "screenshot-pixels", width: 1, height: 1, screenshotResource: "native-desktop:fixture" };
+      if (command === "image") return { mimeType: "image/jpeg", base64: jpeg.toString("base64"), sha256: createHash("sha256").update(jpeg).digest("hex"), sourceScreenshotId: pngId, width: 1, height: 1 };
+      if (command === "act") return { operationId: body.operationId, outcome: "completed", executed: true, reason: "fixture execution" };
+      if (command === "invalidate") return { invalidated: true };
+      throw new Error("Unexpected window-set fixture command");
+    }, async close() {},
+  };
+  const controller = createAgentDesktopToolsProvider({ platform: "darwin", isScopeActive: s => active && s.generation === scope.generation,
+    createProvider: () => createMacosDesktopProvider({ helperExecutable: "/unlaunched", helperSha256: "f".repeat(64), platform: "darwin", isScopeActive: () => active, transportFactory: () => transport }) });
+  const invoke = (name: string, args: Record<string, unknown>) => controller.execute({ scope: { ...scope, toolCallId: `set-${++sequence}` }, tool: `desktop/${name}`, arguments: args, idempotencyKey: `set-${sequence}` });
+  try {
+    await controller.inspectPermissions(true); await controller.listWindows(true); await controller.setEnabled(true, true);
+    await controller.selectAndBind(scope, selection(0), true); await controller.selectAndBind(scope, selection(1), true);
+    const beforeDuplicate = calls.length; await controller.selectAndBind(scope, selection(0), true); expect(calls).toHaveLength(beforeDuplicate);
+    expect(controller.status(scope).bindings.map(row => row.selection)).toEqual([selection(0), selection(1)]);
+    const descriptors = await controller.discover(scope); expect(descriptors.every(row => row.supported)).toBe(true);
+    expect(JSON.stringify(descriptors)).toContain(rows[0]!.windowEpoch); expect(JSON.stringify(descriptors)).toContain(rows[1]!.windowEpoch); expect(JSON.stringify(descriptors)).not.toContain("Private title");
+    const first = await invoke("observe", { selection: selection(0) }); expect(first.state).toBe("completed");
+    const a = (first.result as any).structuredContent.binding;
+    const second = await invoke("observe", { selection: selection(1) }); expect(second.state).toBe("completed");
+    const b = (second.result as any).structuredContent.binding;
+    const beforeRejected = calls.length;
+    expect((await invoke("click", { binding: a, x: 0, y: 0 })).state).toBe("failed");
+    expect((await invoke("observe", { selection: selection(2) })).state).toBe("failed"); expect(calls).toHaveLength(beforeRejected);
+    expect((await invoke("click", { binding: b, x: 0, y: 0 })).state).toBe("completed");
+    controller.revoke(scope, selection(0)); expect(controller.status(scope).bindings.map(row => row.selection)).toEqual([selection(1)]);
+    expect((await invoke("observe", { selection: selection(0) })).state).toBe("failed");
+    expect((await invoke("observe", { selection: selection(1) })).state).toBe("completed");
+    for (const index of [0, 2, 3, 4, 5, 6, 7]) await controller.selectAndBind(scope, selection(index), true);
+    expect(controller.status(scope).bindings).toHaveLength(8);
+    await expect(controller.selectAndBind(scope, selection(8), true)).rejects.toThrow("at most 8");
+    expect(calls.filter(name => name === "enable")).toHaveLength(1);
+    active = false; controller.invalidate(scope.taskId); expect(controller.status(scope).bindings).toHaveLength(0);
+    expect((await invoke("observe", { selection: selection(1) })).state).toBe("failed");
+  } finally { await controller.close(); }
+});
+
 test("desktop controller is passive/off until explicit controls and binds bounded image/input to one task generation", async () => {
   const scope: ToolScope = { taskId: "controller-task", generation: 1, toolCallId: "observe-1" };
   const calls: string[] = []; let creates = 0, enabled = false, selected = false, closed = 0, activeGeneration = 1;
