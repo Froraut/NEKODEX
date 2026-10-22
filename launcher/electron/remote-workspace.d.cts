@@ -16,7 +16,7 @@ export type RemoteCommandResult = { exitCode: number | null; stdout: string; std
 export type RemoteSaveResult = { state: 'saved'; revision: string; draftRetained: boolean; receipt: RemoteReceipt } | { state: 'conflict' | 'failed' | 'unknown'; draftId: string; receipt: RemoteReceipt };
 export interface RemoteWorkspaceApi extends RemoteWorktreeApi, RemoteGitReviewApi {
   remoteWorkspaceHosts(): Promise<RemoteHost[]>;
-  remoteWorkspaceAddHost(input: RemoteHostInput): Promise<RemoteHost>;
+  remoteWorkspaceAddHost(input: RemoteHostInput & { id?: string }): Promise<RemoteHost>;
   remoteWorkspaceForgetHost(id: string): Promise<{ removed: boolean }>;
   remoteWorkspaceConnect(id: string): Promise<RemoteHost>;
   remoteWorkspaceDisconnect(id: string): Promise<{ disconnected: boolean }>;
@@ -48,7 +48,7 @@ export interface RemoteWorkspaceService extends RemoteWorktreeService {
   executeAgentTool(request: RemoteAgentInvocation): Promise<RemoteAgentOutcome>;
   agentReceipt(request: RemoteAgentInvocation): RemoteAgentOutcome | null;
   listHosts(): RemoteHost[];
-  addHost(input: RemoteHostInput): RemoteHost;
+  addHost(input: RemoteHostInput & { id?: string }): RemoteHost;
   forgetHost(id: string): { removed: boolean };
   connect(id: string): Promise<RemoteHost>;
   disconnect(id: string): { disconnected: boolean };

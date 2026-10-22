@@ -238,7 +238,7 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
   if (fs.existsSync(storagePath)) {
     const saved = JSON.parse(safeRead(storagePath, 24 * 1024 * 1024).toString());
     if (![1, 2].includes(saved.version) || !Array.isArray(saved.hosts) || saved.hosts.length > LIMITS.hosts || !Array.isArray(saved.receipts) || !Array.isArray(saved.drafts)) fail('STORE', 'Invalid remote workspace registry.');
-    for (const item of saved.hosts) { const checked = validateHost(item.config); if (!/^[a-f0-9-]{36}$/.test(item.id) || item.fingerprint !== hash(JSON.stringify(checked))) fail('STORE', 'Invalid remote host record.'); hosts.set(item.id, { id: item.id, config: checked, fingerprint: item.fingerprint }); }
+    for (const item of saved.hosts) { const checked = validateHost(item.config); if (!/^[a-f0-9-]{36}$/.test(item.id) || item.fingerprint !== hash(JSON.stringify(checked))) fail('STORE', 'Invalid remote host record.'); if (item.displayLabel !== undefined && (typeof item.displayLabel !== 'string' || !item.displayLabel.trim() || item.displayLabel.length > 100)) fail('STORE', 'Invalid remote host label.'); hosts.set(item.id, { id: item.id, config: checked, fingerprint: item.fingerprint, ...(item.displayLabel === undefined ? {} : { displayLabel: item.displayLabel }) }); }
     receipts = saved.receipts.slice(-LIMITS.receipts); drafts = saved.drafts.slice(-LIMITS.drafts);
     if (saved.worktrees !== undefined && (!Array.isArray(saved.worktrees) || saved.worktrees.length > 24)) fail('STORE', 'Invalid managed remote worktree registry.');
     worktrees = (saved.worktrees ?? []).map(record => { if (!record || !/^[a-f0-9-]{36}$/.test(record.id) || !hosts.has(record.hostId) || typeof record.path !== 'string' || typeof record.sourceRoot !== 'string' || typeof record.branch !== 'string') fail('STORE', 'Invalid managed remote worktree record.'); return ['creating', 'archiving'].includes(record.state) ? { ...record, state: 'needs-inspection' } : record; });
@@ -291,7 +291,7 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
     if (await session.sftp.realpath(joined) !== joined || (stat.mode & 0xf000) === 0xa000) fail('BOUNDARY', 'Symbolic links are outside the remote editor boundary.'); return joined;
   }
   function publicHost(host) { const session = sessions.get(host.id), effective = session?.effectiveHost;
-    return { id: host.id, ...host.config, ...(effective ? { hostname: effective.config.hostname, username: effective.config.username, port: effective.config.port } : {}),
+    return { id: host.id, ...host.config, label: host.displayLabel ?? host.config.label, ...(effective ? { hostname: effective.config.hostname, username: effective.config.username, port: effective.config.port } : {}),
       ...(host.config.connectionMode === 'ssh-config-alias' ? { sshAlias: host.config.hostname, aliasResolved: Boolean(effective),
         configuredEndpoint: { hostname: host.config.hostname, username: host.config.username, port: host.config.port, connectionMode: 'ssh-config-alias' } } : {}), fingerprint: effective?.fingerprint ?? host.fingerprint,
       connected: Boolean(session && !session.sftp.closed), canonicalRoot: session?.root ?? null, busy: busy.has(host.id),
@@ -531,7 +531,29 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
     gitListActions(id) { hostOf(id); return remoteGitReview.listActions(id); },
     gitPruneActions(id, actionIds) { hostOf(id); return remoteGitReview.pruneActions(id, actionIds); },
     listHosts: () => [...hosts.values()].map(publicHost),
-    addHost(input) { if (hosts.size >= LIMITS.hosts) fail('HOST', 'Remote host limit reached.'); const config = validateHost(input); const host = { id: randomUUID(), config, fingerprint: hash(JSON.stringify(config)) }; hosts.set(host.id, host); persist(); return publicHost(host); },
+    addHost(input) {
+      const { id, ...settings } = input ?? {};
+      const config = validateHost(settings);
+      if (id !== undefined) {
+        const host = hostOf(id);
+        if (busy.has(id)) fail('BUSY', 'Wait for the remote operation to settle.');
+        // A label is display metadata: preserve the authority fingerprint and every recovery record.
+        const authority = value => JSON.stringify([value.hostname, value.username, value.port, value.root, value.connectionMode ?? 'direct']);
+        if (authority(config) === authority(host.config)) {
+          host.displayLabel = config.label; persist(); return publicHost(host);
+        }
+        if (receipts.some(row => row.hostId === id && ['started', 'unknown'].includes(row.state))) fail('UNKNOWN', 'Reconcile this host’s uncertain transaction before changing its destination.');
+        if (drafts.some(row => row.hostId === id)) fail('DRAFT', 'Recover or discard retained drafts before changing this destination.');
+        if (worktrees.some(row => row.hostId === id) || gitReviewActions.some(row => row.hostId === id)) fail('RECOVERY', 'This destination retains managed worktree or Git recovery records; add a separate host instead.');
+        clearHostAuthority(id); sessions.get(id)?.sftp.close(); sessions.delete(id);
+        hostTransports.get(id)?.close(); connectionStates.set(id, 'disconnected');
+        host.config = config; delete host.displayLabel; host.fingerprint = hash(JSON.stringify(config));
+        persist(); return publicHost(host);
+      }
+      if (hosts.size >= LIMITS.hosts) fail('HOST', 'Remote host limit reached.');
+      const host = { id: randomUUID(), config, fingerprint: hash(JSON.stringify(config)) };
+      hosts.set(host.id, host); persist(); return publicHost(host);
+    },
     forgetHost(id) { hostOf(id); if (busy.has(id)) fail('BUSY', 'Wait for the remote operation to settle.'); if (receipts.some(row => row.hostId === id && ['started', 'unknown'].includes(row.state))) fail('UNKNOWN', 'Retain this host until its exact uncertain transaction is reconciled.'); if (worktrees.some(w => w.hostId === id)) fail('WORKTREE', 'This host retains managed worktree ownership records.'); if (gitReviewActions.some(r => r.hostId === id)) fail('GIT', 'This host retains Git action and recovery records.'); if (drafts.some(d => d.hostId === id)) fail('DRAFT', 'Recover or discard this host’s drafts before removing it.'); retireHostBindings(id); sessions.get(id)?.sftp.close(); sessions.delete(id); hosts.delete(id); hostTransports.delete(id); connectionStates.delete(id); for (const [token, a] of approvals) if (a.hostId === id) approvals.delete(token); persist(); return { removed: true }; },
     connect: id => exclusive(id, async () => { const host = hostOf(id); clearHostAuthority(id); const previous = hostTransports.get(id); previous?.close(); sessions.delete(id);
       connectionStates.set(id, 'connecting');

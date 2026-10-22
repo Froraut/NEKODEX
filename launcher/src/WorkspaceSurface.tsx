@@ -184,6 +184,8 @@ export function WorkspaceSurface({ language }: { language: Language }) {
   const retryFoldersButton = useRef<HTMLButtonElement>(null);
   const [selected, setSelected] = useState("");
   const [opened, setOpened] = useState("");
+  const [createMode, setCreateMode] = useState(false);
+  const [createIntent, setCreateIntent] = useState(false);
   const [pathInput, setPathInput] = useState("");
   const [drafts, setDrafts] = useState<WorkspaceDraft[]>([]);
   const [error, setError] = useState("");
@@ -258,7 +260,7 @@ export function WorkspaceSurface({ language }: { language: Language }) {
     if (paths?.includes(opened) && !retainedPaths.includes(opened)) setEditorVersion(previous => previous + 1);
     void refreshDrafts();
   };
-  const open = (path: string) => { void navigate(() => { setDirtyPaths([]); setOpened(path); setPathInput(path); }); };
+  const open = (path: string, creating = false) => { void navigate(() => { setDirtyPaths([]); setOpened(path); setPathInput(path); setCreateIntent(creating); setCreateMode(false); setEditorVersion(value => value + 1); }); };
   return <Page width="wide" className="nk-workspace" >
     <SurfaceHeader title={c.title} subtitle={c.subtitle} actions={<Button ref={folderButton} variant="primary" busy={picking} disabled={rootsLoading} onClick={() => void pick()}>{c.pick}</Button>} />
     {error && <Notice tone="error">{error}</Notice>}
@@ -268,22 +270,27 @@ export function WorkspaceSurface({ language }: { language: Language }) {
     {roots.length > 0 && <div className="nk-workspace__root-bar">
       <Select label={c.folder} value={selected} onChange={(id) => { void navigate(() => { setOpened(""); setSelected(id); }); }} options={[{ value: "", label: c.folder }, ...roots.map((item) => ({ value: item.id, label: item.name }))]} />
       {root && <><code className="nk-workspace__root-path">{root.path}</code>
+        <Button size="sm" onClick={() => void api().workspaceManageRoot(root.id).catch(reason => setError(message(reason)))}>{language === "ru" ? "Управлять папкой в файловом менеджере" : "Manage folder in file manager"}</Button>
         <Button size="sm" onClick={() => void forget()} disabled={Boolean(opened)} title={opened ? c.close : undefined}>{c.remove}</Button></>}
     </div>}
     {rootsKnown && !root && <Panel><p>{c.empty}</p></Panel>}
     {root && <>
+      <p>{language === "ru" ? "Создавайте папки, переименовывайте и перемещайте файлы в корзину через файловый менеджер. Затем обновите список файлов здесь." : "Create folders, rename files or move them to Trash in the system file manager. Then refresh the file list here."}</p>
       {drafts.length > 0 && <Panel title={c.drafts} padding="compact"><div className="nk-workspace__drafts">
         {drafts.map((draft) => <Button size="sm" key={draft.id} onClick={() => open(draft.path)}>{draft.path}</Button>)}
       </div></Panel>}
       <div className="nk-workspace__layout">
         <Panel title={c.files} className="nk-workspace__files" padding="compact" actions={<Button size="sm" onClick={() => { setVersion(version + 1); void refreshDrafts(); }}>{c.refresh}</Button>}>
           <DirectoryBranch key={`${root.id}:${version}`} workspaceId={root.id} directory="" label={root.name} onOpen={open} c={c} initialOpen />
-          <form onSubmit={(event) => { event.preventDefault(); if (pathInput) open(pathInput); }}>
+          <Button size="sm" onClick={() => { setCreateMode(true); setPathInput(""); }}>{language === "ru" ? "Новый файл" : "New file"}</Button>
+          {createMode && <p>{language === "ru" ? "Укажите путь внутри папки. Файл появится после сохранения." : "Enter a path inside this folder. The file is created when you Save."}</p>}
+          <form onSubmit={(event) => { event.preventDefault(); if (pathInput) open(pathInput, createMode); }}>
             <TextField label={c.path} value={pathInput} onChange={(event) => setPathInput(event.target.value)} />
-            <Button size="sm" type="submit" disabled={!pathInput}>{c.open}</Button>
+            <Button size="sm" type="submit" disabled={!pathInput}>{createMode ? (language === "ru" ? "Подготовить новый файл" : "Prepare new file") : c.open}</Button>
+            {createMode && <Button size="sm" onClick={() => setCreateMode(false)}>{c.cancel}</Button>}
           </form>
         </Panel>
-        {opened ? <WorkspaceEditor key={`${root.id}:${opened}:${editorVersion}`} workspaceId={root.id} path={opened} c={c} host={api} onChanged={() => void refreshDrafts()} editorPort={editorPort}
+        {opened ? <WorkspaceEditor key={`${root.id}:${opened}:${editorVersion}`} workspaceId={root.id} path={opened} language={language} createIntent={createIntent} c={c} host={api} onChanged={() => void refreshDrafts()} editorPort={editorPort}
           onDirty={(path, dirty) => setDirtyPaths(previous => dirty ? previous.includes(path) ? previous : [...previous, path] : previous.filter(item => item !== path))}
           onClose={() => { setOpened(""); setDirtyPaths([]); void refreshDrafts(); }} />
           : <Panel title={c.editor}><p>{c.selectFile}</p></Panel>}

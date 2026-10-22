@@ -1157,3 +1157,23 @@ or scheduled application access is required.
 An installed patch launcher may configure an independent account tunnel while a compatible Full-mode account-tunnel core finishes existing Native traffic. This retains the committed releaseVersion and other peers; cross-family/channel or core-mode transitions still require normal generation activation.
 
 The module map excludes `launcher/native/owned-worker/target` as generated Cargo cache while retaining the Rust source, manifests and build-owner code. Keeping that reusable cache during the active Native batch must not change the committed source map.
+
+### Basic project and source metadata actions
+
+`remoteWorkspaceAddHost` accepts an optional existing host id as an upsert. The
+remote owner validates configuration and preserves id. A display-label change
+persists optional `displayLabel` separately from the legacy fingerprint-bearing
+config so existing sessions, signed receipts and recovery drafts stay valid
+after restart. Destination changes retire approvals/Agent bindings and transport,
+require reconnection, and refuse retained drafts, uncertain receipts and managed
+worktree/Git recovery ownership. No remote command is used to edit metadata.
+
+External usage `rename-source` changes only validated `accountPseudonym`,
+retaining source id/path/client, imported records and dedup cursors. Renderer
+New file actions prepare a missing-path candidate (including empty content);
+existing revision-checked Save remains the sole file publication owner.
+`workspace-manage-root` accepts only a workspace id. Main resolves the current
+ancestry-checked grant and opens only that directory in the OS file manager;
+renderer-supplied absolute paths or arbitrary file execution are not admitted.
+Focused coverage: `tests/basic-functions-lane2.test.ts`; UI verification remains
+separate from those disposable local metadata and owner-contract fixtures.

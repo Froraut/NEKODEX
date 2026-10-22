@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   // Local workspace authority is granted only by the main process's native picker.
   workspaceRoots: () => ipcRenderer.invoke("launcher:workspace-roots"),
   workspaceOpenWorktree: (sourceRootId, worktreeId) => ipcRenderer.invoke('launcher:workspace-open-worktree', sourceRootId, worktreeId),
+  workspaceManageRoot: id => ipcRenderer.invoke("launcher:workspace-manage-root", id),
   workspacePick: () => ipcRenderer.invoke("launcher:workspace-pick"),
   workspaceForget: id => ipcRenderer.invoke("launcher:workspace-forget", id),
   workspaceList: (id, path = "") => ipcRenderer.invoke("launcher:workspace-list", id, path),

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { WorkspacePreview } from "../electron/local-workspace.cjs";
-import type { LauncherApi } from "./types";
+import type { Language, LauncherApi } from "./types";
 import { Badge, Button, Dialog, Notice, Panel } from "./design";
 
 type WorkspaceEditorCopy = Record<"binary" | "cancel" | "close" | "conflict" | "dirty" | "discard" | "discardBody" | "discardTitle" | "disk" | "editor" | "kept" | "loading" | "missing" | "recovering" | "resolve" | "retained" | "review" | "save" | "saved" | "truncated", string>;
@@ -22,8 +22,8 @@ export async function waitForWorkspaceDraftMutations(workspaceId: string): Promi
 }
 
 type EditorModel = { preview: WorkspacePreview; text: string; draftId?: string; dirty: boolean; version: number };
-export function WorkspaceEditor({ workspaceId, path, c, onChanged, onClose, onDirty, editorPort, host }: {
-  workspaceId: string; path: string; c: WorkspaceEditorCopy; onChanged: () => void; onClose: () => void;
+export function WorkspaceEditor({ workspaceId, path, c, onChanged, onClose, onDirty, editorPort, host, createIntent = false, language = "en" }: {
+  language?: Language; createIntent?: boolean; workspaceId: string; path: string; c: WorkspaceEditorCopy; onChanged: () => void; onClose: () => void;
   host: () => WorkspaceEditorApi;
   onDirty: (path: string, dirty: boolean) => void; editorPort: { current: (() => Promise<void>) | null };
 }) {
@@ -76,7 +76,8 @@ export function WorkspaceEditor({ workspaceId, path, c, onChanged, onClose, onDi
         ? { path, state: "text" as const, text: draft.text, revision: draft.expectedRevision, size: new TextEncoder().encode(draft.text).length }
         : null;
       if (preview) {
-        update({ preview, text: draft?.text ?? preview.text ?? "", draftId: draft?.id, dirty: Boolean(draft), version: 0 });
+        if (createIntent && preview.state !== "missing") { setError(language === "ru" ? "Файл уже существует. Откройте его или выберите другой путь." : "A file already exists at this path. Open it instead, or choose another new path."); return; }
+        update({ preview, text: draft?.text ?? preview.text ?? "", draftId: draft?.id, dirty: Boolean(draft) || createIntent, version: 0 });
         if (draft) { setNote(c.recovering); setConflict(preview.revision !== draft.expectedRevision); }
         // A recovered candidate always keeps its original baseline until explicit conflict resolution.
         if (draft) update({ ...current.current!, preview: { ...preview, revision: draft.expectedRevision } });

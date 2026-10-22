@@ -1183,7 +1183,10 @@ function registerIpc({ logger, stateStore }) {
     destroy: () => workspaceGitService.destroy(),
   });
   registerWorkspaceGitIpc({ registerIpcHandler: handle, service: workspaceGitService });
-  registerWorkspaceIpc({ registerIpcHandler: handle, service: localWorkspaceService, beforeForget: id => {
+  registerWorkspaceIpc({ registerIpcHandler: handle, service: localWorkspaceService, manageRoot: async directory => {
+    const failure = await shell.openPath(directory);
+    if (failure) throw new Error(failure);
+  }, beforeForget: id => {
     loopFileWatcher?.beforeForget(id);
     if (workspaceVmExportService?.hasRetainedState(id)) throw new Error('Keep this workspace registered until its exact VM export outcome is reconciled');
     if (workspaceGitService.hasRetainedState(id)) throw new Error('Keep this folder registered to access its worktrees, archives and snapshots');

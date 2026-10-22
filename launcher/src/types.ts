@@ -624,6 +624,7 @@ export interface RouteDiagnosticsReport {
 export interface LauncherApi extends NativeThreadsApi, NativePersistentApi, WorkspaceTerminalApi, RemoteWorkspaceApi, WorkspaceGitControlsApi, LocalGitReviewApi {
   workspaceRoots(): Promise<LocalWorkspaceRoot[]>;
   workspaceOpenWorktree(sourceRootId: string, worktreeId: string): Promise<LocalWorkspaceRoot>;
+  workspaceManageRoot(id: string): Promise<void>;
   workspacePick(): Promise<LocalWorkspaceRoot | null>;
   workspaceForget(id: string): Promise<boolean>;
   workspaceList(id: string, path?: string): Promise<WorkspaceListing>;

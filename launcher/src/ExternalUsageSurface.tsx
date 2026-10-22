@@ -16,6 +16,7 @@ export function ExternalUsageSurface({ api, language = 'en' }: { api: ExternalUs
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState('');
+  const [renaming, setRenaming] = useState<{ id: string; label: string } | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const owner = useRef(0), inFlight = useRef(false);
   const apply = (next: ExternalUsageSnapshot) => {
@@ -72,7 +73,13 @@ export function ExternalUsageSurface({ api, language = 'en' }: { api: ExternalUs
       <div className="external-usage__field external-usage__source-scope"><label htmlFor={`${baseId}-scope-${source.id}`}>{c.scope}</label><Select id={`${baseId}-scope-${source.id}`} label={c.scope} value={source.scope} onChange={value => void run(() => api.request({action:'set-scope',sourceId:source.id,scope:value as ExternalUsageScope}))} options={options} disabled={busy} /></div>
       {source.warnings.length ? <Notice tone="warning" title={c.warnings} className="external-usage__warnings">{source.warnings.map((warning, index) => <span key={warning} className="external-usage__warning-item">{index ? ' · ' : ''}{warning}</span>)}</Notice> : null}
       <div className="external-usage__estimate-block"><h3>{c.estimate}</h3>{estimate(source.estimate)}</div>
+      {renaming?.id === source.id ? <form onSubmit={event => { event.preventDefault(); if (!/^[A-Za-z0-9_-]{1,40}$/.test(renaming.label)) return; void run(async () => { const next = await api.request({ action: 'rename-source', sourceId: source.id, accountPseudonym: renaming.label }); setRenaming(null); return next; }); }}>
+        <TextField autoFocus label={c.account} hint={c.accountHint} value={renaming.label} maxLength={40} pattern="[A-Za-z0-9_-]{1,40}" disabled={busy} onChange={event => setRenaming({ id: source.id, label: event.target.value })} />
+        <Button type="submit" disabled={busy || !/^[A-Za-z0-9_-]{1,40}$/.test(renaming.label)}>{language === 'ru' ? 'Сохранить название' : 'Save label'}</Button>
+        <Button disabled={busy} onClick={() => setRenaming(null)}>{c.cancel}</Button>
+      </form> : null}
       <div className="external-usage__actions">
+        <Button disabled={busy} onClick={() => setRenaming({ id: source.id, label: source.accountPseudonym })}>{language === 'ru' ? 'Изменить название' : 'Rename source'}</Button>
         <Button disabled={busy || !source.enabled} onClick={() => void run(() => api.request({action:'import',sourceId:source.id}))}>{c.import}</Button>
         <Button disabled={busy} onClick={() => void run(() => api.request({action:'set-enabled',sourceId:source.id,enabled:!source.enabled}))}>{source.enabled ? c.pause : c.resume}</Button>
         <Button disabled={busy} variant="ghost" className="external-usage__forget" onClick={() => setDeleting(source.id)}>{c.forget}</Button>
