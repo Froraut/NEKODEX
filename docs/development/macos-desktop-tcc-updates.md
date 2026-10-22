@@ -64,12 +64,14 @@ the outermost app. The helper must not run from inside NEKODEX.app.
   NEKODEX.app and outside `~/.codex-chatgpt-web/versions/`, so it never moves
   and is never pruned. The DEV source CLI keeps its checkout path.
 - **The confirmation alert.** "Allow NEKODEX desktop control?" is the helper's
-  own `CFUserNotification` alert, not a TCC prompt; it changes nothing in System
+  own opaque AppKit `NSWindow`, not a TCC prompt; it changes nothing in System
   Settings. It exists because any same-user process could start the helper and
   so borrow its grants. The answer now lasts for the life of that helper process
   (a repeated enable on the same process no longer asks), and is never
   persisted: a stored answer would be just as available to whoever starts the
-  helper next. "Disable and release desktop access" and a restart end the
+  helper next. Don't Allow is the default Return action; Escape and close refuse,
+  there is no consent timer, and caller ownership is rechecked after the awaited
+  answer. "Disable and release desktop access" and a restart end the
   process, so the next enable asks again.
 
 ## One-time repair after installing this change
