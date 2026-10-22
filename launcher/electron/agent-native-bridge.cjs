@@ -80,7 +80,7 @@ function createAgentNativeBridge(options = {}) {
     for (const waiter of [...entry.waiters]) waiter();
     return entry.receipt;
   }
-  function knownUnsent(entry) { return publish(entry, { state: 'not_sent', ownerHeld: false, writeDisposition: 'not-written', assistantText: undefined }); }
+  function knownUnsent(entry, preflightFailure) { return publish(entry, { ...(preflightFailure ? { preflightFailure } : {}), state: 'not_sent', ownerHeld: false, writeDisposition: 'not-written', assistantText: undefined }); }
   function unknown(entry, held = false) { return publish(entry, { state: 'unknown', ownerHeld: held, writeDisposition: entry.receipt?.writeDisposition === 'written' ? 'written' : 'unknown', assistantText: undefined }); }
   function bindingIdentity(e) {
     return digest(['agent-native-binding-v1', e.scope.taskId, e.scope.familyId, e.scope.generation, e.scope.agentWorkerId, e.admissionId, e.model]);
@@ -260,10 +260,10 @@ function createAgentNativeBridge(options = {}) {
       possibleOffer = true;
       const row = await binding.service.offerOwnedTurn({ workerHandle: binding.workerHandle, actionId: e.actionId, text: e.text, ...(e.images?.length ? { images: e.images } : {}), outputSchema: AGENT_NATIVE_OUTPUT_SCHEMA });
       return project(entry, binding, row);
-    } catch {
+    } catch (reason) {
       if (binding && !possibleOffer && binding.service) { try { await retire(binding); } catch { return unknown(entry, true); } }
       if (binding && possibleOffer) binding.unsettled = true;
-      return possibleOffer ? unknown(entry, Boolean(entry.receipt?.ownerHeld)) : knownUnsent(entry);
+      return possibleOffer ? unknown(entry, Boolean(entry.receipt?.ownerHeld)) : knownUnsent(entry, reason.preflightFailure);
     } finally { if (binding) binding.busy = false; }
   }
   function lookup(value) {

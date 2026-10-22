@@ -27,9 +27,14 @@ export interface OwnedNativeExecutionPortOptions {
   history?: OwnedNativeHistoryPort;
 }
 function identity(value: unknown): value is string { return typeof value === "string" && Boolean(value.trim()) && value.length <= 160 && !/[\u0000-\u001f]/u.test(value); }
-function notSent(request: ExecutionRequest): ExecutionResult { return { receiptId: `not-sent:${request.dispatch.id}`, outcome: "not_sent", actualSpend: 0,
-  summary: "Native admission, exact continuation, supported typed result or bounded protocol context is unavailable; no Native offer was made." }; }
+function notSent(request: ExecutionRequest, preflightFailure?: AgentNativeReceipt["preflightFailure"]): ExecutionResult { return { receiptId: `not-sent:${request.dispatch.id}`, outcome: "not_sent", actualSpend: 0,
+  summary: preflightFailure ? `Native account preflight failed at ${preflightFailure.phase} (${preflightFailure.reasonCode}); no Native offer was made.`
+    : "Native admission, exact continuation, supported typed result or bounded protocol context is unavailable; no Native offer was made." }; }
 function validateReceipt(receipt: AgentNativeReceipt, envelope: AgentNativeOfferEnvelope, payloadDigest: string): void {
+  if (receipt?.preflightFailure && (Object.keys(receipt.preflightFailure).sort().join(',') !== 'phase,reasonCode'
+    || !['account-read', 'account-rate-limits', 'account-check'].includes(receipt.preflightFailure.phase)
+    || !['rpc_timeout', 'rpc_rejected', 'client_closed', 'worker_busy', 'account_changed', 'account_preflight_failed'].includes(receipt.preflightFailure.reasonCode)
+    || receipt.state !== 'not_sent' || receipt.writeDisposition !== 'not-written' || receipt.ownerHeld)) throw new Error("Invalid Native preflight diagnostic");
   if (!receipt || receipt.version !== 1 || receipt.actionId !== envelope.actionId || !receipt.scope || !sameNativeScope(receipt.scope, envelope.scope)
     || receipt.model !== envelope.model || receipt.admissionId !== envelope.admissionId || receipt.outputSchemaId !== envelope.outputSchemaId || receipt.payloadDigest !== payloadDigest
     || receipt.inputAuthorship !== "automatic-host" || !Number.isSafeInteger(receipt.revision) || receipt.revision < 1 || typeof receipt.ownerHeld !== "boolean"
@@ -138,7 +143,7 @@ export function createOwnedNativeExecutionPort(options: OwnedNativeExecutionPort
       if (newest && newest.revision > receipt.revision) { receipt = newest; continue; }
       if (receipt.state === "not_sent") {
         if (acceptance || receipt.writeDisposition !== "not-written" || receipt.ownerHeld) throw new Error("Native not-sent proof conflicts with its offered owner");
-        return notSent(request);
+        return notSent(request, receipt.preflightFailure);
       }
       if (receipt.state === "completed" || receipt.state === "failed") {
         if (receipt.ownerHeld) throw new Error("Native terminal still holds an unsettled owner");
