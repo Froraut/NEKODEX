@@ -44,7 +44,7 @@ test("retained late tool receipts reconcile without replay, while correction inv
       tools: [{ type: "function", name: "browser_input", parameters: { type: "object" } }], toolMap: [{ wireName: "browser_input", tool: "browser/input" }],
       pending: [{ toolCallId: callId, tool: "browser/input", wireName: "browser_input", arguments: { text: callId } }],
     } };
-  } }, lookupToolOutcome: key => tools.receipt(key), reconcileToolReceipt: request => tools.reconcileReceipt(request), onTaskScopeInvalidated: taskId => tools.invalidateTaskTools(taskId) });
+  } }, lookupToolOutcome: key => tools.taskOutcome(key), reconcileToolReceipt: request => tools.reconcileReceipt(request), onTaskScopeInvalidated: taskId => tools.invalidateTaskTools(taskId) });
   const authorize = (request: Request) => request.headers.get("authorization") === "Bearer fixture-control";
   tools = createAgentToolsComposition({ home, authorize, builtins: [builtin], isScopeActive: scope => {
     const task = store.getTask(scope.taskId); return task.generation === scope.generation && ["ready", "running", "awaiting_input"].includes(task.status);
@@ -107,4 +107,61 @@ test("retained late tool receipts reconcile without replay, while correction inv
     releaseLateRead(); await runtime.waitForIdle();
     try { await tools.close(); } finally { reopened?.close(); store.close(); rmSync(home, { recursive: true, force: true }); }
   }
+}, 5_000);
+
+test("task GET and duplicate approval preserve one live human handoff until its terminal receipt", async () => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "nekodex-human-poll-")));
+  const store = new AgentModeStore(join(home, "agent.sqlite"));
+  let entered!: () => void, release!: () => void, effects = 0, executions = 0;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const humanReturn = new Promise<void>(resolve => { release = resolve; });
+  let tools!: ReturnType<typeof createAgentToolsComposition>;
+  const runtime = new AgentModeRuntime({ store, ownerId: "human-wait-owner", models: () => [{ id: "fixture-model" }],
+    lookupToolOutcome: key => tools.taskOutcome(key),
+    executionPort: { async execute(request, acknowledge) {
+      acknowledge("fixture-ack");
+      return { receiptId: "fixture-result", outcome: "awaiting_input", actualSpend: null, summary: "One selected-window handoff.", continuation: {
+        responseId: "fixture-response", rootDispatchId: request.dispatch.id,
+        input: [], output: [], tools: [], toolMap: [],
+        pending: [{ toolCallId: "click", tool: "desktop/click", wireName: "desktop_click", arguments: { waitForForeground: true } }],
+      } };
+    } },
+  });
+  const authorize = () => true;
+  const builtin: StandaloneBuiltinToolsProvider = {
+    serverId: "desktop", waitsForUser: request => request.arguments.waitForForeground === true,
+    async discover() { return [{ id: "desktop/click", name: "click", serverId: "desktop", supported: true,
+      inputSchema: { type: "object", properties: { waitForForeground: { const: true } }, required: ["waitForForeground"], additionalProperties: false } }]; },
+    async execute() { executions++; entered(); await humanReturn; effects++; return { state: "completed", result: { clicks: effects } }; },
+  };
+  tools = createAgentToolsComposition({ home, authorize, builtins: [builtin],
+    isScopeActive: scope => { const task = store.getTask(scope.taskId); return task.generation === scope.generation && ["ready", "running", "awaiting_input"].includes(task.status); },
+    resolveToolCall: scope => runtime.resolveToolCall(scope), onOutcome: outcome => { runtime.recordToolOutcome(outcome); },
+  });
+  const handler = createAgentModeRoutes({ runtime, authorize });
+  const get = async () => {
+    const response = (await handler(new Request("http://127.0.0.1/admin/agent-mode", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "get", taskId: "task" }) })))!;
+    expect(response.status).toBe(200); return (await response.json() as any).value;
+  };
+  try {
+    runtime.create("create", { ownerMode: "agent", id: "task", mode: "manual", originalRequest: "Click only the selected fixture after approval.",
+      requirements: [{ id: "r", text: "One click." }], stages: [{ id: "s", instruction: "Request one click.", requirementIds: ["r"] }],
+      bounds: { maxConcurrent: 1, maxTurns: 2, maxSpend: null }, execution: { provider: "local-responses", model: "fixture-model" } });
+    runtime.step("task", "step", { explicitUserAction: true }); await runtime.waitForIdle();
+    const scope = { taskId: "task", generation: 1, toolCallId: "click" };
+    const pending = tools.approveInvoke(scope, true); await started;
+    const key = runtime.resolveToolCall(scope)!.idempotencyKey;
+    expect(tools.receipt(key)?.state).toBe("outcome_unknown"); // The durable intent remains visible.
+    for (let i = 0; i < 2; i++) {
+      const detail = await get();
+      expect(detail.task.status).toBe("awaiting_input"); expect(detail.pendingToolCalls).toHaveLength(1);
+      expect(detail.effectiveToolOutcomes).toEqual([]);
+    }
+    const duplicate = tools.approveInvoke(scope, true);
+    await Promise.resolve(); expect(executions).toBe(1); expect(effects).toBe(0);
+    release(); expect((await pending).state).toBe("completed"); expect((await duplicate).state).toBe("completed");
+    expect(effects).toBe(1); expect(executions).toBe(1);
+    const finished = await get(); expect(finished.task.status).toBe("ready");
+    expect(finished.effectiveToolOutcomes).toHaveLength(1); expect(finished.effectiveToolOutcomes[0].state).toBe("completed");
+  } finally { release(); await tools.close(); runtime.beginShutdown(); await runtime.waitForIdle(); runtime.finishShutdown(); store.close(); rmSync(home, { recursive: true, force: true }); }
 }, 5_000);

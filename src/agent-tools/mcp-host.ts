@@ -33,6 +33,7 @@ export class StandaloneMcpHost implements StandaloneToolsPort {
   private grants = new Map<string, string>();
   private activeCalls = new Set<Promise<unknown>>();
   private pendingBuiltinWork = new Set<Promise<ToolOutcome>>();
+  private pendingHumanHandoffs = new Map<string, Promise<ToolOutcome>>();
   private builtinProviders = new Map<string, StandaloneBuiltinToolsProvider>();
   private builtinEntries = new Map<string, ToolEntry>();
   private abort = new AbortController();
@@ -182,7 +183,7 @@ export class StandaloneMcpHost implements StandaloneToolsPort {
     this.active(request.scope); options.signal?.throwIfAborted();
     const fingerprint = invocationFingerprint(request);
     // Receipt reads do not authorize new execution and may be performed after grant consumption.
-    const prior = this.journal.existing(request); if (prior) return prior;
+    const prior = this.journal.existing(request); if (prior) return this.pendingHumanHandoffs.get(request.idempotencyKey) ?? prior;
     const [serverId, name, extra] = request.tool.split("/");
     const session = this.sessions.get(serverId!); const entry = this.entry(request.tool);
     if (extra || (!session && !entry?.builtin) || !entry?.descriptor.supported || !entry.validate) throw new Error("Tool is undiscovered or unsupported");
@@ -206,7 +207,11 @@ export class StandaloneMcpHost implements StandaloneToolsPort {
         // An exact approved foreground handoff retains its task owner until the
         // person returns or revokes it. Recording an observation timeout here
         // would pause the task and invalidate the very scope that is waiting.
-        if (entry.builtin.waitsForUser?.(request)) return await work;
+        if (entry.builtin.waitsForUser?.(request)) {
+          this.pendingHumanHandoffs.set(request.idempotencyKey, work);
+          try { return await work; }
+          finally { if (this.pendingHumanHandoffs.get(request.idempotencyKey) === work) this.pendingHumanHandoffs.delete(request.idempotencyKey); }
+        }
         let timer: ReturnType<typeof setTimeout> | undefined;
         try { return await Promise.race([work, new Promise<ToolOutcome>(resolve => { timer = setTimeout(() => resolve(this.journal.get(request.idempotencyKey)!), this.timeout); })]); }
         finally { if (timer) clearTimeout(timer); }
@@ -219,6 +224,8 @@ export class StandaloneMcpHost implements StandaloneToolsPort {
     }
   }
   getOutcome(idempotencyKey: string): ToolOutcome | undefined { return this.journal.get(idempotencyKey); }
+  /** Existing approved work only. Reading or joining it never starts another invocation. */
+  pendingHumanHandoff(idempotencyKey: string): Promise<ToolOutcome> | undefined { return this.pendingHumanHandoffs.get(idempotencyKey); }
   get pendingBuiltinCount(): number { return this.pendingBuiltinWork.size; }
   async waitForIdle(): Promise<void> { await Promise.allSettled([...this.activeCalls, ...this.pendingBuiltinWork]); }
   existingOutcome(request: Omit<ToolInvocation, "grantId">): ToolOutcome | undefined { return this.journal.existing(request); }
