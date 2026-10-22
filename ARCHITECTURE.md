@@ -474,6 +474,16 @@ fallback or retained development UID-only pin substitutes production trust. Bund
 bootstrap reads use that same exact admitted layout. Source pin verification does
 not establish a signed installed wrapper or successful provider run.
 
+The owned inference leaf exposes main-only `interruptOwnedTurn` for an exact
+acknowledged offer, worker handle and turn. It journals a consumed interrupt
+identity on the existing offer before writing `turn/interrupt`, so action quota
+cannot prevent Stop and duplicate calls only observe. The account facade routes
+this control over the existing exact subscription without idle reservation,
+account preflight or process startup. An ACK reports stopping; only the original
+matching terminal settles inference. Missing interrupt ACK retains ownership and
+late terminal correlation; exact subscription cleanup remains separately awaited.
+`tests/owned-native-stop.test.ts` checks these boundaries with inert stdio.
+
 **Retained owned conversations:** `persistent-native-conversations.cjs` uses the
 existing qualified account server. Every mutation binds the observed profile,
 epoch and server generation. Exact conversation and Native-thread reservations
