@@ -4,7 +4,38 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 const require = createRequire(import.meta.url);
 const { registerAgentTools } = require("../launcher/electron/ipc/agent-tools.cjs");
+const { RuntimeSupervisor } = require("../launcher/electron/runtime-supervisor.cjs");
 const { createLifecycleAdmission } = require("../launcher/electron/lifecycle-admission.cjs");
+
+test('desktop enable keeps its real control request alive while the human confirmation exceeds five seconds', async () => {
+  const handlers = new Map<string, (...args: any[]) => any>();
+  const originalFetch = globalThis.fetch, packets: any[] = [];
+  let requests = 0, aborted = false;
+  const supervisor = Object.assign(Object.create(RuntimeSupervisor.prototype), {
+    readConfig: () => ({ host: '127.0.0.1', port: 17841, controlToken: 'inert-fixture' }),
+    ownedAgentRuntimeReady: async () => true,
+    performControl(config: unknown, action: string, options: unknown) {
+      packets.push(options); return RuntimeSupervisor.prototype.performControl.call(this, config, action, options);
+    },
+  });
+  registerAgentTools({ handle: (name: string, handler: any) => handlers.set(name, handler), runtimeHost: { supervisor } });
+  globalThis.fetch = (async (_url: unknown, init: RequestInit) => {
+    requests++;
+    return new Promise<Response>((resolve, reject) => {
+      const timer = setTimeout(() => resolve(new Response(JSON.stringify({ ok: true, value: { enabled: true } }))), 5250);
+      init.signal?.addEventListener('abort', () => { aborted = true; clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); }, { once: true });
+    });
+  }) as typeof fetch;
+  try {
+    expect(await handlers.get('launcher:agent-tools')!({}, { action: 'setDesktopEnabled', enabled: true, explicitUserAction: true })).toEqual({ enabled: true });
+    expect(requests).toBe(1); expect(aborted).toBe(false);
+    globalThis.fetch = (async () => new Response(JSON.stringify({ ok: true, value: {} }))) as typeof fetch;
+    for (const body of [{ action: 'setDesktopEnabled', enabled: false, explicitUserAction: true }, { action: 'setDesktopEnabled', enabled: true, explicitUserAction: false }, { action: 'status' }]) {
+      await handlers.get('launcher:agent-tools')!({}, body);
+    }
+    expect(packets.map(packet => packet.timeoutMs)).toEqual([null, 5000, 5000, 5000]);
+  } finally { globalThis.fetch = originalFetch; }
+}, 10000);
 test('host network privacy revoke uses the actual preload narrow route during lifecycle drain without admitting grants', async () => {
   const admission = createLifecycleAdmission(), handlers = new Map<string, (...args: any[]) => any>();
   const forwarded: unknown[] = [], readiness: unknown[] = [], channels: string[] = [];

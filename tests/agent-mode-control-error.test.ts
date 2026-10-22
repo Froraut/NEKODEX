@@ -15,7 +15,9 @@ const { registerAgentMode } = require('../launcher/electron/ipc/agent-mode.cjs')
 const { registerBrowserCompanion } = require('../launcher/electron/ipc/browser-companion.cjs');
 
 const config = { host: '127.0.0.1', port: 17841, controlToken: 'inert-fixture' };
-const control = (...args: unknown[]) => RuntimeSupervisor.prototype.control.apply({}, args);
+// Exercise the real control wrapper and its delegated transport without starting a runtime.
+const supervisor = Object.create(RuntimeSupervisor.prototype);
+const control = (...args: unknown[]) => RuntimeSupervisor.prototype.control.apply(supervisor, args);
 const generic = 'The Agent action could not be completed; inspect its current durable state before retrying.';
 /** Every passed-through refusal must stay a literal the daemon owner actually throws. */
 function sourceLiterals(...paths: string[]): string {

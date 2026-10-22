@@ -2336,7 +2336,9 @@ class RuntimeSupervisor {
 
   async performControl(config, action, options = {}) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 5_000);
+    // A trusted caller can leave a human confirmation to its actual owner. Other
+    // control requests retain their bounded transport deadline.
+    const timeout = options.timeoutMs === null ? undefined : setTimeout(() => controller.abort(), options.timeoutMs ?? 5_000);
     try {
       const response = await fetch(`http://${config.host}:${config.port}/admin/${action}`, {
         method: "POST",

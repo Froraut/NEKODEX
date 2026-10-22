@@ -298,7 +298,23 @@ test.skipIf(!swiftCompiler)('pixel click events address the selected window with
                 "window": NSEvent(cgEvent: event)?.windowNumber ?? -1, "clickState": event.getIntegerValueField(.mouseEventClickState),
                 "button": event.getIntegerValueField(.mouseEventButtonNumber), "flags": event.flags.rawValue] }
         }
-        let value: [String: Any] = ["display": CGDisplayBounds(CGMainDisplayID()).height > 0, "center": encode(CGPoint(x: 124, y: 168)),
+        func row(_ id: CGWindowID, _ pid: pid_t, _ process: String) -> WindowRow {
+            WindowRow(id: id, pid: pid, processID: process, epoch: "fixture", frame: CGRect(x: 0, y: 0, width: 560, height: 312), owner: "fixture", title: "fixture")
+        }
+        let selected = row(100, 10, "10:1"), sharing = row(101, 10, "10:1"), other = row(102, 10, "10:1"), foreign = row(200, 20, "20:1")
+        func order(_ rows: [WindowRow]) -> Bool { selectedWindowIsForemost(selected, among: rows) { $0.id == 100 || $0.id == 102 } }
+        func surface(_ row: WindowRow, _ rect: CGRect) -> [String: Any] {
+            [kCGWindowNumber as String: row.id, kCGWindowOwnerPID as String: row.pid, kCGWindowLayer as String: 0,
+             kCGWindowAlpha as String: 1.0, kCGWindowBounds as String: rect.dictionaryRepresentation]
+        }
+        let stack = [surface(sharing, CGRect(x: 6, y: 6, width: 66, height: 20)), surface(selected, selected.frame)]
+        let orderChecks: [String: Bool] = ["sharingAccessory": order([sharing, selected]), "selectedFirst": order([selected]),
+            "otherAXWindow": order([other, selected]), "foreignWindow": order([foreign, selected]), "missing": order([sharing]),
+            "reusedProcess": order([row(100, 10, "10:2")])]
+        let pointChecks: [String: Bool] = ["bodyUnobstructed": port.stackedAbove(stack, row: selected, point: CGPoint(x: 124, y: 168)) == false,
+            "accessoryStillBlocked": port.stackedAbove(stack, row: selected, point: CGPoint(x: 10, y: 10)) == true,
+            "foreignStillBlocked": port.stackedAbove([surface(foreign, selected.frame)] + stack, row: selected, point: CGPoint(x: 124, y: 168)) == true]
+        let value: [String: Any] = ["order": orderChecks, "point": pointChecks, "display": CGDisplayBounds(CGMainDisplayID()).height > 0, "center": encode(CGPoint(x: 124, y: 168)),
             "fractional": encode(CGPoint(x: 0.5, y: 311.5)), "negative": encode(CGPoint(x: -1, y: 4)), "infinite": encode(CGPoint(x: CGFloat.infinity, y: 4))]
         print(String(data: try! JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), encoding: .utf8)!)
     }
@@ -310,6 +326,8 @@ test.skipIf(!swiftCompiler)('pixel click events address the selected window with
     const run = spawnSync(executable, [], { encoding: 'utf8', timeout: 15000 });
     if (run.status !== 0) throw new Error(`harness failed: ${run.stderr}`);
     const value = JSON.parse(run.stdout) as Record<string, unknown>;
+    expect(value.order).toEqual({ sharingAccessory: true, selectedFirst: true, otherAXWindow: false, foreignWindow: false, missing: false, reusedProcess: false });
+    expect(value.point).toEqual({ bodyUnobstructed: true, accessoryStillBlocked: true, foreignStillBlocked: true });
     expect(value.negative).toBeNull(); expect(value.infinite).toBeNull();
     // Without a main display there is no flip reference; the helper then refuses as event-unavailable.
     if (value.display !== true) { expect(value.center).toBeNull(); return; }

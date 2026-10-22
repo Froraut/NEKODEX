@@ -400,7 +400,12 @@ inspects the tab and explicitly releases that exact operation ID. Turns without 
 opt-in never reach that tab and keep the built-in browser. The host also keeps its
 own unknown slot until a late receipt or revoke. A late ACK reconciles the host receipt but does not release the
 hold or trigger another send. A failure to observe the answer after a confirmed
-send is held as `companion_response_unobserved`. Holds live in process memory: an
+send is held as `companion_response_unobserved`. A visible `data-dil-render-failed`
+marker inside that turn's answer is reported as a ChatGPT response rendering
+failure, rather than an empty answer. Its placeholder is never returned as model
+text and the companion never clicks Regenerate. Hidden markers and ordinary
+answer text quoting the error do not establish a rendering failure.
+Holds live in process memory: an
 application restart discards the pairing and selected page authority, so a new
 binding is again an explicit user action, and the existing turn runtime still
 never replays a send-activated prompt.
