@@ -16,7 +16,7 @@ function activeQuota(state) {
   const active = new Set(state.conversations.filter(row => !row.archivedAt).map(row => row.id));
   return { conversations: active.size, conversationLimit: 128,
     actions: state.actions.filter(row => ['prepared', 'stopping', 'unknown'].includes(row.state) || row.ownerHeld === true
-      || !['archive', 'stop'].includes(row.kind) && row.state !== 'failed' && active.has(row.conversationId)).length, actionLimit: 512 };
+      || !['archive', 'stop', 'rename'].includes(row.kind) && row.state !== 'failed' && active.has(row.conversationId)).length, actionLimit: 512 };
 }
 /** Main-only. Native retains full context by explicit consent; this registry contains
  * ownership/receipts and the last summary only, never credentials or raw rollouts. */
@@ -32,8 +32,8 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
   let state;
   try {
     const bytes = regular(file, 4 * 1024 * 1024); lastDigest = digest(bytes); state = JSON.parse(bytes);
-    if (![1, 2, 3].includes(state.version) || !Array.isArray(state.conversations) || !Array.isArray(state.actions) || activeQuota(state).conversations > 128 || activeQuota(state).actions - state.actions.filter(row => ['archive', 'stop'].includes(row.kind) && (['prepared', 'stopping', 'unknown'].includes(row.state) || row.ownerHeld === true)).length > 512) throw new Error();
-    for (const row of state.conversations) { uuid(row.id); uuid(row.profileId); uuid(row.epoch); uuid(row.serverGeneration); if (!Number.isSafeInteger(row.revision) || row.revision < 0 || row.archivedAt !== undefined && (!Number.isSafeInteger(row.archivedAt) || row.archivedAt <= 0)) throw new Error(); }
+    if (![1, 2, 3].includes(state.version) || !Array.isArray(state.conversations) || !Array.isArray(state.actions) || activeQuota(state).conversations > 128 || activeQuota(state).actions - state.actions.filter(row => ['archive', 'stop', 'rename'].includes(row.kind) && (['prepared', 'stopping', 'unknown'].includes(row.state) || row.ownerHeld === true)).length > 512) throw new Error();
+    for (const row of state.conversations) { uuid(row.id); uuid(row.profileId); uuid(row.epoch); uuid(row.serverGeneration); if (row.labelRevision !== undefined && (!Number.isSafeInteger(row.labelRevision) || row.labelRevision < 0) || row.label !== undefined && (typeof row.label !== 'string' || row.label.length > 80 || /\p{C}/u.test(row.label)) || !Number.isSafeInteger(row.revision) || row.revision < 0 || row.archivedAt !== undefined && (!Number.isSafeInteger(row.archivedAt) || row.archivedAt <= 0)) throw new Error(); }
     for (const row of state.actions) { uuid(row.actionId); uuid(row.conversationId); }
   } catch (reason) {
     if (reason.code !== 'ENOENT') throw fail('registry_unavailable', 'Persistent Native registry is unavailable');
@@ -102,6 +102,34 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
     if (!model || !isAgentNativeHistorySource(model.historySource) || canonical(model.historySource) !== canonical(row.historySource)) return 'account_identity_changed';
     if (sameScope(row, context) && live.has(row.id)) return 'already_loaded';
     return null;
+  }
+  function canRename(row, context) {
+    return Boolean(!destroyed && !row.archivedAt && context && row.profileId === context.profileId && row.epoch === context.epoch
+      && !state.actions.some(action => action.conversationId === row.id && action.kind === 'rename' && (['prepared', 'unknown'].includes(action.state) || action.ownerHeld === true)));
+  }
+  async function rename(input) {
+    let recorded = false;
+    try {
+      if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !['actionId', 'conversationId', 'revision', 'expectedContext', 'expectedLabel', 'label'].includes(key))) throw fail('invalid_intent', 'Unsupported conversation label input');
+      uuid(input.actionId); uuid(input.conversationId);
+      for (const label of [input.label, input.expectedLabel]) if (typeof label !== 'string' || label.length > 80 || /\p{C}/u.test(label)) throw fail('invalid_conversation_label', 'Use a plain conversation label of at most 80 characters');
+      if (!input.expectedContext || Object.keys(input.expectedContext).sort().join(',') !== 'epoch,profileId,serverGeneration') throw fail('stale_account', 'Select the exact current account generation');
+      for (const key of ['profileId', 'epoch', 'serverGeneration']) uuid(input.expectedContext[key]);
+      const fingerprint = digest(canonical({ kind: 'rename', input })), old = state.actions.find(action => action.actionId === input.actionId);
+      if (old) { recorded = true; if (old.fingerprint !== fingerprint) throw fail('intent_conflict', 'Conversation label action identity changed'); return list(); }
+      const context = getExecution(), row = state.conversations.find(row => row.id === input.conversationId);
+      if (!row || row.revision !== input.revision) throw fail('stale_conversation', 'Select the exact current conversation revision');
+      if (!canRename(row, context) || !['profileId', 'epoch', 'serverGeneration'].every(key => context[key] === input.expectedContext[key])) throw fail('stale_account', 'Select the current active conversation account');
+      if ((row.label || '') !== input.expectedLabel) throw fail('conversation_label_changed', 'The conversation label changed; refresh before renaming');
+      const action = { actionId: input.actionId, conversationId: row.id, kind: 'rename', fingerprint, state: 'completed', ownerHeld: false, revision: row.revision };
+      try { publishIntent({ action, row, patch: { label: input.label.trim() || undefined, labelRevision: (row.labelRevision || 0) + 1 } }); recorded = true; }
+      catch (reason) {
+        recorded = reason.registryWriteDisposition !== 'not-written';
+        if (recorded) { action.state = 'unknown'; action.reasonCode = 'label_publication_unknown'; }
+        throw reason;
+      }
+      return list();
+    } catch (reason) { reason.actionRecorded = recorded; throw reason; }
   }
   function stopTarget(row, context) {
     if (destroyed || row.archivedAt || !sameScope(row, context) || !context.server.inspect().accepting) return null;
@@ -185,12 +213,14 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
       || snapshot.receipts.some(receipt => receipt.ownerHeld === true || ['prepared', 'offered', 'acknowledged', 'unknown'].includes(receipt.state)))) return 'conversation_busy';
     return null;
   }
-  function list({ archiveCursor } = {}) {
+  function list({ archiveCursor, archiveQuery = '' } = {}) {
+    if (typeof archiveQuery !== 'string' || archiveQuery.length > 120 || /\p{C}/u.test(archiveQuery)) throw fail('invalid_archive_query', 'Use a plain archive query of at most 120 characters');
+    archiveQuery = archiveQuery.trim(); const foldedQuery = archiveQuery.toLowerCase(), queryHash = digest(foldedQuery).slice(0, 16);
     const context = getExecution(), selected = context || state.selected;
     const scoped = state.conversations.filter(row => selected && row.profileId === selected.profileId && row.epoch === selected.epoch);
     const project = row => {
       const worker = live.get(row.id), available = !destroyed && sameScope(row, context) && worker && !context.server.inspect().closed && context.server.inspect().accepting;
-      return { id: row.id, revision: row.revision, threadId: row.threadId, model: row.model,
+      return { id: row.id, revision: row.revision, ...(row.label ? { label: row.label } : {}), labelRevision: row.labelRevision || 0, renameAvailable: canRename(row, context), threadId: row.threadId, model: row.model,
         status: row.archivedAt ? 'archived' : available ? row.status : row.status === 'unloaded' ? 'unloaded' : 'unavailable', ownerAvailable: Boolean(available), createdAt: row.createdAt, updatedAt: row.updatedAt,
         stopAvailable: stopReason(row, context) === null, stopReason: stopReason(row, context),
         resumeAvailable: !row.archivedAt && resumeReason(row, context) === null, resumeReason: row.archivedAt ? 'archived' : resumeReason(row, context),
@@ -201,17 +231,24 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
         ...(typeof row.lastTurnId === 'string' ? { lastTurnId: row.lastTurnId } : {}), recordingRequiredBeforeFirstSend: row.requireCaptureUntilFirstSent === true };
     };
     const conversations = scoped.filter(row => !row.archivedAt).map(project);
-    const archived = scoped.filter(row => row.archivedAt).sort((a, b) => b.archivedAt - a.archivedAt || a.id.localeCompare(b.id));
-    if (archiveCursor !== undefined) uuid(archiveCursor);
-    const start = archiveCursor === undefined ? 0 : archived.findIndex(row => row.id === archiveCursor) + 1;
+    const allArchived = scoped.filter(row => row.archivedAt);
+    const archived = allArchived.filter(row => !foldedQuery || [row.label, row.id, row.threadId, row.model, row.lastSummary?.slice(0, 4096), row.lastTextPreview?.slice(0, 2048)]
+      .some(value => typeof value === 'string' && value.toLowerCase().includes(foldedQuery))).sort((a, b) => b.archivedAt - a.archivedAt || a.id.localeCompare(b.id));
+    let cursorId;
+    if (archiveCursor !== undefined) {
+      if (typeof archiveCursor !== 'string' || archiveCursor.length > 80) throw fail('stale_archive_cursor', 'Refresh the archived conversation list');
+      const parts = archiveCursor.split(':'); cursorId = parts[0]; uuid(cursorId);
+      if (!(parts.length === 2 && parts[1] === queryHash || parts.length === 1 && !foldedQuery)) throw fail('stale_archive_cursor', 'The archive query changed; refresh its first page');
+    }
+    const start = archiveCursor === undefined ? 0 : archived.findIndex(row => row.id === cursorId) + 1;
     if (archiveCursor !== undefined && start === 0) throw fail('stale_archive_cursor', 'Refresh the archived conversation list');
     const page = archived.slice(start, start + 50);
     const ids = new Set(conversations.map(row => row.id));
     return { conversations, actions: state.actions.filter(row => ids.has(row.conversationId)).map(row => ({ actionId: row.actionId, kind: row.kind,
       conversationId: row.conversationId, state: row.state, ownerHeld: row.ownerHeld === true, ...(row.reasonCode ? { reasonCode: row.reasonCode } : {}),
       ...(row.nativeStatus ? { nativeStatus: row.nativeStatus } : {}) })),
-      archivedConversations: page.map(project), archivedCount: archived.length, archivedConversationIds: archived.map(row => row.id),
-      archiveNextCursor: start + page.length < archived.length ? page.at(-1).id : null, quota: activeQuota(state),
+      archivedConversations: page.map(project), archivedCount: archived.length, archivedTotalCount: allArchived.length, archiveQuery, archivedConversationIds: allArchived.map(row => row.id),
+      archiveNextCursor: start + page.length < archived.length ? `${page.at(-1).id}:${queryHash}` : null, quota: activeQuota(state),
       busy: operations.size > 0, retention: 'explicit-native-context', resumeSupported: true };
   }
   function recordNative(action, row, receipt) {
@@ -433,7 +470,7 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
     })().catch(reason => { closing = undefined; throw reason; });
     return closing;
   }
-  return Object.freeze({ list, stop, transcriptScope, currentHistoryScopes, resolveHistoryScope, readTranscriptPage, create: input => execute('create', input), send: input => execute('send', input), fork: input => execute('fork', input),
+  return Object.freeze({ list, rename, stop, transcriptScope, currentHistoryScopes, resolveHistoryScope, readTranscriptPage, create: input => execute('create', input), send: input => execute('send', input), fork: input => execute('fork', input),
     archive: input => execute('archive', input), closeIdle: input => execute('closeIdle', input), resume: input => execute('resume', input),
     inspectAction: actionId => {
       uuid(actionId); const row = state.actions.find(value => value.actionId === actionId);

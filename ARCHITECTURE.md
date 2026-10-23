@@ -580,6 +580,16 @@ No provider thread or captured transcript is deleted. There is no archive restor
 or implicit Resume. Main projects exact selected-account tombstones plus pages of
 50 archived metadata/preview rows; an opaque last-row cursor reads later pages.
 
+Active retained conversations also have a separate optional user label. The
+quota-exempt `rename` metadata receipt binds exact account/revision and expected
+label, but never changes execution revision, updatedAt, activeActionId or Native
+context. `labelRevision` alone advances, including blank-label reset, so late
+execution snapshots cannot roll back a newer name. Archive rows remain read-only.
+A snapshot's optional plain query is bounded to 120 characters and filters only
+archived title/IDs/model/summary/preview metadata. Active rows, receipts and archive
+tombstones remain unfiltered. Pages contain at most 50 matches; their opaque cursor
+binds normalized query. Matching and total archive counts are distinct.
+
 The persistent `stop` route derives the exact Native offer/turn from the selected
 conversation revision and current worker. It does not revise or replace the
 sending action and can run while that Send is awaiting Native. Its durable intent
