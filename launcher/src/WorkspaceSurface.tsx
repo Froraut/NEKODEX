@@ -77,8 +77,11 @@ function DirectoryBranch({ workspaceId, directory, label, onOpen, c, initialOpen
   useEffect(() => {
     if (!expanded || listing) return;
     let current = true; setLoading(true); setError("");
-    api().workspaceListPage(workspaceId, directory, cursor).then((value) => { if (current) setListing(value); })
-      .catch((reason) => { if (current) setError(message(reason)); }).finally(() => { if (current) setLoading(false); });
+    api().workspaceListPage(workspaceId, directory, cursor).then((value) => {
+      if (current) { setLoading(false); setListing(value); }
+    }).catch((reason) => {
+      if (current) { setLoading(false); setError(message(reason)); }
+    });
     return () => { current = false; };
   }, [workspaceId, directory, expanded, listing, retry, cursor]);
   return <div className="nk-workspace__branch">
@@ -163,7 +166,8 @@ function GitReview({ workspaceId, c, language, dirtyPaths, onChanged, onOpenFile
     {bases?.state === "unavailable" && <Notice tone="warning">{bases.reason}</Notice>}
     {bases?.state === "ready" && bases.truncated && <Notice tone="warning">{c.gitRefsLimited}</Notice>}
     {!snapshot && <p>{c.noGit}</p>}
-    {snapshot?.state === "unavailable" && <Notice tone="warning">{snapshot.reason}</Notice>}
+    {snapshot?.state === "unavailable" && (bases?.state !== "unavailable" || bases.reason !== snapshot.reason)
+      && <Notice tone="warning">{snapshot.reason}</Notice>}
     {snapshot?.state === "ready" && <>
       <p className="nk-workspace__oids"><span>HEAD <code>{snapshot.headOid}</code></span><span>BASE {snapshot.baseRef && <strong>{snapshot.baseRef.replace(/^refs\/(heads|remotes)\//, "")}</strong>} <code>{snapshot.baseOid}</code></span></p>
       <pre className="nk-workspace__status">{snapshot.status.join("\n") || c.noStatus}</pre>

@@ -417,6 +417,7 @@
   "guideVideo": "指导视频",
   "expandGuideVideo": "展开指导视频",
   "closeGuideVideo": "关闭展开的指导视频",
+  "guideVideoUnavailable": "视频无法加载，请重试。",
   "openTunnels": "打开 Tunnels",
   "openKeys": "创建 API key",
   "mcpStepTwo": "连接本地 Harness",

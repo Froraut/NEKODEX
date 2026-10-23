@@ -417,6 +417,7 @@
   "guideVideo": "Guide video",
   "expandGuideVideo": "Expand guide video",
   "closeGuideVideo": "Close expanded guide video",
+  "guideVideoUnavailable": "This video could not be loaded. Try again.",
   "openTunnels": "Open Tunnels",
   "openKeys": "Create API key",
   "mcpStepTwo": "Connect the local harness",

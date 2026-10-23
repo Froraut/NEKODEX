@@ -19,6 +19,7 @@ const en = {
   statuses: { completed: 'Completed', interrupted: 'Interrupted', failed: 'Failed' },
   failed: 'Handoff did not complete', unknown: 'Handoff outcome requires inspection',
   unknownBody: 'NEKODEX could not confirm the outcome. Open the thread in Codex and check whether the message was sent before continuing. Acknowledging does not confirm either outcome.',
+  refreshStatus: 'Refresh handoff status',
   acknowledge: 'I inspected this thread', unavailable: 'Exclusive handoff is unavailable in this build.',
   generic: 'The exclusive handoff is unavailable. Check the configured official Codex executable and profile.',
 };
@@ -37,10 +38,13 @@ const ru: typeof en = {
   statuses: { completed: 'Завершён', interrupted: 'Прерван', failed: 'Ошибка' },
   failed: 'Передача не выполнена', unknown: 'Результат передачи нужно проверить',
   unknownBody: 'NEKODEX не смог подтвердить результат. Откройте чат в Codex и проверьте, было ли отправлено сообщение, прежде чем продолжать. Отметка не подтверждает ни один исход.',
+  refreshStatus: 'Обновить статус передачи',
   acknowledge: 'Я проверил этот чат', unavailable: 'Исключительная передача недоступна в этой сборке.',
   generic: 'Исключительная передача недоступна. Проверьте настроенный официальный исполняемый файл и профиль Codex.',
 };
 type SafeError = { code: string; message: string; rpcCode?: number };
+const unknownHandoffError = (error: SafeError | null | undefined) =>
+  error?.code === 'handoff_outcome_unknown' || error?.code === 'handoff_release_unconfirmed';
 
 export function NativeThreadHandoffPanel({ language, disabled = false, api, thread, onSettled }: {
   language: Language; disabled?: boolean; api: NativeThreadsApi; thread: CodexThreadMetadata; onSettled?: (threadId: string) => void;
@@ -53,7 +57,13 @@ export function NativeThreadHandoffPanel({ language, disabled = false, api, thre
   const [errors, setErrors] = useState<Record<string, SafeError>>({});
   const [receipts, setReceipts] = useState<Record<string, CodexThreadHandoffReceipt>>({});
   const [stopPending, setStopPending] = useState(false);
+  const [snapshotRetryPending, setSnapshotRetryPending] = useState(false);
   const stopLock = useRef(false), refreshInFlight = useRef(false), currentApi = useRef(api);
+  const attemptRevision = useRef(0);
+  const observedAttempts = useRef(new Map<string, {
+    source: NativeThreadsApi; revision: number; actionId?: string; error?: SafeError;
+  }>());
+  if (currentApi.current !== api) { attemptRevision.current++; observedAttempts.current.clear(); }
   currentApi.current = api;
   const [busyThread, setBusyThread] = useState<string | null>(null);
   const locked = useRef(false), mounted = useRef(true), selectedThread = useRef(thread.id);
@@ -63,12 +73,46 @@ export function NativeThreadHandoffPanel({ language, disabled = false, api, thre
   const busy = busyThread !== null;
   const refresh = async () => {
     if (!mounted.current || refreshInFlight.current) return;
-    const source = api; refreshInFlight.current = true;
+    const source = api, revision = attemptRevision.current; refreshInFlight.current = true;
     try {
       const result = await source.nativeThreadHandoffSnapshot?.();
-      if (mounted.current && source === currentApi.current && result?.ok) setSnapshot(result.value);
+      if (mounted.current && source === currentApi.current && revision === attemptRevision.current && result?.ok) {
+        setSnapshot(result.value);
+        for (const action of result.value.uncertainHandoffs) {
+          const known = observedAttempts.current.get(action.threadId);
+          observedAttempts.current.set(action.threadId, {
+            ...(known?.source === source && known.revision === revision ? known : {}),
+            source, revision, actionId: action.actionId,
+          });
+        }
+        return result.value;
+      }
     } catch { /* Passive receipt state only; errors stay with the action that caused them. */ }
     finally { refreshInFlight.current = false; }
+  };
+  const retrySnapshot = async () => {
+    if (disabled || refreshInFlight.current) return;
+    const source = api, target = thread.id, revision = attemptRevision.current;
+    const retained = observedAttempts.current.get(target);
+    const known = retained ? { ...retained } : undefined;
+    setSnapshotRetryPending(true);
+    try {
+      const value = await refresh();
+      // Another window may have acknowledged this exact previously observed action.
+      // Only this explicit fresh read can release its cached error: an initial empty
+      // read, an old API/attempt, or passive polling never establishes that fact.
+      if (mounted.current && source === currentApi.current && target === selectedThread.current
+        && revision === attemptRevision.current && known?.source === source && known.revision === revision
+        && known.actionId && unknownHandoffError(known.error) && value?.available === true && !value.active
+        && !value.uncertainHandoffs.some(action => action.actionId === known.actionId || action.threadId === target)) {
+        setErrors(rows => {
+          if (rows[target] !== known.error) return rows;
+          const next = { ...rows }; delete next[target]; return next;
+        });
+        observedAttempts.current.delete(target);
+      }
+    }
+    finally { if (mounted.current) setSnapshotRetryPending(false); }
   };
   useEffect(() => { mounted.current = true; void refresh(); return () => { mounted.current = false; }; }, [api]);
   // A handoff started by an earlier mount (or another window) is visible only through the
@@ -89,13 +133,22 @@ export function NativeThreadHandoffPanel({ language, disabled = false, api, thre
   };
   const perform = async (actionThread: string, action: () => Promise<void>) => {
     if (disabled || locked.current) return;
+    const source = api, revision = attemptRevision.current;
     locked.current = true; setBusyThread(actionThread); keyed(setErrors, actionThread, null);
     try { await action(); }
     catch (reason) {
       // Only the registrar's sanitized envelope may reach this view, never an IPC exception text.
       const safe = reason && typeof reason === 'object' && 'code' in reason && 'message' in reason
         && !(reason instanceof Error) ? reason as SafeError : { code: 'handoff_unavailable', message: text.generic };
-      if (mounted.current) keyed(setErrors, actionThread, safe);
+      if (mounted.current) {
+        if (unknownHandoffError(safe) && source === currentApi.current && revision === attemptRevision.current) {
+          const known = observedAttempts.current.get(actionThread);
+          observedAttempts.current.set(actionThread, {
+            ...(known?.source === source && known.revision === revision ? known : {}), source, revision, error: safe,
+          });
+        }
+        keyed(setErrors, actionThread, safe);
+      }
     } finally {
       await refresh();
       if (mounted.current) setBusyThread(null);
@@ -105,13 +158,25 @@ export function NativeThreadHandoffPanel({ language, disabled = false, api, thre
     }
   };
   const uncertain = snapshot?.uncertainHandoffs || [];
-  const blocked = uncertain.some(action => action.threadId === thread.id) || Boolean(snapshot?.active);
+  const uncertainForThread = uncertain.filter(action => action.threadId === thread.id);
+  const unknownError = unknownHandoffError(error);
+  // A failed status read cannot turn an explicitly unknown send into permission to resend.
+  // Acknowledgment here, or a fresh explicit read after a known action was released
+  // elsewhere, is required before the retained error can stop blocking this view.
+  const blocked = unknownError || uncertainForThread.length > 0 || Boolean(snapshot?.active);
   const subagent = Boolean(thread.parentThreadId);
   const activeHere = thread.status.type === 'active';
   const setMessage = (value: string) => keyed(setDrafts, thread.id, value || null);
   const send = () => {
     const target = thread.id, value = message;
-    if (!value.trim()) return;
+    if (!value.trim() || blocked) return;
+    const revision = ++attemptRevision.current;
+    // Invalidate older reads without losing another thread's exact unknown/error
+    // correlation when this send is refused by the main owner's global lease.
+    for (const [id, known] of observedAttempts.current) {
+      if (id !== target && known.source === api) observedAttempts.current.set(id, { ...known, revision });
+    }
+    observedAttempts.current.set(target, { source: api, revision });
     void perform(target, async () => {
       keyed(setReceipts, target, null);
       const result = unwrap(await api.nativeThreadContinue?.({ threadId: target, text: value }));
@@ -145,16 +210,27 @@ export function NativeThreadHandoffPanel({ language, disabled = false, api, thre
     <p>{text.body}</p>
     <p className="native-threads__hint">{text.exclusivity} {text.settings}</p>
     {snapshot && !snapshot.available ? <Notice tone="warning" title={text.unavailable} /> : null}
-    {uncertain.filter(action => action.threadId === thread.id).map(action => <Notice key={action.actionId} tone="warning"
+    {uncertainForThread.map(action => <Notice key={action.actionId} tone="warning"
       title={text.unknown} meta={`${action.actionId}${action.turnId ? ` · ${text.turn} ${action.turnId}` : ''}${action.reasonCode ? ` · ${action.reasonCode}` : ''}`}
-      action={<Button size="sm" disabled={disabled || busy || action.state === 'pending'} onClick={() => acknowledge(action.actionId)}>{text.acknowledge}</Button>}>
+      action={<div className="native-threads__actions">
+        <Button size="sm" disabled={disabled || busy || action.state === 'pending'} onClick={() => acknowledge(action.actionId)}>{text.acknowledge}</Button>
+        <Button size="sm" busy={snapshotRetryPending} disabled={disabled || busy || snapshotRetryPending}
+          onClick={() => void retrySnapshot()}>{text.refreshStatus}</Button>
+      </div>}>
       {text.unknownBody}</Notice>)}
     {snapshot?.active?.threadId === thread.id && snapshot.active.turnId && api.nativeThreadStopHandoff ? <div className="native-threads__actions">
       <Button size="sm" busy={stopPending} disabled={disabled || stopPending || !snapshot.active.stopAvailable} onClick={() => void stop()}>
         {snapshot.active.stopState ? text.stopping : text.stop}</Button>
       {snapshot.active.stopState === 'unknown' ? <p className="native-threads__hint">{text.stopUnknown}</p> : null}
     </div> : null}
-    {error ? <Notice tone="error" title={text.failed} meta={`${error.code}${error.rpcCode === undefined ? '' : ` · RPC ${error.rpcCode}`}`}>{error.message}</Notice> : null}
+    {/* The retained unknown record already provides its exact identity and inspection action.
+        If that snapshot could not be read, the error alone still cannot establish nonexecution. */}
+    {error && !(unknownError && uncertainForThread.length > 0) ? <Notice tone={unknownError ? 'warning' : 'error'}
+      title={unknownError ? text.unknown : text.failed}
+      meta={`${error.code}${error.rpcCode === undefined ? '' : ` · RPC ${error.rpcCode}`}`}
+      action={unknownError ? <Button size="sm" busy={snapshotRetryPending} disabled={disabled || busy || snapshotRetryPending}
+        onClick={() => void retrySnapshot()}>{text.refreshStatus}</Button> : undefined}>
+      {unknownError ? text.unknownBody : error.message}</Notice> : null}
     {receipt ? <Notice tone={receipt.turnStatus === 'completed' ? 'success' : 'warning'} title={text.released}
       meta={`${text.turn} ${receipt.turnId}`}>
       <BadgeRow><Badge>{text.status}: {text.statuses[receipt.turnStatus]}</Badge>

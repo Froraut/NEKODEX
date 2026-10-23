@@ -277,10 +277,26 @@ export function messageOf(value: unknown): string {
 
 export function TutorialVideo({ copy, label, src }: { copy: Copy; label: string; src: string }) {
   const [expanded, setExpanded] = useState(false);
+  const [failedSource, setFailedSource] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
   const inlineVideo = useRef<HTMLVideoElement>(null);
   const expandedVideo = useRef<HTMLVideoElement>(null);
   const expandedDialog = useRef<HTMLDivElement>(null);
   const expandedAt = useRef(0);
+  const failed = failedSource === src;
+  const videoFailed = () => { setFailedSource(src); setRetrying(false); };
+  const videoReady = () => { setFailedSource(null); setRetrying(false); };
+  const failureNotice = failed ? (
+    <Notice
+      className="nk-media__error"
+      tone="warning"
+      action={<Button disabled={retrying} onClick={() => {
+        setRetrying(true);
+        inlineVideo.current?.load();
+        expandedVideo.current?.load();
+      }}>{retrying ? copy.loading : copy.retry}</Button>}
+    >{copy.guideVideoUnavailable}</Notice>
+  ) : null;
 
   const closeExpanded = () => {
     const currentTime = expandedVideo.current?.currentTime;
@@ -294,11 +310,14 @@ export function TutorialVideo({ copy, label, src }: { copy: Copy; label: string;
   return (
     <>
       <div className="nk-media">
-        <video aria-label={label} controls preload="metadata" muted playsInline ref={inlineVideo} src={src} />
+        <video aria-label={label} controls preload="metadata" muted playsInline ref={inlineVideo} src={src}
+          onError={videoFailed} onLoadedMetadata={videoReady} />
+        {failureNotice}
         <KitIconButton
           className="nk-media__expand"
           icon="expand"
           label={copy.expandGuideVideo}
+          disabled={failed}
           onClick={() => {
             expandedAt.current = inlineVideo.current?.currentTime ?? 0;
             inlineVideo.current?.pause();
@@ -321,12 +340,15 @@ export function TutorialVideo({ copy, label, src }: { copy: Copy; label: string;
             preload="metadata"
             muted
             onLoadedMetadata={(event) => {
+              videoReady();
               event.currentTarget.currentTime = expandedAt.current;
             }}
+            onError={videoFailed}
             playsInline
             ref={expandedVideo}
             src={src}
           />
+          {failureNotice}
           <KitIconButton
             className="nk-media__close"
             data-modal-autofocus

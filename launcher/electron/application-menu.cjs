@@ -13,6 +13,7 @@ function applicationMenu({ name, checkLabel, onCheck, quitLabel, stopLabel, onSt
       { type: "separator" }, { role: "quit", label: quitLabel || `Завершить ${name}` },
       ...(onStop ? [{ label: stopLabel, click: onStop }] : []),
     ] },
+    { label: "Файл", submenu: [{ role: "close", label: "Закрыть окно" }] },
     { label: "Правка", submenu: [
       { role: "undo", label: "Отменить" }, { role: "redo", label: "Повторить" },
       { type: "separator" }, { role: "cut", label: "Вырезать" }, { role: "copy", label: "Копировать" },
@@ -46,6 +47,7 @@ function applicationMenu({ name, checkLabel, onCheck, quitLabel, stopLabel, onSt
       { type: "separator" }, { role: "quit", ...(quitLabel ? { label: quitLabel } : {}) },
       ...(onStop ? [{ label: stopLabel, click: onStop }] : []),
     ] },
+    { label: "File", submenu: [{ role: "close" }] },
     { role: "editMenu" },
     { label: "View", submenu: [
       ...reloadItems, { role: "toggleDevTools" }, { type: "separator" },

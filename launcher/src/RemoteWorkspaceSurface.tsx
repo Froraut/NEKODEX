@@ -14,6 +14,8 @@ const copy = {
     cancelOperation: 'Cancel SSH transport', cancelling: 'Requesting cancellation…', cancellationPending: 'Transport cancellation requested; waiting for the operation receipt.', noActiveOperation: 'There is no active operation to cancel.',
     cancelHint: 'Cancels the local SSH connection. A remote process may continue; inspect its exact receipt and outcome before another mutation.', reconnectHint: 'Connect explicitly after the current operation settles. Previous command approvals cannot be reused.',
     previousPage: 'Previous', nextPage: 'Next', pageLimit: 'Directory scan limit reached. Enter a relative file path to open a file directly.', files: 'Files', refresh: 'Refresh', up: 'Parent folder', path: 'Relative file path', open: 'Open file', save: 'Save remote file', draft: 'Retain draft locally',
+    filesNotLoaded: 'File list not loaded. Choose Refresh to read this folder.', filesConnect: 'Connect to this host, then choose Refresh to read its files.',
+    emptyFolder: 'This folder is empty.', emptyPage: 'No entries on this page. Use the page controls or open a relative file path.',
     empty: 'Add a host, select it and connect. Connections start only when you choose Connect.', changed: 'Unsaved draft', retained: 'Draft retained locally', saved: 'Saved and read back from the remote host',
     binary: 'This binary file cannot be edited here.', missing: 'Saving creates a new file in this remote folder.', conflict: 'The remote version changed. Your draft is retained. Read the current version and deliberately choose a new baseline.',
     review: 'Read current remote version', baseline: 'Use this version as the save baseline', latest: 'Current remote version', drafts: 'Recoverable drafts', recover: 'Recover', discard: 'Discard draft',
@@ -30,6 +32,8 @@ const copy = {
     cancelOperation: 'Отменить соединение SSH', cancelling: 'Запрашивается отмена…', cancellationPending: 'Отмена соединения запрошена; ожидается квитанция операции.', noActiveOperation: 'Нет активной операции для отмены.',
     cancelHint: 'Отменяется локальное соединение SSH. Процесс на сервере может продолжаться; перед новым изменением проверьте точную квитанцию и результат.', reconnectHint: 'Подключитесь явно после завершения текущей операции. Прежние подтверждения команд повторно не используются.',
     previousPage: 'Назад', nextPage: 'Далее', pageLimit: 'Достигнут предел просмотра папки. Введите относительный путь файла, чтобы открыть его напрямую.', files: 'Файлы', refresh: 'Обновить', up: 'Родительская папка', path: 'Относительный путь файла', open: 'Открыть файл', save: 'Сохранить на сервере', draft: 'Сохранить черновик локально',
+    filesNotLoaded: 'Список файлов ещё не загружен. Нажмите «Обновить», чтобы прочитать эту папку.', filesConnect: 'Подключитесь к серверу, затем нажмите «Обновить», чтобы прочитать список файлов.',
+    emptyFolder: 'Эта папка пуста.', emptyPage: 'На этой странице нет записей. Перейдите на другую страницу или откройте файл по относительному пути.',
     empty: 'Добавьте сервер, выберите его и подключитесь. Подключение начинается только по кнопке «Подключиться».', changed: 'Есть несохранённый черновик', retained: 'Черновик сохранён локально', saved: 'Файл сохранён и прочитан с сервера',
     binary: 'Двоичный файл нельзя редактировать здесь.', missing: 'Сохранение создаст новый файл внутри этой папки.', conflict: 'Версия на сервере изменилась. Черновик сохранён. Прочитайте текущую версию и явно выберите новую основу сохранения.',
     review: 'Прочитать текущую версию', baseline: 'Использовать эту версию как основу', latest: 'Текущая версия на сервере', drafts: 'Сохранённые черновики', recover: 'Восстановить', discard: 'Удалить черновик',
@@ -176,6 +180,8 @@ export default function RemoteWorkspaceSurface({ language, api }: { language: La
         <Button size="sm" disabled={operationBusy || !connected || !listing?.path} onClick={() => void act(() => loadDirectory(selected, listing!.path.split('/').slice(0, -1).join('/')))}>{c.up}</Button></div>
       <p><code>{listing?.path || '/'}</code></p>
       <div className="nk-remote__files">{listing?.entries.map(e => <button type="button" key={e.path} disabled={operationBusy || e.kind === 'blocked'} onClick={() => e.kind === 'directory' ? void act(() => loadDirectory(selected, e.path)) : void openFile(e.path)}><span aria-hidden="true">{e.kind === 'directory' ? '▸ ' : e.kind === 'file' ? '· ' : '↗ '}</span>{e.name}</button>)}</div>
+      {!listing && <p role="status">{connected ? c.filesNotLoaded : c.filesConnect}</p>}
+      {listing && !listing.entries.length && <p role="status">{listing.previousCursor || listing.nextCursor || listing.scanLimited || listing.truncated ? c.emptyPage : c.emptyFolder}</p>}
       {listing && <div className="nk-remote__actions">
         <Button size="sm" disabled={operationBusy || !connected || !listing.previousCursor} onClick={() => void act(() => loadDirectory(selected, listing.path, listing.previousCursor!))}>{c.previousPage}</Button>
         <Button size="sm" disabled={operationBusy || !connected || !listing.nextCursor} onClick={() => void act(() => loadDirectory(selected, listing.path, listing.nextCursor!))}>{c.nextPage}</Button>

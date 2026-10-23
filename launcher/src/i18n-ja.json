@@ -417,6 +417,7 @@
   "guideVideo": "ガイド動画",
   "expandGuideVideo": "ガイド動画を拡大",
   "closeGuideVideo": "拡大したガイド動画を閉じる",
+  "guideVideoUnavailable": "動画を読み込めませんでした。もう一度お試しください。",
   "openTunnels": "Tunnels を開く",
   "openKeys": "API キーを作成",
   "mcpStepTwo": "ローカルハーネスを接続",

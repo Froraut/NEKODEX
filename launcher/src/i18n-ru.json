@@ -417,6 +417,7 @@
   "guideVideo": "Видеоинструкция",
   "expandGuideVideo": "Развернуть видеоинструкцию",
   "closeGuideVideo": "Закрыть развёрнутое видео",
+  "guideVideoUnavailable": "Видео не загрузилось. Повторите попытку.",
   "openTunnels": "Открыть Tunnels",
   "openKeys": "Создать API-ключ",
   "mcpStepTwo": "Подключите локальную среду",

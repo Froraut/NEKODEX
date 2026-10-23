@@ -57,6 +57,7 @@ selectButton.addEventListener("click", async () => {
 stopButton.addEventListener("click", async () => {
   if (stopping) return;
   stopping = true; render();
+  say("Stopping sharing…");
   try { if (pairing) await companionRequest(pairing, "revoke"); } catch { /* Forget only our local authority. */ }
   // Closing the exact extension session cannot close the user's selected web page.
   if (owner?.tabId) { try { await api.tabs.remove(owner.tabId); } catch { /* Already closed. */ } }
