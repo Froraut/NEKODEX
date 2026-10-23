@@ -1394,6 +1394,8 @@ function registerIpc({ logger, stateStore }) {
     try {
       const current = currentGlobalOperation();
       if (current || browserHost?.hasActiveTurns()) throw new Error(`Finish ${current || 'active Web tasks'} before Native recovery`);
+      // Preserve an existing browser admission owner rather than reopening its pause.
+      browserHost?.assertTurnAdmission();
       owner = lifecycleAdmission.acquire('Native recovery and tool connection pause');
       browserHost?.closeTurnAdmission('Native recovery');
       lifecycleAdmission.assertOwner(owner);
