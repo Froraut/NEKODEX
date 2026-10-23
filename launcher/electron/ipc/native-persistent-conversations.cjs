@@ -6,6 +6,7 @@ const KEYS = {
   send: ['action', 'actionId', 'conversationId', 'revision', 'text', 'expectedContext'],
   fork: ['action', 'actionId', 'conversationId', 'revision', 'expectedContext', 'lastTurnId'],
   closeIdle: ['action', 'actionId', 'conversationId', 'revision', 'expectedContext'],
+  stop: ['action', 'actionId', 'conversationId', 'revision', 'expectedContext'],
   archive: ['action', 'actionId', 'conversationId', 'revision', 'expectedContext'],
   resume: ['action', 'actionId', 'conversationId', 'revision', 'expectedContext'],
 };
@@ -16,7 +17,8 @@ function registerPersistentNativeConversations({ handle, getService, getContext 
   const projectAction = row => ({ actionId: row.actionId, kind: row.kind,
     ...(row.conversationId ? { conversationId: row.conversationId } : {}), state: row.state,
     ...(row.ownerHeld === true ? { ownerHeld: true } : {}),
-    ...(row.reasonCode ? { reasonCode: row.reasonCode } : {}) });
+    ...(row.reasonCode ? { reasonCode: row.reasonCode } : {}),
+    ...(['completed', 'failed', 'interrupted'].includes(row.nativeStatus) ? { nativeStatus: row.nativeStatus } : {}) });
   const snapshot = async (value, actionId, archiveCursor) => {
     const source = value || await getService().list({ archiveCursor });
     const context = getContext();
@@ -33,6 +35,7 @@ function registerPersistentNativeConversations({ handle, getService, getContext 
         ...(typeof row.lastTurnId === 'string' && row.lastTurnId.length > 0 && row.lastTurnId.length <= 128 && !/[\u0000-\u001f]/.test(row.lastTurnId)
           ? { lastTurnId: row.lastTurnId } : {}),
         ...(row.archivedAt ? { archivedAt: row.archivedAt } : {}),
+        stopAvailable: row.stopAvailable === true, stopReason: typeof row.stopReason === 'string' ? row.stopReason : null,
         archiveAvailable: row.archiveAvailable === true, archiveReason: typeof row.archiveReason === 'string' ? row.archiveReason : null,
         ownerAvailable: row.ownerAvailable === true,
         resumeAvailable: row.resumeAvailable === true,

@@ -98,3 +98,19 @@ test('archive IPC preserves known receipt after row leaves active list and pages
   const invalid = await handler(null, { action: 'archive', actionId: randomUUID(), conversationId: id, revision: 2, expectedContext: context, threadId: randomUUID() });
   expect(invalid).toMatchObject({ ok: false, error: { knownNotStarted: true, code: 'invalid_request' } });
 });
+
+test('Stop IPC accepts only opaque conversation identity and projects stopping without inventing terminal success', async () => {
+  let handler: Function = () => {}; const expectedContext = { profileId: randomUUID(), epoch: randomUUID(), serverGeneration: randomUUID() };
+  const id = randomUUID(), actionId = randomUUID(), calls: any[] = [];
+  const receipt = { actionId, conversationId: id, kind: 'stop', state: 'stopping', ownerHeld: true };
+  const source = { conversations: [{ id, revision: 2, model: 'fixture', status: 'running', createdAt: 1, updatedAt: 1, stopAvailable: false, stopReason: 'stop_already_requested' }], actions: [receipt] };
+  registerPersistentNativeConversations({ handle: (_: string, value: Function) => { handler = value; }, getContext: () => expectedContext,
+    getService: () => ({ stop: async (input: any) => { calls.push(input); return source; }, list: () => source, inspectAction: () => receipt }) });
+  const request = { action: 'stop', actionId, conversationId: id, revision: 2, expectedContext };
+  const response = await handler(null, request);
+  expect(response).toMatchObject({ ok: true, value: { observedAction: receipt, conversations: [{ status: 'running', stopAvailable: false }] } });
+  expect(calls[0]).toEqual({ actionId, conversationId: id, revision: 2, expectedContext });
+  expect(await handler(null, { ...request, turnId: randomUUID() })).toMatchObject({ ok: false, error: { code: 'invalid_request', knownNotStarted: true } });
+  expect(await handler(null, { ...request, expectedContext: { ...expectedContext, epoch: randomUUID() } })).toMatchObject({ ok: false, error: { code: 'context_changed', knownNotStarted: true } });
+  expect(calls).toHaveLength(1);
+});

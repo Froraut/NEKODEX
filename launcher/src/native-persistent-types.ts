@@ -15,6 +15,8 @@ export interface NativePersistentConversation {
   lastTurnId?: string;
   recordingRequiredBeforeFirstSend?: boolean;
   archivedAt?: number;
+  stopAvailable?: boolean;
+  stopReason?: string | null;
   archiveAvailable?: boolean;
   archiveReason?: string | null;
   ownerAvailable: boolean;
@@ -34,8 +36,8 @@ export interface NativePersistentSnapshot {
   archivedConversationIds?: string[];
   archiveNextCursor?: string | null;
   quota?: { conversations: number; conversationLimit: number; actions: number; actionLimit: number };
-  actions: Array<{ actionId: string; kind: string; conversationId?: string; state: string; ownerHeld?: boolean; reasonCode?: string }>;
-  observedAction?: { actionId: string; kind: string; conversationId?: string; state: string; ownerHeld?: boolean; reasonCode?: string };
+  actions: Array<{ actionId: string; kind: string; conversationId?: string; state: string; ownerHeld?: boolean; reasonCode?: string; nativeStatus?: 'completed' | 'failed' | 'interrupted' }>;
+  observedAction?: { actionId: string; kind: string; conversationId?: string; state: string; ownerHeld?: boolean; reasonCode?: string; nativeStatus?: 'completed' | 'failed' | 'interrupted' };
   busy: boolean;
   retention: 'explicit-native-context';
   resumeSupported: boolean;
@@ -49,7 +51,7 @@ export type NativePersistentRequest =
       conversationMode?: NativeConversationMode; recordFutureText?: { consent: true; acknowledgeUnknownSecrets: true } }
   | { action: 'send'; actionId: string; conversationId: string; revision: number; text: string; expectedContext: NativePersistentContext }
   | { action: 'fork'; actionId: string; conversationId: string; revision: number; expectedContext: NativePersistentContext; lastTurnId?: string }
-  | { action: 'closeIdle' | 'resume' | 'archive'; actionId: string; conversationId: string; revision: number; expectedContext: NativePersistentContext };
+  | { action: 'closeIdle' | 'resume' | 'archive' | 'stop'; actionId: string; conversationId: string; revision: number; expectedContext: NativePersistentContext };
 
 export type NativePersistentResult = { ok: true; value: NativePersistentSnapshot }
   | { ok: false; error: { code: string; message: string; knownNotStarted?: boolean; nativeTurnNotStarted?: boolean } };
