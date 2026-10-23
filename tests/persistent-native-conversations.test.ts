@@ -518,3 +518,22 @@ test('Archive accepts a known failed settled subscription without manufacturing 
     expect(f.service.list().archivedCount).toBe(1);
   } finally { await f.close(); }
 });
+
+test('Archive byte-cap refusal preserves exact revision/status/actions before any retirement or Native RPC', async () => {
+  const f = await fixture();
+  try {
+    await f.service.create(f.create('retained near byte cap'));
+    await f.rewriteRegistry(value => {
+      value.padding = '';
+      value.padding = 'x'.repeat(4 * 1024 * 1024 - Buffer.byteLength(JSON.stringify(value)) - 64);
+    });
+    const before = f.service.list(), row = before.conversations[0], calls = f.methods.length;
+    const bytes = readFileSync(join(f.storageRoot, 'registry.json'));
+    const input = { actionId: randomUUID(), conversationId: row.id, revision: row.revision, expectedContext: f.expectedContext };
+    await expect(f.service.archive(input)).rejects.toMatchObject({ code: 'registry_quota', actionRecorded: false, registryWriteDisposition: 'not-written' });
+    expect(f.service.list()).toEqual(before);
+    expect(f.service.inspectAction(input.actionId)).toBeUndefined();
+    expect(readFileSync(join(f.storageRoot, 'registry.json')).equals(bytes)).toBe(true);
+    expect(f.methods).toHaveLength(calls);
+  } finally { await f.close(); }
+});
