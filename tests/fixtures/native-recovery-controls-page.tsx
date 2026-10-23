@@ -22,7 +22,7 @@ const api: NativeAccountsApi = { async request(body) {
       observedAt: Date.now(), unsettledActionCount: 0, markers: [{ kind: 'authority', formerPid: 86402, sha256: 'b'.repeat(64) }] } };
   } else if (body.action === 'recover-owner') {
     if (body.reviewDigest !== state.recoveryPreview?.reviewDigest) throw new Error('Stale inert review');
-    state = { ...state, available: true, reasonCode: null, recoveryReceipt: { actionId: body.actionId, reviewDigest: body.reviewDigest, state: 'completed', terminal: true, ownerHeld: false, archivedCount: 1, unsettledActionCount: 0 } };
+    state = { ...state, available: true, reasonCode: null, ...(params.get('state') === 'restore-failed' ? { recoveryRestorationWarning: { actionId: body.actionId, reasonCode: 'tool_connections_restore_failed' as const } } : {}), recoveryReceipt: { actionId: body.actionId, reviewDigest: body.reviewDigest, state: 'completed', terminal: true, ownerHeld: false, archivedCount: 1, unsettledActionCount: 0 } };
   } else if (body.action === 'rename-profile') {
     if (body.profileId !== profileId || body.epoch !== epoch || body.expectedLabel !== state.profiles[0]!.label) throw new Error('Stale inert profile');
     state = { ...state, profiles: [{ ...state.profiles[0]!, label: body.label }], receipts: [...state.receipts, { actionId: body.actionId, kind: 'rename-profile', profileId, epoch, state: 'completed' }] };

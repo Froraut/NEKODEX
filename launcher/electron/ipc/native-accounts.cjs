@@ -18,6 +18,7 @@ function registerNativeAccounts({ handle, withOwnerRecovery = operation => opera
   // Known pre-intent refusals are observations, not a command retry. Retain them
   // in this main instance so a lost refusal response can be read back by action ID.
   const rejected = new Map();
+  const restorationWarnings = new Map();
   const closed = new Map(); // Current-main observations; leaf retirement receipts remain durable.
   handle('launcher:native-accounts', async (_event, body) => {
     if (!body || typeof body !== 'object' || Array.isArray(body)
@@ -86,9 +87,17 @@ function registerNativeAccounts({ handle, withOwnerRecovery = operation => opera
       if (!UUID.test(body.loginAttemptId)) throw new Error('Invalid Native login identity');
       await authority.cancelLogin({ actionId: body.actionId, loginAttemptId: body.loginAttemptId });
     } } catch (error) {
-      if (body.action === 'preview-owner-recovery' || error?.actionRecorded !== false) throw error;
-      if (rejected.size >= 128) rejected.delete(rejected.keys().next().value);
-      rejected.set(body.actionId, { actionId: body.actionId, knownNotStarted: true });
+      const recorded = body.action === 'recover-owner' && error?.nativeRecoveryRestoreFailed === true
+        ? authority.inspectRecovery?.(body.actionId) : null;
+      if (recorded?.state === 'completed' && recorded.terminal && !recorded.ownerHeld) {
+        recoveryReceipt = recorded; // Committed marker archival is never an unknown mutation.
+        if (restorationWarnings.size >= 128) restorationWarnings.delete(restorationWarnings.keys().next().value);
+        restorationWarnings.set(body.actionId, { actionId: body.actionId, reasonCode: 'tool_connections_restore_failed' });
+      } else {
+        if (body.action === 'preview-owner-recovery' || error?.actionRecorded !== false) throw error;
+        if (rejected.size >= 128) rejected.delete(rejected.keys().next().value);
+        rejected.set(body.actionId, { actionId: body.actionId, knownNotStarted: true });
+      }
     }
     let inventory, execution;
     try { inventory = getInventory?.().inspect(); } catch { /* No reviewed build is not model availability. */ }
@@ -97,6 +106,7 @@ function registerNativeAccounts({ handle, withOwnerRecovery = operation => opera
     const snapshot = authority.inspect();
     return { ...snapshot, receipts: [...snapshot.receipts, ...closed.values()], ...(inventory ? { inventory } : {}), ...(execution ? { execution } : {}),
       ...(recoveryPreview ? { recoveryPreview } : {}), ...(recoveryReceipt ? { recoveryReceipt } : {}),
+      ...(restorationWarnings.has(body.actionId) ? { recoveryRestorationWarning: restorationWarnings.get(body.actionId) } : {}),
       ...(rejected.has(body.actionId) ? { rejectedAction: rejected.get(body.actionId) } : {}) };
   });
   handle('launcher:native-accounts-open', async (_event, url) => {

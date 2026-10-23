@@ -663,21 +663,31 @@ class AccountTunnelSupervisor {
   async restartOwned(keys) {
     const results = await Promise.allSettled(keys.map(async key => {
       const peer = this.peers.get(key);
-      if (!peer || peer.tunnel || peer.runtimeStatus !== "stopped") return;
-      // A successful stop commits shutdownRequested. Failed-stop compensation is
-      // the one path that may release that fence and restart the same old binding.
-      peer.allowRestartAfterQuitFailure?.();
-      if (peer.restartTimers?.tunnel) {
-        clearTimeout(peer.restartTimers.tunnel);
-        peer.restartTimers.tunnel = null;
+      if (!peer) throw new Error("Previously owned account tunnel binding is missing");
+      if (peer.tunnel) return; // A refused stop retained its original live owner.
+      if (peer.runtimeStatus !== "stopped") throw new Error("Previously owned account tunnel is not settled stopped");
+      try {
+        peer.resumeStoppedOwner();
+        const result = await peer.startIfConfigured();
+        if (result?.status !== "ready") throw new Error(`Account tunnel restart returned ${result?.status || "unknown"}`);
+      } catch (error) {
+        // Keep this exact failed binding eligible for the supported Reconnect action.
+        // Never restart it again here or borrow another account's connection.
+        if (!peer.stopping && !peer.startPromise && !peer.recoveryTasks?.size && !peer.tunnelControlControllers?.size) {
+          peer.runtimeStatus = "failed";
+          peer.runtimeDetail = error.message;
+        }
+        this.options.logger?.error?.("runtime.account_tunnel_restore_failed", {
+          accountId: peer.binding?.accountId, interactionMode: peer.binding?.interactionMode,
+          message: error.message,
+        });
+        throw error;
       }
-      const result = await peer.startIfConfigured();
-      if (result?.status !== "ready") throw new Error(`Account tunnel restart returned ${result?.status || "unknown"}`);
     }));
     this.onChange();
     const failures = results.filter(result => result.status === "rejected");
     if (failures.length) throw new AggregateError(failures.map(result => result.reason),
-      "Owned account tunnel restart compensation failed");
+      `Owned account tunnel restart compensation failed: ${failures.map(result => result.reason?.message || "unknown").join("; ")}`);
   }
 
   async stop({ force = false } = {}) {

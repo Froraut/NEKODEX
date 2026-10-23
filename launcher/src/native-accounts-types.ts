@@ -25,6 +25,7 @@ export interface NativeAccountsSnapshot {
   executionAvailable: false;
   recoverySupported?: boolean;
   recoveryPreview?: import('../electron/native-account-recovery.cjs').NativeOwnerRecoveryPreview;
+  recoveryRestorationWarning?: { actionId: string; reasonCode: 'tool_connections_restore_failed' };
   recoveryReceipt?: import('../electron/native-account-recovery.cjs').NativeOwnerRecoveryReceipt;
   rejectedAction?: { actionId: string; knownNotStarted: true };
   inventory?: { activeCount: number; receipts: Array<import('../electron/native-account-inventory.cjs').NativeInventoryReceipt>; models: never[]; executionAvailable: false };

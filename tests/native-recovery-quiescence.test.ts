@@ -49,7 +49,7 @@ test('exact peer compensation does not start a configured peer that was delibera
   const peers = new AccountTunnelSupervisor({}, () => {});
   const peer = (name: string, owned: boolean) => ({ tunnel: owned ? { pid: 12 } : null, runtimeStatus: owned ? 'ready' : 'stopped',
     async shutdown() { this.tunnel = null; this.runtimeStatus = 'stopped'; return { status: 'stopped' }; },
-    allowRestartAfterQuitFailure() {}, async startIfConfigured() { starts.push(name); this.runtimeStatus = 'ready'; return { status: 'ready' }; } });
+    resumeStoppedOwner() {}, async startIfConfigured() { starts.push(name); this.runtimeStatus = 'ready'; return { status: 'ready' }; } });
   peers.peers.set('old-owned', peer('old-owned', true)); peers.peers.set('deliberately-stopped', peer('deliberately-stopped', false));
   f.runtime.accountTunnelSupervisor = peers; f.runtime.reportTunnelStatus = async () => {};
   await f.runtime.withNativeRecoveryQuiescence(async () => ({ state: 'reviewable' }));
@@ -88,4 +88,21 @@ test('real legacy startTunnel compensation accepts explicit start while schedule
   });
   await f.runtime.withNativeRecoveryQuiescence(async () => ({ state: 'reviewable' }));
   expect(adopted).toBe(true); expect(f.runtime.tunnel.pid).toBe(11); expect(f.runtime.stopping).toBe(false);
+});
+
+test('committed recovery returns its completed receipt separately from a connection restoration failure', async () => {
+  const { registerNativeAccounts } = createRequire(import.meta.url)('../launcher/electron/ipc/native-accounts.cjs');
+  const handlers = new Map<string, Function>(); let calls = 0;
+  const actionId = '22222222-2222-4222-8222-222222222222';
+  const receipt = { actionId, state: 'completed', terminal: true, ownerHeld: false, archivedCount: 2, unsettledActionCount: 0 };
+  registerNativeAccounts({ handle: (name: string, handler: Function) => handlers.set(name, handler),
+    withOwnerRecovery: async (operation: Function) => { await operation(); throw Object.assign(new Error('peer restore failed'), { nativeRecoveryRestoreFailed: true }); },
+    getAuthority: () => ({ inspect: () => ({ available: true, profiles: [], activeCount: 0, receipts: [] }), recoverOwner: async () => { calls++; return receipt; }, inspectRecovery: () => receipt }) });
+  const handle = handlers.get('launcher:native-accounts')!;
+  const result = await handle(null, { action: 'recover-owner', actionId, reviewDigest: 'a'.repeat(64) });
+  expect(result.recoveryReceipt).toEqual(receipt); expect(result.recoveryRestorationWarning.reasonCode).toBe('tool_connections_restore_failed');
+  const observed = await handle(null, { action: 'status', actionId });
+  expect(observed.recoveryReceipt).toEqual(receipt); expect(observed.recoveryRestorationWarning).toEqual(result.recoveryRestorationWarning); expect(calls).toBe(1);
+  receipt.state = 'unknown'; receipt.terminal = false; receipt.ownerHeld = true;
+  await expect(handle(null, { action: 'recover-owner', actionId, reviewDigest: 'a'.repeat(64) })).rejects.toThrow('peer restore failed');
 });
