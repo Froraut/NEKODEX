@@ -2008,6 +2008,7 @@ function registerIpc({ logger, stateStore }) {
   });
   registerAccountHandlers({
     handle, getBrowserHost: () => browserHost, getAccountToolsService: () => accountToolsService,
+    getRuntimeHost: () => runtimeHost,
     isRuntimeBusy: () => quitting || shutdownInProgress || runtimeHost.currentOperation(),
     invalidateAccountProof: () => invalidateAccountProof(stateStore),
   });
