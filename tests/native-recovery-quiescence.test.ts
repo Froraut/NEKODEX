@@ -71,3 +71,21 @@ test('validated recovery pause refusal reconciles exact Apply action without cal
   await expect(handle(null, { action: 'recover-owner', actionId, reviewDigest: 'bad' })).rejects.toThrow('Invalid Native recovery review');
   expect(pauses).toBe(1);
 });
+
+test('real legacy startTunnel compensation accepts explicit start while scheduled recovery remains fenced', async () => {
+  const f = fixture(); f.config.accountTunnelMode = false;
+  f.runtime.tunnel = { pid: 10 }; let adopted = false;
+  Object.assign(f.runtime, {
+    stopTunnelGracefully: async () => { f.runtime.tunnel = null; },
+    assertTunnelClientReady() {},
+    waitForKnownTunnelStatus: async () => {
+      expect(f.runtime.stopping).toBe(true);
+      f.runtime.scheduleRecovery('tunnel'); expect(f.runtime.restartTimers.tunnel).toBeNull();
+      return { ready: true, pid: 11 };
+    },
+    waitForTunnelMcpTransport: async () => { adopted = true; expect(f.runtime.stopping).toBe(true); },
+    startTunnelMonitor() {},
+  });
+  await f.runtime.withNativeRecoveryQuiescence(async () => ({ state: 'reviewable' }));
+  expect(adopted).toBe(true); expect(f.runtime.tunnel.pid).toBe(11); expect(f.runtime.stopping).toBe(false);
+});
