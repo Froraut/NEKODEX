@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Badge, BadgeRow, Button, Checkbox, Dialog, EmptyState, Notice, Panel, PanelStack, Select } from './design';
+import { Badge, BadgeRow, Button, Checkbox, Dialog, EmptyState, Notice, Panel, PanelStack, Select, TextField } from './design';
 import type { Language } from './types';
 import type { NativePersistentApi, NativePersistentContext, NativePersistentRequest, NativePersistentSnapshot } from './native-persistent-types';
 import type { NativeConversationMode } from './native-persistent-types';
@@ -18,6 +18,7 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
   const ru = language === 'ru';
   const promptId = useId();
   const mounted = useRef(false), reading = useRef(false);
+  const queuedRead = useRef<{ archiveCursor?: string; query: string } | null>(null);
   const pending = useRef(new Map<string, { body: Mutation; draftKey: string; uncertain: boolean; nativeTurnNotStarted?: boolean }>());
   const [, renderPending] = useState(0);
   const draft = useRef({ selectedId: null as string | null, prompt: '', key: '' });
@@ -25,6 +26,13 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
   const [snapshot, setSnapshot] = useState<NativePersistentSnapshot | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [model, setModel] = useState('');
+  const [activeQuery, setActiveQuery] = useState('');
+  const activeSearch = useRef<HTMLInputElement>(null);
+  const [archiveQuery, setArchiveQuery] = useState('');
+  const archiveSearch = useRef('');
+  const [archiveSearchError, setArchiveSearchError] = useState<string | null>(null);
+  const [renameTarget, setRenameTarget] = useState<{ conversationId: string; revision: number; expectedContext: NativePersistentContext; expectedLabel: string } | null>(null);
+  const [renameLabel, setRenameLabel] = useState('');
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   // Drafts follow the account identity and conversation, including a separate new-compose slot.
   const draftKey = JSON.stringify([snapshot?.profileId ?? null, snapshot?.epoch ?? null, selectedId]);
@@ -42,6 +50,12 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
   const transport = useRef(api); transport.current = api;
   const historyTransport = useRef(historyApi); historyTransport.current = historyApi;
   const selected = snapshot?.conversations.find(row => row.id === selectedId);
+  const conversationLabel = (row: NativePersistentSnapshot['conversations'][number]) =>
+    'label' in row && typeof row.label === 'string' && row.label.trim() ? row.label : row.model;
+  const matches = (row: NativePersistentSnapshot['conversations'][number], query: string) => !query.trim()
+    || [conversationLabel(row), row.model, row.id, row.threadId ?? '', row.lastTextPreview ?? '', row.lastSummary ?? '']
+      .some(value => value.toLowerCase().includes(query.trim().toLowerCase()));
+  const visibleConversations = snapshot?.conversations.filter(row => matches(row, activeQuery)) ?? [];
   draft.current = { selectedId, prompt, key: draftKey };
   const uncertain = [...pending.current.values()].some(row => row.uncertain)
     || snapshot?.actions.some(row => row.state === 'unknown' || settled.has(row.state) && row.ownerHeld === true) === true;
@@ -51,7 +65,7 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
   const locked = disabled || uncertain || selectionBusy;
   const textAllowed = Boolean(prompt.trim()) && new TextEncoder().encode(prompt).length <= 32 * 1024;
 
-  const accept = (value: NativePersistentSnapshot, requestedContext: string | null) => {
+  const accept = (value: NativePersistentSnapshot, requestedContext: string | null, requestedArchiveQuery?: string) => {
     const contextKey = JSON.stringify([value.profileId, value.epoch, value.serverGeneration]);
     if (observedContext.current !== requestedContext && observedContext.current !== contextKey) return;
     if (observedContext.current !== contextKey || !value.models.some(row => row.id === model)) { setConsent(false); setRecordFutureText(false); setAcknowledgeSecrets(false); }
@@ -59,12 +73,17 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
     // Concurrent replies may contain older snapshots. Never replace a newer row or terminal action.
     setSnapshot(previous => {
       if (!previous || JSON.stringify([previous.profileId, previous.epoch, previous.serverGeneration]) !== contextKey) return value;
+      const archiveMatches = requestedArchiveQuery === archiveSearch.current && (value.archiveQuery ?? '') === archiveSearch.current;
       const archivedIds = new Set([...(previous.archivedConversationIds ?? []), ...(value.archivedConversationIds ?? [])]);
       return { ...value, archivedConversationIds: [...archivedIds],
-        archivedConversations: [...(previous.archivedConversations ?? []).filter(row => !value.archivedConversations?.some(next => next.id === row.id)), ...(value.archivedConversations ?? [])],
+        archivedConversations: archiveMatches ? [...(previous.archivedConversations ?? []).filter(row => !value.archivedConversations?.some(next => next.id === row.id)), ...(value.archivedConversations ?? [])] : previous.archivedConversations,
+        archiveNextCursor: archiveMatches ? value.archiveNextCursor : previous.archiveNextCursor,
+        archiveQuery: archiveSearch.current, archivedCount: archiveMatches ? value.archivedCount : previous.archivedCount,
         conversations: [...previous.conversations.filter(prior => !value.conversations.some(row => row.id === prior.id)), ...value.conversations.map(row => {
           const prior = previous.conversations.find(candidate => candidate.id === row.id);
-          return prior && (prior.revision > row.revision || prior.revision === row.revision && (prior.updatedAt > row.updatedAt || prior.status !== 'running' && row.status === 'running')) ? prior : row;
+          const execution = prior && (prior.revision > row.revision || prior.revision === row.revision && (prior.updatedAt > row.updatedAt || prior.status !== 'running' && row.status === 'running')) ? prior : row;
+          const label = prior && (prior.labelRevision ?? 0) > (row.labelRevision ?? 0) ? prior : row;
+          return { ...execution, label: label.label, labelRevision: label.labelRevision };
         })].filter(row => !archivedIds.has(row.id)),
         actions: [...previous.actions.filter(prior => !value.actions.some(row => row.actionId === prior.actionId)), ...value.actions.map(row => {
           const prior = previous.actions.find(candidate => candidate.actionId === row.actionId);
@@ -80,6 +99,10 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
       if (settled.has(receipt.state) && receipt.ownerHeld !== true) {
         pending.current.delete(actionId);
         if (receipt.state === 'completed' && outstanding.body.action === 'archive') setArchiveTarget(null);
+        if (receipt.state === 'completed' && outstanding.body.action === 'rename') {
+          const renamedId = outstanding.body.conversationId;
+          setRenameTarget(current => current?.conversationId === renamedId ? null : current);
+        }
         const sourceId = outstanding.body.action === 'create' ? null : outstanding.body.conversationId;
         const sameDraft = draft.current.key === outstanding.draftKey && draft.current.selectedId === sourceId
           && (!('text' in outstanding.body) || draft.current.prompt === outstanding.body.text);
@@ -90,7 +113,7 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
             const next = { ...previous }; delete next[outstanding.draftKey]; return next;
           });
         }
-        if (receipt.state === 'completed' && sameDraft) {
+        if (receipt.state === 'completed' && sameDraft && outstanding.body.action !== 'rename') {
           if (receipt.conversationId) setSelectedId(value.conversations.some(row => row.id === receipt.conversationId) ? receipt.conversationId : null);
           setConsent(false);
         }
@@ -111,16 +134,17 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
   const expectedContext = (): NativePersistentContext | null => snapshot?.available && snapshot.profileId && snapshot.epoch && snapshot.serverGeneration
     ? { profileId: snapshot.profileId, epoch: snapshot.epoch, serverGeneration: snapshot.serverGeneration } : null;
   const read = async (archiveCursor?: string, passive = false) => {
-    if (reading.current) return;
+    if (reading.current) { if (!passive) queuedRead.current = { archiveCursor, query: archiveSearch.current }; return; }
     reading.current = true; if (mounted.current && !passive) setBusy(true);
     try {
       // Each retained action gets its own passive lookup, including those omitted by a bounded list.
       const actionIds = [...pending.current.keys()];
       for (const actionId of actionIds.length ? actionIds : [undefined]) {
         const requestedContext = observedContext.current;
-        const response = await transport.current.nativePersistentRequest({ action: 'snapshot', ...(actionId ? { actionId } : {}), ...(archiveCursor ? { archiveCursor } : {}) });
+        const requestedArchiveQuery = archiveSearch.current;
+        const response = await transport.current.nativePersistentRequest({ action: 'snapshot', ...(actionId ? { actionId } : {}), ...(archiveCursor ? { archiveCursor } : {}), archiveQuery: requestedArchiveQuery });
         if (!mounted.current) return;
-        if (response.ok) { accept(response.value, requestedContext); setError(null); }
+        if (response.ok) { accept(response.value, requestedContext, requestedArchiveQuery); setError(null); }
         else setError(response.error.code);
       }
       if (historyTransport.current && !passive) {
@@ -129,7 +153,11 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
         } catch { if (mounted.current) setGlobalHistory(null); }
       }
     } catch { if (mounted.current) setError('connection_unavailable'); }
-    finally { reading.current = false; if (mounted.current && !passive) setBusy(false); }
+    finally {
+      reading.current = false; if (mounted.current && !passive) setBusy(false);
+      const queued = queuedRead.current; queuedRead.current = null;
+      if (mounted.current && queued) void read(queued.query === archiveSearch.current ? queued.archiveCursor : undefined);
+    }
   };
   useEffect(() => {
     mounted.current = true; void read();
@@ -154,9 +182,9 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
   }, [pendingOwnedTurn, snapshot?.profileId, snapshot?.epoch, snapshot?.serverGeneration]);
   const mutate = async (body: Mutation) => {
     const targetId = body.action === 'create' ? null : body.conversationId;
-    if (disabled || uncertain && body.action !== 'stop' || [...pending.current.values()].some(row =>
+    if (disabled || uncertain && !['stop', 'rename'].includes(body.action) || [...pending.current.values()].some(row =>
       body.action === 'create' ? row.body.action === 'create'
-        : body.action === 'stop' ? row.body.action === 'stop' && row.body.conversationId === targetId
+        : body.action === 'stop' || body.action === 'rename' ? row.body.action === body.action && row.body.conversationId === targetId
           : row.body.action !== 'create' && row.body.conversationId === targetId)) return;
     // Reserve synchronously before IPC; a second click cannot offer the same thread twice.
     pending.current.set(body.actionId, { body, draftKey: draft.current.key, uncertain: false }); renderPending(revision => revision + 1); setError(null); setTurnNotStarted(false);
@@ -164,7 +192,10 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
       const requestedContext = observedContext.current;
       const response = await transport.current.nativePersistentRequest(body);
       if (!mounted.current) return;
-      if (response.ok) accept(response.value, requestedContext);
+      if (response.ok) {
+        accept(response.value, requestedContext);
+        if (body.action === 'archive') await read();
+      }
       else {
         setError(response.error.code);
         if (response.error.knownNotStarted) pending.current.delete(body.actionId);
@@ -211,6 +242,18 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
     if (!selected?.stopAvailable || !context || pendingStop) return;
     void mutate({ action: 'stop', actionId: crypto.randomUUID(), conversationId: selected.id, revision: selected.revision, expectedContext: context });
   };
+  const pendingRename = renameTarget ? [...pending.current.values()].find(({ body }) => body.action === 'rename' && body.conversationId === renameTarget.conversationId) : undefined;
+  const renaming = Boolean(pendingRename && !pendingRename.uncertain);
+  const renameInvalid = renameLabel.length > 80 || /[\p{Cc}\p{Cf}]/u.test(renameLabel);
+  const selectedRenamePending = selected && [...pending.current.values()].some(({ body }) => body.action === 'rename' && body.conversationId === selected.id);
+  const searchArchives = () => {
+    if (archiveQuery.length > 120 || /[\p{Cc}\p{Cf}]/u.test(archiveQuery)) {
+      setArchiveSearchError(ru ? 'До 120 символов без управляющих символов.' : 'Use up to 120 characters without control characters.'); return;
+    }
+    setArchiveSearchError(null); archiveSearch.current = archiveQuery.trim().toLowerCase();
+    setSnapshot(previous => previous ? { ...previous, archivedConversations: [], archiveNextCursor: null } : previous);
+    void read();
+  };
   const archivePending = archiveTarget !== null && [...pending.current.values()].some(({ body, uncertain: unknown }) => !unknown && body.action === 'archive' && body.conversationId === archiveTarget.conversationId);
   const archiveReason = (reason?: string | null) => ({
     prior_outcome_unresolved: ru ? 'Сначала проверьте исход предыдущего действия.' : 'Inspect the prior action outcome first.',
@@ -250,11 +293,13 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
       <div className="native-persistent__sidebar">
         <div className="native-persistent__actions"><Button size="sm" disabled={disabled} onClick={() => { setSelectedId(null); setConsent(false); setRecordFutureText(false); setAcknowledgeSecrets(false); setTurnNotStarted(false); }}>
           {ru ? 'Новый диалог' : 'New conversation'}</Button></div>
+        {snapshot?.conversations.length || activeQuery ? <TextField ref={activeSearch} type="search" label={ru ? 'Фильтр активных диалогов' : 'Filter active conversations'} value={activeQuery} onChange={event => setActiveQuery(event.target.value)} /> : null}
         {!snapshot?.conversations.length ? <EmptyState title={ru ? 'Сохранённых диалогов пока нет' : 'No retained conversations yet'} /> :
-          <ul className="native-persistent__list">{snapshot.conversations.map(row => <li key={row.id}>
+          !visibleConversations.length ? <EmptyState title={ru ? 'Нет диалогов по этому фильтру' : 'No conversations match this filter'} action={<Button size="sm" onClick={() => { setActiveQuery(''); activeSearch.current?.focus(); }}>{ru ? 'Сбросить фильтр' : 'Clear filter'}</Button>} /> :
+          <ul className="native-persistent__list">{visibleConversations.map(row => <li key={row.id}>
             <Button variant={row.id === selectedId ? 'secondary' : 'ghost'} disabled={disabled}
               onClick={() => { setSelectedId(row.id); setConsent(false); setRecordFutureText(false); setAcknowledgeSecrets(false); setTurnNotStarted(false); }}>
-              <span className="native-persistent__conversation-label"><strong>{row.model}</strong>{' '}
+              <span className="native-persistent__conversation-label"><strong>{conversationLabel(row)}</strong>{' '}
                 <span><code>{row.id.slice(0, 8)}</code> <span>{statusText(row.status)}</span></span></span>
             </Button>
             {row.parentId ? <small>{ru ? 'Ответвление от' : 'Forked from'} {row.parentId.slice(0, 8)}</small> : null}
@@ -262,6 +307,7 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
       </div>
       <div className="native-persistent__detail">
         {selected ? <>
+          <h3>{conversationLabel(selected)}</h3>
           <BadgeRow className="native-persistent__metadata"><Badge>{statusText(selected.status)}</Badge> <code>{selected.threadId || selected.id}</code></BadgeRow>
           <Badge>{selected.conversationMode === 'canonical-text-v1' ? (ru ? 'Обычный текст' : 'Natural text') : (ru ? 'Прежний JSON-режим' : 'Legacy JSON mode')}</Badge>
           {selected.recordingRequiredBeforeFirstSend ? <Notice title={ru ? 'Первый ход требует записи текста' : 'The first turn requires text recording'}>
@@ -318,6 +364,7 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
         <div className="native-persistent__actions">
           <Button variant="primary" disabled={locked || !textAllowed || !snapshot?.available || (selected ? !ready || selected.recordingRequiredBeforeFirstSend && !recordingReady : !consent || !model || recordFutureText && !acknowledgeSecrets)}
             busy={selectionBusy} onClick={selected ? send : create}>{selected ? (ru ? 'Продолжить диалог' : 'Continue conversation') : (ru ? 'Создать и отправить' : 'Create and send')}</Button>
+          {selected ? <Button disabled={disabled || !selected.renameAvailable || Boolean(selectedRenamePending)} title={!selected.renameAvailable ? (ru ? 'Переименование недоступно в этом состоянии подключения.' : 'Renaming is unavailable in this connection state.') : undefined} onClick={() => { const context = expectedContext(); if (context) { setError(null); setRenameLabel(selected.label ?? ''); setRenameTarget({ conversationId: selected.id, revision: selected.revision, expectedLabel: selected.label ?? '', expectedContext: context }); } }}>{ru ? 'Переименовать диалог' : 'Rename conversation'}</Button> : null}
           {selected && (selected.stopAvailable || pendingStop) ? <Button variant="danger" disabled={disabled || !selected.stopAvailable || Boolean(pendingStop)} busy={stopping} onClick={stop}>{pendingStop?.uncertain ? (ru ? 'Проверьте исход остановки' : 'Inspect Stop outcome') : stopping ? (ru ? 'Остановка хода Native…' : 'Stopping Native turn…') : (ru ? 'Остановить ход Native' : 'Stop Native turn')}</Button> : null}
           {selected ? <Button disabled={locked || !ready || Boolean(prompt.trim())} onClick={fork}>{ru ? 'Ответвить сохранённый контекст' : 'Fork retained context'}</Button> : null}
           {selected && ready ? <Button disabled={locked || Boolean(prompt.trim())} onClick={() => changeConnection('closeIdle')}>
@@ -341,13 +388,23 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
     </div>
     <details><summary>{ru ? 'Архив на устройстве' : 'Local archive'} ({snapshot?.archivedCount ?? '…'})</summary>
       <p>{ru ? 'Удалено из активного списка. Контекст Native и сохранённая история остаются. Восстановление здесь пока недоступно.' : 'Removed from the active list. Native context and saved history are retained. Restore is not available here yet.'}</p>
-      {snapshot?.archivedCount === undefined ? <p>{ru ? 'Локальный архив недоступен в этом состоянии подключения.' : 'Local archive is unavailable in this connection state.'}</p> : !snapshot.archivedConversations?.length ? <p>{ru ? 'В архиве пока нет диалогов.' : 'No archived conversations loaded.'}</p> : snapshot.archivedConversations.map(row => <article key={row.id}>
-        <h4>{row.model} · {row.id.slice(0, 8)}</h4><code>{row.threadId || row.id}</code>
+      <form className="native-persistent__actions" onSubmit={event => { event.preventDefault(); searchArchives(); }}>
+        <TextField type="search" label={ru ? 'Поиск в локальном архиве' : 'Search local archive'} value={archiveQuery} maxLength={120} error={archiveSearchError ?? undefined} onChange={event => setArchiveQuery(event.target.value)} />
+        <Button type="submit" disabled={disabled || busy || snapshot?.archivedTotalCount === undefined}>{ru ? 'Найти в архиве' : 'Search archive'}</Button>
+      </form>
+      {snapshot?.archivedTotalCount !== undefined ? <p>{ru ? 'Найдено / всего в архиве' : 'Matching / total archived'}: {snapshot.archivedCount ?? 0} / {snapshot.archivedTotalCount}</p> : null}
+      {busy ? <p role="status">{ru ? 'Загрузка локального архива…' : 'Loading local archive…'}</p> : snapshot?.archivedCount === undefined ? <p>{ru ? 'Локальный архив недоступен в этом состоянии подключения.' : 'Local archive is unavailable in this connection state.'}</p> : !snapshot.archivedConversations?.length ? <p>{archiveSearch.current ? (ru ? 'В архиве нет диалогов по этому запросу.' : 'No archived conversations match this search.') : (ru ? 'В архиве пока нет диалогов.' : 'No archived conversations loaded.')}</p> : snapshot.archivedConversations.filter(row => matches(row, archiveSearch.current)).map(row => <article key={row.id}>
+        <h4>{conversationLabel(row)} · {row.id.slice(0, 8)}</h4><code>{row.threadId || row.id}</code>
         <Badge>{statusText('archived')}</Badge>
         {row.lastTextPreview !== undefined || row.lastSummary !== undefined ? <pre className="native-persistent__answer">{row.lastTextPreview ?? row.lastSummary}</pre> : null}
       </article>)}
       {snapshot?.archiveNextCursor ? <Button disabled={disabled || busy} onClick={() => void read(snapshot.archiveNextCursor!)}>{ru ? 'Загрузить более старые записи архива' : 'Load older archives'}</Button> : null}
     </details>
+    <Dialog open={renameTarget !== null} title={ru ? 'Переименовать диалог' : 'Rename conversation'} onClose={() => { if (!renaming) setRenameTarget(null); }}
+      actions={<><Button disabled={renaming} onClick={() => setRenameTarget(null)}>{ru ? 'Отмена' : 'Cancel'}</Button><Button disabled={disabled || Boolean(pendingRename) || renameInvalid || renameLabel.trim() === renameTarget?.expectedLabel} busy={renaming} onClick={() => { if (renameTarget) void mutate({ action: 'rename', actionId: crypto.randomUUID(), ...renameTarget, label: renameLabel }); }}>{ru ? 'Сохранить название' : 'Save conversation name'}</Button></>}>
+      <TextField label={ru ? 'Название диалога' : 'Conversation name'} value={renameLabel} maxLength={80} disabled={renaming} error={renameInvalid ? (ru ? 'До 80 символов без управляющих символов.' : 'Use up to 80 characters without control characters.') : undefined} hint={ru ? 'Пустое название вернёт имя модели. ID, контекст Native и черновик сообщения сохраняются.' : 'Leave blank to use the model name. The ID, Native context and message draft are preserved.'} onChange={event => setRenameLabel(event.target.value)} />
+      {error ? <Notice tone="warning">{error}</Notice> : null}
+    </Dialog>
     <Dialog open={archiveTarget !== null} title={ru ? 'Перенести диалог в локальный архив?' : 'Archive this conversation locally?'} onClose={() => { if (!archivePending) setArchiveTarget(null); }}
       actions={<><Button disabled={archivePending} onClick={() => setArchiveTarget(null)}>{ru ? 'Отмена' : 'Cancel'}</Button><Button disabled={disabled || uncertain || archivePending} busy={archivePending} onClick={() => { if (archiveTarget) void mutate({ action: 'archive', actionId: crypto.randomUUID(), ...archiveTarget }); }}>{ru ? 'Перенести в архив' : 'Confirm local archive'}</Button></>}>
       <p>{ru ? 'Диалог исчезнет из активного списка. Контекст Native и сохранённая история остаются. Восстановление здесь пока недоступно.' : 'Remove from the active list; retained Native context and saved history are kept. Restore is not available here yet.'}</p>
