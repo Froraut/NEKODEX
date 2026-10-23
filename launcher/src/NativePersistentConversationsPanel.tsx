@@ -139,9 +139,9 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
     try {
       // Each retained action gets its own passive lookup, including those omitted by a bounded list.
       const actionIds = [...pending.current.keys()];
+      const requestedArchiveQuery = archiveSearch.current;
       for (const actionId of actionIds.length ? actionIds : [undefined]) {
         const requestedContext = observedContext.current;
-        const requestedArchiveQuery = archiveSearch.current;
         const response = await transport.current.nativePersistentRequest({ action: 'snapshot', ...(actionId ? { actionId } : {}), ...(archiveCursor ? { archiveCursor } : {}), archiveQuery: requestedArchiveQuery });
         if (!mounted.current) return;
         if (response.ok) { accept(response.value, requestedContext, requestedArchiveQuery); setError(null); }
