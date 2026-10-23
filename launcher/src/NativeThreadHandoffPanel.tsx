@@ -53,7 +53,8 @@ export function NativeThreadHandoffPanel({ language, disabled = false, api, thre
   const [errors, setErrors] = useState<Record<string, SafeError>>({});
   const [receipts, setReceipts] = useState<Record<string, CodexThreadHandoffReceipt>>({});
   const [stopPending, setStopPending] = useState(false);
-  const stopLock = useRef(false);
+  const stopLock = useRef(false), refreshInFlight = useRef(false), currentApi = useRef(api);
+  currentApi.current = api;
   const [busyThread, setBusyThread] = useState<string | null>(null);
   const locked = useRef(false), mounted = useRef(true), selectedThread = useRef(thread.id);
   selectedThread.current = thread.id;
@@ -61,10 +62,13 @@ export function NativeThreadHandoffPanel({ language, disabled = false, api, thre
   const message = drafts[thread.id] ?? '', error = errors[thread.id] ?? null, receipt = receipts[thread.id] ?? null;
   const busy = busyThread !== null;
   const refresh = async () => {
+    if (!mounted.current || refreshInFlight.current) return;
+    const source = api; refreshInFlight.current = true;
     try {
-      const result = await api.nativeThreadHandoffSnapshot?.();
-      if (mounted.current && result?.ok) setSnapshot(result.value);
+      const result = await source.nativeThreadHandoffSnapshot?.();
+      if (mounted.current && source === currentApi.current && result?.ok) setSnapshot(result.value);
     } catch { /* Passive receipt state only; errors stay with the action that caused them. */ }
+    finally { refreshInFlight.current = false; }
   };
   useEffect(() => { mounted.current = true; void refresh(); return () => { mounted.current = false; }; }, [api]);
   // A handoff started by an earlier mount (or another window) is visible only through the

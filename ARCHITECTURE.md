@@ -535,7 +535,10 @@ Explicit `native-thread-stop-handoff` carries the original single-turn handoff
 exclusive lease, refusing stale actions even on the same thread. It persists
 `stopRequested` before the single interrupt and exposes stopping/unknown control
 state. ACK does not finish the original terminal wait or release its child.
-The panel polls local state while Send waits and owns a separate Stop lock.
+The panel polls local state while Send waits, skips reads while one is in flight
+or after unmount, and owns a separate Stop lock. The standalone inert
+`tests/fixtures/native-handoff-stop-ui.ts` renders the actual panel with fake
+callbacks for pending Send, Stop ACK, terminal interruption and lease release.
 See [Codex client control](docs/design/codex-client-control.md).
 
 ### Selected attachments and partial history
