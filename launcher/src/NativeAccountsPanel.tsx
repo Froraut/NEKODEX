@@ -187,7 +187,7 @@ export function NativeAccountsPanel({ language, api, disabled = false, onChange 
       <h3>{ru ? 'Восстановление Native после сбоя' : 'Native recovery after a failure'}</h3>
       <p>{ru ? 'Сначала проверьте план. Восстановление убирает подтверждённые устаревшие блокировки, сохраняя аккаунт и сеансы. Прежние запросы не повторяются; вход, каталог и модели не запускаются.' : 'Review the plan first. Recovery archives confirmed stale locks and retains the account and sessions. Prior requests are not replayed; it starts no sign-in, inventory or model.'}</p>
       <Button disabled={disabled || busy || uncertain} onClick={() => void previewRecovery()}>{ru ? 'Приостановить инструменты и проверить восстановление' : 'Pause tool connections and preview recovery'}</Button>
-      <p>{ru ? 'Проверка и подтверждённое восстановление временно приостанавливают соединения инструментов и затем восстанавливают их. Аккаунты, ключи и адреса туннелей сохраняются; активные Native HTTP-запросы продолжаются. Текущая работа Web и инструментов должна завершиться.' : 'Preview and reviewed recovery briefly pause tool connections and then restore them. Accounts, keys and tunnel addresses are retained; active Native HTTP requests continue. Finish current Web and tool work first.'}</p>
+      <p>{ru ? 'Проверка и подтверждённое восстановление временно приостанавливают соединения инструментов и затем восстанавливают их. Аккаунты, ключи и адреса туннелей сохраняются; активные ответы Native продолжаются. Текущая работа Web и инструментов должна завершиться.' : 'Preview and reviewed recovery briefly pause tool connections and then restore them. Accounts, keys and tunnel addresses are retained; active Native responses continue. Finish current Web and tool work first.'}</p>
       {recoveryPreview ? <>
         <p role="status">{recoveryPreview.state === 'reviewable'
           ? (ru ? 'Подтверждены устаревшие маркеры. Проверьте точный план перед восстановлением.' : 'Stale markers confirmed. Review the exact plan before recovery.')
@@ -200,7 +200,7 @@ export function NativeAccountsPanel({ language, api, disabled = false, onChange 
         </li>)}</ul>
         {recoveryPreview.reviewDigest ? <p>{ru ? 'SHA-256 плана: ' : 'Plan SHA-256: '}{recoveryPreview.reviewDigest}</p> : null}
         </details>
-        <p>{ru ? `Прежних неподтверждённых действий: ${recoveryPreview.unsettledActionCount}. Их результат останется неизвестным; повторной отправки не будет.` : `Prior unsettled actions: ${recoveryPreview.unsettledActionCount}. Their outcome remains unknown; they will not be replayed.`}</p>
+        <p>{recoveryPreview.unsettledActionCount === 0 ? (ru ? 'Нет прежних неподтверждённых действий.' : 'No prior unsettled actions.') : (ru ? `Прежних неподтверждённых действий: ${recoveryPreview.unsettledActionCount}. Их результат останется неизвестным; повторной отправки не будет.` : `Prior unsettled actions: ${recoveryPreview.unsettledActionCount}. Their outcome remains unknown; they will not be replayed.`)}</p>
         {recoveryPreview.state === 'reviewable' && recoveryPreview.reviewDigest ? <>
           <Checkbox checked={recoveryAcknowledged} disabled={disabled || busy || uncertain} onChange={setRecoveryAcknowledged} label={ru ? 'Я проверил этот план и подтверждаю архивирование указанных устаревших маркеров без повтора прежних действий.' : 'I reviewed this plan and approve archiving these stale markers without replaying prior actions.'} />
           <Button disabled={disabled || busy || uncertain || !recoveryAcknowledged} onClick={() => void mutate({ action: 'recover-owner', actionId: crypto.randomUUID(), reviewDigest: recoveryPreview.reviewDigest! })}>{ru ? 'Приостановить инструменты и восстановить' : 'Pause tool connections and recover reviewed owner'}</Button>
@@ -209,7 +209,7 @@ export function NativeAccountsPanel({ language, api, disabled = false, onChange 
       {recoveryReceipt ? <div role="status">
         <p>{ru ? 'Квитанция восстановления: ' : 'Recovery receipt: '}{recoveryReceipt.state} · {recoveryReceipt.actionId}</p>
         <p>{ru ? `Архивировано маркеров: ${recoveryReceipt.archivedCount}. Владелец удерживается: ${recoveryReceipt.ownerHeld ? 'да' : 'нет'}. Операция завершена: ${recoveryReceipt.terminal ? 'да' : 'нет'}.` : `Archived markers: ${recoveryReceipt.archivedCount}. Owner held: ${recoveryReceipt.ownerHeld ? 'yes' : 'no'}. Terminal: ${recoveryReceipt.terminal ? 'yes' : 'no'}.`}</p>
-        <p>{ru ? `Прежних неподтверждённых действий: ${recoveryReceipt.unsettledActionCount}. Результаты не восстановлены и действия не повторены.` : `Prior unsettled actions: ${recoveryReceipt.unsettledActionCount}. Their results have not been recovered and no actions have been replayed.`}</p>
+        <p>{recoveryReceipt.unsettledActionCount === 0 ? (ru ? 'Нет прежних неподтверждённых действий.' : 'No prior unsettled actions.') : (ru ? `Прежних неподтверждённых действий: ${recoveryReceipt.unsettledActionCount}. Результаты не восстановлены и действия не повторены.` : `Prior unsettled actions: ${recoveryReceipt.unsettledActionCount}. Their results have not been recovered and no actions have been replayed.`)}</p>
         {recoveryReceipt.reasonCode ? <p>{ru ? 'Причина: ' : 'Reason: '}{recoveryReceipt.reasonCode}</p> : null}
       </div> : null}
     </section> : null}
