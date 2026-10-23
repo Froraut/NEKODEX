@@ -41,11 +41,13 @@ export function NativeAccountsPanel({ language, api, disabled = false, onChange 
   const recoveryPlan = useRef<string | null>(null);
   const [recoveryAcknowledged, setRecoveryAcknowledged] = useState(false);
   const [recoveryReceipt, setRecoveryReceipt] = useState<NativeOwnerRecoveryReceipt | null>(null);
+  const [restorationWarning, setRestorationWarning] = useState<NativeAccountsSnapshot['recoveryRestorationWarning']>();
   const [removing, setRemoving] = useState<NativeAccountProfile | null>(null);
 
   const acceptSnapshot = (result: NativeAccountsSnapshot) => {
     setSnapshot(result);
     if (result.recoveryReceipt) setRecoveryReceipt(result.recoveryReceipt);
+    if (result.recoveryRestorationWarning) setRestorationWarning(result.recoveryRestorationWarning);
     if (result.recoveryReceipt?.state === 'completed' && result.recoveryReceipt.terminal && !result.recoveryReceipt.ownerHeld) {
       recoveryPlan.current = null; setRecoveryPreview(null); setRecoveryAcknowledged(false);
     } else if (result.recoverySupported === false) {
@@ -207,6 +209,9 @@ export function NativeAccountsPanel({ language, api, disabled = false, onChange 
         </> : null}
       </> : null}
       {recoveryReceipt ? <div role="status">
+        {restorationWarning?.actionId === recoveryReceipt.actionId && recoveryReceipt.state === 'completed' && recoveryReceipt.terminal && !recoveryReceipt.ownerHeld ? <Notice tone="warning" title={ru ? 'Восстановление завершено; при возврате соединений инструментов возникла ошибка.' : 'Recovery completed; tool connection restoration encountered an error.'}>
+          {ru ? 'Архивирование подтверждено. Проверьте состояние инструментов и при необходимости используйте «Переподключить». Не повторяйте восстановление.' : 'Marker archival is confirmed. Check tool connection status and use Reconnect if needed. Do not repeat recovery.'}
+        </Notice> : null}
         <p>{ru ? 'Квитанция восстановления: ' : 'Recovery receipt: '}{recoveryReceipt.state} · {recoveryReceipt.actionId}</p>
         <p>{ru ? `Архивировано маркеров: ${recoveryReceipt.archivedCount}. Владелец удерживается: ${recoveryReceipt.ownerHeld ? 'да' : 'нет'}. Операция завершена: ${recoveryReceipt.terminal ? 'да' : 'нет'}.` : `Archived markers: ${recoveryReceipt.archivedCount}. Owner held: ${recoveryReceipt.ownerHeld ? 'yes' : 'no'}. Terminal: ${recoveryReceipt.terminal ? 'yes' : 'no'}.`}</p>
         <p>{recoveryReceipt.unsettledActionCount === 0 ? (ru ? 'Нет прежних неподтверждённых действий.' : 'No prior unsettled actions.') : (ru ? `Прежних неподтверждённых действий: ${recoveryReceipt.unsettledActionCount}. Результаты не восстановлены и действия не повторены.` : `Prior unsettled actions: ${recoveryReceipt.unsettledActionCount}. Their results have not been recovered and no actions have been replayed.`)}</p>

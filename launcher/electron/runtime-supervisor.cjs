@@ -2073,6 +2073,17 @@ class RuntimeSupervisor {
     return this.tunnelControlControllers.size === 0;
   }
 
+  // Exact compensation after an acknowledged stop: admit one explicit start,
+  // without the failed-Quit helper scheduling a competing background recovery.
+  resumeStoppedOwner() {
+    if (this.runtimeStatus !== "stopped" || this.daemon || this.tunnel || this.stopping
+      || this.stopPromise || this.startPromise || this.recoveryTasks.size
+      || this.tunnelControlControllers.size || Object.values(this.restartTimers).some(Boolean)) {
+      throw new Error("Stopped runtime still has an unsettled owner");
+    }
+    if (this.shutdownRequested) this.shutdownResumeAllowed = true;
+  }
+
   allowRestartAfterQuitFailure() {
     if (!this.shutdownRequested) return;
     this.shutdownResumeAllowed = true;
@@ -2920,8 +2931,9 @@ class RuntimeSupervisor {
       if (!this.daemon && !this.shutdownRequested && this.launcherProfile !== "development") this.scheduleRecovery("daemon");
     }
     if (restoreErrors.length) {
-      throw new Error([failure ? errorMessage(failure) : "Native recovery finished", "Restoring tool connections failed",
-        ...restoreErrors.map(errorMessage)].join("; "));
+      this.logger.warn("runtime.native_recovery_restore_failed", { message: restoreErrors.map(errorMessage).join("; ") });
+      throw Object.assign(new Error([failure ? errorMessage(failure) : "Native recovery finished", "Restoring tool connections failed",
+        ...restoreErrors.map(errorMessage)].join("; ")), { nativeRecoveryRestoreFailed: true });
     }
     if (failure) throw failure;
     return result;
