@@ -941,6 +941,8 @@ snapshots or user imports. Unknown/unpriced tokens are not zero; missing cache
 semantics stay unknown. Results are estimated API-equivalent, never a bill or
 proven savings; overlaps stay outside the aggregate.
 
+Retained-conversation UI keeps drafts by profile/epoch and conversation, including a separate new-compose slot. Local archives remain viewable and explicit tombstones prevent late active snapshots from restoring archived rows. While this mounted panel owns a pending create/send/Stop, nonoverlapping passive receipt reads expose the exact backend Stop capability without sending model work; terminal/unknown outcomes, unmount and context change retire polling. Stop bypasses only the ordinary pending-Send UI lock, never backend ownership. Manual history-import inputs freeze until their original write settles.
+
 React surfaces receive explicit guarded ports. `SettingsDiagnostics` presents
 workflow/Codex/route/support/doctor controls while Settings retains save queue,
 action handlers, lifecycle guards and generation. Recovery links navigate without
