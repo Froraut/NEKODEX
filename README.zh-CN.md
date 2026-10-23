@@ -6,16 +6,16 @@ NEKODEX 是用于管理 ChatGPT 账户、Codex 任务和本地工具的桌面工
 
 ## 下载
 
-**目前公开发布的版本：macOS `6.1.33-nekodex.22`，Linux `6.1.12-nekodex.1`。** 发行版仅面向 Apple Silicon Mac，其他平台以后提供。 源码版本可能更新；公开下载链接只指向已经发布的文件。
+**目前公开发布的版本：macOS `6.1.33-nekodex.23`，Linux `6.1.12-nekodex.1`。** 发行版仅面向 Apple Silicon Mac，其他平台以后提供。 源码版本可能更新；公开下载链接只指向已经发布的文件。
 
 | 平台 | 下载 | 状态 |
 | --- | --- | --- |
-| macOS 13+，Apple Silicon | [ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v6.1.33-nekodex.22/NEKODEX-6.1.33-nekodex.22-mac-arm64.dmg) | Developer ID 签名并公证 |
+| macOS 13+，Apple Silicon | [ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v6.1.33-nekodex.23/NEKODEX-6.1.33-nekodex.23-mac-arm64.dmg) | Developer ID 签名并公证 |
 | macOS 13+，Intel | [Intel DMG 6.1.33-nekodex.4](https://github.com/Froraut/NEKODEX/releases/download/v6.1.33-nekodex.4/NEKODEX-6.1.33-nekodex.4-mac-x64.dmg) | 最后的 Intel 版本，不再更新 |
 | Linux x64 | [AppImage 6.1.12-nekodex.1](https://github.com/Froraut/NEKODEX/releases/download/v6.1.12-nekodex.1/codex-web-gpt-6.1.12-nekodex.1-linux-x64.AppImage) | 已发布 |
 | Windows x64 | [构建预览](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml) | 未签名；不支持应用内可信更新 |
 
-[发行说明](https://github.com/Froraut/NEKODEX/releases/tag/v6.1.33-nekodex.22) · [校验和](https://github.com/Froraut/NEKODEX/releases/download/v6.1.33-nekodex.22/checksums.txt) · [发行真实性](docs/release-signing.md)
+[发行说明](https://github.com/Froraut/NEKODEX/releases/tag/v6.1.33-nekodex.23) · [校验和](https://github.com/Froraut/NEKODEX/releases/download/v6.1.33-nekodex.23/checksums.txt) · [发行真实性](docs/release-signing.md)
 
 在 macOS 上打开 DMG，将 **NEKODEX** 拖入“应用程序”。今后的已发布更新可从应用内的 **Updates** 页面安装。保留账户配置和 ChatGPT 登录资料；更新前先完成正在运行的任务。
 
