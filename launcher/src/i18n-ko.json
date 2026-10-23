@@ -286,6 +286,7 @@
   "guideVideo": "가이드 영상",
   "expandGuideVideo": "가이드 영상 확대",
   "closeGuideVideo": "확대된 가이드 영상 닫기",
+  "guideVideoUnavailable": "동영상을 불러오지 못했습니다. 다시 시도하세요.",
   "openTunnels": "Tunnels 열기",
   "openKeys": "API 키 생성",
   "mcpStepTwo": "로컬 하네스 연결",

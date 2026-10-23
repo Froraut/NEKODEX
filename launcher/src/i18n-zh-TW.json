@@ -286,6 +286,7 @@
   "guideVideo": "導覽影片",
   "expandGuideVideo": "展開導覽影片",
   "closeGuideVideo": "關閉展開的導覽影片",
+  "guideVideoUnavailable": "無法載入影片，請重試。",
   "openTunnels": "開啟 Tunnels",
   "openKeys": "建立 API key",
   "mcpStepTwo": "連線本機 Harness",

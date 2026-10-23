@@ -182,6 +182,7 @@ api.receive(payload => {
   options.clear();
   for (const profile of profiles) options.set(profile.id, createOption(profile));
   elements.profiles.replaceChildren(...options.values());
+  elements.profiles.removeAttribute('aria-busy');
   // Without profiles there is nothing to search or continue with: a new isolated sign-in is the next step.
   const none = profiles.length === 0;
   elements.search.disabled = none;

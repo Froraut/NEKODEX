@@ -350,6 +350,8 @@
 /* TutorialVideo: inline player with an expand button; expanded, it fills the window below the titlebar controls. */
 .nk-media { position: relative; width: min(100%, 620px); overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-under); }
 .nk-media video { display: block; width: 100%; max-height: 280px; object-fit: contain; }
+.nk-media__error { margin: var(--space-3); }
+.nk-media.is-expanded .nk-media__error { position: absolute; top: calc(var(--size-titlebar) + var(--space-3)); left: var(--space-3); right: var(--space-3); }
 .nk-media__expand { position: absolute; top: var(--space-2); right: var(--space-2); background: var(--bg-elevated); opacity: 0; pointer-events: none; }
 .nk-media:hover .nk-media__expand, .nk-media__expand:focus-visible { opacity: 1; pointer-events: auto; }
 /* Expanded, the video sits below a titlebar-high band that keeps the window controls clear; the close

@@ -8,7 +8,7 @@ function PdfPreview({ resource, verified, choose }: { resource: ManagedSkillDocu
   return <div className="agent-tools-document-preview">
     <Badge tone={preview.state === 'completed' ? 'neutral' : 'warning'}>{preview.state}</Badge>
     <p>{choose('Text layer only. Images, layout, annotations and scanned pages are not fully represented; no OCR is performed.', 'Только текстовый слой. Изображения, оформление, аннотации и сканированные страницы представлены не полностью; OCR не выполняется.')}</p>
-    <small>{preview.extractor.provider} · v{preview.extractor.version}</small>
+    <small>{preview.extractor.provider} · v{preview.extractor.version}</small>{' '}
     {preview.extractor.executableSha256 ? <code>{choose('Extractor SHA-256', 'SHA-256 обработчика')}: {preview.extractor.executableSha256}</code> : <p>{choose('No admitted extractor executable identity is available.', 'Идентификатор допущенного обработчика недоступен.')}</p>}
     {preview.pageCount !== undefined ? <p>{choose('Pages', 'Страниц')}: {preview.pageCount} · {choose('with text', 'с текстом')}: {preview.pagesWithText ?? '—'} · {choose('without text', 'без текста')}: {preview.pagesWithoutText ?? '—'}</p> : null}
     {preview.state === 'completed' ? <pre>{preview.text}</pre> : <Notice tone="warning">{choose('The PDF text preview is not confirmed. Importing this file does not mean its content was read successfully.', 'Текстовый просмотр PDF не подтверждён. Импорт файла не означает успешное чтение его содержимого.')}{preview.reason ? <p>{preview.reason}</p> : null}</Notice>}

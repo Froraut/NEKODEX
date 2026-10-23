@@ -16,10 +16,10 @@
     </header>
     <div class="search-heading">
       <label class="search-label" for="search" id="search-label">Search profiles</label>
-      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <p id="status" class="status" role="status" aria-live="polite">Loading profiles…</p>
     </div>
-    <input id="search" type="search" autocomplete="off" spellcheck="false" aria-controls="profiles" placeholder="Name, Google email, or profile">
-    <div id="profiles" class="profiles" role="listbox" aria-labelledby="title"></div>
+    <input id="search" type="search" autocomplete="off" spellcheck="false" aria-controls="profiles" placeholder="Name, Google email, or profile" disabled>
+    <div id="profiles" class="profiles" role="listbox" aria-labelledby="title" aria-busy="true"></div>
     <!-- Shown in place of the list when no profile is shown; the status line above announces it. -->
     <div id="empty" class="empty" hidden>
       <svg class="empty-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 4v2"/></svg>
