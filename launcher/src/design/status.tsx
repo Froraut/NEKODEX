@@ -59,7 +59,7 @@ export function Notice({ tone = "info", title, meta, action, icon, children, cla
       <NkIcon name={icon || noticeIcon[tone]} />
       <div>
         {title ? <strong>{title}</strong> : null}
-        {children ? <p>{children}</p> : null}
+        {children ? <div className="nk-notice__message">{children}</div> : null}
         {meta ? <small>{meta}</small> : null}
       </div>
       {action ? <div className="nk-notice__action">{action}</div> : null}
