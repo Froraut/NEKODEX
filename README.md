@@ -18,16 +18,16 @@
 
 ## Download
 
-**6.1.33-nekodex.21 · prerelease** · Releases are built for macOS Apple Silicon only; other platforms later. The Intel and Linux links are the last builds for those platforms.
+**6.1.33-nekodex.22 · prerelease** · Releases are built for macOS Apple Silicon only; other platforms later. The Intel and Linux links are the last builds for those platforms.
 
 | Platform | Package | Delivery |
 | --- | --- | --- |
-| macOS 13+ · Apple Silicon | [ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v6.1.33-nekodex.21/NEKODEX-6.1.33-nekodex.21-mac-arm64.dmg) | Developer ID signed and notarized |
+| macOS 13+ · Apple Silicon | [ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v6.1.33-nekodex.22/NEKODEX-6.1.33-nekodex.22-mac-arm64.dmg) | Developer ID signed and notarized |
 | macOS 13+ · Intel | [Intel DMG 6.1.33-nekodex.4](https://github.com/Froraut/NEKODEX/releases/download/v6.1.33-nekodex.4/NEKODEX-6.1.33-nekodex.4-mac-x64.dmg) | Last Intel build; no further updates |
 | Linux x64 | [AppImage 6.1.12-nekodex.1](https://github.com/Froraut/NEKODEX/releases/download/v6.1.12-nekodex.1/codex-web-gpt-6.1.12-nekodex.1-linux-x64.AppImage) | Authenticated release metadata |
 | Windows x64 | [Preview artifacts](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml) | Unsigned preview; outside authenticated updates |
 
-[Release notes](https://github.com/Froraut/NEKODEX/releases/tag/v6.1.33-nekodex.21) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v6.1.33-nekodex.21/checksums.txt) · [Release authenticity](docs/release-signing.md)
+[Release notes](https://github.com/Froraut/NEKODEX/releases/tag/v6.1.33-nekodex.22) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v6.1.33-nekodex.22/checksums.txt) · [Release authenticity](docs/release-signing.md)
 
 On macOS, open the DMG and drag **NEKODEX** to **Applications**. For later releases, use **Updates → Download and restart** inside the app. Account profiles and settings stay in place. Finish active tasks first.
 
