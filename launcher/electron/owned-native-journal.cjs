@@ -8,6 +8,9 @@ const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const STATES = ['prepared', 'offered', 'acknowledged', 'completed', 'failed', 'unknown'];
 const NONTERMINAL = ['prepared', 'offered', 'acknowledged'];
 const MAX_OBSERVATIONS = 32;
+const IDENTITY_FIELDS = ['actionId', 'interruptActionId', 'retirementActionId'];
+const consumedIdentity = (rows, actionId, permitted = () => false) => rows.some(row =>
+  IDENTITY_FIELDS.some(field => row[field] === actionId && !permitted(row, field)));
 function observe(row) {
   if (!Array.isArray(row.observations) || row.observations.length >= MAX_OBSERVATIONS) {
     throw fail('journal_quota', 'Native receipt observations have reached their bound');
@@ -118,7 +121,7 @@ function createOwnedNativeJournal({ directory, admissionId, maxActions = 128 } =
   function begin({ actionId, workerHandle, threadId, inputHash, schemaHash, imageAttachments, kind = 'offer' }) {
     uuid(actionId); uuid(workerHandle); if (threadId !== null) uuid(threadId); acquire();
     const value = read();
-    if (value.actions.some(row => row.actionId === actionId)) throw fail('intent_already_recorded', 'Native actions cannot be replayed; inspect the existing receipt');
+    if (consumedIdentity(value.actions, actionId)) throw fail('intent_already_recorded', 'Native actions cannot be replayed; inspect the existing receipt');
     if (value.actions.length >= maxActions) throw fail('journal_quota', 'Native receipt storage has reached its bound');
     if (imageAttachments !== undefined) {
       imageAttachments = validateOwnedNativeImageMetadata(imageAttachments);
@@ -140,6 +143,14 @@ function createOwnedNativeJournal({ directory, admissionId, maxActions = 128 } =
   function update(actionId, changes) {
     uuid(actionId); const value = read(), row = value.actions.find(item => item.actionId === actionId);
     if (!row) throw fail('journal_unavailable', 'Native action receipt is missing');
+    if (Object.hasOwn(changes, 'actionId') && changes.actionId !== actionId) throw fail('intent_already_recorded', 'Native action identity cannot be replaced');
+    for (const field of ['interruptActionId', 'retirementActionId']) if (Object.hasOwn(changes, field)) {
+      uuid(changes[field]);
+      if (row[field] !== undefined && row[field] !== changes[field]
+        || consumedIdentity(value.actions, changes[field], (owner, key) => owner === row && key === field)) {
+        throw fail('intent_already_recorded', 'Native control identities cannot be reused or replaced');
+      }
+    }
     if (changes.state && (!STATES.includes(changes.state) || !NONTERMINAL.includes(row.state)
       && !(row.state === 'unknown' && row.ownerHeld) && changes.state !== row.state)) {
       throw fail('invalid_receipt_transition', 'Native terminal receipts cannot be replayed or rewritten');
@@ -149,7 +160,8 @@ function createOwnedNativeJournal({ directory, admissionId, maxActions = 128 } =
   }
   function retire(workerHandle, actionId) {
     uuid(workerHandle); uuid(actionId); acquire(); const value = read();
-    if (value.actions.some(row => row.actionId === actionId || row.retirementActionId === actionId && row.workerHandle !== workerHandle)) {
+    if (consumedIdentity(value.actions, actionId, (row, field) => field === 'retirementActionId' && row.workerHandle === workerHandle)
+      || value.actions.some(row => row.workerHandle === workerHandle && row.retirementActionId && row.retirementActionId !== actionId)) {
       throw fail('intent_already_recorded', 'Retirement requires its own exact action identity');
     }
     for (const row of value.actions.filter(row => row.workerHandle === workerHandle)) {
@@ -164,6 +176,6 @@ function createOwnedNativeJournal({ directory, admissionId, maxActions = 128 } =
     try { if (regular(lock, 4096).toString() === owner) fs.unlinkSync(lock); }
     finally { owned = false; }
   }
-  return Object.freeze({ acquire, snapshot, ownerStatus, begin, update, retire, release });
+  return Object.freeze({ acquire, snapshot, ownerStatus, hasConsumedIdentity: actionId => { uuid(actionId); return consumedIdentity(read().actions, actionId); }, begin, update, retire, release });
 }
 module.exports = { createOwnedNativeJournal, uuid };

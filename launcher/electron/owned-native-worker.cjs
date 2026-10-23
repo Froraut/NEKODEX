@@ -279,7 +279,7 @@ function createWorkerService(options = {}, shared) {
   async function createOwnedWorker({ actionId } = {}) {
     uuid(actionId);
     if (destroyed || busy || worker && (state !== 'retired' || !worker.rpc.closed)) throw fail('worker_busy', 'Native worker owner is not available for creation');
-    if (journal.snapshot().some(row => row.actionId === actionId)) throw fail('intent_already_recorded', 'Inspect the recorded native action instead of replaying it');
+    if (journal.hasConsumedIdentity(actionId)) throw fail('intent_already_recorded', 'Inspect the recorded native action instead of replaying it');
     if (journal.snapshot().some(row => row.state === 'unknown' && !row.retired)) throw fail('reconciliation_required', 'Retire the previous uncertain worker before creating another');
     busy = 'Creating private native worker'; state = 'creating';
     let row, creationWritten = false;
@@ -338,7 +338,7 @@ function createWorkerService(options = {}, shared) {
     }
     const prepared = prepareOwnedNativeInput(text, images);
     if (prepared.imageAttachments.length && admission.imageInput !== true) throw fail('image_input_unsupported', 'Admitted Native model does not support image input');
-    if (journal.snapshot().some(row => row.actionId === actionId)) {
+    if (journal.hasConsumedIdentity(actionId)) {
       throw fail('intent_already_recorded', 'Inspect the recorded native action instead of replaying it');
     }
     if (textMode && outputSchema !== undefined) throw fail('invalid_schema', 'Canonical text conversations cannot use an Agent result schema');
@@ -399,9 +399,9 @@ function createWorkerService(options = {}, shared) {
       if (receipt.interruptActionId !== actionId) throw fail('intent_already_recorded', 'Inspect the recorded Stop instead of repeating it');
       return observation(receipt);
     }
+    if (journal.hasConsumedIdentity(actionId)) throw fail('intent_already_recorded', 'Stop requires its own action identity');
     if (receipt.nativeStatus) return observation(receipt); // Completion won the race; send nothing.
     if (destroyed || !active || active.row.actionId !== targetActionId || active.row.turnId !== turnId || !receipt.ownerHeld || worker.rpc.closed) throw fail('worker_not_ready', 'The exact active turn owner is unavailable');
-    if (journal.snapshot().some(row => row.actionId === actionId || row.interruptActionId === actionId)) throw fail('intent_already_recorded', 'Stop requires its own action identity');
     // Persist on the existing offer: Stop remains available at the action quota.
     // Repeated calls observe this consumed intent; no timeout permits a replay.
     receipt = update(targetActionId, { interruptActionId: actionId, interruptState: 'requested' });
@@ -423,8 +423,8 @@ function createWorkerService(options = {}, shared) {
     if (busy && !active) throw fail('worker_busy', 'Native creation or admission is still pending');
     const known = worker?.handle === workerHandle || journal.snapshot().some(row => row.workerHandle === workerHandle);
     if (!known) throw fail('invalid_intent', 'Native worker handle is unknown');
-    if (shared) destroyed = true;
     journal.retire(workerHandle, actionId);
+    if (shared) destroyed = true;
     if (worker?.handle === workerHandle) { if (shared && !worker.rpc.closed) held('worker_retiring'); else unknown('worker_retired'); }
     if (worker?.handle === workerHandle) {
       state = 'retiring';

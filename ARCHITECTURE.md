@@ -476,7 +476,9 @@ not establish a signed installed wrapper or successful provider run.
 
 The owned inference leaf exposes main-only `interruptOwnedTurn` for an exact
 acknowledged offer, worker handle and turn. It journals a consumed interrupt
-identity on the existing offer before writing `turn/interrupt`, so action quota
+identity on the existing offer before writing `turn/interrupt`. The journal owns
+one consumed-identity check across offers, interrupts and retirements, retaining
+those identities across reload and refusing reuse by a different operation, so action quota
 cannot prevent Stop and duplicate calls only observe. The account facade routes
 this control over the existing exact subscription without idle reservation,
 account preflight or process startup. An ACK reports stopping; only the original

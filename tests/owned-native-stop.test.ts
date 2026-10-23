@@ -6,14 +6,16 @@ import { PassThrough, Writable } from 'node:stream';
 import { mkdtempSync, realpathSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-const { createOwnedNativeAccountServer } = createRequire(import.meta.url)('../launcher/electron/owned-native-worker.cjs');
+const require = createRequire(import.meta.url);
+const { createOwnedNativeAccountServer } = require('../launcher/electron/owned-native-worker.cjs');
+const { createOwnedNativeJournal } = require('../launcher/electron/owned-native-journal.cjs');
 
 // Real worker/account/receipt code; only the private child stdio is synthetic.
 async function fixture() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'nekodex-stop-')));
   const paths = { home: join(root, 'home'), codexHome: join(root, 'codex'), cwd: join(root, 'home', 'work') };
   for (const value of Object.values(paths)) mkdirSync(value, { recursive: true, mode: 0o700 });
-  const methods: any[] = [], workers: any[] = [], callbacks = new Map<string, (receipt: any) => void>();
+  const methods: any[] = [], workers: any[] = [], journalPaths = new Map<any, string>(), callbacks = new Map<string, (receipt: any) => void>();
   const turns = new Map<string, any>(); let child: any, respond: any, event: any;
   let holdInterrupt = false, holdClose = false, launches = 0;
   const admission: any = { paths, provider: 'openai', serverGeneration: randomUUID(),
@@ -58,7 +60,7 @@ async function fixture() {
       worker = owner.createWorker(binding, (receipt: any) => {
         callbacks.get(targetActionId)?.(receipt);
         if (receipt.actionId === targetActionId && receipt.state === 'acknowledged') acknowledged(receipt);
-      }, undefined, { mode: 'canonical-text-v1' }); workers.push(worker);
+      }, undefined, { mode: 'canonical-text-v1' }); workers.push(worker); journalPaths.set(worker, join(root, 'journals', binding.workerBindingId));
       created = await worker.createOwnedWorker({ actionId: randomUUID() });
       return worker.offerOwnedTurn({ workerHandle: created.workerHandle, actionId: targetActionId, text: 'synthetic request' });
     });
@@ -74,7 +76,7 @@ async function fixture() {
     }
     event('turn/completed', { threadId, turn: { id: turnId, status } });
   };
-  return { start, methods, callbacks, finish, launches: () => launches,
+  return { start, methods, callbacks, finish, readJournal: (worker: any) => createOwnedNativeJournal({ directory: journalPaths.get(worker), admissionId: 'a'.repeat(64) }), launches: () => launches,
     holdInterrupt: () => { holdInterrupt = true; }, holdClose: () => { holdClose = true; },
     releaseClose: (threadId: string) => event('thread/closed', { threadId }),
     allowClose: () => { holdClose = false; },
@@ -126,5 +128,41 @@ test('natural completion winning Stop race is preserved and sends no interrupt',
     const a = await f.start(); f.finish(a.threadId, 'completed'); await a.operation;
     expect(await a.worker.interruptOwnedTurn(a.stopInput)).toMatchObject({ state: 'settled', receipt: { nativeStatus: 'completed', ownerHeld: false } });
     expect(f.methods.filter(row => row.method === 'turn/interrupt')).toHaveLength(0);
+  } finally { await f.close(); }
+}, 2000);
+
+
+test('consumed Stop identity cannot become an offer or retirement, including after journal reload', async () => {
+  const f = await fixture();
+  try {
+    const a = await f.start();
+    await a.worker.interruptOwnedTurn(a.stopInput);
+    f.finish(a.threadId, 'completed'); await a.operation;
+    const turnStarts = f.methods.filter(row => row.method === 'turn/start').length;
+    await expect(a.worker.offerOwnedTurn({ workerHandle: a.stopInput.workerHandle,
+      actionId: a.stopInput.actionId, text: 'must not send' })).rejects.toMatchObject({ code: 'intent_already_recorded' });
+    await expect(a.worker.retireOwnedWorker({ workerHandle: a.stopInput.workerHandle,
+      actionId: a.stopInput.actionId })).rejects.toMatchObject({ code: 'intent_already_recorded' });
+    expect(a.worker.inspectOwnedWorker().state).toBe('ready');
+    expect(f.methods.filter(row => row.method === 'turn/start')).toHaveLength(turnStarts);
+    await a.worker.destroy();
+    const restored = f.readJournal(a.worker); restored.acquire();
+    try {
+      expect(restored.hasConsumedIdentity(a.stopInput.actionId)).toBe(true);
+      expect(() => restored.begin({ workerHandle: a.stopInput.workerHandle, actionId: a.stopInput.actionId,
+        threadId: a.threadId, inputHash: 'synthetic' })).toThrow('cannot be replayed');
+      expect(() => restored.retire(a.stopInput.workerHandle, a.stopInput.actionId)).toThrow('exact action identity');
+      const other = restored.begin({ workerHandle: a.stopInput.workerHandle, actionId: randomUUID(), threadId: a.threadId, inputHash: 'synthetic' });
+      expect(() => restored.update(other.actionId, { interruptActionId: a.stopInput.actionId })).toThrow('cannot be reused');
+      expect(() => restored.update(other.actionId, { actionId: a.stopInput.actionId })).toThrow('cannot be replaced');
+      // Same exact control observation is allowed; overwriting it would forget consumption.
+      expect(restored.update(a.stopInput.targetActionId, { interruptActionId: a.stopInput.actionId }).interruptActionId).toBe(a.stopInput.actionId);
+      expect(() => restored.update(a.stopInput.targetActionId, { interruptActionId: randomUUID() })).toThrow('cannot be reused');
+      const retirementId = randomUUID(); restored.retire(a.stopInput.workerHandle, retirementId);
+      restored.retire(a.stopInput.workerHandle, retirementId);
+      expect(() => restored.begin({ workerHandle: a.stopInput.workerHandle, actionId: retirementId,
+        threadId: a.threadId, inputHash: 'synthetic' })).toThrow('cannot be replayed');
+      expect(() => restored.retire(a.stopInput.workerHandle, randomUUID())).toThrow('exact action identity');
+    } finally { restored.release(); }
   } finally { await f.close(); }
 }, 2000);
