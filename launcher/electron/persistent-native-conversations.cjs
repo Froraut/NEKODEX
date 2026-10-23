@@ -47,22 +47,49 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
     catch { throw fail('owner_exists', 'Persistent Native registry already has an owner; reconcile it before reuse'); }
     owned = true;
   }
+  function registryBytes(candidate) {
+    const bytes = `${JSON.stringify({ ...candidate, version: 3 })}\n`;
+    if (Buffer.byteLength(bytes) > 4 * 1024 * 1024) throw Object.assign(fail('registry_quota', 'Persistent Native registry quota reached'), { registryWriteDisposition: 'not-written' });
+    return bytes;
+  }
   function save() {
-    acquire();
-    state.version = 3;
-    if (regular(lock, 4096).toString() !== owner) throw fail('owner_changed', 'Persistent Native registry owner changed');
-    let observed;
-    try { observed = digest(regular(file, 4 * 1024 * 1024)); } catch (reason) { if (reason.code !== 'ENOENT') throw reason; }
-    if (observed !== lastDigest) throw fail('registry_changed', 'Persistent Native registry changed outside its owner');
-    const bytes = `${JSON.stringify(state)}\n`;
-    if (Buffer.byteLength(bytes) > 4 * 1024 * 1024) throw fail('registry_quota', 'Persistent Native registry quota reached');
-    const tmp = path.join(directory, `${randomUUID()}.tmp`); let fd;
+    let publicationPossible = false;
     try {
-      fd = fs.openSync(tmp, 'wx', 0o600); fs.writeFileSync(fd, bytes); fs.fsyncSync(fd); fs.closeSync(fd); fd = undefined;
-      fs.renameSync(tmp, file); const dir = fs.openSync(directory, 'r'); try { fs.fsyncSync(dir); } finally { fs.closeSync(dir); }
-      lastDigest = digest(bytes);
-    } finally { if (fd !== undefined) fs.closeSync(fd); fs.rmSync(tmp, { force: true }); }
-    notify();
+      acquire();
+      if (regular(lock, 4096).toString() !== owner) throw fail('owner_changed', 'Persistent Native registry owner changed');
+      let observed;
+      try { observed = digest(regular(file, 4 * 1024 * 1024)); } catch (reason) { if (reason.code !== 'ENOENT') throw reason; }
+      if (observed !== lastDigest) throw fail('registry_changed', 'Persistent Native registry changed outside its owner');
+      const bytes = registryBytes(state), tmp = path.join(directory, `${randomUUID()}.tmp`); let fd;
+      try {
+        fd = fs.openSync(tmp, 'wx', 0o600); fs.writeFileSync(fd, bytes); fs.fsyncSync(fd); fs.closeSync(fd); fd = undefined;
+        publicationPossible = true; // A rename attempt or later error cannot prove absence of publication.
+        fs.renameSync(tmp, file); const dir = fs.openSync(directory, 'r'); try { fs.fsyncSync(dir); } finally { fs.closeSync(dir); }
+        lastDigest = digest(bytes); state.version = 3;
+      } finally { if (fd !== undefined) fs.closeSync(fd); fs.rmSync(tmp, { force: true }); }
+      notify();
+    } catch (reason) { reason.registryWriteDisposition = publicationPossible ? 'unknown' : 'not-written'; throw reason; }
+  }
+  function publishIntent({ action, row, patch = {}, newConversation = false, selected = state.selected }) {
+    // Validate the complete candidate before touching shared live row identities.
+    // Replacing state wholesale would invalidate concurrent owners' row references.
+    const conversations = row ? newConversation ? [...state.conversations, { ...row, ...patch }]
+      : state.conversations.map(value => value === row ? { ...value, ...patch } : value) : state.conversations;
+    registryBytes({ ...state, conversations, actions: [...state.actions, action], selected });
+    const before = row && { ...row }, previousSelected = state.selected;
+    if (newConversation) state.conversations.push(row);
+    if (row) Object.assign(row, patch);
+    state.actions.push(action); state.selected = selected;
+    try { save(); }
+    catch (reason) {
+      if (reason.registryWriteDisposition === 'not-written') {
+        state.actions.splice(state.actions.indexOf(action), 1);
+        if (newConversation) state.conversations.splice(state.conversations.indexOf(row), 1);
+        else if (row) for (const key of Object.keys(patch)) { if (Object.hasOwn(before, key)) row[key] = before[key]; else delete row[key]; }
+        state.selected = previousSelected;
+      }
+      throw reason;
+    }
   }
   const sameScope = (row, context) => context && row.profileId === context.profileId && row.epoch === context.epoch && row.serverGeneration === context.serverGeneration;
   function resumeReason(row, context) {
@@ -125,7 +152,9 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
       if (!target) throw fail('stop_unavailable', 'An exact acknowledged active Native turn is required');
       const action = { actionId: input.actionId, conversationId: row.id, kind: 'stop', fingerprint, state: 'prepared', ownerHeld: true,
         targetActionId: target.action.actionId, targetNativeActionId: target.receipt.actionId, targetTurnId: target.receipt.turnId, revision: row.revision };
-      state.actions.push(action); recorded = true; save(); // Quota-exempt control intent; never revises the sending action.
+      try { publishIntent({ action }); recorded = true; }
+      catch (reason) { recorded = reason.registryWriteDisposition !== 'not-written'; throw reason; }
+      // Quota-exempt control intent; never revises the sending action.
       try {
         const current = getExecution();
         if (!current || current.server !== context.server || !sameScope(row, current) || live.get(row.id) !== target.worker || destroyed) throw fail('stale_account', 'Native Stop owner changed before dispatch');
@@ -283,10 +312,13 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
           const firstRecordingAuthority = input.recordFutureText ? transcript?.recordingAuthorityForConversation(row.id, initialRecordingAuthority) : undefined;
           const action = { actionId: input.actionId, kind, fingerprint, conversationId: row.id, state: 'prepared', ownerHeld: false,
             createActionId: randomUUID(), turnActionId: randomUUID(), closeActionId: randomUUID(), createdAt: now };
-          if (['create', 'fork'].includes(kind)) state.conversations.push(row);
-          state.actions.push(action); state.selected = { profileId: context.profileId, epoch: context.epoch };
-          row.revision++; row.status = 'running'; row.updatedAt = now; row.activeActionId = action.actionId; action.revision = row.revision;
-          recorded = true; save();
+          action.revision = row.revision + 1;
+          try {
+            publishIntent({ action, row, newConversation: ['create', 'fork'].includes(kind),
+              patch: { revision: action.revision, status: 'running', updatedAt: now, activeActionId: action.actionId },
+              selected: { profileId: context.profileId, epoch: context.epoch } });
+            recorded = true;
+          } catch (reason) { recorded = reason.registryWriteDisposition !== 'not-written'; throw reason; }
           let worker;
           try {
             if (kind === 'archive' && live.get(row.id)?.inspectOwnedWorker().state === 'retired') worker = live.get(row.id);

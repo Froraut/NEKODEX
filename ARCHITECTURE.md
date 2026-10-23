@@ -575,6 +575,9 @@ subscription before marking the row archived. Prepared, unknown and owner-held
 obligations prevent archival. Archived history and known nonheld failed actions
 stop consuming active count slots; they remain idempotency evidence. The existing
 4 MiB byte limit remains, so this is bounded local retention, not unlimited storage.
+Initial conversation/Stop intent publication checks the complete candidate before
+changing live rows. A proven pre-publication failure restores only that admission;
+a possibly committed rename retains its unresolved receipt without replay.
 No provider thread or captured transcript is deleted. There is no archive restore
 or implicit Resume. Main projects exact selected-account tombstones plus pages of
 50 archived metadata/preview rows; an opaque last-row cursor reads later pages.
