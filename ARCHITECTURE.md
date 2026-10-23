@@ -705,6 +705,13 @@ surfaces.
 `StandaloneMcpHost` and ToolJournal own discovery, exact schemas/arguments,
 approval, durable unknown-before-effect and result reconciliation. Configured
 servers and builtin browser/desktop/remote/VM tools use that same owner.
+The owned Native adapter pins its initial tool IDs and schemas. After a matching
+known tool outcome, each continuation discovers the current task-scoped supported
+subset and refreshes descriptions such as the selected browser binding. Added,
+ambiguous, unavailable or schema-changed tools cannot expand that continuation;
+the saved earlier catalog/receipts remain immutable. Current descriptions replace
+old host hints, while exact human approval and strict execution-time bindings
+remain authoritative. Discovery failure sends no new Native offer or input retry.
 Install, save-disabled, enable, connect, discovery and successful tool effect are
 separate transitions. Frozen official filesystem, sequential-thinking and memory
 recipes retain exact lock/tree/integrity/runtime pins and recipe-specific sandbox/

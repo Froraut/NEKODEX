@@ -4,6 +4,9 @@ import { AGENT_NATIVE_PROTOCOL, AGENT_NATIVE_OUTPUT_SCHEMA, AGENT_NATIVE_OUTPUT_
   type AgentNativeBridge, type AgentNativeOfferEnvelope } from "../src/agent-mode/native-protocol";
 import { compileAgentNativeOutputSchema } from "../launcher/electron/agent-native-bridge.cjs";
 import type { ExecutionRequest, AgentToolOutcome } from "../src/agent-mode/types";
+import { createAgentBrowserToolsProvider } from "../src/browser-companion/agent-tools";
+import type { BrowserBinding } from "../src/browser-companion/protocol";
+import type { BrowserProviderPort } from "../src/browser-companion/providers";
 
 function request(): ExecutionRequest {
   return {
@@ -19,6 +22,62 @@ function request(): ExecutionRequest {
   };
 }
 const waiting = { protocol: AGENT_NATIVE_PROTOCOL, kind: "awaiting_input", requestId: null, toolId: null, argumentsJson: null, summary: "Please provide the missing destination." };
+
+test("Native browser continuation refreshes the current selected hint without expanding pinned tool/schema authority", async () => {
+  const input = request();
+  input.task.originalRequest = 'Observe, type the inert fixture value, observe again; one exact approved tool per turn.';
+  const initial: BrowserBinding = { sessionId: 'session', scopeId: 'selected-scope', tabId: 1, windowId: 2, frameId: 0,
+    documentId: 'document', documentEpoch: 'document-epoch', observationId: 'old-observation' };
+  let selected = initial;
+  const provider = { selected: () => selected, capabilities: () => ({ available: true }) } as unknown as BrowserProviderPort;
+  const browser = createAgentBrowserToolsProvider({ provider: () => provider, isScopeActive: () => true });
+  const scope = { taskId: input.task.id, generation: input.task.generation, toolCallId: 'first-dispatch' };
+  browser.bind(scope, initial);
+  const catalog = (await browser.discover(scope)).map(row => ({ id: row.id, description: row.description, inputSchema: row.inputSchema }));
+  const originalCatalog = JSON.stringify(catalog);
+  selected = { ...initial, observationId: 'fresh-observation' }; // An approved observe produced the binding used by type.
+  const callId = nativeToolCallId('type-dispatch', 'type-two');
+  input.dispatch.continuationOf = 'type-dispatch';
+  input.continuation = { source: { kind: 'owned-native', version: 1, protocol: AGENT_NATIVE_PROTOCOL,
+    rootDispatchId: 'first-dispatch', taskGeneration: input.task.generation, taskRevision: input.task.revision,
+    workerBindingId: 'binding', workerGeneration: 1, nativeTurnReceiptId: 'type-turn', catalog, catalogDigest: nativeDigest(catalog),
+    requestIds: ['observe-one', 'type-two'], pending: [{ protocol: AGENT_NATIVE_PROTOCOL, toolCallId: callId, requestId: 'type-two',
+      tool: 'browser/type', arguments: { binding: selected, ref: 'input-ref', text: 'INERT_VALUE' } }] },
+    outcomes: [{ idempotencyKey: `tool:${nativeDigest(['type-dispatch', callId])}`, scope: { ...scope, toolCallId: callId },
+      tool: 'browser/type', state: 'completed', result: { structuredContent: { execution: { executed: true } } } }] };
+  let offered: AgentNativeOfferEnvelope | undefined; let discoveries = 0; let claims = 0;
+  const port = createOwnedNativeExecutionPort({ models: () => [{ id: 'fixture-model', provider: 'owned-native', available: true, admissionId: 'fixture-admission' }],
+    claimTransport() { claims++; }, tools: { async discover(currentScope, control) {
+      discoveries++; expect(currentScope).toEqual({ ...scope, toolCallId: input.dispatch.id });
+      const live = await browser.discover(currentScope, control);
+      return [...live.map(row => row.id === 'browser/type' ? { ...row, supported: false }
+        : row.id === 'browser/click' ? { ...row, inputSchema: { type: 'object', additionalProperties: true } } : row),
+        { id: 'newly-enabled/write', serverId: 'newly-enabled', name: 'write', supported: true, inputSchema: { type: 'object' } }];
+    } }, bridge: {
+      async offer(envelope, options) {
+        offered = envelope;
+        const receipt = { version: 1 as const, actionId: envelope.actionId, scope: envelope.scope, model: envelope.model,
+          admissionId: envelope.admissionId, outputSchemaId: envelope.outputSchemaId, payloadDigest: nativeDigest(envelope), revision: 1,
+          state: 'completed' as const, ownerHeld: false, writeDisposition: 'written' as const, workerBindingId: 'binding', workerGeneration: 1,
+          nativeTurnReceiptId: 'observe-three-turn', acceptanceReceipt: 'ack', inputAuthorship: 'automatic-host' as const,
+          assistantText: JSON.stringify({ protocol: AGENT_NATIVE_PROTOCOL, kind: 'tool_request', requestId: 'observe-three',
+            toolId: 'browser/observe', argumentsJson: JSON.stringify({ binding: selected, includeImage: false }), summary: null }) };
+        options.onReceipt(receipt); return receipt;
+      }, async readReceipt() { throw Error('No re-offer or receipt recovery expected'); }, async waitReceipt() { throw Error('No wait expected'); },
+    } });
+  const result = await port.execute(input, () => {});
+  const current = JSON.parse(offered!.text).declaredTools;
+  expect(current.map((row: { id: string }) => row.id)).toEqual(['browser/observe']);
+  expect(current[0].description).toContain('"observationId":"fresh-observation"');
+  expect(current[0].description).not.toContain('old-observation');
+  expect(current[0].inputSchema).toEqual(catalog[0]!.inputSchema);
+  expect(result.continuation).toMatchObject({ catalog: current, catalogDigest: nativeDigest(current), pending: [{ arguments: { binding: selected, includeImage: false } }] });
+  expect(JSON.stringify(input.continuation.source.catalog)).toBe(originalCatalog);
+  expect([discoveries, claims]).toEqual([1, 1]);
+  input.continuation.outcomes[0]!.state = 'outcome_unknown';
+  expect(await port.execute(input, () => { throw Error('Unknown input must not continue'); })).toMatchObject({ outcome: 'not_sent' });
+  expect([discoveries, claims]).toEqual([1, 1]);
+});
 
 test("Native explicit input request preserves a waiting stage and never fabricates a pending tool", async () => {
   expect(parseNativeResult(JSON.stringify(waiting), [], [])).toEqual({ kind: "awaiting_input", summary: waiting.summary });
