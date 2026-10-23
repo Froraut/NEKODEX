@@ -44,7 +44,7 @@ export function AccountCardManagement({ id, label, language, authenticated, manu
       title={accessBlocked ?? (manual ? text.manualReason : undefined)} aria-label={`${text.reauthenticate} · ${label}`}
       onClick={event => open('reauthenticate', event.currentTarget)}>{text.reauthenticate}</Button> : null}
     <span className="accounts-management-remove">
-      <Button size="sm" variant="danger" disabled={disabled || !!removeReason || !!accessBlocked}
+      <Button size="sm" variant="ghost" className="accounts-management-remove__entry" disabled={disabled || !!removeReason || !!accessBlocked}
         aria-label={`${text.remove} · ${label}`} title={removeReason ?? accessBlocked}
         onClick={event => open('remove', event.currentTarget)}>{text.remove}</Button>
       {removeReason ? <small className="field-hint">{removeReason}</small> : null}

@@ -91,3 +91,7 @@
 
 .accounts-management-remove { display: inline-flex; flex-direction: column; gap: 4px; max-width: 260px; }
 .accounts-management-remove .field-hint { font-size: 11px; color: var(--text-secondary); line-height: 1.4; }
+
+/* Opening the removal review is quiet; the dialog keeps the filled destructive confirmation. */
+.accounts-management-remove .accounts-management-remove__entry { color: var(--text-error); }
+.accounts-management-remove .accounts-management-remove__entry:hover:not(:disabled, [aria-disabled="true"]) { background: var(--bg-error); color: var(--text-error); }
