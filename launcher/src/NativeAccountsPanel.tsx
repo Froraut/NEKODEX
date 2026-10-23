@@ -32,6 +32,7 @@ export function NativeAccountsPanel({ language, api, disabled = false, onChange 
   const uncertainRequest = useRef<Mutation | null>(null);
   const [snapshot, setSnapshot] = useState<NativeAccountsSnapshot | null>(null);
   const [label, setLabel] = useState('');
+  const [renaming, setRenaming] = useState<{ profile: NativeAccountProfile; label: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [uncertain, setUncertain] = useState(false);
   const [error, setError] = useState(false);
@@ -87,6 +88,7 @@ export function NativeAccountsPanel({ language, api, disabled = false, onChange 
         || result.rejectedAction?.actionId === outstanding.actionId && result.rejectedAction.knownNotStarted))) {
         uncertainRequest.current = null; setUncertain(false);
         if (outstanding.action === 'prepare-profile') setLabel('');
+        if (outstanding.action === 'rename-profile' && result.receipts.some(row => row.actionId === outstanding.actionId && row.state === 'completed')) { setRenaming(null); qualified = true; }
       }
     } catch {
       if (mounted.current) setError(true);
@@ -130,6 +132,7 @@ export function NativeAccountsPanel({ language, api, disabled = false, onChange 
       } else setUncertain(true);
       if (result.rejectedAction?.actionId === body.actionId) setError(true);
       if (body.action === 'prepare-profile') setLabel('');
+      if (body.action === 'rename-profile' && result.receipts.some(row => row.actionId === body.actionId && row.state === 'completed')) { setRenaming(null); qualified = true; }
     } catch {
       if (mounted.current) { setUncertain(true); setError(true); }
     } finally {
@@ -183,7 +186,8 @@ export function NativeAccountsPanel({ language, api, disabled = false, onChange 
     {snapshot?.recoverySupported && (!snapshot.available || recoveryPreview || recoveryReceipt) ? <section aria-label={ru ? 'Восстановление владельца Native' : 'Native owner recovery'}>
       <h3>{ru ? 'Восстановление Native после сбоя' : 'Native recovery after a failure'}</h3>
       <p>{ru ? 'Сначала проверьте план. Восстановление убирает подтверждённые устаревшие блокировки, сохраняя аккаунт и сеансы. Прежние запросы не повторяются; вход, каталог и модели не запускаются.' : 'Review the plan first. Recovery archives confirmed stale locks and retains the account and sessions. Prior requests are not replayed; it starts no sign-in, inventory or model.'}</p>
-      <Button disabled={disabled || busy || uncertain} onClick={() => void previewRecovery()}>{ru ? 'Проверить план восстановления' : 'Preview owner recovery'}</Button>
+      <Button disabled={disabled || busy || uncertain} onClick={() => void previewRecovery()}>{ru ? 'Приостановить инструменты и проверить восстановление' : 'Pause tool connections and preview recovery'}</Button>
+      <p>{ru ? 'Проверка и подтверждённое восстановление временно приостанавливают соединения инструментов и затем восстанавливают их. Аккаунты, ключи и адреса туннелей сохраняются; активные Native HTTP-запросы продолжаются. Текущая работа Web и инструментов должна завершиться.' : 'Preview and reviewed recovery briefly pause tool connections and then restore them. Accounts, keys and tunnel addresses are retained; active Native HTTP requests continue. Finish current Web and tool work first.'}</p>
       {recoveryPreview ? <>
         <p role="status">{recoveryPreview.state === 'reviewable'
           ? (ru ? 'Подтверждены устаревшие маркеры. Проверьте точный план перед восстановлением.' : 'Stale markers confirmed. Review the exact plan before recovery.')
@@ -199,7 +203,7 @@ export function NativeAccountsPanel({ language, api, disabled = false, onChange 
         <p>{ru ? `Прежних неподтверждённых действий: ${recoveryPreview.unsettledActionCount}. Их результат останется неизвестным; повторной отправки не будет.` : `Prior unsettled actions: ${recoveryPreview.unsettledActionCount}. Their outcome remains unknown; they will not be replayed.`}</p>
         {recoveryPreview.state === 'reviewable' && recoveryPreview.reviewDigest ? <>
           <Checkbox checked={recoveryAcknowledged} disabled={disabled || busy || uncertain} onChange={setRecoveryAcknowledged} label={ru ? 'Я проверил этот план и подтверждаю архивирование указанных устаревших маркеров без повтора прежних действий.' : 'I reviewed this plan and approve archiving these stale markers without replaying prior actions.'} />
-          <Button disabled={disabled || busy || uncertain || !recoveryAcknowledged} onClick={() => void mutate({ action: 'recover-owner', actionId: crypto.randomUUID(), reviewDigest: recoveryPreview.reviewDigest! })}>{ru ? 'Выполнить подтверждённое восстановление' : 'Recover reviewed owner'}</Button>
+          <Button disabled={disabled || busy || uncertain || !recoveryAcknowledged} onClick={() => void mutate({ action: 'recover-owner', actionId: crypto.randomUUID(), reviewDigest: recoveryPreview.reviewDigest! })}>{ru ? 'Приостановить инструменты и восстановить' : 'Pause tool connections and recover reviewed owner'}</Button>
         </> : null}
       </> : null}
       {recoveryReceipt ? <div role="status">
@@ -226,6 +230,20 @@ export function NativeAccountsPanel({ language, api, disabled = false, onChange 
       const execution = snapshot?.execution?.profileId === profile.id && snapshot.execution.epoch === profile.epoch && snapshot.execution.ownerHeld ? snapshot.execution : undefined;
       return <li key={profile.id} className="native-accounts__profile">
         <strong>{profile.label}</strong>
+        {renaming?.profile.id === profile.id && renaming.profile.epoch === profile.epoch ? <form onSubmit={event => {
+          event.preventDefault();
+          if (!renaming.label.trim() || renaming.label === renaming.profile.label || locked) return;
+          void mutate({ action: 'rename-profile', actionId: crypto.randomUUID(), profileId: renaming.profile.id,
+            epoch: renaming.profile.epoch, expectedLabel: renaming.profile.label, label: renaming.label.trim() });
+        }}>
+          <TextField label={ru ? 'Название профиля Native' : 'Native profile label'} value={renaming.label} maxLength={80}
+            disabled={locked} autoFocus onChange={event => setRenaming({ ...renaming, label: event.currentTarget.value })} />
+          <div className="native-accounts__actions">
+            <Button type="submit" disabled={locked || !renaming.label.trim() || renaming.label.trim() === renaming.profile.label}>{ru ? 'Сохранить название' : 'Save label'}</Button>
+            <Button type="button" variant="ghost" disabled={busy} onClick={() => setRenaming(null)}>{ru ? 'Отмена' : 'Cancel'}</Button>
+          </div>
+          <p>{ru ? 'Меняется только название; вход и текущее выполнение сохраняются.' : 'Only the label changes; sign-in and current execution are retained.'}</p>
+        </form> : null}
         <p role="status">{stateText(profile)}</p>
         {inventory ? <p role="status">{inventory.state === 'completed'
           ? (ru ? `Аккаунт и каталог подтверждены: ${inventory.metadata?.modelCount ?? 0} моделей. Результаты выполнения показаны в задачах.` : `Account and catalog verified: ${inventory.metadata?.modelCount ?? 0} models. Execution results are shown in the tasks.`)
@@ -245,6 +263,7 @@ export function NativeAccountsPanel({ language, api, disabled = false, onChange 
           {pending && login ? <Button disabled={locked || login.state === 'cancel-requested'} onClick={() => void mutate({ action: 'cancel-login', actionId: crypto.randomUUID(), loginAttemptId: login.id })}>{ru ? 'Отменить вход' : 'Cancel sign-in'}</Button> : null}
           {profile.state === 'signed-in-checking' && !execution ? <Button disabled={locked || Boolean(snapshot?.inventory?.activeCount)} onClick={() => void mutate({ action: 'inspect-models', actionId: crypto.randomUUID(), profileId: profile.id, epoch: profile.epoch })}>{ru ? 'Проверить аккаунт и модели' : 'Inspect account and models'}</Button> : null}
           {execution ? <Button disabled={locked} onClick={() => void mutate({ action: 'close-execution', actionId: crypto.randomUUID(), profileId: profile.id, epoch: profile.epoch })}>{ru ? 'Закрыть Native и всех его исполнителей' : 'Close Native and all its workers'}</Button> : null}
+          <Button variant="ghost" disabled={locked || Boolean(renaming)} onClick={() => setRenaming({ profile, label: profile.label })}>{ru ? 'Переименовать профиль' : 'Rename profile'}</Button>
           {!pending ? <Button variant="ghost" disabled={locked} onClick={() => setRemoving(profile)}>{ru ? 'Удалить профиль' : 'Remove profile'}</Button> : null}
         </div>
       </li>;
