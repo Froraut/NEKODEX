@@ -5,6 +5,7 @@ const ACTION_KEYS = {
   status: ['action', 'actionId'],
   'preview-owner-recovery': ['action'],
   'recover-owner': ['action', 'actionId', 'reviewDigest'],
+  'rename-profile': ['action', 'actionId', 'profileId', 'epoch', 'expectedLabel', 'label'],
   'prepare-profile': ['action', 'actionId', 'label'],
   'begin-device-login': ['action', 'actionId', 'profileId', 'epoch'],
   'cancel-login': ['action', 'actionId', 'loginAttemptId'],
@@ -13,7 +14,7 @@ const ACTION_KEYS = {
   'remove-profile': ['action', 'actionId', 'profileId', 'epoch', 'confirmSignedIn'],
 };
 /** The guarded main handle owns login. Renderer supplies only opaque IDs and intent. */
-function registerNativeAccounts({ handle, getAuthority, getInventory, getExecution, beforeExecutionClosed, onExecutionClosed, beforeProfileRemoved, openExternal, clipboard }) {
+function registerNativeAccounts({ handle, withOwnerRecovery = operation => operation(), getAuthority, getInventory, getExecution, beforeExecutionClosed, onExecutionClosed, beforeProfileRemoved, openExternal, clipboard }) {
   // Known pre-intent refusals are observations, not a command retry. Retain them
   // in this main instance so a lost refusal response can be read back by action ID.
   const rejected = new Map();
@@ -28,13 +29,16 @@ function registerNativeAccounts({ handle, getAuthority, getInventory, getExecuti
     let recoveryPreview, recoveryReceipt;
     try { if (body.action === 'preview-owner-recovery') {
       if (!authority.previewRecovery) throw new Error('Native recovery is unavailable');
-      recoveryPreview = await authority.previewRecovery();
+      recoveryPreview = await withOwnerRecovery(() => authority.previewRecovery());
     } else if (body.action === 'recover-owner') {
       if (typeof body.reviewDigest !== 'string' || !/^[a-f0-9]{64}$/.test(body.reviewDigest) || !authority.recoverOwner) throw new Error('Invalid Native recovery review');
-      recoveryReceipt = await authority.recoverOwner({ actionId: body.actionId, reviewDigest: body.reviewDigest });
+      recoveryReceipt = await withOwnerRecovery(() => authority.recoverOwner({ actionId: body.actionId, reviewDigest: body.reviewDigest }));
     } else if (body.action === 'prepare-profile') {
       if (typeof body.label !== 'string' || !body.label.trim() || body.label.length > 80 || /\p{C}/u.test(body.label)) throw new Error('Invalid Native profile label');
       authority.prepareProfile({ actionId: body.actionId, label: body.label });
+    } else if (body.action === 'rename-profile') {
+      if (!UUID.test(body.profileId) || !UUID.test(body.epoch) || typeof body.expectedLabel !== 'string' || typeof body.label !== 'string') throw new Error('Invalid Native profile rename');
+      authority.renameProfile({ actionId: body.actionId, profileId: body.profileId, epoch: body.epoch, expectedLabel: body.expectedLabel, label: body.label });
     } else if (body.action === 'begin-device-login') {
       if (!UUID.test(body.profileId) || !UUID.test(body.epoch)) throw new Error('Invalid Native profile identity');
       authority.beginDeviceLogin({ actionId: body.actionId, profileId: body.profileId, epoch: body.epoch });
@@ -82,7 +86,7 @@ function registerNativeAccounts({ handle, getAuthority, getInventory, getExecuti
       if (!UUID.test(body.loginAttemptId)) throw new Error('Invalid Native login identity');
       await authority.cancelLogin({ actionId: body.actionId, loginAttemptId: body.loginAttemptId });
     } } catch (error) {
-      if (error?.actionRecorded !== false) throw error;
+      if (body.action === 'preview-owner-recovery' || error?.actionRecorded !== false) throw error;
       if (rejected.size >= 128) rejected.delete(rejected.keys().next().value);
       rejected.set(body.actionId, { actionId: body.actionId, knownNotStarted: true });
     }

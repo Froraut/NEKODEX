@@ -2858,6 +2858,75 @@ class RuntimeSupervisor {
     return true;
   }
 
+  // Temporarily fence Web/local tools while preserving independent Native HTTP.
+  // Saved tunnel bindings and the daemon's process/monitor remain owned in place.
+  async withNativeRecoveryQuiescence(callback) {
+    if (typeof callback !== "function" || this.nativeRecoveryQuiescing || this.stopping || this.shutdownRequested
+      || this.startPromise || this.stopPromise || this.recoveryTasks.size || this.tunnelControlControllers.size
+      || Object.values(this.restartTimers).some(Boolean)) {
+      throw new Error("Finish the current runtime transition before Native recovery");
+    }
+    const config = this.readConfig();
+    if (!this.daemon) {
+      if (this.tunnel || this.accountTunnelSupervisor?.ownedKeys().length) {
+        throw new Error("Native recovery cannot pause tool connections without the owned runtime");
+      }
+      return callback(); // An unconfigured/offline launcher has no tool peers to pause.
+    }
+    if (!config) throw new Error("Native recovery requires the owned runtime configuration");
+    const session = await this.runtimeSession(config, "status");
+    if (session.launcher_detached !== false) throw new Error("Native recovery requires an attached interface");
+    const savedConfig = JSON.stringify(config), daemon = this.daemon;
+    const previouslyOwned = config.accountTunnelMode === true ? this.accountTunnelSupervisor?.ownedKeys() ?? [] : [];
+    const hadLegacyTunnel = Boolean(this.tunnel);
+    this.nativeRecoveryQuiescing = true;
+    this.stopping = true; // Prevent parent monitor recovery while its peers are deliberately stopped.
+    let detachAttempted = false, stopAttempted = false, result, failure;
+    const restoreErrors = [];
+    try {
+      // This exact daemon endpoint atomically refuses live Web/Agent/tool owners.
+      // It does not drain, cancel or await unrelated Native HTTP requests.
+      detachAttempted = true;
+      await this.runtimeSession(config, "detach");
+      stopAttempted = true;
+      if (config.accountTunnelMode === true) await this.accountTunnelSupervisor?.stop();
+      else if (this.tunnel) await this.stopTunnelGracefully(config);
+      if (this.daemon !== daemon || JSON.stringify(this.readConfig()) !== savedConfig) {
+        throw new Error("Runtime ownership changed before Native recovery");
+      }
+      result = await callback(); // The unchanged authority still requires complete physical proof.
+    } catch (error) { failure = error; }
+    finally {
+      if (stopAttempted) {
+        try {
+          if (this.daemon !== daemon || JSON.stringify(this.readConfig()) !== savedConfig) {
+            throw new Error("Runtime configuration changed while restoring tool connections");
+          }
+          if (config.accountTunnelMode === true) {
+            await this.accountTunnelSupervisor?.restartOwned(previouslyOwned);
+          } else if (hadLegacyTunnel && config.mode === "full" && !this.tunnel) await this.startTunnel(config);
+        } catch (error) { restoreErrors.push(error); }
+      }
+      // Compensate even an unacknowledged detach; it may have reached the daemon.
+      if (detachAttempted) {
+        try { await this.runtimeSession(config, "attach"); }
+        catch (error) { restoreErrors.push(error); }
+        try { await this.reportTunnelStatus(config, config.accountTunnelMode === true
+          ? this.accountTunnelSupervisor?.snapshot().some(row => row.ready) === true : Boolean(this.tunnel)); }
+        catch (error) { restoreErrors.push(error); }
+      }
+      this.stopping = false;
+      this.nativeRecoveryQuiescing = false;
+      if (!this.daemon && !this.shutdownRequested && this.launcherProfile !== "development") this.scheduleRecovery("daemon");
+    }
+    if (restoreErrors.length) {
+      throw new Error([failure ? errorMessage(failure) : "Native recovery finished", "Restoring tool connections failed",
+        ...restoreErrors.map(errorMessage)].join("; "));
+    }
+    if (failure) throw failure;
+    return result;
+  }
+
   async detachForQuit() {
     const config = this.readConfig();
     if (this.launcherProfile !== "production" || !config || !this.daemon) {

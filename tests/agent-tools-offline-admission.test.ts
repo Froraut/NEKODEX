@@ -80,5 +80,5 @@ test("an actual approved SDK owner blocks detach offline, then settles once and 
   const child = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/agent-tools-offline-owner.ts")], { env: { ...env, CODEX_CHATGPT_WEB_BACKGROUND_RUNTIME: "1", CODEX_CHATGPT_WEB_NATIVE_BACKGROUND_ROUTE: "DIRECT" }, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exit] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   if (exit !== 0) throw new Error(`Owned offline SDK fixture exited ${exit}: ${stderr}`);
-  expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({ ok: true, webReady: false, syntheticPendingSource: true, realSdkEffectCount: 1, refusedBusyDetach: true, idleDetach: true, blockedDetachedScope: true, attachedScopeRestored: true, nativeFixtureRequests: 1, sdkChildReaped: true });
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({ ok: true, webReady: false, syntheticPendingSource: true, realSdkEffectCount: 1, refusedBusyDetach: true, idleDetach: true, blockedDetachedScope: true, attachedScopeRestored: true, nativeFixtureRequests: 2, nativeRecoveryQuiescence: true, sdkChildReaped: true });
 }, 10_000);

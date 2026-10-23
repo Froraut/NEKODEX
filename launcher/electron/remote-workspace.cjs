@@ -3,6 +3,7 @@
 // OpenSSH owns host-key/authentication checks. This owner speaks SFTP v3 over its
 // subsystem pipe; renderer values never become local shell syntax or SSH options.
 const fs = require('node:fs');
+const { createDirectoryPages } = require('./directory-page.cjs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { createHash, createHmac, randomBytes, randomUUID } = require('node:crypto');
@@ -53,7 +54,7 @@ class Reader {
   u32() { return this.take(4).readUInt32BE(); }
   string() { return this.take(this.u32()); }
   text() { return new TextDecoder('utf-8', { fatal: true }).decode(this.string()); }
-  attrs() { const flags = this.u32(); const result = {}; if (flags & 1) result.size = Number(this.take(8).readBigUInt64BE()); if (flags & 2) this.take(8); if (flags & 4) result.mode = this.u32(); if (flags & 8) this.take(8); if (flags & 0x80000000) { const count = this.u32(); if (count > 100) fail('PROTOCOL', 'Too many SFTP attributes.'); for (let i = 0; i < count; i++) { this.string(); this.string(); } } return result; }
+  attrs() { const flags = this.u32(); const result = {}; if (flags & 1) result.size = Number(this.take(8).readBigUInt64BE()); if (flags & 2) this.take(8); if (flags & 4) result.mode = this.u32(); if (flags & 8) { this.u32(); result.mtime = this.u32(); } if (flags & 0x80000000) { const count = this.u32(); if (count > 100) fail('PROTOCOL', 'Too many SFTP attributes.'); for (let i = 0; i < count; i++) { this.string(); this.string(); } } return result; }
 }
 function validateHost(value) {
   if (!value || typeof value !== 'object' || Object.keys(value).some(key => !['label', 'hostname', 'username', 'port', 'root', 'connectionMode'].includes(key))) fail('HOST', 'Invalid SSH host settings.');
@@ -120,14 +121,15 @@ class Sftp {
   async stat(file) { try { return this.expect(await this.request(7, str(file)), 105).attrs(); } catch (e) { if (e.sftpCode === 2) return null; throw e; } }
   async handle(type, ...parts) { return this.expect(await this.request(type, ...parts), 102).string(); }
   async release(handle) { this.expect(await this.request(4, str(handle)), 101); }
-  async list(file) { const handle = await this.handle(11, str(file)); const entries = []; let truncated = false;
-    try { let pages = 0; while (true) { if (++pages > 100) { truncated = true; break; } let response; try { response = await this.request(12, str(handle)); } catch (e) { if (e.sftpCode === 1) break; throw e; }
+  async list(file, start = 0) { if (!Number.isSafeInteger(start) || start < 0) fail('PAGE', 'Invalid directory offset.'); const handle = await this.handle(11, str(file)); const entries = []; let truncated = false; let scanLimited = false; let skipped = 0;
+    try { let pages = 0; while (true) { if (++pages > 100) { truncated = true; scanLimited = true; break; } let response; try { response = await this.request(12, str(handle)); } catch (e) { if (e.sftpCode === 1) break; throw e; }
       const r = this.expect(response, 104); const n = r.u32(); if (n > 10000) fail('PROTOCOL', 'SFTP listing exceeds bounds.');
       for (let i = 0; i < n; i++) { const name = r.text(); r.string(); const attrs = r.attrs(); if (name === '.' || name === '..' || name.toLowerCase() === '.git') continue;
         if (name.length > 4096 || name.includes('/') || name.includes('\\') || /[\0\r\n]/.test(name)) continue;
+        if (skipped++ < start) continue;
         if (entries.length < LIMITS.entries) entries.push({ name, ...attrs }); else truncated = true; }
       if (truncated) break;
-    } } finally { await this.release(handle); } return { entries, truncated }; }
+    } } finally { await this.release(handle); } return { entries, truncated, ...(scanLimited ? { scanLimited } : {}) }; }
   async read(file) { const stat = await this.stat(file); if (!stat) return null;
     if ((stat.mode & 0xf000) !== 0x8000 || !Number.isSafeInteger(stat.size) || stat.size > LIMITS.bytes) fail('FILE', 'Only regular files up to 256 KiB can be edited.');
     const handle = await this.handle(3, str(file), uint(1), uint(0)); const chunks = []; let size = 0;
@@ -238,7 +240,7 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
   if (fs.existsSync(storagePath)) {
     const saved = JSON.parse(safeRead(storagePath, 24 * 1024 * 1024).toString());
     if (![1, 2].includes(saved.version) || !Array.isArray(saved.hosts) || saved.hosts.length > LIMITS.hosts || !Array.isArray(saved.receipts) || !Array.isArray(saved.drafts)) fail('STORE', 'Invalid remote workspace registry.');
-    for (const item of saved.hosts) { const checked = validateHost(item.config); if (!/^[a-f0-9-]{36}$/.test(item.id) || item.fingerprint !== hash(JSON.stringify(checked))) fail('STORE', 'Invalid remote host record.'); hosts.set(item.id, { id: item.id, config: checked, fingerprint: item.fingerprint }); }
+    for (const item of saved.hosts) { const checked = validateHost(item.config); if (!/^[a-f0-9-]{36}$/.test(item.id) || item.fingerprint !== hash(JSON.stringify(checked))) fail('STORE', 'Invalid remote host record.'); if (item.displayLabel !== undefined && (typeof item.displayLabel !== 'string' || !item.displayLabel.trim() || item.displayLabel.length > 100)) fail('STORE', 'Invalid remote host label.'); hosts.set(item.id, { id: item.id, config: checked, fingerprint: item.fingerprint, ...(item.displayLabel === undefined ? {} : { displayLabel: item.displayLabel }) }); }
     receipts = saved.receipts.slice(-LIMITS.receipts); drafts = saved.drafts.slice(-LIMITS.drafts);
     if (saved.worktrees !== undefined && (!Array.isArray(saved.worktrees) || saved.worktrees.length > 24)) fail('STORE', 'Invalid managed remote worktree registry.');
     worktrees = (saved.worktrees ?? []).map(record => { if (!record || !/^[a-f0-9-]{36}$/.test(record.id) || !hosts.has(record.hostId) || typeof record.path !== 'string' || typeof record.sourceRoot !== 'string' || typeof record.branch !== 'string') fail('STORE', 'Invalid managed remote worktree record.'); return ['creating', 'archiving'].includes(record.state) ? { ...record, state: 'needs-inspection' } : record; });
@@ -291,7 +293,7 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
     if (await session.sftp.realpath(joined) !== joined || (stat.mode & 0xf000) === 0xa000) fail('BOUNDARY', 'Symbolic links are outside the remote editor boundary.'); return joined;
   }
   function publicHost(host) { const session = sessions.get(host.id), effective = session?.effectiveHost;
-    return { id: host.id, ...host.config, ...(effective ? { hostname: effective.config.hostname, username: effective.config.username, port: effective.config.port } : {}),
+    return { id: host.id, ...host.config, label: host.displayLabel ?? host.config.label, ...(effective ? { hostname: effective.config.hostname, username: effective.config.username, port: effective.config.port } : {}),
       ...(host.config.connectionMode === 'ssh-config-alias' ? { sshAlias: host.config.hostname, aliasResolved: Boolean(effective),
         configuredEndpoint: { hostname: host.config.hostname, username: host.config.username, port: host.config.port, connectionMode: 'ssh-config-alias' } } : {}), fingerprint: effective?.fingerprint ?? host.fingerprint,
       connected: Boolean(session && !session.sftp.closed), canonicalRoot: session?.root ?? null, busy: busy.has(host.id),
@@ -299,9 +301,16 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
       reconnectRequired: Boolean(session?.sftp.closed || connectionStates.get(host.id) === 'disconnected'),
       activeOperation: owners.get(host.id) ?? null, cancellationRequested: controls.get(host.id)?.signal.aborted ?? false,
       unknownReceiptIds: receipts.filter(row => row.hostId === host.id && row.state === 'unknown').map(row => row.id) }; }
-  async function listRemote(s, directory = '') {
-    const target = await bounded(s, directory, true); const listing = await s.sftp.list(target);
-    return { path: directory, truncated: listing.truncated, entries: listing.entries.map(e => ({ name: e.name, path: directory ? directory + '/' + e.name : e.name,
+  const directoryPages = createDirectoryPages(LIMITS.entries);
+  async function listRemote(s, directory = '', page) {
+    const target = await bounded(s, directory, true);
+    const scope = hash(JSON.stringify([s.host.id, s.connectionId, s.root, directory]));
+    const stamp = async () => { const stat = await s.sftp.stat(target); if (!stat || (stat.mode & 0xf000) !== 0x4000) fail('DIRECTORY', 'Select a remote directory.'); return hash(JSON.stringify([stat.mode, stat.size, stat.mtime ?? null])); };
+    const revision = page === undefined ? null : await stamp();
+    const start = page === undefined ? 0 : directoryPages.offset(page, scope, revision);
+    const listing = await s.sftp.list(target, start);
+    if (page !== undefined) { await bounded(s, directory, true); if (revision !== await stamp()) directoryPages.reject(); }
+    return { path: directory, truncated: listing.truncated, ...(listing.scanLimited ? { scanLimited: true } : {}), ...(page === undefined ? {} : directoryPages.result(scope, revision, start, listing.truncated && !listing.scanLimited)), entries: listing.entries.map(e => ({ name: e.name, path: directory ? directory + '/' + e.name : e.name,
       kind: (e.mode & 0xf000) === 0x4000 ? 'directory' : (e.mode & 0xf000) === 0x8000 ? 'file' : 'blocked', size: e.size ?? null })) };
   }
   async function readRemote(s, file) {
@@ -531,7 +540,29 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
     gitListActions(id) { hostOf(id); return remoteGitReview.listActions(id); },
     gitPruneActions(id, actionIds) { hostOf(id); return remoteGitReview.pruneActions(id, actionIds); },
     listHosts: () => [...hosts.values()].map(publicHost),
-    addHost(input) { if (hosts.size >= LIMITS.hosts) fail('HOST', 'Remote host limit reached.'); const config = validateHost(input); const host = { id: randomUUID(), config, fingerprint: hash(JSON.stringify(config)) }; hosts.set(host.id, host); persist(); return publicHost(host); },
+    addHost(input) {
+      const { id, ...settings } = input ?? {};
+      const config = validateHost(settings);
+      if (id !== undefined) {
+        const host = hostOf(id);
+        if (busy.has(id)) fail('BUSY', 'Wait for the remote operation to settle.');
+        // A label is display metadata: preserve the authority fingerprint and every recovery record.
+        const authority = value => JSON.stringify([value.hostname, value.username, value.port, value.root, value.connectionMode ?? 'direct']);
+        if (authority(config) === authority(host.config)) {
+          host.displayLabel = config.label; persist(); return publicHost(host);
+        }
+        if (receipts.some(row => row.hostId === id && ['started', 'unknown'].includes(row.state))) fail('UNKNOWN', 'Reconcile this host’s uncertain transaction before changing its destination.');
+        if (drafts.some(row => row.hostId === id)) fail('DRAFT', 'Recover or discard retained drafts before changing this destination.');
+        if (worktrees.some(row => row.hostId === id) || gitReviewActions.some(row => row.hostId === id)) fail('RECOVERY', 'This destination retains managed worktree or Git recovery records; add a separate host instead.');
+        clearHostAuthority(id); sessions.get(id)?.sftp.close(); sessions.delete(id);
+        hostTransports.get(id)?.close(); connectionStates.set(id, 'disconnected');
+        host.config = config; delete host.displayLabel; host.fingerprint = hash(JSON.stringify(config));
+        persist(); return publicHost(host);
+      }
+      if (hosts.size >= LIMITS.hosts) fail('HOST', 'Remote host limit reached.');
+      const host = { id: randomUUID(), config, fingerprint: hash(JSON.stringify(config)) };
+      hosts.set(host.id, host); persist(); return publicHost(host);
+    },
     forgetHost(id) { hostOf(id); if (busy.has(id)) fail('BUSY', 'Wait for the remote operation to settle.'); if (receipts.some(row => row.hostId === id && ['started', 'unknown'].includes(row.state))) fail('UNKNOWN', 'Retain this host until its exact uncertain transaction is reconciled.'); if (worktrees.some(w => w.hostId === id)) fail('WORKTREE', 'This host retains managed worktree ownership records.'); if (gitReviewActions.some(r => r.hostId === id)) fail('GIT', 'This host retains Git action and recovery records.'); if (drafts.some(d => d.hostId === id)) fail('DRAFT', 'Recover or discard this host’s drafts before removing it.'); retireHostBindings(id); sessions.get(id)?.sftp.close(); sessions.delete(id); hosts.delete(id); hostTransports.delete(id); connectionStates.delete(id); for (const [token, a] of approvals) if (a.hostId === id) approvals.delete(token); persist(); return { removed: true }; },
     connect: id => exclusive(id, async () => { const host = hostOf(id); clearHostAuthority(id); const previous = hostTransports.get(id); previous?.close(); sessions.delete(id);
       connectionStates.set(id, 'connecting');
@@ -553,7 +584,7 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
       clearHostAuthority(id); control.abort(); hostTransports.get(id)?.close(); connectionStates.set(id, 'disconnected');
       return { requested: true, operation, remoteOutcome: 'requires-terminal-proof' };
     },
-    list: (id, directory = '') => exclusive(id, () => listRemote(connected(id), directory)),
+    list: (id, directory = '', page) => exclusive(id, () => listRemote(connected(id), directory, page)),
     preview: (id, file) => exclusive(id, () => readRemote(connected(id), file)),
     retainDraft: (id, input) => retain(id, input),
     listDrafts(id) { hostOf(id); return drafts.filter(d => d.hostId === id); },

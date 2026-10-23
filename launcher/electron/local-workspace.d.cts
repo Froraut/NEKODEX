@@ -2,7 +2,7 @@ import type { AgentWorkspaceGrant, AgentWorkspaceGrantSummary } from "./agent-wo
 
 export interface LocalWorkspaceRoot { id: string; name: string; path: string; selectedAt: string }
 export interface WorkspaceEntry { name: string; path: string; kind: "directory" | "file" | "blocked-link" | "unsupported" }
-export interface WorkspaceListing { path: string; entries: WorkspaceEntry[]; truncated: boolean }
+export interface WorkspaceListing { path: string; entries: WorkspaceEntry[]; truncated: boolean; offset?: number; previousCursor?: string | null; nextCursor?: string | null; scanLimited?: boolean }
 export interface WorkspacePreview {
   path: string; state: "text" | "missing" | "binary" | "truncated";
   revision: string | null; text: string | null; size: number; truncated?: boolean;
@@ -46,7 +46,7 @@ export interface LocalWorkspaceService {
   hasManagedRootGrant(sourceRootId: string, worktreeId: string): boolean;
   listRoots(): LocalWorkspaceRoot[];
   forgetRoot(workspaceId: string): boolean;
-  list(workspaceId: string, path?: string): WorkspaceListing;
+  list(workspaceId: string, path?: string, cursor?: string | null): WorkspaceListing;
   tree(workspaceId: string, path?: string, depth?: number): WorkspaceListing;
   preview(workspaceId: string, path: string): WorkspacePreview;
   save(workspaceId: string, input: { path: string; expectedRevision: string | null; text: string; draftId?: string }): WorkspaceSaveResult;

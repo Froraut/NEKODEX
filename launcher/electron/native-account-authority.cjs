@@ -140,7 +140,7 @@ function createNativeAccountAuthority({ authorityHome, executable, executableSha
         if (!LOGIN_STATES.has(profile.login.state) || profile.login.reasonCode !== undefined && !safeReason(profile.login.reasonCode)) throw fail('registry_unavailable', 'Native login metadata is invalid'); }
     }
     for (const receipt of value.receipts) { uuid(receipt.actionId); uuid(receipt.profileId); uuid(receipt.epoch);
-      if (!['prepare-profile', 'device-login', 'cancel-login', 'profile-config', 'remove-profile'].includes(receipt.kind) || typeof receipt.state !== 'string' || !safeReason(receipt.state.replaceAll('-', '_'))
+      if (!['prepare-profile', 'device-login', 'cancel-login', 'profile-config', 'remove-profile', 'rename-profile'].includes(receipt.kind) || typeof receipt.state !== 'string' || !safeReason(receipt.state.replaceAll('-', '_'))
         || receipt.reasonCode !== undefined && !safeReason(receipt.reasonCode)) throw fail('registry_unavailable', 'Native action metadata is invalid');
       if (receipt.loginAttemptId !== undefined) uuid(receipt.loginAttemptId);
       if (receipt.kind === 'profile-config' && ![receipt.beforeConfigSha256, receipt.candidateConfigSha256].every(value => /^[a-f0-9]{64}$/.test(value || ''))) throw fail('registry_unavailable', 'Native config transition metadata is invalid'); }
@@ -222,6 +222,16 @@ function createNativeAccountAuthority({ authorityHome, executable, executableSha
     if (value.receipts.some(receipt => receipt.actionId === actionId)) throw fail('intent_already_recorded', 'Native account actions cannot be replayed; inspect their receipt');
     if (value.receipts.length >= 512) throw fail('registry_quota', 'Native account receipt storage is full');
     value.receipts.push({ actionId, ...row });
+  }
+  function renameProfile({ actionId, profileId, epoch, expectedLabel, label } = {}) {
+    uuid(actionId); uuid(profileId); uuid(epoch);
+    if (typeof label !== 'string' || !label.trim() || label.trim().length > 80 || /\p{C}/u.test(label)
+      || typeof expectedLabel !== 'string' || expectedLabel.length > 80 || /\p{C}/u.test(expectedLabel)) throw fail('invalid_profile_label', 'Use a plain Native account label of 1–80 characters');
+    acquire(); const value = read(), profile = value.profiles.find(row => row.id === profileId && row.epoch === epoch);
+    if (!profile) throw fail('unknown_profile', 'This Native profile epoch does not exist');
+    if (profile.label !== expectedLabel) throw fail('profile_label_changed', 'The Native profile label changed; refresh before renaming');
+    intent(value, actionId, { kind: 'rename-profile', profileId, epoch, state: 'completed' });
+    profile.label = label.trim(); save(value); notify(); return profileProjection(profile);
   }
   function prepareProfile({ actionId, label } = {}) {
     uuid(actionId);
@@ -504,7 +514,7 @@ function createNativeAccountAuthority({ authorityHome, executable, executableSha
       } catch (error) { return annotate(error); }
     };
   }
-  return Object.freeze({ inspect, snapshot: inspect, prepareProfile: guardedMutation(prepareProfile),
+  return Object.freeze({ inspect, snapshot: inspect, prepareProfile: guardedMutation(prepareProfile), renameProfile: guardedMutation(renameProfile),
     beginDeviceLogin: guardedMutation(beginDeviceLogin), inspectLogin, removeProfile: guardedMutation(removeProfile),
     checkRemovable: input => { try { return { signedIn: checkRemovable(input).signedIn }; } catch (error) { error.actionRecorded = false; throw error; } }, cancelLogin: guardedMutation(cancelLogin), resolveProfile,
     publishProfileConfig: guardedMutation(publishProfileConfig), acquireProfileOwner, releaseProfileOwner,

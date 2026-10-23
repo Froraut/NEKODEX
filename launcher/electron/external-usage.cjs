@@ -289,7 +289,7 @@ function createExternalUsageService({ statePath = null, pickDirectory } = {}) {
     });
   }
   async function request(body) {
-    fields(body, ['action', 'sourceId', 'enabled', 'scope', 'catalog']);
+    fields(body, ['action', 'sourceId', 'enabled', 'scope', 'catalog', 'accountPseudonym']);
     if (body.action === 'status') return snapshot();
     if (body.action === 'import') { if (!safeId(body.sourceId)) fail('Invalid source'); return importSource(body.sourceId); }
     return exclusive(async () => {
@@ -298,6 +298,10 @@ function createExternalUsageService({ statePath = null, pickDirectory } = {}) {
       else {
         const source = next.sources.find(item => item.id === body.sourceId); if (!source) fail('Unknown external usage source');
         if (body.action === 'set-enabled' && typeof body.enabled === 'boolean') source.enabled = body.enabled;
+        else if (body.action === 'rename-source') {
+          if (typeof body.accountPseudonym !== 'string' || !/^[A-Za-z0-9_-]{1,40}$/.test(body.accountPseudonym)) fail('Use a valid account pseudonym');
+          source.accountPseudonym = body.accountPseudonym;
+        }
         else if (body.action === 'set-scope' && scopes.includes(body.scope)) source.scope = body.scope;
         else if (body.action === 'forget-source') {
           next.sources = next.sources.filter(item => item.id !== source.id);

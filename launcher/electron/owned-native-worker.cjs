@@ -279,7 +279,7 @@ function createWorkerService(options = {}, shared) {
   async function createOwnedWorker({ actionId } = {}) {
     uuid(actionId);
     if (destroyed || busy || worker && (state !== 'retired' || !worker.rpc.closed)) throw fail('worker_busy', 'Native worker owner is not available for creation');
-    if (journal.snapshot().some(row => row.actionId === actionId)) throw fail('intent_already_recorded', 'Inspect the recorded native action instead of replaying it');
+    if (journal.hasConsumedIdentity(actionId)) throw fail('intent_already_recorded', 'Inspect the recorded native action instead of replaying it');
     if (journal.snapshot().some(row => row.state === 'unknown' && !row.retired)) throw fail('reconciliation_required', 'Retire the previous uncertain worker before creating another');
     busy = 'Creating private native worker'; state = 'creating';
     let row, creationWritten = false;
@@ -338,7 +338,7 @@ function createWorkerService(options = {}, shared) {
     }
     const prepared = prepareOwnedNativeInput(text, images);
     if (prepared.imageAttachments.length && admission.imageInput !== true) throw fail('image_input_unsupported', 'Admitted Native model does not support image input');
-    if (journal.snapshot().some(row => row.actionId === actionId)) {
+    if (journal.hasConsumedIdentity(actionId)) {
       throw fail('intent_already_recorded', 'Inspect the recorded native action instead of replaying it');
     }
     if (textMode && outputSchema !== undefined) throw fail('invalid_schema', 'Canonical text conversations cannot use an Agent result schema');
@@ -389,13 +389,42 @@ function createWorkerService(options = {}, shared) {
       state = 'retired'; await worker.rpc.destroy(); throw reason;
     } finally { busy = null; }
   }
+  async function interruptOwnedTurn({ workerHandle, actionId, targetActionId, turnId } = {}) {
+    uuid(workerHandle); uuid(actionId); uuid(targetActionId); uuid(turnId);
+    const find = () => journal.snapshot().find(row => row.actionId === targetActionId && row.workerHandle === workerHandle && row.turnId === turnId);
+    const observation = receipt => ({ state: receipt.nativeStatus ? 'settled' : receipt.interruptState === 'unknown' || receipt.interruptState === 'rejected' ? 'unknown' : 'stopping', receipt });
+    let receipt = find();
+    if (!receipt || !worker || worker.handle !== workerHandle || receipt.threadId !== worker.threadId) throw fail('invalid_intent', 'Stop requires the exact owned acknowledged turn');
+    if (receipt.interruptActionId) {
+      if (receipt.interruptActionId !== actionId) throw fail('intent_already_recorded', 'Inspect the recorded Stop instead of repeating it');
+      return observation(receipt);
+    }
+    if (journal.hasConsumedIdentity(actionId)) throw fail('intent_already_recorded', 'Stop requires its own action identity');
+    if (receipt.nativeStatus) return observation(receipt); // Completion won the race; send nothing.
+    if (destroyed || !active || active.row.actionId !== targetActionId || active.row.turnId !== turnId || !receipt.ownerHeld || worker.rpc.closed) throw fail('worker_not_ready', 'The exact active turn owner is unavailable');
+    // Persist on the existing offer: Stop remains available at the action quota.
+    // Repeated calls observe this consumed intent; no timeout permits a replay.
+    receipt = update(targetActionId, { interruptActionId: actionId, interruptState: 'requested' });
+    active.row = receipt;
+    try {
+      await worker.rpc.request('turn/interrupt', { threadId: worker.threadId, turnId });
+      receipt = find();
+      if (!receipt.nativeStatus) receipt = update(targetActionId, { interruptState: 'acknowledged' });
+    } catch (reason) {
+      receipt = find();
+      if (!receipt.nativeStatus) receipt = update(targetActionId, { interruptState: reason.authoritative ? 'rejected' : 'unknown' });
+      // Neither rejection nor a missing ACK settles the original inference owner.
+    }
+    if (active?.row.actionId === targetActionId) active.row = receipt;
+    return observation(receipt);
+  }
   async function retireOwnedWorker({ workerHandle, actionId } = {}) {
     uuid(workerHandle); uuid(actionId);
     if (busy && !active) throw fail('worker_busy', 'Native creation or admission is still pending');
     const known = worker?.handle === workerHandle || journal.snapshot().some(row => row.workerHandle === workerHandle);
     if (!known) throw fail('invalid_intent', 'Native worker handle is unknown');
-    if (shared) destroyed = true;
     journal.retire(workerHandle, actionId);
+    if (shared) destroyed = true;
     if (worker?.handle === workerHandle) { if (shared && !worker.rpc.closed) held('worker_retiring'); else unknown('worker_retired'); }
     if (worker?.handle === workerHandle) {
       state = 'retiring';
@@ -454,7 +483,7 @@ function createWorkerService(options = {}, shared) {
     }
     return { threadId, items, nextCursor: page.nextCursor, excludedItems, complete: cursor === null && page.nextCursor === null && excludedItems === 0 && items.every(item => item.coverage === 'complete') };
   }
-  return Object.freeze({ createOwnedWorker, offerOwnedTurn, inspectOwnedWorker, retireOwnedWorker, observeCanonical, readCanonicalPage,
+  return Object.freeze({ createOwnedWorker, offerOwnedTurn, interruptOwnedTurn, inspectOwnedWorker, retireOwnedWorker, observeCanonical, readCanonicalPage,
     currentOperation: () => busy || (worker?.rpc.cleanupPending ? 'Awaiting exact native process cleanup' : active ? 'Awaiting private native inference outcome' : null), destroy });
 }
 function createOwnedNativeWorkerService(options = {}) { return createWorkerService(options); }
@@ -561,6 +590,13 @@ function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 30000, t
             await ready();
           },
           request: async (method, params, beforeWrite, onWaitTimeout) => {
+            if (method === 'turn/interrupt') {
+              // Cancellation is a control operation on this facade's exact existing
+              // subscription; it must not acquire an idle gate or start a process.
+              if (!id() || params?.threadId !== id() || !safeId(params.turnId) || listener.locallyClosed || threads.get(id())?.closed || threads.get(id())?.requested) throw fail('invalid_intent', 'Stop requires the exact live owned subscription');
+              if (stopped || fault) throw fault || fail('client_closed', 'Native account server is closing');
+              return rpc.request(method, params, beforeWrite, onWaitTimeout);
+            }
             const reading = persistent?.mode === CANONICAL_TEXT_MODE && ['thread/read', 'thread/items/list', 'thread/turns/list'].includes(method);
             const allowed = persistent ? ['config/read', 'configRequirements/read', 'thread/start', 'thread/fork', 'thread/resume', 'turn/start', ...(persistent.mode === CANONICAL_TEXT_MODE ? ['thread/read', 'thread/items/list', 'thread/turns/list'] : [])] : ['config/read', 'configRequirements/read', 'thread/start', 'turn/start'];
             if (!allowed.includes(method)) throw fail('unsupported_method', 'Native account facade method is unavailable');
@@ -672,7 +708,7 @@ function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 30000, t
         uuid(conversationId);
         const registry = JSON.parse(regular(registryPath, 4 * 1024 * 1024));
         const row = Array.isArray(registry.conversations) && registry.conversations.find(value => value.id === conversationId);
-        if (!row || ![2, 3].includes(row.contextVersion) || row.contextVersion === 3 && row.conversationMode !== CANONICAL_TEXT_MODE || row.revision !== revision || !['idle', 'unloaded'].includes(row.status)
+        if (!row || row.archivedAt || ![2, 3].includes(row.contextVersion) || row.contextVersion === 3 && row.conversationMode !== CANONICAL_TEXT_MODE || row.revision !== revision || !['idle', 'unloaded'].includes(row.status)
           || !isAgentNativeHistorySource(row.historySource) || canonical(row.historySource) !== canonical(admission.historySource)
           || row.profileId !== row.historySource.profileId || row.epoch !== row.historySource.authEpoch
           || !Array.isArray(registry.actions) || registry.actions.some(value => value.conversationId === conversationId && (['prepared', 'unknown'].includes(value.state) || value.ownerHeld === true))

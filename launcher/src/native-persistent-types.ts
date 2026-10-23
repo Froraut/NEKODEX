@@ -2,9 +2,12 @@ export type NativeConversationMode = 'neko-json-v1' | 'canonical-text-v1';
 export interface NativePersistentConversation {
   id: string;
   revision: number;
+  label?: string;
+  labelRevision?: number;
+  renameAvailable?: boolean;
   threadId: string | null;
   model: string;
-  status: 'idle' | 'running' | 'unknown' | 'unavailable' | 'unloaded';
+  status: 'idle' | 'running' | 'unknown' | 'unavailable' | 'unloaded' | 'archived';
   createdAt: number;
   updatedAt: number;
   parentId?: string;
@@ -14,6 +17,11 @@ export interface NativePersistentConversation {
   lastTextTruncated?: boolean;
   lastTurnId?: string;
   recordingRequiredBeforeFirstSend?: boolean;
+  archivedAt?: number;
+  stopAvailable?: boolean;
+  stopReason?: string | null;
+  archiveAvailable?: boolean;
+  archiveReason?: string | null;
   ownerAvailable: boolean;
   resumeAvailable?: boolean;
   resumeReason?: string | null;
@@ -26,8 +34,15 @@ export interface NativePersistentSnapshot {
   serverGeneration: string | null;
   models: Array<{ id: string; label?: string }>;
   conversations: NativePersistentConversation[];
-  actions: Array<{ actionId: string; kind: string; conversationId?: string; state: string; ownerHeld?: boolean; reasonCode?: string }>;
-  observedAction?: { actionId: string; kind: string; conversationId?: string; state: string; ownerHeld?: boolean; reasonCode?: string };
+  archivedConversations?: NativePersistentConversation[];
+  archivedCount?: number;
+  archivedTotalCount?: number;
+  archiveQuery?: string;
+  archivedConversationIds?: string[];
+  archiveNextCursor?: string | null;
+  quota?: { conversations: number; conversationLimit: number; actions: number; actionLimit: number };
+  actions: Array<{ actionId: string; kind: string; conversationId?: string; state: string; ownerHeld?: boolean; reasonCode?: string; nativeStatus?: 'completed' | 'failed' | 'interrupted' }>;
+  observedAction?: { actionId: string; kind: string; conversationId?: string; state: string; ownerHeld?: boolean; reasonCode?: string; nativeStatus?: 'completed' | 'failed' | 'interrupted' };
   busy: boolean;
   retention: 'explicit-native-context';
   resumeSupported: boolean;
@@ -36,12 +51,13 @@ export interface NativePersistentSnapshot {
 export interface NativePersistentContext { profileId: string; epoch: string; serverGeneration: string }
 
 export type NativePersistentRequest =
-  | { action: 'snapshot'; actionId?: string }
+  | { action: 'snapshot'; actionId?: string; archiveCursor?: string; archiveQuery?: string }
   | { action: 'create'; actionId: string; model: string; text: string; retainContext: true; expectedContext: NativePersistentContext;
       conversationMode?: NativeConversationMode; recordFutureText?: { consent: true; acknowledgeUnknownSecrets: true } }
+  | { action: 'rename'; actionId: string; conversationId: string; revision: number; expectedContext: NativePersistentContext; expectedLabel: string; label: string }
   | { action: 'send'; actionId: string; conversationId: string; revision: number; text: string; expectedContext: NativePersistentContext }
   | { action: 'fork'; actionId: string; conversationId: string; revision: number; expectedContext: NativePersistentContext; lastTurnId?: string }
-  | { action: 'closeIdle' | 'resume'; actionId: string; conversationId: string; revision: number; expectedContext: NativePersistentContext };
+  | { action: 'closeIdle' | 'resume' | 'archive' | 'stop'; actionId: string; conversationId: string; revision: number; expectedContext: NativePersistentContext };
 
 export type NativePersistentResult = { ok: true; value: NativePersistentSnapshot }
   | { ok: false; error: { code: string; message: string; knownNotStarted?: boolean; nativeTurnNotStarted?: boolean } };

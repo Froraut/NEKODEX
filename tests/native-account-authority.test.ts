@@ -313,3 +313,21 @@ function createNativeAccountAuthorityFor(f: any, afterRemovalIntent: () => void)
     testHooks: { platform: 'darwin', probePolicy() {}, afterRemovalIntent } });
   return service;
 }
+
+test('profile Rename changes only user metadata, preserves exact active lease/config/login and refuses stale labels', async () => {
+  const f = fixture(), prepared = f.prepare();
+  f.login(prepared); writeFileSync(join(f.calls[0].config.env.CODEX_HOME, 'auth.json'), '', { mode: 0o600 }); f.children[0].emit('close', 0, null);
+  const profile = f.service.inspect().profiles[0];
+  const before = new Map(diskFiles(join(f.authorityHome, 'profiles')).map(file => [file, readFileSync(file)]));
+  const lease = f.service.acquireProfileOwner({ profileId: profile.id, epoch: profile.epoch, actionId: randomUUID(), kind: 'execution' });
+  const action = { actionId: randomUUID(), profileId: profile.id, epoch: profile.epoch, expectedLabel: profile.label, label: ' Renamed account ' };
+  expect(f.service.renameProfile(action)).toEqual({ ...profile, label: 'Renamed account' });
+  expect(f.service.inspect().activeCount).toBe(1); expect(f.calls).toHaveLength(1);
+  for (const [file, bytes] of before) expect(readFileSync(file).equals(bytes)).toBe(true);
+  expect(f.service.inspect().receipts.at(-1)).toMatchObject({ actionId: action.actionId, kind: 'rename-profile', state: 'completed' });
+  expect(() => f.service.renameProfile({ ...action, actionId: randomUUID() })).toThrow('label changed');
+  expect(() => f.service.renameProfile({ ...action, actionId: randomUUID(), expectedLabel: 'Renamed account', label: 'bad\nlabel' })).toThrow('plain Native');
+  f.service.releaseProfileOwner(lease);
+  await f.service.destroy();
+  const restored = f.create(); expect(restored.inspect().profiles[0]).toEqual({ ...profile, label: 'Renamed account' });
+});

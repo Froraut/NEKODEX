@@ -1183,7 +1183,10 @@ function registerIpc({ logger, stateStore }) {
     destroy: () => workspaceGitService.destroy(),
   });
   registerWorkspaceGitIpc({ registerIpcHandler: handle, service: workspaceGitService });
-  registerWorkspaceIpc({ registerIpcHandler: handle, service: localWorkspaceService, beforeForget: id => {
+  registerWorkspaceIpc({ registerIpcHandler: handle, service: localWorkspaceService, manageRoot: async directory => {
+    const failure = await shell.openPath(directory);
+    if (failure) throw new Error(failure);
+  }, beforeForget: id => {
     loopFileWatcher?.beforeForget(id);
     if (workspaceVmExportService?.hasRetainedState(id)) throw new Error('Keep this workspace registered until its exact VM export outcome is reconciled');
     if (workspaceGitService.hasRetainedState(id)) throw new Error('Keep this folder registered to access its worktrees, archives and snapshots');
@@ -1386,7 +1389,28 @@ function registerIpc({ logger, stateStore }) {
       onChange: publishNativeAccountModels });
     return nativeAccountExecution;
   };
-  registerNativeAccounts({ handle, getAuthority: getNativeAccountAuthority, getInventory: getNativeAccountInventory,
+  registerNativeAccounts({ handle, withOwnerRecovery: async operation => {
+    let owner, entered = false;
+    try {
+      const current = currentGlobalOperation();
+      if (current || browserHost?.hasActiveTurns()) throw new Error(`Finish ${current || 'active Web tasks'} before Native recovery`);
+      // Preserve an existing browser admission owner rather than reopening its pause.
+      browserHost?.assertTurnAdmission();
+      owner = lifecycleAdmission.acquire('Native recovery and tool connection pause');
+      browserHost?.closeTurnAdmission('Native recovery');
+      lifecycleAdmission.assertOwner(owner);
+      await browserHost?.cancelReadOnlyInspections();
+      const competing = currentGlobalOperation();
+      if (competing || browserHost?.hasActiveTurns()) throw new Error(`Finish ${competing || 'active Web tasks'} before Native recovery`);
+      return await runtimeSupervisor.withNativeRecoveryQuiescence(() => { entered = true; return operation(); });
+    } catch (error) {
+      // Only failures before the unchanged authority callback are known not started.
+      if (!entered) error.actionRecorded = false;
+      throw error;
+    } finally {
+      if (owner) { lifecycleAdmission.release(owner); browserHost?.openTurnAdmission(); }
+    }
+  }, getAuthority: getNativeAccountAuthority, getInventory: getNativeAccountInventory,
     getExecution: getNativeAccountExecution,
     beforeExecutionClosed: execution => closeNativeConversationOwners(execution),
     onExecutionClosed: execution => { if (nativeAccountExecution === execution) nativeAccountExecution = null; publishNativeAccountModels(); },
@@ -1984,6 +2008,7 @@ function registerIpc({ logger, stateStore }) {
   });
   registerAccountHandlers({
     handle, getBrowserHost: () => browserHost, getAccountToolsService: () => accountToolsService,
+    getRuntimeHost: () => runtimeHost,
     isRuntimeBusy: () => quitting || shutdownInProgress || runtimeHost.currentOperation(),
     invalidateAccountProof: () => invalidateAccountProof(stateStore),
   });

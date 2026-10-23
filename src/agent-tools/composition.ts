@@ -586,6 +586,18 @@ export class AgentToolsComposition {
     if (selections.size > 64) throw new Error("Selected skill task scope limit exceeded");
     writePrivateMetadata(this.skillStatePath, { version: 1, roots: this.skillRoots, selections: [...selections.values()] }); this.selections = selections; return selected;
   }
+  deselectSkill(scope: ToolScope, identity: SkillIdentity, explicitUserAction: boolean) {
+    if (!explicitUserAction) throw new Error("Explicit selected skill removal required"); this.scope(scope);
+    const key = JSON.stringify([scope.taskId, scope.generation]);
+    const row = this.selections.get(key);
+    if (!row) return this.status();
+    // Exact retained identity: never clear a newer selected revision or another task.
+    const skills = row.skills.filter(skill => !(skill.id === identity.id && skill.grantId === identity.grantId && skill.digest === identity.digest && skill.relativePath === identity.relativePath && skill.source === identity.source && skill.bytes === identity.bytes));
+    const selections = new Map(this.selections);
+    if (skills.length) selections.set(key, { ...row, skills }); else selections.delete(key);
+    writePrivateMetadata(this.skillStatePath, { version: 1, roots: this.skillRoots, selections: [...selections.values()] });
+    this.selections = selections; return this.status();
+  }
   selectedSkillContent(scope: ToolScope): SelectedSkill[] {
     this.scope(scope);
     const selections = this.selections.get(JSON.stringify([scope.taskId, scope.generation]))?.skills ?? [];

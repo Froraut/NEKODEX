@@ -21,7 +21,10 @@ async function fixture(capacity = 3, terminalTimeoutMs = 50) {
   let admissionId = 'a'.repeat(64); const model = 'synthetic-model';
   const profileId = randomUUID(), epoch = randomUUID();
   const historySource = { profileId, authEpoch: epoch, backendAccountId: 'synthetic-account', sourceId: 'c'.repeat(64) };
+  const interrupted = new Map<string, () => void>();
+  let holdInterrupt = false;
   const forkParents = new Map<string, string | null>();
+  let holdClose = false, closeSeen: (() => void) | undefined;
   let emitThreadClose: ((id: string) => void) | undefined, holdResume = false, resumeSeen: (() => void) | undefined;
   const admission: any = { paths, historySource, provider: 'openai', serverGeneration: randomUUID(), compileOutputSchema: compileAgentNativeOutputSchema,
     prestart: () => ({ executable: '/inert-owned-wrapper', args: ['--stdio'], paths, environment: {} }),
@@ -57,6 +60,7 @@ async function fixture(capacity = 3, terminalTimeoutMs = 50) {
             const params = request.params, turnId = randomUUID(), threadId = params.threadId;
             histories.get(threadId)!.push(params.input[0].text);
             response(request, { turn: { id: turnId } });
+            interrupted.set(threadId, () => event('turn/completed', { threadId, turn: { id: turnId, status: 'interrupted' } }));
             const finish = () => {
               event('item/completed', { threadId, turnId, completedAtMs: Date.now(), item: { type: 'userMessage', id: randomUUID(), clientId: params.clientUserMessageId, content: params.input } });
               event('item/completed', { threadId, turnId, completedAtMs: Date.now(), item: { type: 'agentMessage', id: randomUUID(), phase: 'final_answer', text: JSON.stringify({ protocol: 'neko-agent-v1', kind: 'final', requestId: null, toolId: null, argumentsJson: null, summary: `Observed ${params.input[0].text}` }) } });
@@ -65,7 +69,8 @@ async function fixture(capacity = 3, terminalTimeoutMs = 50) {
             if (holdNext) { holdNext = false; held.set(threadId, finish); } else finish();
             turnWaiters.get(params.input[0].text)?.(); turnWaiters.delete(params.input[0].text);
           }
-          if (request.method === 'thread/unsubscribe') { response(request, {}); event('thread/closed', { threadId: request.params.threadId }); }
+          if (request.method === 'turn/interrupt' && !holdInterrupt) response(request, {});
+          if (request.method === 'thread/unsubscribe') { response(request, {}); if (holdClose) { closeSeen?.(); } else event('thread/closed', { threadId: request.params.threadId }); }
         }); done();
       } });
       child.stdin.on('finish', () => { processClosed = true; child.emit('close', 0, null); });
@@ -81,6 +86,15 @@ async function fixture(capacity = 3, terminalTimeoutMs = 50) {
   let service = createPersistentNativeConversations({ getExecution: () => context, storageRoot });
   const create = (text = 'first') => ({ actionId: randomUUID(), model, text, retainContext: true, expectedContext });
   return { root, get server() { return server; }, get service() { return service; }, methods, histories, get expectedContext() { return expectedContext; }, create, storageRoot, launches: () => launches, hold: () => { holdNext = true; },
+    async rewriteRegistry(edit: (state: any) => void) {
+      await service.destroy();
+      const file = join(storageRoot, 'registry.json'), value = JSON.parse(readFileSync(file, 'utf8')); edit(value);
+      writeFileSync(file, JSON.stringify(value), { mode: 0o600 });
+      service = createPersistentNativeConversations({ getExecution: () => context, storageRoot });
+    },
+    interruptTerminal: (threadId: string) => { interrupted.get(threadId)!(); held.delete(threadId); },
+    holdInterrupt: () => { holdInterrupt = true; },
+    holdClose: () => { holdClose = true; return new Promise<void>(resolve => { closeSeen = resolve; }); },
     emitOldClose: (threadId: string) => emitThreadClose!(threadId),
     holdResume: () => { holdResume = true; return new Promise<void>(resolve => { resumeSeen = resolve; }); },
     async restart() {
@@ -93,7 +107,7 @@ async function fixture(capacity = 3, terminalTimeoutMs = 50) {
     },
     rejectCreate: () => { rejectNextCreate = true; }, aliasCreate: () => { aliasNextCreate = true; },
     waitForTurn: (text: string) => new Promise<void>(resolve => { turnWaiters.set(text, resolve); }),
-    release: (threadId = held.keys().next().value) => { const finish = held.get(threadId!); held.delete(threadId!); finish!(); }, switchContext: () => { context = { ...context, epoch: randomUUID() }; },
+    release: (threadId = held.keys().next().value) => { const finish = held.get(threadId!); held.delete(threadId!); finish!(); }, switchContext: () => { context = { ...context, epoch: randomUUID() }; }, restoreContext: () => { context = { ...context, epoch }; },
     async close() { await Promise.all([service.destroy(), server.destroy()]); expect(processClosed || launches === 0).toBe(true); rmSync(root, { recursive: true, force: true }); } };
 }
 
@@ -354,5 +368,223 @@ test('legacy retained rows remain readable metadata but cannot Resume without pr
     expect(f.service.list().conversations[0]).toMatchObject({ id: original.id, resumeAvailable: false, resumeReason: 'legacy_identity_unproven' });
     await expect(f.service.resume({ actionId: randomUUID(), conversationId: original.id, revision: 1, expectedContext: f.expectedContext })).rejects.toMatchObject({ actionRecorded: false });
     expect(f.methods.filter(row => row.method === 'thread/resume')).toHaveLength(0);
+  } finally { await f.close(); }
+});
+
+test('Archive releases both full active quotas, preserves receipts/context and retries never send after restart', async () => {
+  const f = await fixture();
+  try {
+    const first = f.create('retained first'); await f.service.create(first);
+    const original = f.service.list().conversations[0];
+    await f.rewriteRegistry(value => {
+      const row = value.conversations[0];
+      for (let i = 1; i < 128; i++) value.conversations.push({ ...row, id: randomUUID(), threadId: randomUUID(), status: 'unloaded' });
+      for (let i = 1; i < 512; i++) value.actions.push({ ...value.actions[0], actionId: randomUUID(), fingerprint: 'fixture-only' });
+    });
+    expect(f.service.list().quota).toMatchObject({ conversations: 128, actions: 512 });
+    await expect(f.service.create(f.create('refused'))).rejects.toMatchObject({ code: 'registry_quota', actionRecorded: false });
+    const action = { actionId: randomUUID(), conversationId: original.id, revision: original.revision, expectedContext: f.expectedContext };
+    const before = f.methods.length;
+    const archived = await f.service.archive(action);
+    expect(f.methods).toHaveLength(before); // Unloaded registry metadata never opens a subscription.
+    expect(archived.quota).toMatchObject({ conversations: 127, actions: 0 });
+    expect(archived.archivedConversations[0]).toMatchObject({ id: original.id, status: 'archived', threadId: original.threadId,
+      lastSummary: 'Observed retained first', resumeAvailable: false, archiveAvailable: false });
+    expect(archived.archivedConversationIds).toEqual([original.id]);
+    expect(f.service.inspectAction(first.actionId)).toMatchObject({ state: 'completed', ownerHeld: false });
+    const disk = JSON.parse(readFileSync(join(f.storageRoot, 'registry.json'), 'utf8'));
+    expect(disk.actions).toHaveLength(513); expect(disk.conversations).toHaveLength(128);
+    await f.service.create(f.create('after archive'));
+    const sent = f.methods.filter(row => row.method === 'turn/start').length;
+    await f.restart();
+    await f.service.create(first); await f.service.archive(action);
+    expect(f.methods.filter(row => row.method === 'turn/start')).toHaveLength(sent);
+    expect(f.service.list().archivedCount).toBe(1);
+    await expect(f.service.resume({ ...action, actionId: randomUUID(), revision: original.revision + 1, expectedContext: f.expectedContext })).rejects.toMatchObject({ code: 'stale_conversation', actionRecorded: false });
+  } finally { await f.close(); }
+});
+
+test('Archive retires only the exact idle subscription and keeps other loaded conversations usable', async () => {
+  const f = await fixture();
+  try {
+    await f.service.create(f.create('one')); await f.service.create(f.create('two'));
+    const [one, two] = f.service.list().conversations;
+    const before = f.methods.filter(row => row.method === 'turn/start').length;
+    await f.service.archive({ actionId: randomUUID(), conversationId: one.id, revision: one.revision, expectedContext: f.expectedContext });
+    expect(f.methods.filter(row => row.method === 'thread/unsubscribe').map(row => row.params.threadId)).toEqual([one.threadId]);
+    expect(f.methods.filter(row => row.method === 'turn/start')).toHaveLength(before);
+    expect(f.service.list().conversations[0]).toMatchObject({ id: two.id, ownerAvailable: true });
+    await f.service.send({ actionId: randomUUID(), conversationId: two.id, revision: two.revision, text: 'continued', expectedContext: f.expectedContext });
+    expect(f.histories.get(two.threadId)).toEqual(['two', 'continued']);
+  } finally { await f.close(); }
+});
+
+test('Archive retains uncertain intent across account change and passive retry; prepared/unknown/owner-held cannot archive', async () => {
+  const f = await fixture();
+  try {
+    await f.service.create(f.create()); const row = f.service.list().conversations[0];
+    const seen = f.holdClose();
+    const input = { actionId: randomUUID(), conversationId: row.id, revision: row.revision, expectedContext: f.expectedContext };
+    const work = f.service.archive(input); await seen;
+    expect(f.service.inspectAction(input.actionId)).toMatchObject({ state: 'prepared', ownerHeld: true });
+    f.switchContext(); f.emitOldClose(row.threadId);
+    await expect(work).rejects.toMatchObject({ code: 'stale_account', actionRecorded: true });
+    expect(f.service.inspectAction(input.actionId)).toMatchObject({ state: 'unknown', ownerHeld: false });
+    const calls = f.methods.length; await f.service.archive(input); expect(f.methods).toHaveLength(calls);
+    const disk = JSON.parse(readFileSync(join(f.storageRoot, 'registry.json'), 'utf8'));
+    expect(disk.conversations[0].archivedAt).toBeUndefined();
+    f.restoreContext(); await f.restart();
+    expect(f.service.list().conversations[0].archiveAvailable).toBe(false);
+    await expect(f.service.archive({ ...input, actionId: randomUUID(), revision: row.revision + 1, expectedContext: f.expectedContext })).rejects.toMatchObject({ code: 'archive_unavailable', actionRecorded: false });
+  } finally { await f.close(); }
+});
+
+test('Archive listing is account scoped and paginated; settled failed receipts do not permanently spend active slots', async () => {
+  const f = await fixture();
+  try {
+    await f.service.create(f.create());
+    await f.rewriteRegistry(value => {
+      const row = value.conversations[0];
+      for (let i = 0; i < 51; i++) value.conversations.push({ ...row, id: randomUUID(), archivedAt: Date.now() - i, status: 'unloaded' });
+      value.conversations.push({ ...row, id: randomUUID(), epoch: randomUUID(), archivedAt: Date.now(), status: 'unloaded' });
+      for (let i = 0; i < 512; i++) value.actions.push({ actionId: randomUUID(), conversationId: randomUUID(), kind: 'create', state: 'failed', ownerHeld: false, fingerprint: 'failed-fixture' });
+    });
+    const first = f.service.list(); expect(first.archivedCount).toBe(51); expect(first.archivedConversations).toHaveLength(50);
+    expect(first.quota.actions).toBe(1);
+    expect(f.service.list({ archiveCursor: first.archiveNextCursor }).archivedConversations).toHaveLength(1);
+    await f.service.create(f.create('not blocked by failed history'));
+  } finally { await f.close(); }
+});
+
+test('Stop works at the action quota while Send is pending; ACK waits terminal and exact cleanup then Resume', async () => {
+  const f = await fixture(3, 5000);
+  try {
+    await f.service.create(f.create('old'));
+    await f.rewriteRegistry(value => { for (let i = 1; i < 511; i++) value.actions.push({ ...value.actions[0], actionId: randomUUID(), fingerprint: 'old-completed-fixture' }); });
+    f.hold(); const turnSeen = f.waitForTurn('held'), input = f.create('held'), sending = f.service.create(input);
+    await turnSeen; await Promise.resolve();
+    const active = f.service.list().conversations.find((row: any) => row.status === 'running');
+    expect(f.service.list().quota.actions).toBe(512); expect(active.stopAvailable).toBe(true);
+    const stop = { actionId: randomUUID(), conversationId: active.id, revision: active.revision, expectedContext: f.expectedContext };
+    const response = await f.service.stop(stop);
+    expect(response.conversations.find((row: any) => row.id === active.id)).toMatchObject({ revision: active.revision, stopAvailable: false, status: 'running' });
+    expect(f.service.inspectAction(stop.actionId)).toMatchObject({ state: 'stopping', ownerHeld: true });
+    await f.service.stop(stop);
+    expect(f.methods.filter(row => row.method === 'turn/interrupt')).toHaveLength(1);
+    const closed = f.holdClose(); f.interruptTerminal(active.threadId); await sending; await closed;
+    expect(f.service.inspectAction(stop.actionId).state).toBe('stopping');
+    f.emitOldClose(active.threadId);
+    // Await a concrete service completion observation without arbitrary sleeps.
+    await f.service.destroy();
+    expect(f.service.inspectAction(stop.actionId)).toMatchObject({ state: 'completed', ownerHeld: false, nativeStatus: 'interrupted' });
+    const disk = JSON.parse(readFileSync(join(f.storageRoot, 'registry.json'), 'utf8'));
+    expect(disk.conversations.find((row: any) => row.id === active.id)).toMatchObject({ status: 'unloaded', revision: active.revision, activeActionId: input.actionId });
+    expect(disk.actions.find((row: any) => row.actionId === input.actionId)).toMatchObject({ state: 'failed', nativeStatus: 'interrupted' });
+    await f.restart();
+    const resumed = await f.service.resume({ actionId: randomUUID(), conversationId: active.id, revision: active.revision, expectedContext: f.expectedContext });
+    expect(resumed.conversations.find((row: any) => row.id === active.id).status).toBe('idle');
+    expect(f.methods.filter(row => row.method === 'turn/start')).toHaveLength(2);
+  } finally { await f.close(); }
+});
+
+test('lost Stop ACK remains nonreplayable and late exact terminal settles the retained Stop', async () => {
+  const f = await fixture(3, 5000);
+  try {
+    f.hold(); const turnSeen = f.waitForTurn('held-stop'), sending = f.service.create(f.create('held-stop'));
+    await turnSeen; await Promise.resolve(); const row = f.service.list().conversations[0];
+    f.holdInterrupt(); const input = { actionId: randomUUID(), conversationId: row.id, revision: row.revision, expectedContext: f.expectedContext };
+    await f.service.stop(input);
+    expect(f.service.inspectAction(input.actionId)).toMatchObject({ state: 'unknown', ownerHeld: true });
+    await f.service.stop(input);
+    await expect(f.service.stop({ ...input, actionId: randomUUID() })).rejects.toMatchObject({ actionRecorded: false, code: 'stop_unavailable' });
+    expect(f.methods.filter(row => row.method === 'turn/interrupt')).toHaveLength(1);
+    f.interruptTerminal(row.threadId); await sending; await f.service.destroy();
+    expect(f.service.inspectAction(input.actionId)).toMatchObject({ state: 'completed', nativeStatus: 'interrupted' });
+  } finally { await f.close(); }
+});
+
+test('Archive accepts a known failed settled subscription without manufacturing an unknown retirement', async () => {
+  const f = await fixture(3, 5000);
+  try {
+    f.hold(); const turnSeen = f.waitForTurn('failed-turn'), sending = f.service.create(f.create('failed-turn'));
+    await turnSeen; await Promise.resolve(); const row = f.service.list().conversations[0];
+    f.interruptTerminal(row.threadId); await sending;
+    // The matching closed event is delivered by the same in-memory fixture queue.
+    await Promise.resolve();
+    const current = f.service.list().conversations[0]; expect(current.archiveAvailable).toBe(true);
+    const input = { actionId: randomUUID(), conversationId: row.id, revision: current.revision, expectedContext: f.expectedContext };
+    await f.service.archive(input);
+    expect(f.service.inspectAction(input.actionId)).toMatchObject({ state: 'completed', ownerHeld: false });
+    expect(f.service.list().archivedCount).toBe(1);
+  } finally { await f.close(); }
+});
+
+test('Archive byte-cap refusal preserves exact revision/status/actions before any retirement or Native RPC', async () => {
+  const f = await fixture();
+  try {
+    await f.service.create(f.create('retained near byte cap'));
+    await f.rewriteRegistry(value => {
+      value.padding = '';
+      value.padding = 'x'.repeat(4 * 1024 * 1024 - Buffer.byteLength(JSON.stringify(value)) - 64);
+    });
+    const before = f.service.list(), row = before.conversations[0], calls = f.methods.length;
+    const bytes = readFileSync(join(f.storageRoot, 'registry.json'));
+    const input = { actionId: randomUUID(), conversationId: row.id, revision: row.revision, expectedContext: f.expectedContext };
+    await expect(f.service.archive(input)).rejects.toMatchObject({ code: 'registry_quota', actionRecorded: false, registryWriteDisposition: 'not-written' });
+    expect(f.service.list()).toEqual(before);
+    expect(f.service.inspectAction(input.actionId)).toBeUndefined();
+    expect(readFileSync(join(f.storageRoot, 'registry.json')).equals(bytes)).toBe(true);
+    expect(f.methods).toHaveLength(calls);
+  } finally { await f.close(); }
+});
+
+test('conversation Rename preserves live Send revision/context, uses metadata-only receipt and cannot edit archives', async () => {
+  const f = await fixture(3, 5000);
+  try {
+    await f.service.create(f.create('first')); const original = f.service.list().conversations[0];
+    f.hold(); const seen = f.waitForTurn('continued'), send = { actionId: randomUUID(), conversationId: original.id, revision: original.revision, expectedContext: f.expectedContext, text: 'continued' };
+    const sending = f.service.send(send); await seen; await Promise.resolve();
+    const before = JSON.parse(readFileSync(join(f.storageRoot, 'registry.json'), 'utf8')), row = before.conversations[0], calls = f.methods.length;
+    const rename = { actionId: randomUUID(), conversationId: row.id, revision: row.revision, expectedContext: f.expectedContext, expectedLabel: '', label: ' My retained work ' };
+    const result = await f.service.rename(rename);
+    expect(result.conversations[0]).toMatchObject({ label: 'My retained work', revision: row.revision, status: 'running', stopAvailable: true });
+    const after = JSON.parse(readFileSync(join(f.storageRoot, 'registry.json'), 'utf8'));
+    expect(after.conversations[0]).toEqual({ ...row, label: 'My retained work', labelRevision: 1 });
+    expect(after.selected).toEqual(before.selected); expect(result.quota.actions).toBe(2); expect(f.methods).toHaveLength(calls);
+    expect(f.service.inspectAction(rename.actionId)).toMatchObject({ kind: 'rename', state: 'completed', ownerHeld: false });
+    await f.service.rename(rename); expect(f.methods).toHaveLength(calls);
+    f.release(original.threadId); await sending;
+    expect(f.service.list().conversations[0]).toMatchObject({ label: 'My retained work', revision: row.revision, lastSummary: 'Observed continued', status: 'idle' });
+    await expect(f.service.rename({ ...rename, actionId: randomUUID(), expectedLabel: '', label: 'stale' })).rejects.toMatchObject({ code: 'conversation_label_changed', actionRecorded: false });
+    await f.service.rename({ ...rename, actionId: randomUUID(), expectedLabel: 'My retained work', label: '' });
+    expect(f.service.list().conversations[0].label).toBeUndefined();
+    expect(f.service.list().conversations[0].labelRevision).toBe(2);
+    await f.service.archive({ actionId: randomUUID(), conversationId: row.id, revision: row.revision, expectedContext: f.expectedContext });
+    expect(f.service.list().archivedConversations[0].renameAvailable).toBe(false);
+    await expect(f.service.rename({ ...rename, actionId: randomUUID(), revision: row.revision + 1 })).rejects.toMatchObject({ actionRecorded: false });
+  } finally { await f.close(); }
+});
+
+test('archive query pages bounded scoped metadata with query-bound cursor and never filters active conversation metadata', async () => {
+  const f = await fixture();
+  try {
+    await f.service.create(f.create('first'));
+    await f.rewriteRegistry(value => {
+      const row = value.conversations[0]; row.label = 'Active draft';
+      for (let i = 0; i < 51; i++) value.conversations.push({ ...row, id: randomUUID(), label: 'Needle ' + i, archivedAt: Date.now() - i, status: 'unloaded' });
+      value.conversations.push({ ...row, id: randomUUID(), label: 'Other title', lastSummary: 'Other summary', archivedAt: Date.now(), status: 'unloaded' });
+      value.conversations.push({ ...row, id: randomUUID(), epoch: randomUUID(), label: 'Needle foreign scope', archivedAt: Date.now(), status: 'unloaded' });
+    });
+    const active = f.service.list().conversations;
+    const page = f.service.list({ archiveQuery: ' Needle ' });
+    expect(page).toMatchObject({ archivedCount: 51, archivedTotalCount: 52, archiveQuery: 'Needle' });
+    expect(page.archivedConversations).toHaveLength(50); expect(page.conversations).toEqual(active);
+    expect(page.archivedConversationIds).toHaveLength(52);
+    expect(f.service.list({ archiveQuery: 'NEEDLE', archiveCursor: page.archiveNextCursor }).archivedConversations).toHaveLength(1);
+    expect(() => f.service.list({ archiveQuery: 'Other', archiveCursor: page.archiveNextCursor })).toThrow('query changed');
+    const selected = page.archivedConversations[0]; expect(f.service.list({ archiveQuery: selected.id }).archivedConversations.map((row: any) => row.id)).toEqual([selected.id]);
+    expect(f.service.list({ archiveQuery: 'Other summary' }).archivedCount).toBe(1);
+    expect(() => f.service.list({ archiveQuery: 'x'.repeat(121) })).toThrow('at most 120');
+    expect(f.service.list({ archiveQuery: 'no match' }).conversations).toEqual(active);
   } finally { await f.close(); }
 });

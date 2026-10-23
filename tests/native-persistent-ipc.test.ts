@@ -79,3 +79,55 @@ test('Native account shutdown closes the transport while a conversation awaits i
     { async destroy() { events.push('other-settled'); } })).rejects.toThrow('retained-owner');
   expect(events.at(-1)).toBe('other-settled');
 });
+
+test('archive IPC preserves known receipt after row leaves active list and pages metadata without renderer capabilities', async () => {
+  let handler: Function = () => {}; const context = { profileId: randomUUID(), epoch: randomUUID(), serverGeneration: randomUUID() };
+  const id = randomUUID(), actionId = randomUUID(), archiveCursor = randomUUID();
+  const calls: any[] = [], action = { actionId, kind: 'archive', conversationId: id, state: 'completed' };
+  const source = { conversations: [], actions: [], archivedConversations: [{ id, revision: 2, status: 'archived', createdAt: 1, updatedAt: 2,
+    model: 'fixture', threadId: randomUUID(), archivedAt: 2, lastSummary: 'Retained preview', ownerAvailable: false, resumeAvailable: false, archiveAvailable: false,
+    historySource: { private: 'not-renderer-authority' } }], archivedCount: 1, archivedConversationIds: [id], archiveNextCursor: null,
+    quota: { conversations: 0, conversationLimit: 128, actions: 0, actionLimit: 512 } };
+  registerPersistentNativeConversations({ handle: (_: string, value: Function) => { handler = value; }, getContext: () => context,
+    getService: () => ({ list: (input: any) => { calls.push(input); return source; }, inspectAction: () => action,
+      archive: async (input: any) => { calls.push(input); return source; } }) });
+  const result = await handler(null, { action: 'archive', actionId, conversationId: id, revision: 1, expectedContext: context });
+  expect(result).toMatchObject({ ok: true, value: { observedAction: action, conversations: [], archivedCount: 1, quota: { actions: 0 } } });
+  expect(JSON.stringify(result)).not.toContain('not-renderer-authority');
+  await handler(null, { action: 'snapshot', archiveCursor }); expect(calls.at(-1)).toEqual({ archiveCursor });
+  const invalid = await handler(null, { action: 'archive', actionId: randomUUID(), conversationId: id, revision: 2, expectedContext: context, threadId: randomUUID() });
+  expect(invalid).toMatchObject({ ok: false, error: { knownNotStarted: true, code: 'invalid_request' } });
+});
+
+test('Stop IPC accepts only opaque conversation identity and projects stopping without inventing terminal success', async () => {
+  let handler: Function = () => {}; const expectedContext = { profileId: randomUUID(), epoch: randomUUID(), serverGeneration: randomUUID() };
+  const id = randomUUID(), actionId = randomUUID(), calls: any[] = [];
+  const receipt = { actionId, conversationId: id, kind: 'stop', state: 'stopping', ownerHeld: true };
+  const source = { conversations: [{ id, revision: 2, model: 'fixture', status: 'running', createdAt: 1, updatedAt: 1, stopAvailable: false, stopReason: 'stop_already_requested' }], actions: [receipt] };
+  registerPersistentNativeConversations({ handle: (_: string, value: Function) => { handler = value; }, getContext: () => expectedContext,
+    getService: () => ({ stop: async (input: any) => { calls.push(input); return source; }, list: () => source, inspectAction: () => receipt }) });
+  const request = { action: 'stop', actionId, conversationId: id, revision: 2, expectedContext };
+  const response = await handler(null, request);
+  expect(response).toMatchObject({ ok: true, value: { observedAction: receipt, conversations: [{ status: 'running', stopAvailable: false }] } });
+  expect(calls[0]).toEqual({ actionId, conversationId: id, revision: 2, expectedContext });
+  expect(await handler(null, { ...request, turnId: randomUUID() })).toMatchObject({ ok: false, error: { code: 'invalid_request', knownNotStarted: true } });
+  expect(await handler(null, { ...request, expectedContext: { ...expectedContext, epoch: randomUUID() } })).toMatchObject({ ok: false, error: { code: 'context_changed', knownNotStarted: true } });
+  expect(calls).toHaveLength(1);
+});
+
+test('metadata Rename and archive-query IPC project label-only intent and retain full active metadata', async () => {
+  let handler: Function = () => {}; const expectedContext = { profileId: randomUUID(), epoch: randomUUID(), serverGeneration: randomUUID() };
+  const id = randomUUID(), actionId = randomUUID(), calls: any[] = [];
+  const receipt = { actionId, conversationId: id, kind: 'rename', state: 'completed' };
+  const source = { conversations: [{ id, revision: 2, label: 'New label', renameAvailable: true, status: 'running', model: 'fixture', createdAt: 1, updatedAt: 1 }],
+    actions: [receipt], archivedConversations: [], archivedCount: 0, archivedTotalCount: 3, archiveQuery: 'needle' };
+  registerPersistentNativeConversations({ handle: (_: string, value: Function) => { handler = value; }, getContext: () => expectedContext,
+    getService: () => ({ rename: async (input: any) => { calls.push(input); return source; }, list: (input: any) => { calls.push(input); return source; }, inspectAction: () => receipt }) });
+  const request = { action: 'rename', actionId, conversationId: id, revision: 2, expectedContext, expectedLabel: '', label: 'New label' };
+  expect(await handler(null, request)).toMatchObject({ ok: true, value: { observedAction: receipt, conversations: [{ id, revision: 2, label: 'New label', status: 'running' }] } });
+  expect(calls[0]).toEqual({ actionId, conversationId: id, revision: 2, expectedContext, expectedLabel: '', label: 'New label' });
+  expect(await handler(null, { action: 'snapshot', archiveQuery: 'needle' })).toMatchObject({ ok: true, value: { archivedCount: 0, archivedTotalCount: 3, archiveQuery: 'needle', conversations: [{ id }] } });
+  expect(calls.at(-1)).toEqual({ archiveCursor: undefined, archiveQuery: 'needle' });
+  expect(await handler(null, { ...request, threadId: randomUUID() })).toMatchObject({ ok: false, error: { code: 'invalid_request', knownNotStarted: true } });
+  expect(await handler(null, { action: 'snapshot', archiveQuery: 'x'.repeat(121) })).toMatchObject({ ok: false, error: { code: 'invalid_request' } });
+});

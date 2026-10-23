@@ -29,6 +29,7 @@ const copy = {
     gitBaseMissing: "The selected base branch is no longer available. Choose a base and capture changes again.",
     gitCheck: "Check snapshot freshness", current: "Current snapshot", stale: "Snapshot is stale — capture changes again",
     noChanges: "No tracked changes in this captured diff.", noStatus: "The working tree is clean.",
+    previousPage: "Previous", nextPage: "Next", startPage: "Start / Refresh", pageLimit: "Directory scan limit reached. Use the relative file path or open this folder in the file manager.",
     noGit: "Capture the folder's Git status to review changes.", limited: "Output is truncated.", gitBinary: "Includes binary changes.",
     recovering: "Recovered draft; the file remains unchanged.", kept: "The file was saved. The recovery draft is still retained.",
   },
@@ -51,6 +52,7 @@ const copy = {
     gitBaseMissing: "Выбранная базовая ветка больше недоступна. Выберите базу и получите изменения заново.",
     gitCheck: "Проверить актуальность снимка", current: "Актуальный снимок", stale: "Снимок устарел — получите изменения заново",
     noChanges: "В этом снимке нет изменений отслеживаемых файлов.", noStatus: "Рабочее дерево чистое.",
+    previousPage: "Назад", nextPage: "Далее", startPage: "Сначала / Обновить", pageLimit: "Достигнут предел просмотра папки. Введите относительный путь файла или откройте папку в файловом менеджере.",
     noGit: "Получите состояние Git этой папки для просмотра изменений.", limited: "Результат сокращён.", gitBinary: "Есть двоичные изменения.",
     recovering: "Черновик восстановлен; файл на диске не изменён.", kept: "Файл сохранён. Резервный черновик пока остаётся доступным.",
   },
@@ -70,27 +72,34 @@ function DirectoryBranch({ workspaceId, directory, label, onOpen, c, initialOpen
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const navigate = (next: string | null) => { setCursor(next); setListing(null); setRetry(value => value + 1); };
   useEffect(() => {
     if (!expanded || listing) return;
     let current = true; setLoading(true); setError("");
-    api().workspaceList(workspaceId, directory).then((value) => { if (current) setListing(value); })
+    api().workspaceListPage(workspaceId, directory, cursor).then((value) => { if (current) setListing(value); })
       .catch((reason) => { if (current) setError(message(reason)); }).finally(() => { if (current) setLoading(false); });
     return () => { current = false; };
-  }, [workspaceId, directory, expanded, listing, retry]);
+  }, [workspaceId, directory, expanded, listing, retry, cursor]);
   return <div className="nk-workspace__branch">
     <button type="button" className="nk-workspace__tree-row" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
       <span aria-hidden="true">{expanded ? "▾" : "▸"}</span><span>{label}</span>
     </button>
     {expanded && <div className="nk-workspace__children">
       {loading && <p role="status">{c.loading}</p>}
-      {error && <Notice tone="error" action={<Button size="sm" onClick={() => setRetry(retry + 1)}>{c.refresh}</Button>}>{error}</Notice>}
+      {error && <Notice tone="error" action={<Button size="sm" onClick={() => navigate(null)}>{c.refresh}</Button>}>{error}</Notice>}
       {listing?.entries.map((entry) => entry.kind === "directory"
         ? <DirectoryBranch key={entry.path} workspaceId={workspaceId} directory={entry.path} label={entry.name} onOpen={onOpen} c={c} />
         : <button type="button" key={entry.path} className="nk-workspace__tree-row" onClick={() => onOpen(entry.path)}
           disabled={entry.kind !== "file"} title={entry.kind !== "file" ? c.blocked : entry.path}>
           <span aria-hidden="true">{entry.kind === "file" ? "·" : "↗"}</span><span>{entry.name}</span>
         </button>)}
-      {listing?.truncated && <p>{c.limited}</p>}
+      {listing && <div className="nk-workspace__actions">
+        <Button size="sm" disabled={loading || !listing.previousCursor} onClick={() => navigate(listing.previousCursor!)}>{c.previousPage}</Button>
+        <Button size="sm" disabled={loading || !listing.nextCursor} onClick={() => navigate(listing.nextCursor!)}>{c.nextPage}</Button>
+        <Button size="sm" disabled={loading} onClick={() => navigate(null)}>{c.startPage}</Button>
+      </div>}
+      {listing?.scanLimited && <p>{c.pageLimit}</p>}
     </div>}
   </div>;
 }
@@ -184,6 +193,8 @@ export function WorkspaceSurface({ language }: { language: Language }) {
   const retryFoldersButton = useRef<HTMLButtonElement>(null);
   const [selected, setSelected] = useState("");
   const [opened, setOpened] = useState("");
+  const [createMode, setCreateMode] = useState(false);
+  const [createIntent, setCreateIntent] = useState(false);
   const [pathInput, setPathInput] = useState("");
   const [drafts, setDrafts] = useState<WorkspaceDraft[]>([]);
   const [error, setError] = useState("");
@@ -258,7 +269,7 @@ export function WorkspaceSurface({ language }: { language: Language }) {
     if (paths?.includes(opened) && !retainedPaths.includes(opened)) setEditorVersion(previous => previous + 1);
     void refreshDrafts();
   };
-  const open = (path: string) => { void navigate(() => { setDirtyPaths([]); setOpened(path); setPathInput(path); }); };
+  const open = (path: string, creating = false) => { void navigate(() => { setDirtyPaths([]); setOpened(path); setPathInput(path); setCreateIntent(creating); setCreateMode(false); setEditorVersion(value => value + 1); }); };
   return <Page width="wide" className="nk-workspace" >
     <SurfaceHeader title={c.title} subtitle={c.subtitle} actions={<Button ref={folderButton} variant="primary" busy={picking} disabled={rootsLoading} onClick={() => void pick()}>{c.pick}</Button>} />
     {error && <Notice tone="error">{error}</Notice>}
@@ -268,22 +279,27 @@ export function WorkspaceSurface({ language }: { language: Language }) {
     {roots.length > 0 && <div className="nk-workspace__root-bar">
       <Select label={c.folder} value={selected} onChange={(id) => { void navigate(() => { setOpened(""); setSelected(id); }); }} options={[{ value: "", label: c.folder }, ...roots.map((item) => ({ value: item.id, label: item.name }))]} />
       {root && <><code className="nk-workspace__root-path">{root.path}</code>
+        <Button size="sm" onClick={() => void api().workspaceManageRoot(root.id).catch(reason => setError(message(reason)))}>{language === "ru" ? "Управлять папкой в файловом менеджере" : "Manage folder in file manager"}</Button>
         <Button size="sm" onClick={() => void forget()} disabled={Boolean(opened)} title={opened ? c.close : undefined}>{c.remove}</Button></>}
     </div>}
     {rootsKnown && !root && <Panel><p>{c.empty}</p></Panel>}
     {root && <>
+      <p>{language === "ru" ? "Создавайте папки, переименовывайте и перемещайте файлы в корзину через файловый менеджер. Затем обновите список файлов здесь." : "Create folders, rename files or move them to Trash in the system file manager. Then refresh the file list here."}</p>
       {drafts.length > 0 && <Panel title={c.drafts} padding="compact"><div className="nk-workspace__drafts">
         {drafts.map((draft) => <Button size="sm" key={draft.id} onClick={() => open(draft.path)}>{draft.path}</Button>)}
       </div></Panel>}
       <div className="nk-workspace__layout">
         <Panel title={c.files} className="nk-workspace__files" padding="compact" actions={<Button size="sm" onClick={() => { setVersion(version + 1); void refreshDrafts(); }}>{c.refresh}</Button>}>
           <DirectoryBranch key={`${root.id}:${version}`} workspaceId={root.id} directory="" label={root.name} onOpen={open} c={c} initialOpen />
-          <form onSubmit={(event) => { event.preventDefault(); if (pathInput) open(pathInput); }}>
+          <Button size="sm" onClick={() => { setCreateMode(true); setPathInput(""); }}>{language === "ru" ? "Новый файл" : "New file"}</Button>
+          {createMode && <p>{language === "ru" ? "Укажите путь внутри папки. Файл появится после сохранения." : "Enter a path inside this folder. The file is created when you Save."}</p>}
+          <form onSubmit={(event) => { event.preventDefault(); if (pathInput) open(pathInput, createMode); }}>
             <TextField label={c.path} value={pathInput} onChange={(event) => setPathInput(event.target.value)} />
-            <Button size="sm" type="submit" disabled={!pathInput}>{c.open}</Button>
+            <Button size="sm" type="submit" disabled={!pathInput}>{createMode ? (language === "ru" ? "Подготовить новый файл" : "Prepare new file") : c.open}</Button>
+            {createMode && <Button size="sm" onClick={() => setCreateMode(false)}>{c.cancel}</Button>}
           </form>
         </Panel>
-        {opened ? <WorkspaceEditor key={`${root.id}:${opened}:${editorVersion}`} workspaceId={root.id} path={opened} c={c} host={api} onChanged={() => void refreshDrafts()} editorPort={editorPort}
+        {opened ? <WorkspaceEditor key={`${root.id}:${opened}:${editorVersion}`} workspaceId={root.id} path={opened} language={language} createIntent={createIntent} c={c} host={api} onChanged={() => void refreshDrafts()} editorPort={editorPort}
           onDirty={(path, dirty) => setDirtyPaths(previous => dirty ? previous.includes(path) ? previous : [...previous, path] : previous.filter(item => item !== path))}
           onClose={() => { setOpened(""); setDirtyPaths([]); void refreshDrafts(); }} />
           : <Panel title={c.editor}><p>{c.selectFile}</p></Panel>}

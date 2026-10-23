@@ -41,7 +41,9 @@ export interface AgentModeStatus {
   ownerId?: string;
   models: { id: string; label?: string; provider?: 'local-responses' | 'owned-native'; admissionId?: string; available?: boolean; accepting?: boolean; imageInput?: boolean; maxConcurrent?: number }[];
   capabilities: { tools: boolean; workspace: boolean; autoSchedule: boolean; observedEvidence?: boolean; loopSource?: 'mailbox'; externalWatchers?: boolean; semanticReview?: { available: boolean; providers: 'local-responses'[] } };
-  tasks: AgentTask[];
+  tasks: Pick<AgentTask, 'id' | 'originalRequest' | 'status' | 'mode' | 'generation' | 'turns' | 'bounds' | 'archivedAt'>[];
+  offset?: number;
+  nextOffset?: number | null;
   total?: number;
   truncated?: boolean;
   archived?: number;

@@ -624,8 +624,10 @@ export interface RouteDiagnosticsReport {
 export interface LauncherApi extends NativeThreadsApi, NativePersistentApi, WorkspaceTerminalApi, RemoteWorkspaceApi, WorkspaceGitControlsApi, LocalGitReviewApi {
   workspaceRoots(): Promise<LocalWorkspaceRoot[]>;
   workspaceOpenWorktree(sourceRootId: string, worktreeId: string): Promise<LocalWorkspaceRoot>;
+  workspaceManageRoot(id: string): Promise<void>;
   workspacePick(): Promise<LocalWorkspaceRoot | null>;
   workspaceForget(id: string): Promise<boolean>;
+  workspaceListPage(id: string, path?: string, cursor?: string | null): Promise<WorkspaceListing>;
   workspaceList(id: string, path?: string): Promise<WorkspaceListing>;
   workspacePreview(id: string, path: string): Promise<WorkspacePreview>;
   workspaceSave(id: string, input: { path: string; expectedRevision: string | null; text: string; draftId?: string }): Promise<WorkspaceSaveResult>;
@@ -762,6 +764,9 @@ export interface LauncherApi extends NativeThreadsApi, NativePersistentApi, Work
   openCodexLogin(flowId: string, id: string): Promise<boolean>;
   cancelCodexLogin(flowId: string, id: string): Promise<CodexLoginProgress>;
   copyCodexLoginCode(flowId: string, id: string): Promise<boolean>;
+  renameAccount(id: string, label: string): Promise<AccountPoolSnapshot>;
+  removeAccount(id: string, confirmed: boolean): Promise<AccountPoolSnapshot>;
+  reauthenticateAccount(id: string, confirmed: boolean): Promise<BrowserState>;
   addAccount(label: string): Promise<AccountPoolSnapshot>;
   selectAccount(id: string): Promise<AccountPoolSnapshot>;
   setAccountEnabled(id: string, enabled: boolean): Promise<AccountPoolSnapshot>;

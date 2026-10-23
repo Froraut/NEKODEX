@@ -176,11 +176,11 @@ export function ConversationHistorySurface({ api, language = "en" }: { api: Conv
     </div>
     <Panel title={copy.import}>
       <form onSubmit={saveSelection} className="conversation-history__import">
-        <TextField label={copy.task} value={draftThread} onChange={event => { setDraftThread(event.target.value); setChecked(false); renewDraft(); }} maxLength={120} required />
-        <div className="conversation-history__actions"><Select label={copy.role} value={draftRole} onChange={value => { setDraftRole(value); setChecked(false); renewDraft(); }} options={[{value:"user",label:"user"},{value:"assistant",label:"assistant"}]} /><Select label={copy.author} value={draftAuthor} onChange={value => { setDraftAuthor(value); setChecked(false); renewDraft(); }} options={[{value:"unknown",label:"unknown"},{value:"human",label:"human"},{value:"assistant",label:"assistant"},{value:"agent",label:"agent"}]} /></div>
-        <label className="conversation-history__text-field"><span>{copy.text}</span><textarea value={draftText} onChange={event => { setDraftText(event.target.value); setChecked(false); renewDraft(); }} rows={7} required aria-invalid={draftTooLarge || undefined} aria-describedby="history-draft-size" /></label>
+        <TextField disabled={busy} label={copy.task} value={draftThread} onChange={event => { setDraftThread(event.target.value); setChecked(false); renewDraft(); }} maxLength={120} required />
+        <div className="conversation-history__actions"><Select disabled={busy} label={copy.role} value={draftRole} onChange={value => { setDraftRole(value); setChecked(false); renewDraft(); }} options={[{value:"user",label:"user"},{value:"assistant",label:"assistant"}]} /><Select disabled={busy} label={copy.author} value={draftAuthor} onChange={value => { setDraftAuthor(value); setChecked(false); renewDraft(); }} options={[{value:"unknown",label:"unknown"},{value:"human",label:"human"},{value:"assistant",label:"assistant"},{value:"agent",label:"agent"}]} /></div>
+        <label className="conversation-history__text-field"><span>{copy.text}</span><textarea disabled={busy} value={draftText} onChange={event => { setDraftText(event.target.value); setChecked(false); renewDraft(); }} rows={7} required aria-invalid={draftTooLarge || undefined} aria-describedby="history-draft-size" /></label>
         <p id="history-draft-size" role={draftTooLarge ? "alert" : undefined}>{draftBytes.toLocaleString()} / {(status?.maxMessageBytes ?? 524288).toLocaleString()} bytes{draftTooLarge ? (language === "ru" ? " — превышен лимит сообщения; выберите меньший текст. Текст не обрезан." : " — message limit exceeded; select less text. Text has not been truncated.") : ""}</p>
-        <Checkbox checked={checked} onChange={setChecked} label={copy.checked} />
+        <Checkbox disabled={busy} checked={checked} onChange={setChecked} label={copy.checked} />
         <div className="conversation-history__actions"><Button type="submit" disabled={busy || !status?.recordingEnabled || status.quotaReached || draftTooLarge || !checked || !draftThread.trim() || !draftText.trim()}>{copy.save}</Button></div>
       </form>
     </Panel>

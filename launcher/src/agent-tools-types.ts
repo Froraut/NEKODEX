@@ -30,7 +30,7 @@ export interface AgentToolsApi {
 export interface ManagedInstallReceipt {
   actionId: string; catalogId: string; state: string; allowedRoot: string;
   graphSha256?: string; lockSha256?: string; graph?: { name: string; version: string; integrity: string }[];
-  runtime?: string; archive?: string; tree?: { sha256: string; files: number }; reason?: string;
+  runtime?: string; archive?: string; childPid?: number; tree?: { sha256: string; files: number }; reason?: string;
 }
 export interface ManagedSkillVersionView {
   versionId: string; lineageId: string; label: string; contentDigest: string; bytes: number;

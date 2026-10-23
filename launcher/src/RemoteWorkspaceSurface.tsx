@@ -13,7 +13,7 @@ const copy = {
     status: 'Connection status', connected: 'Connected', connecting: 'Connecting', disconnected: 'Disconnected', active: 'An operation still owns this host', statusRefresh: 'Refresh status',
     cancelOperation: 'Cancel SSH transport', cancelling: 'Requesting cancellation…', cancellationPending: 'Transport cancellation requested; waiting for the operation receipt.', noActiveOperation: 'There is no active operation to cancel.',
     cancelHint: 'Cancels the local SSH connection. A remote process may continue; inspect its exact receipt and outcome before another mutation.', reconnectHint: 'Connect explicitly after the current operation settles. Previous command approvals cannot be reused.',
-    files: 'Files', refresh: 'Refresh', up: 'Parent folder', path: 'Relative file path', open: 'Open file', save: 'Save remote file', draft: 'Retain draft locally',
+    previousPage: 'Previous', nextPage: 'Next', pageLimit: 'Directory scan limit reached. Enter a relative file path to open a file directly.', files: 'Files', refresh: 'Refresh', up: 'Parent folder', path: 'Relative file path', open: 'Open file', save: 'Save remote file', draft: 'Retain draft locally',
     empty: 'Add a host, select it and connect. Connections start only when you choose Connect.', changed: 'Unsaved draft', retained: 'Draft retained locally', saved: 'Saved and read back from the remote host',
     binary: 'This binary file cannot be edited here.', missing: 'Saving creates a new file in this remote folder.', conflict: 'The remote version changed. Your draft is retained. Read the current version and deliberately choose a new baseline.',
     review: 'Read current remote version', baseline: 'Use this version as the save baseline', latest: 'Current remote version', drafts: 'Recoverable drafts', recover: 'Recover', discard: 'Discard draft',
@@ -29,7 +29,7 @@ const copy = {
     status: 'Состояние подключения', connected: 'Подключено', connecting: 'Подключение', disconnected: 'Отключено', active: 'Сервер ещё занят операцией', statusRefresh: 'Обновить состояние',
     cancelOperation: 'Отменить соединение SSH', cancelling: 'Запрашивается отмена…', cancellationPending: 'Отмена соединения запрошена; ожидается квитанция операции.', noActiveOperation: 'Нет активной операции для отмены.',
     cancelHint: 'Отменяется локальное соединение SSH. Процесс на сервере может продолжаться; перед новым изменением проверьте точную квитанцию и результат.', reconnectHint: 'Подключитесь явно после завершения текущей операции. Прежние подтверждения команд повторно не используются.',
-    files: 'Файлы', refresh: 'Обновить', up: 'Родительская папка', path: 'Относительный путь файла', open: 'Открыть файл', save: 'Сохранить на сервере', draft: 'Сохранить черновик локально',
+    previousPage: 'Назад', nextPage: 'Далее', pageLimit: 'Достигнут предел просмотра папки. Введите относительный путь файла, чтобы открыть его напрямую.', files: 'Файлы', refresh: 'Обновить', up: 'Родительская папка', path: 'Относительный путь файла', open: 'Открыть файл', save: 'Сохранить на сервере', draft: 'Сохранить черновик локально',
     empty: 'Добавьте сервер, выберите его и подключитесь. Подключение начинается только по кнопке «Подключиться».', changed: 'Есть несохранённый черновик', retained: 'Черновик сохранён локально', saved: 'Файл сохранён и прочитан с сервера',
     binary: 'Двоичный файл нельзя редактировать здесь.', missing: 'Сохранение создаст новый файл внутри этой папки.', conflict: 'Версия на сервере изменилась. Черновик сохранён. Прочитайте текущую версию и явно выберите новую основу сохранения.',
     review: 'Прочитать текущую версию', baseline: 'Использовать эту версию как основу', latest: 'Текущая версия на сервере', drafts: 'Сохранённые черновики', recover: 'Восстановить', discard: 'Удалить черновик',
@@ -48,6 +48,7 @@ export default function RemoteWorkspaceSurface({ language, api }: { language: La
   const [hosts, setHosts] = useState<RemoteHost[]>([]);
   const [selected, setSelected] = useState('');
   const [form, setForm] = useState(initialHost);
+  const [editingHost, setEditingHost] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const cancellationOwner = useRef<string | null>(null);
@@ -65,6 +66,7 @@ export default function RemoteWorkspaceSurface({ language, api }: { language: La
   const draftQueue = useRef<Promise<unknown>>(Promise.resolve());
   const [listing, setListing] = useState<RemoteListing | null>(null);
   const [filePath, setFilePath] = useState('');
+  const [createMode, setCreateMode] = useState(false);
   const [preview, setPreview] = useState<RemotePreview | null>(null);
   const [latest, setLatest] = useState<RemotePreview | null>(null);
   const [text, setText] = useState('');
@@ -117,14 +119,14 @@ export default function RemoteWorkspaceSurface({ language, api }: { language: La
   async function act(action: () => Promise<void>) { setBusy(true); setError(''); setNote(''); try { await action(); } catch (e) { if (alive.current) setError(message(e)); }
     finally { if (alive.current) { setBusy(false); void refreshHosts().catch(() => {}); } } }
   async function keepCurrent() { const d = editorDraft.current; if (d?.dirty) { await retain(d); if (alive.current && selection.current === d.hostId) setNote(c.retained); } }
-  async function choose(id: string) { await act(async () => { await keepCurrent(); setSelected(id); selection.current = id; editorDraft.current = null;
+  async function choose(id: string) { await act(async () => { await keepCurrent(); setEditingHost(null); setForm(initialHost); setCreateMode(false); setSelected(id); selection.current = id; editorDraft.current = null;
     setPreview(null); setLatest(null); setListing(null); setText(''); setDirty(false); setFilePath(''); setOutput(null); setApproval(null); setReceipts([]); setDrafts([]); if (id) await refreshHost(id); }); }
-  async function loadDirectory(id: string, directory: string) { const rows = await api.remoteWorkspaceList(id, directory); if (selection.current === id && alive.current) setListing(rows); }
-  async function openFile(file: string) { const id = selected; await act(async () => { await keepCurrent(); const p = await api.remoteWorkspacePreview(id, file); const ds = await api.remoteWorkspaceDrafts(id);
-    if (selection.current !== id || !alive.current) return; const draft = ds.find(d => d.path === file); const value = draft?.text ?? p.text ?? '';
+  async function loadDirectory(id: string, directory: string, cursor: string | null = null) { const rows = await api.remoteWorkspaceListPage(id, directory, cursor); if (selection.current === id && alive.current) setListing(rows); }
+  async function openFile(file: string, creating = false) { const id = selected; await act(async () => { await keepCurrent(); const p = await api.remoteWorkspacePreview(id, file); const ds = await api.remoteWorkspaceDrafts(id);
+    if (selection.current !== id || !alive.current) return; if (creating && p.state !== 'missing') throw new Error(language === 'ru' ? 'Файл уже существует. Откройте его или выберите другой путь.' : 'A file already exists. Open it or choose another path.'); const draft = ds.find(d => d.path === file); const value = draft?.text ?? p.text ?? '';
     const baseline = draft ? { ...p, revision: draft.expectedRevision } : p;
-    setPreview(baseline); setLatest(draft && draft.expectedRevision !== p.revision ? p : null); setText(value); setDirty(Boolean(draft)); setFilePath(file);
-    editorDraft.current = { hostId: id, path: file, text: value, expectedRevision: baseline.revision, dirty: Boolean(draft) }; await refreshHost(id);
+    setPreview(baseline); setLatest(draft && draft.expectedRevision !== p.revision ? p : null); setText(value); setDirty(Boolean(draft) || creating); setCreateMode(false); setFilePath(file);
+    editorDraft.current = { hostId: id, path: file, text: value, expectedRevision: baseline.revision, dirty: Boolean(draft) || creating }; await refreshHost(id);
   }); }
   function edit(value: string) { setText(value); setDirty(true); if (editorDraft.current) editorDraft.current = { ...editorDraft.current, text: value, dirty: true }; }
   const connected = Boolean(host?.connected);
@@ -140,8 +142,9 @@ export default function RemoteWorkspaceSurface({ language, api }: { language: La
       <TextField label={c.port} type="number" min={1} max={65535} value={form.port ?? ''} placeholder={form.connectionMode === 'ssh-config-alias' ? 'SSH config / 22' : ''} disabled={operationBusy} onChange={e => setForm({ ...form, port: e.target.value === '' && form.connectionMode === 'ssh-config-alias' ? null : Number(e.target.value) })} />
       <TextField className="nk-remote__wide-field" label={c.root} value={form.root} placeholder="/home/user/project" disabled={operationBusy} onChange={e => setForm({ ...form, root: e.target.value })} />
       <Button disabled={operationBusy || !form.label || !form.hostname || !form.root || form.connectionMode !== 'ssh-config-alias' && (!form.username || form.port === null)} onClick={() => void act(async () => {
-        await keepCurrent(); const row = await api.remoteWorkspaceAddHost(form); await refreshHosts(); setForm(initialHost); setSelected(row.id); selection.current = row.id; editorDraft.current = null; setPreview(null); setText(''); setDirty(false); setFilePath(''); setListing(null); setOutput(null); setApproval(null); setNote(c.savedHosts); await refreshHost(row.id);
-      })}>{c.add}</Button>
+        await keepCurrent(); const row = await api.remoteWorkspaceAddHost({ ...form, ...(editingHost ? { id: editingHost } : {}) }); await refreshHosts(); setForm(initialHost); setEditingHost(null); setSelected(row.id); selection.current = row.id; editorDraft.current = null; setPreview(null); setText(''); setDirty(false); setFilePath(''); setListing(null); setOutput(null); setApproval(null); setNote(c.savedHosts); await refreshHost(row.id);
+      })}>{editingHost ? (language === 'ru' ? 'Сохранить изменения' : 'Save changes') : c.add}</Button>
+      {editingHost && <Button disabled={operationBusy} onClick={() => { setForm(initialHost); setEditingHost(null); }}>{c.cancel}</Button>}
     </div>
       <div className="nk-remote__host-selection nk-remote__labelled-select"><label htmlFor="nk-remote-selected-host">{c.host}</label><Select id="nk-remote-selected-host" label={c.host} value={selected} disabled={operationBusy} options={[{ value: '', label: '—' }, ...hosts.map(h => ({ value: h.id, label: `${h.label} · ${h.sshAlias ? `${h.sshAlias} → ` : ''}${h.username || 'SSH config'}@${h.hostname}:${h.port ?? 'SSH config'}` }))]} onChange={value => void choose(value)} /></div>
       {host && <div className="nk-remote__host-status">
@@ -159,6 +162,7 @@ export default function RemoteWorkspaceSurface({ language, api }: { language: La
         {unresolved && <Notice tone="warning">{c.unknown}</Notice>}
       </div>}
       <div className="nk-remote__actions nk-remote__host-actions">
+        <Button disabled={operationBusy || !host} onClick={() => { if (!host) return; const endpoint = host.configuredEndpoint ?? host; setForm({ label: host.label, hostname: endpoint.hostname, username: endpoint.username, port: endpoint.port, connectionMode: endpoint.connectionMode, root: host.root }); setEditingHost(host.id); }}>{language === 'ru' ? 'Изменить сервер / название' : 'Edit host / rename'}</Button>
         <Button disabled={operationBusy || !host || connected} onClick={() => void act(async () => { await api.remoteWorkspaceConnect(selected); await refreshHosts(); await loadDirectory(selected, ''); await refreshHost(selected); })}>{c.connect}</Button>
         <Button disabled={operationBusy || !connected} onClick={() => void act(async () => { await keepCurrent(); await api.remoteWorkspaceDisconnect(selected); setListing(null); setApproval(null); })}>{c.disconnect}</Button>
         <Button disabled={!host || cancelling || !(busy || host.busy) || Boolean(host.cancellationRequested) || !api.remoteWorkspaceCancelOperation} onClick={() => void cancelTransport()}>{cancelling ? c.cancelling : c.cancelOperation}</Button>
@@ -172,8 +176,14 @@ export default function RemoteWorkspaceSurface({ language, api }: { language: La
         <Button size="sm" disabled={operationBusy || !connected || !listing?.path} onClick={() => void act(() => loadDirectory(selected, listing!.path.split('/').slice(0, -1).join('/')))}>{c.up}</Button></div>
       <p><code>{listing?.path || '/'}</code></p>
       <div className="nk-remote__files">{listing?.entries.map(e => <button type="button" key={e.path} disabled={operationBusy || e.kind === 'blocked'} onClick={() => e.kind === 'directory' ? void act(() => loadDirectory(selected, e.path)) : void openFile(e.path)}><span aria-hidden="true">{e.kind === 'directory' ? '▸ ' : e.kind === 'file' ? '· ' : '↗ '}</span>{e.name}</button>)}</div>
-      {listing?.truncated && <p>300 {c.files.toLowerCase()}…</p>}
-      <div className="nk-remote__actions nk-remote__path-actions"><TextField label={c.path} value={filePath} disabled={operationBusy} onChange={e => setFilePath(e.target.value)} /><Button disabled={operationBusy || !connected || !filePath} onClick={() => void openFile(filePath)}>{c.open}</Button></div>
+      {listing && <div className="nk-remote__actions">
+        <Button size="sm" disabled={operationBusy || !connected || !listing.previousCursor} onClick={() => void act(() => loadDirectory(selected, listing.path, listing.previousCursor!))}>{c.previousPage}</Button>
+        <Button size="sm" disabled={operationBusy || !connected || !listing.nextCursor} onClick={() => void act(() => loadDirectory(selected, listing.path, listing.nextCursor!))}>{c.nextPage}</Button>
+      </div>}
+      {listing?.scanLimited && <p>{c.pageLimit}</p>}
+      <div className="nk-remote__actions nk-remote__path-actions"><Button size="sm" disabled={operationBusy || !connected} onClick={() => { setCreateMode(true); setFilePath(''); }}>{language === 'ru' ? 'Новый файл' : 'New file'}</Button>
+      {createMode && <p>{language === 'ru' ? 'Укажите путь внутри папки. Новый файл появится после сохранения.' : 'Enter a path inside this folder. The new file is created when you Save.'}</p>}
+      <TextField label={c.path} value={filePath} disabled={operationBusy} onChange={e => setFilePath(e.target.value)} /><Button disabled={operationBusy || !connected || !filePath} onClick={() => void openFile(filePath, createMode)}>{createMode ? (language === 'ru' ? 'Подготовить новый файл' : 'Prepare new file') : c.open}</Button>{createMode && <Button disabled={operationBusy} onClick={() => setCreateMode(false)}>{c.cancel}</Button>}</div>
     </Panel><Panel title={preview?.path ?? c.files} className="nk-remote__panel">
       <p>{c.limit}</p>{dirty && <BadgeRow role="status"><Badge tone="warning">{c.changed}</Badge></BadgeRow>}
       {preview?.state === 'binary' && <Notice>{c.binary}</Notice>}{preview?.state === 'missing' && <p>{c.missing}</p>}

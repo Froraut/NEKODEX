@@ -150,7 +150,7 @@ class AccountBrowserPool {
       for (const [key, id] of Object.entries(saved)) {
         if (!/^[a-f0-9]{64}$/.test(key)) throw new Error('Invalid account conversation key');
         validateAccountId(id);
-        if (!this.registry.snapshot().accounts.some(account => account.id === id)) throw new Error('Account affinity references an unknown account');
+        if (!this.registry.hasRetainedOwner(id)) throw new Error('Account affinity references an unknown account');
         this.affinity.set(key, id);
       }
     } catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -247,6 +247,7 @@ class AccountBrowserPool {
   }
   getHost(id) {
     validateAccountId(id);
+    if (this.registry.isRemoved(id)) throw Object.assign(new Error('This conversation belongs to an account removed from NEKODEX; it cannot be routed to another account'), { code: 'account_removed', accountId: id });
     if (!this.registry.snapshot().accounts.some(account => account.id === id)) throw new Error('Unknown ChatGPT account');
     if (this.hosts.has(id)) return this.hosts.get(id);
     const basePartition = this.options.partition;
@@ -504,12 +505,14 @@ class AccountBrowserPool {
   setAccountSafety(id, policy) {
     if (this.destroyed) throw new Error('ChatGPT account pool is closed');
     validateAccountId(id);
+    if (this.registry.isRemoved(id)) throw Object.assign(new Error('This conversation belongs to an account removed from NEKODEX; it cannot be routed to another account'), { code: 'account_removed', accountId: id });
     if (!this.registry.snapshot().accounts.some(account => account.id === id)) throw new Error('Unknown ChatGPT account');
     this.safety.setPolicy(id, policy); this.publish(); return this.accountSnapshot();
   }
   resumeAccount(id) {
     if (this.destroyed) throw new Error('ChatGPT account pool is closed');
     validateAccountId(id);
+    if (this.registry.isRemoved(id)) throw Object.assign(new Error('This conversation belongs to an account removed from NEKODEX; it cannot be routed to another account'), { code: 'account_removed', accountId: id });
     if (!this.registry.snapshot().accounts.some(account => account.id === id)) throw new Error('Unknown ChatGPT account');
     this.safety.resume(id); this.publish(); return this.accountSnapshot();
   }
@@ -681,6 +684,57 @@ class AccountBrowserPool {
     // Codex lists the selected account's models; switch them with the account.
     if (previous !== id) void this.saveSelectedCapabilities();
     return this.accountSnapshot();
+  }
+  renameAccount(id, label) {
+    if (this.destroyed || this.addingAccount) throw new Error('Account metadata is unavailable during the current transition');
+    this.registry.rename(id, label);
+    const row = this.registry.snapshot().accounts.find(account => account.id === id);
+    const entry = this.workspaceDirectory.accounts.get(id);
+    if (entry) { entry.label = row.label; entry.manager.label = row.label; }
+    this.publish();
+    return this.accountSnapshot();
+  }
+  async removeAccount(id, removeBindings) {
+    this.registry.assertRemovable(id);
+    if (typeof removeBindings !== 'function') throw new Error('Account removal owner is unavailable');
+    const host = this.getHost(id);
+    // Even settled tabs may own drafts or retained receipts. Do not close them implicitly.
+    const assertClosed = () => {
+      if (host.turnTabs.size || host.activeTraceId || host.workspaceBrowser?.snapshot().items.some(row => row.state === 'open')
+        || host.workspaceContents?.size || host.apiPanelContents?.size) throw new Error('Close this account’s task tabs and browser workspace windows before removing it');
+      if (this.taskLedgers?.get(id)?.snapshot().some(task => !task.terminal)) throw new Error('Finish or resolve this account’s retained tasks before removing it');
+      this.registry.assertRemovable(id);
+    };
+    assertClosed();
+    const release = this.acquireAccountOperation(id, 'account removal');
+    this.evidenceRestoreSuppressed ??= new Set(); this.evidenceRestoreSuppressed.add(id);
+    let committed = false;
+    try {
+      const fallback = this.registry.snapshot().accounts.find(row => row.id !== id && row.enabled);
+      if (this.registry.snapshot().selectedId === id && fallback) await this.getHost(fallback.id).ready();
+      await removeBindings(() => {
+        assertClosed();
+        const current = this.registry.snapshot();
+        if (current.selectedId === id && current.accounts.find(row => row.id !== id && row.enabled)?.id !== fallback?.id) throw new Error('Enabled account selection changed; review removal again');
+        // Synchronous durable metadata commit follows exact peer retirement/config commit.
+        this.registry.remove(id); committed = true;
+      });
+      const restore = this.evidenceRestores.get(id);
+      if (restore) { restore.cancelled = true; if (restore.timer) clearTimeout(restore.timer); restore.wake?.(); }
+      this.evidenceRestores.delete(id); this.evidenceRefreshing.delete(id);
+      this.workspaceRegistrations.get(id)?.(); this.workspaceRegistrations.delete(id);
+      this.workspaceSessionMutations.get(id)?.invalidate('Account removed from NEKODEX'); this.workspaceSessionMutations.delete(id);
+      host.destroy(); this.hosts.delete(id);
+      // Keep private history bytes, but do not project orphan display rows with
+      // no live account label or offer retry against a removed routing owner.
+      this.taskLedgers?.delete(id);
+      this.capabilities.delete(id); this.connectors.delete(id); this.publishedAuthentication.delete(id);
+      this.selectionRevision++; this.writeDescriptor(); this.syncVisibility(); this.publish();
+      return this.accountSnapshot();
+    } catch (error) {
+      if (committed) throw new Error('The account was removed, but local view cleanup needs a refresh. Removal was not replayed.', { cause: error });
+      throw error;
+    } finally { release(); this.evidenceRestoreSuppressed.delete(id); }
   }
   setAccountEnabled(id, enabled) {
     const account = this.registry.snapshot().accounts.find(candidate => candidate.id === id);
@@ -1201,7 +1255,11 @@ class AccountBrowserPool {
       throw error;
     } finally { if (detectCapabilities) this.publish(); }
   }
-  async openAccountLogin(id) {
+  async reauthenticateAccount(id, confirmed) {
+    if (confirmed !== true) throw new Error('Confirm clearing this account’s local ChatGPT session before signing in again');
+    return this.openAccountLogin(id, true);
+  }
+  async openAccountLogin(id, reauthenticate = false) {
     this.assertAccountOperationAvailable(id);
     await this.selectAccount(id);
     const releaseOperation = this.acquireAccountOperation(id, 'ChatGPT account login');
@@ -1214,6 +1272,12 @@ class AccountBrowserPool {
     try {
       if (this.selectionRevision !== revision || this.registry.snapshot().selectedId !== id) {
         throw new Error('Account selection changed before login started');
+      }
+      if (reauthenticate) {
+        if (host.browserInteractionMode() === 'manual') throw new Error('In Manual mode, sign out and sign in directly in this account’s browser');
+        this.invalidateEvidence(id);
+        await host.logout();
+        this.toolProof.forget(id);
       }
       if (host.browserInteractionMode() === "manual") {
         host.activateHomeSurface();

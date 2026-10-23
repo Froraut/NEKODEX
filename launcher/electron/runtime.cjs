@@ -707,6 +707,56 @@ class RuntimeHost {
     return result;
   }
 
+  /** Retire both exact account bindings before committing a hidden retained owner.
+   * Config is committed before metadata so a crash can leave a visible disconnected
+   * account, never a hidden account with a restartable tunnel. */
+  removeAccountBindings(accountId, commitMetadata) {
+    const operation = async () => {
+      require('./account-registry.cjs').validateAccountId(accountId);
+      if (typeof commitMetadata !== 'function') throw new Error('Account metadata commit is required');
+      if (this.currentOperation()) throw new Error('Finish the current runtime operation before removing an account');
+      const store = require('./account-tunnels.cjs');
+      const current = this.runtimeConfigSnapshot();
+      const before = current.configured ? store.accountTunnelConfigSnapshot(this.supervisor.configPath) : null;
+      // Missing/legacy config cannot authorize retiring an already-owned scoped
+      // peer. Keep the account visible until the normal runtime owner recovers it.
+      if (before?.config.accountTunnelMode !== true && [...(this.supervisor.accountTunnelSupervisor?.peers?.values() ?? [])]
+        .some(peer => peer.binding?.accountId === accountId)) throw new Error('Account tunnel configuration is unavailable; repair the runtime before removing this account');
+      let committedConfig = null;
+      this.lifecycleOperation = 'account-removal';
+      try {
+        if (before?.config.accountTunnelMode === true) {
+          // Both modes are retired even when only one mode is currently active.
+          const peers = this.supervisor.accountPeers();
+          peers.configure(before.config);
+          await peers.prepareChange(accountId, 'automatic');
+          await peers.prepareChange(accountId, 'manual');
+          const retained = store.validateAccountTunnelBindings(before.config.accountTunnels).filter(row => row.accountId !== accountId);
+          const next = store.projectAccountTunnels(before.config, retained);
+          // Full-mode schema requires its legacy compatibility pointer. In
+          // accountTunnelMode it has no startup/admission authority; only the
+          // filtered accountTunnels array is supervised. Credential bytes stay.
+          committedConfig = store.writeAccountTunnelConfig(before, next);
+        }
+        // Must be synchronous: no IPC/provider work between the two durable commits.
+        commitMetadata();
+      } catch (error) {
+        if (committedConfig) {
+          try { store.writeAccountTunnelConfig(committedConfig, before.config); }
+          catch (rollbackError) { throw new AggregateError([error, rollbackError], 'Account removal failed; tunnel rollback needs inspection. The account record was retained.'); }
+        }
+        try { await this.supervisor.syncAccountTunnels(); }
+        catch (recoveryError) { throw new AggregateError([error, recoveryError], 'The account was retained. Tunnel configuration was preserved or restored, but peer recovery needs inspection.'); }
+        throw error;
+      } finally { this.lifecycleOperation = null; }
+      // No removed binding remains to be restarted. Retained peers keep their owners.
+      return { removed: true };
+    };
+    const result = (this.accountTunnelQueue ?? Promise.resolve()).then(operation);
+    this.accountTunnelQueue = result.catch(() => {});
+    return result;
+  }
+
   captureSetupCheckpoint(snapshot) {
     if (typeof this.supervisor.configPath !== "string" || !path.isAbsolute(this.supervisor.configPath)) {
       throw new Error("Launcher runtime supervisor has no absolute configuration path for setup rollback");

@@ -12,7 +12,8 @@ const en = {
   message: 'Message for this thread', send: 'Take over and send', sending: 'Running in NEKODEX…',
   subagent: 'Subagent threads stay with their parent conversation and cannot be handed off.',
   active: 'Codex reports this thread active on this connection. Wait until it is idle.',
-  released: 'Reply received; thread released to Codex', noReply: 'The turn ended without a final assistant message.',
+  stop: 'Stop this turn', stopping: 'Stopping…', stopUnknown: 'Stop outcome is unconfirmed; the turn remains owned until its final state.',
+  released: 'Turn ended; thread released to Codex', noReply: 'The turn ended without a final assistant message.',
   truncated: 'The reply was shortened to 128 KiB here; the full reply is in the thread.',
   turn: 'Turn', status: 'Final state', refused: 'Approval or input requests declined',
   statuses: { completed: 'Completed', interrupted: 'Interrupted', failed: 'Failed' },
@@ -29,7 +30,8 @@ const ru: typeof en = {
   message: 'Сообщение для этого чата', send: 'Забрать и отправить', sending: 'Выполняется в NEKODEX…',
   subagent: 'Чаты субагентов остаются у родительского диалога и не передаются.',
   active: 'Codex сообщает, что чат выполняется в этом подключении. Дождитесь ожидания.',
-  released: 'Ответ получен; чат возвращён Codex', noReply: 'Ход завершился без итогового сообщения ассистента.',
+  stop: 'Остановить этот ход', stopping: 'Остановка…', stopUnknown: 'Остановка не подтверждена; ход остаётся под управлением NEKODEX до итогового состояния.',
+  released: 'Ход завершён; чат возвращён Codex', noReply: 'Ход завершился без итогового сообщения ассистента.',
   truncated: 'Ответ сокращён здесь до 128 КиБ; полный ответ есть в чате.',
   turn: 'Ход', status: 'Итоговое состояние', refused: 'Отклонено запросов согласования или ввода',
   statuses: { completed: 'Завершён', interrupted: 'Прерван', failed: 'Ошибка' },
@@ -50,6 +52,9 @@ export function NativeThreadHandoffPanel({ language, disabled = false, api, thre
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, SafeError>>({});
   const [receipts, setReceipts] = useState<Record<string, CodexThreadHandoffReceipt>>({});
+  const [stopPending, setStopPending] = useState(false);
+  const stopLock = useRef(false), refreshInFlight = useRef(false), currentApi = useRef(api);
+  currentApi.current = api;
   const [busyThread, setBusyThread] = useState<string | null>(null);
   const locked = useRef(false), mounted = useRef(true), selectedThread = useRef(thread.id);
   selectedThread.current = thread.id;
@@ -57,17 +62,21 @@ export function NativeThreadHandoffPanel({ language, disabled = false, api, thre
   const message = drafts[thread.id] ?? '', error = errors[thread.id] ?? null, receipt = receipts[thread.id] ?? null;
   const busy = busyThread !== null;
   const refresh = async () => {
+    if (!mounted.current || refreshInFlight.current) return;
+    const source = api; refreshInFlight.current = true;
     try {
-      const result = await api.nativeThreadHandoffSnapshot?.();
-      if (mounted.current && result?.ok) setSnapshot(result.value);
+      const result = await source.nativeThreadHandoffSnapshot?.();
+      if (mounted.current && source === currentApi.current && result?.ok) setSnapshot(result.value);
     } catch { /* Passive receipt state only; errors stay with the action that caused them. */ }
+    finally { refreshInFlight.current = false; }
   };
   useEffect(() => { mounted.current = true; void refresh(); return () => { mounted.current = false; }; }, [api]);
   // A handoff started by an earlier mount (or another window) is visible only through the
   // main-owned snapshot. Re-read that local state while one is active; it starts no provider work.
   const activeAction = snapshot?.active?.actionId ?? null;
   useEffect(() => {
-    if (!activeAction || busy) return;
+    if (!activeAction && !busy) return;
+    void refresh();
     const timer = setInterval(() => { void refresh(); }, 2000);
     return () => clearInterval(timer);
   }, [activeAction, busy, api]);
@@ -110,6 +119,19 @@ export function NativeThreadHandoffPanel({ language, disabled = false, api, thre
       keyed(setReceipts, target, result); keyed(setDrafts, target, null);
     });
   };
+  const stop = async () => {
+    const owned = snapshot?.active;
+    if (disabled || stopLock.current || !owned?.stopAvailable || owned.threadId !== thread.id || !api.nativeThreadStopHandoff) return;
+    stopLock.current = true; setStopPending(true);
+    try {
+      const result = unwrap(await api.nativeThreadStopHandoff({ actionId: owned.actionId, threadId: owned.threadId }));
+      if (mounted.current) setSnapshot(result);
+    } catch (reason) {
+      const safe = reason && typeof reason === 'object' && 'code' in reason && 'message' in reason
+        && !(reason instanceof Error) ? reason as SafeError : { code: 'handoff_unavailable', message: text.generic };
+      if (mounted.current) keyed(setErrors, owned.threadId, safe);
+    } finally { stopLock.current = false; if (mounted.current) setStopPending(false); await refresh(); }
+  };
   const acknowledge = (actionId: string) => {
     const target = thread.id;
     void perform(target, async () => {
@@ -127,6 +149,11 @@ export function NativeThreadHandoffPanel({ language, disabled = false, api, thre
       title={text.unknown} meta={`${action.actionId}${action.turnId ? ` · ${text.turn} ${action.turnId}` : ''}${action.reasonCode ? ` · ${action.reasonCode}` : ''}`}
       action={<Button size="sm" disabled={disabled || busy || action.state === 'pending'} onClick={() => acknowledge(action.actionId)}>{text.acknowledge}</Button>}>
       {text.unknownBody}</Notice>)}
+    {snapshot?.active?.threadId === thread.id && snapshot.active.turnId && api.nativeThreadStopHandoff ? <div className="native-threads__actions">
+      <Button size="sm" busy={stopPending} disabled={disabled || stopPending || !snapshot.active.stopAvailable} onClick={() => void stop()}>
+        {snapshot.active.stopState ? text.stopping : text.stop}</Button>
+      {snapshot.active.stopState === 'unknown' ? <p className="native-threads__hint">{text.stopUnknown}</p> : null}
+    </div> : null}
     {error ? <Notice tone="error" title={text.failed} meta={`${error.code}${error.rpcCode === undefined ? '' : ` · RPC ${error.rpcCode}`}`}>{error.message}</Notice> : null}
     {receipt ? <Notice tone={receipt.turnStatus === 'completed' ? 'success' : 'warning'} title={text.released}
       meta={`${text.turn} ${receipt.turnId}`}>

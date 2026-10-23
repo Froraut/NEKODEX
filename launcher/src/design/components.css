@@ -170,8 +170,8 @@ body {
 /* No action: the text column ends where the bundle's empty action column began. */
 .nk-notice > div:not(.nk-notice__action):last-child { margin-inline-end: var(--space-3); }
 .nk-notice strong { display: block; color: var(--text-primary); font-weight: 500; }
-.nk-notice p { margin: 0; overflow-wrap: anywhere; }
-.nk-notice strong + p { margin-top: 2px; }
+.nk-notice p, .nk-notice__message { margin: 0; overflow-wrap: anywhere; }
+.nk-notice strong + .nk-notice__message { margin-top: 2px; }
 /* App: the meta line uses text-secondary: tertiary text falls just under 4.5:1 on the tinted (warning) fills. */
 .nk-notice small { display: block; margin-top: var(--space-1); color: var(--text-secondary); font-size: 13px; line-height: 18px; }
 .nk-notice__action { display: flex; flex: 0 1 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-2); min-width: 0; margin-inline-start: auto; align-self: center; }

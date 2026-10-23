@@ -2,7 +2,7 @@
 
 // registerIpcHandler is the composition root's sender-authorized lifecycle guard.
 // The service captures native picker/window dependencies; IPC cannot supply them.
-function registerWorkspaceIpc({ registerIpcHandler, service, beforeForget = () => {} }) {
+function registerWorkspaceIpc({ registerIpcHandler, service, beforeForget = () => {}, manageRoot }) {
   const id = (value) => {
     if (typeof value !== "string" || !/^[a-f0-9-]{36}$/.test(value)) throw new Error("Invalid workspace identifier");
     return value;
@@ -32,6 +32,12 @@ function registerWorkspaceIpc({ registerIpcHandler, service, beforeForget = () =
     return action();
   };
   handle("launcher:workspace-roots", noArgs(() => service.listRoots()));
+  handle("launcher:workspace-manage-root", (...args) => {
+    if (args.length !== 1) throw new Error("Select exactly one granted workspace folder");
+    const grant = service.resolveGrant(id(args[0]));
+    if (!manageRoot) throw new Error("System file manager is unavailable");
+    return manageRoot(grant.path);
+  });
   handle("launcher:workspace-pick", noArgs(() => service.pickRoot()));
   handle('launcher:workspace-open-worktree', (...args) => {
     if (args.length !== 2) throw new Error('Select the exact source and managed worktree');
@@ -40,6 +46,7 @@ function registerWorkspaceIpc({ registerIpcHandler, service, beforeForget = () =
   handle("launcher:workspace-forget", (workspaceId) => {
     const captured = id(workspaceId); beforeForget(captured); return service.forgetRoot(captured);
   });
+  handle("launcher:workspace-list-page", (workspaceId, directory = "", cursor = null) => service.list(id(workspaceId), relative(directory, true), cursor));
   handle("launcher:workspace-list", (workspaceId, directory = "") => service.list(id(workspaceId), relative(directory, true)));
   handle("launcher:workspace-preview", (workspaceId, file) => service.preview(id(workspaceId), relative(file)));
   handle("launcher:workspace-save", (workspaceId, input) => service.save(id(workspaceId), draft(input)));

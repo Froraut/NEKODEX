@@ -6,7 +6,7 @@ export type { RemoteAgentScope, RemoteAgentTaskScope, RemoteAgentBinding, Remote
 export type RemoteHostInput = { label: string; hostname: string; username: string; port: number | null; root: string; connectionMode?: 'direct' | 'ssh-config-alias' };
 export type RemoteOperationCancellation = { requested: boolean; operation: string | null; remoteOutcome: 'not-cancelled' | 'requires-terminal-proof' };
 export type RemoteHost = RemoteHostInput & { id: string; fingerprint: string; connected: boolean; canonicalRoot: string | null; busy: boolean; connectionState?: 'connected' | 'connecting' | 'disconnected'; reconnectRequired?: boolean; activeOperation?: string | null; cancellationRequested?: boolean; unknownReceiptIds?: string[]; sshAlias?: string; aliasResolved?: boolean; configuredEndpoint?: Pick<RemoteHostInput, 'hostname' | 'username' | 'port' | 'connectionMode'> };
-export type RemoteListing = { path: string; truncated: boolean; entries: { name: string; path: string; kind: 'directory' | 'file' | 'blocked'; size: number | null }[] };
+export type RemoteListing = { path: string; truncated: boolean; offset?: number; previousCursor?: string | null; nextCursor?: string | null; scanLimited?: boolean; entries: { name: string; path: string; kind: 'directory' | 'file' | 'blocked'; size: number | null }[] };
 export type RemotePreview = { path: string; state: 'text' | 'binary' | 'missing'; revision: string | null; text: string | null; size: number };
 export type RemoteDraftInput = { path: string; text: string; expectedRevision: string | null };
 export type RemoteDraft = RemoteDraftInput & { id: string; hostId: string; fingerprint: string; time: string };
@@ -16,11 +16,12 @@ export type RemoteCommandResult = { exitCode: number | null; stdout: string; std
 export type RemoteSaveResult = { state: 'saved'; revision: string; draftRetained: boolean; receipt: RemoteReceipt } | { state: 'conflict' | 'failed' | 'unknown'; draftId: string; receipt: RemoteReceipt };
 export interface RemoteWorkspaceApi extends RemoteWorktreeApi, RemoteGitReviewApi {
   remoteWorkspaceHosts(): Promise<RemoteHost[]>;
-  remoteWorkspaceAddHost(input: RemoteHostInput): Promise<RemoteHost>;
+  remoteWorkspaceAddHost(input: RemoteHostInput & { id?: string }): Promise<RemoteHost>;
   remoteWorkspaceForgetHost(id: string): Promise<{ removed: boolean }>;
   remoteWorkspaceConnect(id: string): Promise<RemoteHost>;
   remoteWorkspaceDisconnect(id: string): Promise<{ disconnected: boolean }>;
   remoteWorkspaceCancelOperation?(id: string): Promise<RemoteOperationCancellation>;
+  remoteWorkspaceListPage(id: string, directory?: string, cursor?: string | null): Promise<RemoteListing>;
   remoteWorkspaceList(id: string, directory?: string): Promise<RemoteListing>;
   remoteWorkspacePreview(id: string, file: string): Promise<RemotePreview>;
   remoteWorkspaceRetainDraft(id: string, input: RemoteDraftInput): Promise<RemoteDraft>;
@@ -48,13 +49,13 @@ export interface RemoteWorkspaceService extends RemoteWorktreeService {
   executeAgentTool(request: RemoteAgentInvocation): Promise<RemoteAgentOutcome>;
   agentReceipt(request: RemoteAgentInvocation): RemoteAgentOutcome | null;
   listHosts(): RemoteHost[];
-  addHost(input: RemoteHostInput): RemoteHost;
+  addHost(input: RemoteHostInput & { id?: string }): RemoteHost;
   forgetHost(id: string): { removed: boolean };
   connect(id: string): Promise<RemoteHost>;
   disconnect(id: string): { disconnected: boolean };
   /** Cancel our transport only; the original owner retains terminal/unknown settlement. */
   cancelOperation(id: string): RemoteOperationCancellation;
-  list(id: string, directory?: string): Promise<RemoteListing>;
+  list(id: string, directory?: string, cursor?: string | null): Promise<RemoteListing>;
   preview(id: string, file: string): Promise<RemotePreview>;
   retainDraft(id: string, input: RemoteDraftInput): RemoteDraft;
   listDrafts(id: string): RemoteDraft[];

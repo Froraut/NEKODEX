@@ -307,3 +307,62 @@ test('IPC exposes only an explicit thread/text intent and sanitized handoff fail
   expect(unconfirmed).toEqual({ ok: false, error: { code: 'handoff_settings_unconfirmed',
     message: 'Codex could not confirm that the thread keeps its own service tier. Nothing was sent.' } });
 });
+
+test('explicit handoff Stop uses the original action lease, ACK waits terminal and stale Stop cannot target a later handoff', async () => {
+  let started: () => void = () => {}; let child: any;
+  const waitStart = () => new Promise<void>(resolve => { started = resolve; });
+  const f = fixture({ 'thread/read': readRoot, 'thread/resume': resumeIdle,
+    'turn/start': (request, owner) => { child = owner; owner.respond(request, { turn: { id: TURN } }); started(); },
+    'turn/interrupt': (request, owner) => {
+      expect(f.journal().records.at(-1).stopRequested).toBe(true);
+      owner.respond(request, {});
+    } });
+  const ready = waitStart(); let settled = false;
+  const running = f.handoff.continueThread({ threadId: ROOT, text: 'owned turn', userInitiated: true }).then((receipt: any) => { settled = true; return receipt; });
+  await ready;
+  const active = f.handoff.snapshot().active;
+  expect(active).toMatchObject({ threadId: ROOT, turnId: TURN, phase: 'running', stopAvailable: true });
+  await expect(f.handoff.stop({ actionId: CHILD, threadId: ROOT, userInitiated: true })).rejects.toMatchObject({ code: 'handoff_stop_unavailable' });
+  await expect(f.handoff.stop({ actionId: active.actionId, threadId: CHILD, userInitiated: true })).rejects.toMatchObject({ code: 'handoff_stop_unavailable' });
+  const stopped = await f.handoff.stop({ actionId: active.actionId, threadId: ROOT, userInitiated: true });
+  expect(stopped.active).toMatchObject({ stopState: 'acknowledged', stopAvailable: false });
+  expect(settled).toBe(false); expect(child.closed).not.toBe(true);
+  await f.handoff.stop({ actionId: active.actionId, threadId: ROOT, userInitiated: true });
+  expect(f.received.filter(row => row.method === 'turn/interrupt').map(row => row.params)).toEqual([{ threadId: ROOT, turnId: TURN }]);
+  child.notify('turn/completed', { threadId: CHILD, turn: { id: TURN, status: 'interrupted' } });
+  expect(settled).toBe(false); expect(child.closed).not.toBe(true);
+  child.notify('turn/completed', { threadId: ROOT, turn: { id: TURN, status: 'interrupted' } });
+  expect(await running).toMatchObject({ turnStatus: 'interrupted', released: true }); expect(child.closed).toBe(true);
+  const nextReady = waitStart();
+  const next = f.handoff.continueThread({ threadId: ROOT, text: 'next owned turn', userInitiated: true }); await nextReady;
+  await expect(f.handoff.stop({ actionId: active.actionId, threadId: ROOT, userInitiated: true })).rejects.toMatchObject({ code: 'handoff_stop_unavailable' });
+  expect(f.received.filter(row => row.method === 'turn/interrupt')).toHaveLength(1);
+  child.notify('turn/completed', { threadId: ROOT, turn: { id: TURN, status: 'completed' } });
+  expect(await next).toMatchObject({ turnStatus: 'completed', released: true });
+});
+
+test('explicit handoff Stop lost ACK retains owner and natural completion wins without an interrupt replay', async () => {
+  let started: () => void = () => {}; const ready = new Promise<void>(resolve => { started = resolve; }); let child: any;
+  const f = fixture({ 'thread/read': readRoot, 'thread/resume': resumeIdle,
+    'turn/start': (request, owner) => { child = owner; owner.respond(request, { turn: { id: TURN } }); started(); },
+    'turn/interrupt': () => {} }, { config: { requestTimeoutMs: 25 } });
+  const running = f.handoff.continueThread({ threadId: ROOT, text: 'owned turn', userInitiated: true }); await ready;
+  const active = f.handoff.snapshot().active;
+  const result = await f.handoff.stop({ actionId: active.actionId, threadId: ROOT, userInitiated: true });
+  expect(result.active).toMatchObject({ stopState: 'unknown', phase: 'running' }); expect(child.closed).not.toBe(true);
+  await f.handoff.stop({ actionId: active.actionId, threadId: ROOT, userInitiated: true });
+  expect(f.received.filter(row => row.method === 'turn/interrupt')).toHaveLength(1);
+  child.notify('turn/completed', { threadId: ROOT, turn: { id: TURN, status: 'completed' } });
+  expect(await running).toMatchObject({ turnStatus: 'completed', released: true });
+});
+
+test('handoff Stop IPC accepts exact original action and thread identities only', async () => {
+  const registered = new Map<string, any>(), calls: any[] = [];
+  registerCodexClientControlIpc({ handle: (name: string, handler: any) => registered.set(name, handler), getClient: () => ({}),
+    getHandoff: () => ({ stop: (input: any) => { calls.push(input); return { active: null }; } }) });
+  const stop = registered.get('launcher:native-thread-stop-handoff');
+  expect(await stop({}, { actionId: ROOT, threadId: CHILD })).toEqual({ ok: true, value: { active: null } });
+  expect(calls).toEqual([{ actionId: ROOT, threadId: CHILD, userInitiated: true }]);
+  expect(await stop({}, { actionId: ROOT, threadId: CHILD, turnId: TURN })).toMatchObject({ ok: false, error: { code: 'invalid_parameters' } });
+  expect(await stop({}, { threadId: CHILD })).toMatchObject({ ok: false, error: { code: 'invalid_parameters' } }); expect(calls).toHaveLength(1);
+});
