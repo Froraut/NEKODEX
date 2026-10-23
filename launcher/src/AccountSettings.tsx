@@ -5,7 +5,7 @@ import { useAccountCodexLogin } from "./useAccountCodexLogin";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AccountSafetySettings, type AccountFormState } from "./AccountSafetySettings";
 import { AccountProxySettings, proxyModeOptions } from "./AccountProxySettings";
-import { AccountCodexAllowance, AccountCodexLogin, AccountCodexLoginProgress } from "./AccountCodexControls";
+import { AccountCodexAllowance, AccountCodexLogin, AccountCodexLoginProgress, quotaFreshness } from "./AccountCodexControls";
 import { AccountReadiness, accountPacingStatus } from "./AccountReadiness";
 import { AccountToolsOnboarding } from "./AccountToolsOnboarding";
 import { quotaPortfolioSummary } from "./QuotaPortfolioSummary";
@@ -222,7 +222,8 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
     setQuotas(current => new Map([...current].filter(([id]) => activeIds.has(id))));
     setQuotaFailures(current => new Set([...current].filter(id => activeIds.has(id))));
     // The allowance is held only in memory, so every launch starts unread. Read it once for each
-    // verified account instead of leaving "not checked yet"; a cached result stops this unless it failed transiently.
+    // verified account instead of leaving "not checked yet". Refresh an expired cached observation once
+    // on this hydration/entry; the clock only changes presentation and never starts a polling loop.
     const autoRead = new Set(manual || transitionBusy ? [] : state.accounts
       .filter(account => account.authenticated && account.authenticationStatus === "verified")
       .map(account => account.id));
@@ -266,8 +267,16 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
         try {
           let value = await api.accountCodexQuotaSnapshot(id);
           if (disposed || quotaRevisions.current.get(id) !== revision) continue;
-          if (value === null && autoRead.has(id) && loginLockedIdRef.current !== id) {
-            setQuotas(current => { const next = new Map(current); next.delete(id); return next; });
+          const stale = quotaFreshness(value, false, Date.now()).stale;
+          const retryAt = value?.retryAt ? Date.parse(value.retryAt) : Number.NaN;
+          if ((value === null || stale) && autoRead.has(id) && loginLockedIdRef.current !== id
+            && !(Number.isFinite(retryAt) && retryAt > Date.now())) {
+            // Display the cached observation without scheduling transient retries: only the final
+            // result below owns retry scheduling. Preserve a previous failure while this read is pending.
+            if (value !== null) {
+              const cached = value;
+              setQuotas(current => new Map(current).set(id, cached));
+            } else setQuotas(current => { const next = new Map(current); next.delete(id); return next; });
             value = await api.refreshAccountCodexQuota(id);
             if (disposed || quotaRevisions.current.get(id) !== revision) continue;
           }
@@ -324,7 +333,10 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
         });
       }
     } catch (error) {
-      if (quotaRevisions.current.get(id) === revision) setError(error instanceof Error ? error.message : String(error));
+      if (quotaRevisions.current.get(id) === revision) {
+        setQuotaFailures(current => new Set(current).add(id));
+        setError(error instanceof Error ? error.message : String(error));
+      }
     } finally {
       quotaInFlight.current.delete(id);
       if (quotaRefreshEvidence.current.get(id) === refreshEvidence) quotaRefreshEvidence.current.delete(id);
@@ -460,6 +472,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
   // "Sign in to Codex" was pressed on this account: its flow takes focus when the start button goes away.
   const loginStartRequested = useRef<string | null>(null);
   const text = accountsCopy(language);
+  const accountConnectorLabel = accountToolsCopy(language).connectorLabel;
   const toolsText = accountToolsCopy(language);
   if (!state) return <Page className="accounts-page">
     <SurfaceHeader title={copy.accountsTitle} subtitle={copy.accountsBody} />
@@ -724,9 +737,9 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
           // The same derived step as the tools setup section: a verified connector without this account's tunnel
           // still needs setup (the page notice names that step), so the badge never says Verified next to it.
           facts.push(toolsStep === "verified"
-            ? { label: `${copy.toolConnection}: ${copy.connectionVerified}`, tone: "success", dot: "ready" }
-            : evidenceChecking ? checkingFact(copy.toolConnection)
-            : { label: `${copy.toolConnection}: ${copy.connectionPending}`, dot: "idle" });
+            ? { label: `${accountConnectorLabel}: ${copy.connectionVerified}`, tone: "success", dot: "ready" }
+            : evidenceChecking ? checkingFact(accountConnectorLabel)
+            : { label: `${accountConnectorLabel}: ${copy.connectionPending}`, dot: "idle" });
           if (pacing && (pacing.held || !account.safety)) {
             facts.push({ label: `${pacing.label}: ${pacing.value}`, tone: pacing.held ? "warning" : undefined, dot: pacing.held ? "busy" : "ready" });
           }

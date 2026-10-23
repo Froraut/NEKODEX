@@ -26,6 +26,7 @@ export function accountToolsHandoffAccount(browser: BrowserState, pool: AccountP
 }
 
 const en = {
+  connectorLabel: 'ChatGPT connector',
   automaticMode: 'Automatic', manualMode: 'Manual', savedTunnel: 'This account has saved tunnel credentials for this mode.', reuseSavedTunnel: 'Reconnect this account’s tunnel',
   target: 'Account being configured',
   title: 'Account tools setup',
@@ -50,6 +51,7 @@ const en = {
 };
 type AccountToolsCopy = { [K in keyof typeof en]: string };
 const ru: AccountToolsCopy = {
+  connectorLabel: 'Коннектор ChatGPT',
   automaticMode: 'Автоматический', manualMode: 'Ручной', savedTunnel: 'Для этого аккаунта и режима сохранены данные туннеля.', reuseSavedTunnel: 'Переподключить туннель аккаунта',
   tunnelStatus: 'Состояние туннеля', configuredTunnel: 'ID туннеля', removeTunnel: 'Удалить туннель этого аккаунта', tunnelUnconfigured: 'Туннель аккаунта не настроен', tunnelStarting: 'Запуск', tunnelReady: 'Готов', tunnelStopped: 'Остановлен', tunnelError: 'Ошибка', tunnelUnknown: 'Состояние неизвестно',
   target: 'Настраиваемый аккаунт',
@@ -71,6 +73,7 @@ const ru: AccountToolsCopy = {
   tunnelTitle: 'Настройте туннель и API-ключ этого аккаунта',
 };
 const zhCN: AccountToolsCopy = {
+  connectorLabel: 'ChatGPT 连接器',
   automaticMode: '自动', manualMode: '手动', savedTunnel: '此账户已保存该模式的隧道凭据。', reuseSavedTunnel: '重新连接此账户的隧道',
   tunnelStatus: '隧道状态', configuredTunnel: '隧道 ID', removeTunnel: '移除此账户的隧道', tunnelUnconfigured: '此账户未配置隧道', tunnelStarting: '正在启动', tunnelReady: '已就绪', tunnelStopped: '已停止', tunnelError: '错误', tunnelUnknown: '状态未知',
   target: '正在设置的账户',
@@ -83,6 +86,7 @@ const zhCN: AccountToolsCopy = {
   setup: '设置此账户的隧道', back: '返回账户设置', manual: '手动模式无法自动验证账户。请使用工具设置指南配置连接。', keyInstructions: '为可访问的隧道创建仅有 Tunnels Read + Use 权限的 Restricted API 密钥。在下一步输入隧道 ID 和密钥。', googleFallback: "如果 Google 提示此浏览器或应用可能不安全，请改用常用浏览器继续：Google 拒绝此窗口时，NEKODEX 会自动将页面转到常用浏览器。请在那里登录为 {account} 准备的 OpenAI 组织。离开期间，此设置仍绑定在 {account}。", openTunnelsExternal: "在我的浏览器中打开隧道", openKeysExternal: "在我的浏览器中打开 API 密钥", returned: "从 OpenAI 返回了？请输入为 {account} 创建的隧道 ID 和运行时密钥。", tunnelTitle: '设置此账户的隧道和 API 密钥',
 };
 const zhTW: AccountToolsCopy = {
+  connectorLabel: 'ChatGPT 聯結器',
   automaticMode: '自動', manualMode: '手動', savedTunnel: '此帳號已儲存此模式的通道憑證。', reuseSavedTunnel: '重新連接此帳號的通道',
   tunnelStatus: '通道狀態', configuredTunnel: '通道 ID', removeTunnel: '移除此帳號的通道', tunnelUnconfigured: '此帳號尚未設定通道', tunnelStarting: '正在啟動', tunnelReady: '已就緒', tunnelStopped: '已停止', tunnelError: '錯誤', tunnelUnknown: '狀態未知',
   target: '正在設定的帳號',
@@ -95,6 +99,7 @@ const zhTW: AccountToolsCopy = {
   setup: '設定此帳號的通道', back: '返回帳號設定', manual: '手動模式無法自動驗證帳號。請使用工具設定指南設定連線。', keyInstructions: '為可存取的通道建立僅有 Tunnels Read + Use 權限的 Restricted API 金鑰。在下一步輸入通道 ID 和金鑰。', googleFallback: "如果 Google 提示此瀏覽器或應用程式可能不安全，請改用常用瀏覽器繼續：Google 拒絕此視窗時，NEKODEX 會自動將頁面轉到常用瀏覽器。請在那裡登入為 {account} 準備的 OpenAI 組織。離開期間，此設定仍綁定在 {account}。", openTunnelsExternal: "在我的瀏覽器中開啟通道", openKeysExternal: "在我的瀏覽器中開啟 API 金鑰", returned: "從 OpenAI 回來了？請輸入為 {account} 建立的通道 ID 和執行階段金鑰。", tunnelTitle: '設定此帳號的通道和 API 金鑰',
 };
 const ja: AccountToolsCopy = {
+  connectorLabel: 'ChatGPT コネクター',
   automaticMode: '自動', manualMode: '手動', savedTunnel: 'このアカウントのこのモード用のトンネル認証情報が保存されています。', reuseSavedTunnel: 'このアカウントのトンネルを再接続',
   tunnelStatus: 'トンネルの状態', configuredTunnel: 'トンネル ID', removeTunnel: 'このアカウントのトンネルを削除', tunnelUnconfigured: 'このアカウントのトンネルは未設定', tunnelStarting: '起動中', tunnelReady: '準備完了', tunnelStopped: '停止', tunnelError: 'エラー', tunnelUnknown: '状態不明',
   target: '設定対象のアカウント',
@@ -107,6 +112,7 @@ const ja: AccountToolsCopy = {
   setup: 'このアカウントのトンネルを設定', back: 'アカウント設定に戻る', manual: '手動モードではアカウントを自動検証できません。ツール設定ガイドで接続を設定してください。', keyInstructions: '利用可能なトンネル用に Tunnels Read + Use のみを許可した Restricted API キーを作成します。次の手順でトンネル ID とキーを入力します。', googleFallback: "Google が「このブラウザーまたはアプリは安全でない可能性があります」と表示した場合は、普段のブラウザーで続けてください。Google がこのウィンドウを拒否すると、NEKODEX がページを自動的に引き渡します。そこで {account} 用の OpenAI 組織にサインインしてください。離れている間も、この設定は {account} に紐づいたままです。", openTunnelsExternal: "普段のブラウザーでトンネルを開く", openKeysExternal: "普段のブラウザーで API キーを開く", returned: "OpenAI から戻りましたか？ {account} 用に作成したトンネル ID とランタイムキーを入力してください。", tunnelTitle: 'このアカウントのトンネルと API キーを設定',
 };
 const ko: AccountToolsCopy = {
+  connectorLabel: 'ChatGPT 커넥터',
   automaticMode: '자동', manualMode: '수동', savedTunnel: '이 계정의 이 모드에 터널 인증 정보가 저장되어 있습니다.', reuseSavedTunnel: '이 계정의 터널 다시 연결',
   tunnelStatus: '터널 상태', configuredTunnel: '터널 ID', removeTunnel: '이 계정의 터널 제거', tunnelUnconfigured: '이 계정에 설정된 터널 없음', tunnelStarting: '시작 중', tunnelReady: '준비됨', tunnelStopped: '중지됨', tunnelError: '오류', tunnelUnknown: '상태 알 수 없음',
   target: '설정 중인 계정',
