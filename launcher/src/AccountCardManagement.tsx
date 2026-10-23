@@ -24,8 +24,10 @@ export function AccountCardManagement({ id, label, language, authenticated, manu
     trigger.current = element; setName(label); setError(null); setAction(next);
   };
   const close = () => { if (!gate.current) setAction(null); };
+  const actionBlocked = action === 'remove' ? removeReason ?? accessBlocked
+    : action === 'reauthenticate' ? accessBlocked ?? (manual ? text.manualReason : undefined) : undefined;
   const perform = async () => {
-    if (!action || gate.current || disabled) return;
+    if (!action || gate.current || disabled || actionBlocked) return;
     if (action === 'rename' && (!name.trim() || name.trim().length > 80 || name.trim() === label)) return;
     gate.current = true; setPending(true); setError(null);
     try {
@@ -52,7 +54,7 @@ export function AccountCardManagement({ id, label, language, authenticated, manu
       actions={<>
         <Button data-autofocus={action !== 'rename' || undefined} disabled={pending} onClick={close}>{action === 'remove' ? text.keep : text.cancel}</Button>
         <Button variant={action === 'rename' ? 'primary' : 'danger'} busy={pending}
-          disabled={blocked || (action === 'rename' && (!name.trim() || name.trim().length > 80 || name.trim() === label))}
+          disabled={blocked || !!actionBlocked || (action === 'rename' && (!name.trim() || name.trim().length > 80 || name.trim() === label))}
           onClick={() => void perform()}>{action === 'rename' ? text.save : action === 'remove' ? text.remove : text.reauthConfirm}</Button>
       </>}>
       <p><strong>{label}</strong></p>
@@ -64,6 +66,7 @@ export function AccountCardManagement({ id, label, language, authenticated, manu
         <p>{action === 'remove' ? text.removeBody : text.reauthBody}</p>
         {action === 'remove' ? <><p>{text.retained}</p>{fallbackLabel ? <Notice tone="info">{text.fallback.replace('{account}', fallbackLabel)}</Notice> : null}</> : null}
       </>}
+      {actionBlocked ? <Notice tone="warning">{actionBlocked}</Notice> : null}
       {error ? <Notice tone="error" role="alert">{error}</Notice> : null}
     </Dialog> : null}
   </>;

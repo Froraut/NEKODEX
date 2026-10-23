@@ -35,6 +35,7 @@ function registerAccountHandlers({
     return result;
   });
   handle('launcher:account-reauthenticate', (_event, id, confirmed) => {
+    if (confirmed !== true) throw new Error('Explicit local-session clearing confirmation is required');
     if (isRuntimeBusy()) throw new Error('Finish the current runtime operation before signing in again');
     getAccountToolsService().assertAccountMutable(id);
     invalidateAccountProof();

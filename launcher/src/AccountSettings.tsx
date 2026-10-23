@@ -788,7 +788,8 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
                   {pendingHere === "connector" ? workflow.session.checkingVerification : copy.accountsCheckConnector}</Button> : null}
                 <AccountCardManagement id={account.id} label={account.label} language={language}
                   authenticated={account.authenticated} manual={manual} disabled={mutationsDisabled}
-                  accessBlocked={active || loginBoundActive || quotaReadBusy ? blockedReason ?? accountManagementCopy(language).busyReason : undefined}
+                  accessBlocked={active || loginBoundActive || quotaReadBusy || authChecking || account.evidenceChecking
+                    ? blockedReason ?? accountManagementCopy(language).busyReason : undefined}
                   removeReason={account.id === 'default' ? accountManagementCopy(language).defaultReason
                     : account.enabled && state.accounts.filter(row => row.enabled).length < 2 ? accountManagementCopy(language).lastEnabled : undefined}
                   fallbackLabel={selected ? state.accounts.find(row => row.id !== account.id && row.enabled)?.label : undefined}
