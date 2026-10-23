@@ -296,6 +296,8 @@
   {"path":"launcher/native/tunnel-credential-helper.swift","dependencies":[]},
   {"path":"launcher/package.json","dependencies":[]},
   {"path":"launcher/release-trust.json","dependencies":[]},
+  {"path":"launcher/scripts/basic-functions-fixture.cjs","dependencies":["launcher/electron/external-usage.cjs","launcher/electron/local-workspace.cjs","launcher/electron/remote-workspace.cjs","node:crypto","node:fs","node:os","node:path","vite"]},
+  {"path":"launcher/scripts/basic-functions-fixture.tsx","dependencies":["launcher/src/ExternalUsageSurface.tsx","launcher/src/RemoteWorkspaceSurface.tsx","launcher/src/WorkspaceSurface.tsx","launcher/src/design/components.css","launcher/src/styles.css","launcher/src/surfaces/workspace.css","launcher/src/tokens.css","react","react-dom/client","react/jsx-dev-runtime"]},
   {"path":"launcher/scripts/build-workspace-terminal.cjs","dependencies":["node:child_process","node:fs","node:module","node:path"]},
   {"path":"launcher/scripts/check-renderer-shell.cjs","dependencies":["electron","launcher/electron/account-pool.cjs","launcher/electron/browser-host.cjs","node:assert/strict","node:events","node:fs","node:os","node:path"]},
   {"path":"launcher/scripts/dev.cjs","dependencies":["electron","node:child_process","node:path","scripts/build-credential-helper.cjs","scripts/build-desktop-helper.cjs","scripts/build-skill-pdf-helper.cjs"]},
