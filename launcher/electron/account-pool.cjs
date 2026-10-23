@@ -702,6 +702,7 @@ class AccountBrowserPool {
     const assertClosed = () => {
       if (host.turnTabs.size || host.activeTraceId || host.workspaceBrowser?.snapshot().items.some(row => row.state === 'open')
         || host.workspaceContents?.size || host.apiPanelContents?.size) throw new Error('Close this account’s task tabs and browser workspace windows before removing it');
+      if (this.taskLedgers?.get(id)?.snapshot().some(task => !task.terminal)) throw new Error('Finish or resolve this account’s retained tasks before removing it');
       this.registry.assertRemovable(id);
     };
     assertClosed();
@@ -724,6 +725,9 @@ class AccountBrowserPool {
       this.workspaceRegistrations.get(id)?.(); this.workspaceRegistrations.delete(id);
       this.workspaceSessionMutations.get(id)?.invalidate('Account removed from NEKODEX'); this.workspaceSessionMutations.delete(id);
       host.destroy(); this.hosts.delete(id);
+      // Keep private history bytes, but do not project orphan display rows with
+      // no live account label or offer retry against a removed routing owner.
+      this.taskLedgers?.delete(id);
       this.capabilities.delete(id); this.connectors.delete(id); this.publishedAuthentication.delete(id);
       this.selectionRevision++; this.writeDescriptor(); this.syncVisibility(); this.publish();
       return this.accountSnapshot();

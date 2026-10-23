@@ -153,3 +153,13 @@ test('missing config cannot hide a still-owned scoped tunnel peer', async () => 
   await expect(pool.removeAccountBindings(id, () => { commits++; })).rejects.toThrow('repair the runtime');
   expect(commits).toBe(0);
 });
+
+test('an unresolved retained task without an open tab still prevents removal', async () => {
+  const pool = Object.assign(Object.create(AccountBrowserPool.prototype), {
+    registry: { assertRemovable() {} }, getHost: () => ({ turnTabs: new Map() }),
+    taskLedgers: new Map([[id, { snapshot: () => [{ terminal: false, submission: 'unknown' }] }]]),
+  });
+  let touched = false;
+  await expect(pool.removeAccount(id, () => { touched = true; })).rejects.toThrow('retained tasks');
+  expect(touched).toBe(false);
+});
