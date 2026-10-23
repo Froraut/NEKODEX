@@ -46,6 +46,7 @@ function registerWorkspaceIpc({ registerIpcHandler, service, beforeForget = () =
   handle("launcher:workspace-forget", (workspaceId) => {
     const captured = id(workspaceId); beforeForget(captured); return service.forgetRoot(captured);
   });
+  handle("launcher:workspace-list-page", (workspaceId, directory = "", cursor = null) => service.list(id(workspaceId), relative(directory, true), cursor));
   handle("launcher:workspace-list", (workspaceId, directory = "") => service.list(id(workspaceId), relative(directory, true)));
   handle("launcher:workspace-preview", (workspaceId, file) => service.preview(id(workspaceId), relative(file)));
   handle("launcher:workspace-save", (workspaceId, input) => service.save(id(workspaceId), draft(input)));

@@ -5,6 +5,7 @@ const path = require("node:path");
 const { createHash, randomUUID } = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
+const { createDirectoryPages } = require("./directory-page.cjs");
 const { createAgentWorkspaceGrantAuthority } = require("./agent-workspace-grant.cjs");
 
 const LIMITS = Object.freeze({ roots: 32, entries: 300, treeEntries: 600, depth: 4,
@@ -52,6 +53,7 @@ function createLocalWorkspaceService({ pickDirectory, registryPath = null, agent
   if (registryPath !== null && (!path.isAbsolute(registryPath) || typeof registryPath !== "string")) {
     throw new TypeError("registryPath must be an absolute private application file.");
   }
+  const pages = createDirectoryPages(LIMITS.entries);
   const roots = new Map();
   const drafts = new Map();
   const snapshots = new Map();
@@ -261,26 +263,34 @@ function createLocalWorkspaceService({ pickDirectory, registryPath = null, agent
     const current = captureBinary(id, relative); if (current.revision !== capture.revision) return null;
     return { state: "written", revision: current.revision, sha256: current.sha256, size: current.size, node: current.node };
   }
-  function list(id, relative = "") {
+  function list(id, relative = "", page) {
     const captured = resolve(id, relative, { allowRoot: true });
     if (!captured.stat.isDirectory()) fail("NOT_DIRECTORY", "Select a directory.");
-    const entries = [];
+    const scope = digest(JSON.stringify([id, relative]));
+    const stamp = () => { const stat = fs.lstatSync(captured.target, { bigint: true });
+      return digest(JSON.stringify([String(stat.dev), String(stat.ino), String(stat.mtimeNs), String(stat.ctimeNs)])); };
+    const revision = page === undefined ? null : stamp();
+    const start = page === undefined ? 0 : pages.offset(page, scope, revision);
+    const entries = []; let skipped = 0;
     const directory = fs.opendirSync(captured.target);
-    let more = false;
+    let more = false; let scanLimited = false; let scanned = 0;
     try {
       for (let entry; (entry = directory.readSync());) {
+        if (page !== undefined && ++scanned > 30000) { more = true; scanLimited = true; break; }
         if (entry.name.toLowerCase() === ".git") continue;
+        if (skipped++ < start) continue;
         if (entries.length >= LIMITS.entries) { more = true; break; }
         entries.push({ name: entry.name, path: relative ? `${relative}/${entry.name}` : entry.name,
           kind: entry.isSymbolicLink() ? "blocked-link" : entry.isDirectory() ? "directory" : entry.isFile() ? "file" : "unsupported" });
       }
       unchangedParents(captured);
+      if (page !== undefined && revision !== stamp()) pages.reject();
       if (!sameNode(resolve(id, relative, { allowRoot: true }).stat, captured.stat)) {
         fail("PARENT_CHANGED", "The directory changed during listing.");
       }
     } finally { directory.closeSync(); }
     entries.sort((a, b) => Number(b.kind === "directory") - Number(a.kind === "directory") || a.name.localeCompare(b.name));
-    return { path: relative, entries, truncated: more };
+    return { path: relative, entries, truncated: more, ...(scanLimited ? { scanLimited: true } : {}), ...(page === undefined ? {} : pages.result(scope, revision, start, more && !scanLimited)) };
   }
   function publicRoot(root) {
     return { id: root.id, name: path.basename(root.path) || root.path, path: root.path, selectedAt: root.selectedAt };

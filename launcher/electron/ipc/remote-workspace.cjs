@@ -28,6 +28,7 @@ function registerRemoteWorkspaceIpc({ registerIpcHandler, service }) {
   handle('connect', hostId => service.connect(id(hostId)), 1);
   handle('disconnect', hostId => service.disconnect(id(hostId)), 1);
   handle('cancel-operation', hostId => service.cancelOperation(id(hostId)), 1);
+  handle('list-page', (hostId, directory, cursor) => service.list(id(hostId), directory, cursor), 3);
   handle('list', (hostId, directory) => service.list(id(hostId), directory), 2);
   handle('preview', (hostId, file) => service.preview(id(hostId), file), 2);
   handle('retain-draft', (hostId, input) => service.retainDraft(id(hostId), input), 2);

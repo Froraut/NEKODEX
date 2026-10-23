@@ -627,6 +627,7 @@ export interface LauncherApi extends NativeThreadsApi, NativePersistentApi, Work
   workspaceManageRoot(id: string): Promise<void>;
   workspacePick(): Promise<LocalWorkspaceRoot | null>;
   workspaceForget(id: string): Promise<boolean>;
+  workspaceListPage(id: string, path?: string, cursor?: string | null): Promise<WorkspaceListing>;
   workspaceList(id: string, path?: string): Promise<WorkspaceListing>;
   workspacePreview(id: string, path: string): Promise<WorkspacePreview>;
   workspaceSave(id: string, input: { path: string; expectedRevision: string | null; text: string; draftId?: string }): Promise<WorkspaceSaveResult>;

@@ -29,6 +29,7 @@ const copy = {
     gitBaseMissing: "The selected base branch is no longer available. Choose a base and capture changes again.",
     gitCheck: "Check snapshot freshness", current: "Current snapshot", stale: "Snapshot is stale — capture changes again",
     noChanges: "No tracked changes in this captured diff.", noStatus: "The working tree is clean.",
+    previousPage: "Previous", nextPage: "Next", startPage: "Start / Refresh", pageLimit: "Directory scan limit reached. Use the relative file path or open this folder in the file manager.",
     noGit: "Capture the folder's Git status to review changes.", limited: "Output is truncated.", gitBinary: "Includes binary changes.",
     recovering: "Recovered draft; the file remains unchanged.", kept: "The file was saved. The recovery draft is still retained.",
   },
@@ -51,6 +52,7 @@ const copy = {
     gitBaseMissing: "Выбранная базовая ветка больше недоступна. Выберите базу и получите изменения заново.",
     gitCheck: "Проверить актуальность снимка", current: "Актуальный снимок", stale: "Снимок устарел — получите изменения заново",
     noChanges: "В этом снимке нет изменений отслеживаемых файлов.", noStatus: "Рабочее дерево чистое.",
+    previousPage: "Назад", nextPage: "Далее", startPage: "Сначала / Обновить", pageLimit: "Достигнут предел просмотра папки. Введите относительный путь файла или откройте папку в файловом менеджере.",
     noGit: "Получите состояние Git этой папки для просмотра изменений.", limited: "Результат сокращён.", gitBinary: "Есть двоичные изменения.",
     recovering: "Черновик восстановлен; файл на диске не изменён.", kept: "Файл сохранён. Резервный черновик пока остаётся доступным.",
   },
@@ -70,27 +72,34 @@ function DirectoryBranch({ workspaceId, directory, label, onOpen, c, initialOpen
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const navigate = (next: string | null) => { setCursor(next); setListing(null); setRetry(value => value + 1); };
   useEffect(() => {
     if (!expanded || listing) return;
     let current = true; setLoading(true); setError("");
-    api().workspaceList(workspaceId, directory).then((value) => { if (current) setListing(value); })
+    api().workspaceListPage(workspaceId, directory, cursor).then((value) => { if (current) setListing(value); })
       .catch((reason) => { if (current) setError(message(reason)); }).finally(() => { if (current) setLoading(false); });
     return () => { current = false; };
-  }, [workspaceId, directory, expanded, listing, retry]);
+  }, [workspaceId, directory, expanded, listing, retry, cursor]);
   return <div className="nk-workspace__branch">
     <button type="button" className="nk-workspace__tree-row" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
       <span aria-hidden="true">{expanded ? "▾" : "▸"}</span><span>{label}</span>
     </button>
     {expanded && <div className="nk-workspace__children">
       {loading && <p role="status">{c.loading}</p>}
-      {error && <Notice tone="error" action={<Button size="sm" onClick={() => setRetry(retry + 1)}>{c.refresh}</Button>}>{error}</Notice>}
+      {error && <Notice tone="error" action={<Button size="sm" onClick={() => navigate(null)}>{c.refresh}</Button>}>{error}</Notice>}
       {listing?.entries.map((entry) => entry.kind === "directory"
         ? <DirectoryBranch key={entry.path} workspaceId={workspaceId} directory={entry.path} label={entry.name} onOpen={onOpen} c={c} />
         : <button type="button" key={entry.path} className="nk-workspace__tree-row" onClick={() => onOpen(entry.path)}
           disabled={entry.kind !== "file"} title={entry.kind !== "file" ? c.blocked : entry.path}>
           <span aria-hidden="true">{entry.kind === "file" ? "·" : "↗"}</span><span>{entry.name}</span>
         </button>)}
-      {listing?.truncated && <p>{c.limited}</p>}
+      {listing && <div className="nk-workspace__actions">
+        <Button size="sm" disabled={loading || !listing.previousCursor} onClick={() => navigate(listing.previousCursor!)}>{c.previousPage}</Button>
+        <Button size="sm" disabled={loading || !listing.nextCursor} onClick={() => navigate(listing.nextCursor!)}>{c.nextPage}</Button>
+        <Button size="sm" disabled={loading} onClick={() => navigate(null)}>{c.startPage}</Button>
+      </div>}
+      {listing?.scanLimited && <p>{c.pageLimit}</p>}
     </div>}
   </div>;
 }
