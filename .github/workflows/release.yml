@@ -184,7 +184,19 @@ jobs:
           cp LICENSE release-assets/LICENSE
           cp LICENSES/Bun-1.4.3.md release-assets/Bun-1.4.3.md
           cp LICENSES/libnotify-0.8.7-LGPL-2.1.md release-assets/libnotify-0.8.7-LGPL-2.1.md
-          cp scripts/install.sh release-assets/install.sh
+          # Public docs/defaults describe the last successful publication. The immutable
+          # installer shipped here must instead select this exact validated release.
+          node <<'NODE'
+          const fs = require('node:fs');
+          const { releasePlan } = require('./scripts/release-plan.cjs');
+          const { version } = require('./package.json');
+          releasePlan({ refType: process.env.GITHUB_REF_TYPE, tag: process.env.GITHUB_REF_NAME, version });
+          const source = fs.readFileSync('scripts/install.sh', 'utf8');
+          const defaults = /^VERSION="\$\{CODEX_CHATGPT_WEB_VERSION:-[^}]+\}"$/gm;
+          if ([...source.matchAll(defaults)].length !== 1) throw new Error('Expected exactly one terminal installer version default');
+          const staged = source.replace(defaults, () => 'VERSION="${CODEX_CHATGPT_WEB_VERSION:-' + version + '}"');
+          fs.writeFileSync('release-assets/install.sh', staged, { mode: 0o755 });
+          NODE
           cp scripts/install-launcher.sh release-assets/install-launcher.sh
           cp scripts/install-launcher.ps1 release-assets/install-launcher.ps1
       - name: Flatten release assets

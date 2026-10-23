@@ -280,3 +280,17 @@ not change. The published `5.2.0-nekodex.1` assets and their metadata retain the
 identity and remain immutable. Existing `.1` installations require a manual signed-DMG transition
 to the first release with the renamed identity; redirects alone cannot satisfy their exact pins.
 No legacy-repository alias or unsigned trust-root update is accepted by the new verifier.
+
+### Published download defaults
+
+`publishedReleaseVersion`, the repository `scripts/install.sh` default, and current
+Apple Silicon download/release/checksum links in all README translations describe
+the last successfully published release, independently of the source version.
+Update them together only after publication and verification of the expected
+assets. Preserve the Intel and Linux historical platform pins. This metadata-only
+follow-up does not require another application release. During release asset
+staging, the workflow validates the tag against the source version and rewrites
+only the generated `release-assets/install.sh` default to that exact release,
+before checksumming/signing. Its environment version override remains available.
+The source installer and public download claims stay on the published version
+until the release succeeds; already published assets remain immutable.
