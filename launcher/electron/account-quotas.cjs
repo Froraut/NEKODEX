@@ -108,6 +108,12 @@ function cleanBucket(rateLimit, id, name = null, normalModelSlug = null) {
   };
 }
 
+function hasReportedQuota(bucket) {
+  return bucket.allowed !== null || bucket.limitReached !== null
+    || [bucket.primary, bucket.secondary].some(window =>
+      Object.values(window).some(value => value !== null));
+}
+
 function cleanAdditionalBuckets(value) {
   if (!Array.isArray(value)) return { buckets: [], truncated: false };
   const buckets = [];
@@ -140,13 +146,19 @@ function normalizeUsage(payload, localAccountId, tokenAccountId, fetchedAt) {
   }
   const additional = cleanAdditionalBuckets(payload.additional_rate_limits);
   const planType = cleanBoundedString(payload.plan_type, 80);
+  const accountBucket = cleanBucket(payload.rate_limit, "codex");
+  // A JSON object or a plan/bucket label alone is not a reported allowance.
+  // Keep partial windows and boolean-only (for example, unlimited) answers.
+  if (!hasReportedQuota(accountBucket) && !additional.buckets.some(hasReportedQuota)) {
+    throw new QuotaReadError("invalid_response");
+  }
   return {
     availability: "available",
     coverage: "reported_buckets",
     accountId: localAccountId,
     fetchedAt,
     planType,
-    accountBucket: cleanBucket(payload.rate_limit, "codex"),
+    accountBucket,
     additionalBuckets: additional.buckets,
     additionalBucketsTruncated: additional.truncated,
   };

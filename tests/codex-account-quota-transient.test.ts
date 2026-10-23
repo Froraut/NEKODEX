@@ -125,6 +125,57 @@ test("a definitive answer is not marked transient and Refresh allowance still re
   expect(await tools.refreshQuota(ID)).toMatchObject({ availability: "available" });
 });
 
+test("an empty or unknown 200 JSON answer is not a reported allowance", async () => {
+  const answers = [
+    {},
+    { detail: "No usage found", plan_type: "plus" },
+    { rate_limit: {} },
+    { rate_limit: { allowed: "true", primary_window: { used_percent: "0", reset_at: -1 } } },
+    { additional_rate_limits: [{ metered_feature: "labels-only", limit_name: "Other model" }] },
+  ];
+  for (const payload of answers) {
+    expect(await readOnce({ usage: () => json(payload) })).toMatchObject({
+      availability: "unavailable", coverage: "none", reason: "invalid_response", transient: false,
+    });
+  }
+});
+
+test("an empty refresh retains the previous allowance as stale instead of replacing it with a fresh empty result", async () => {
+  const { tools, browser, advance } = toolsFixture({});
+  const previous = await tools.refreshQuota(ID);
+  browser.current.usage = () => json({});
+  advance(60_000);
+  expect(await tools.refreshQuota(ID)).toMatchObject({
+    availability: "available", fetchedAt: previous.fetchedAt,
+    freshness: "stale", refreshError: "invalid_response", accountBucket: previous.accountBucket,
+  });
+});
+
+test("boolean-only, zero, partial-window and additional-only allowances remain reported", async () => {
+  for (const rateLimit of [{ allowed: true }, { allowed: false }, { limit_reached: false }]) {
+    expect(await readOnce({ usage: () => json({ rate_limit: rateLimit }) })).toMatchObject({
+      availability: "available", coverage: "reported_buckets",
+    });
+  }
+  expect(await readOnce({ usage: () => json({ rate_limit: {
+    primary_window: { used_percent: 0, limit_window_seconds: 604_800, reset_at: 2_000_000_000 },
+    secondary_window: { reset_at: 2_000_000_100 },
+  } }) })).toMatchObject({ availability: "available", accountBucket: {
+    primary: { usedPercent: 0, remainingPercent: 100, windowDurationMins: 10_080, resetsAt: 2_000_000_000 },
+    secondary: { usedPercent: null, remainingPercent: null, resetsAt: 2_000_000_100 },
+  } });
+  expect(await readOnce({ usage: () => json({ additional_rate_limits: [{
+    metered_feature: "other-model", rate_limit: { primary_window: { used_percent: 0 } },
+  }] }) })).toMatchObject({ availability: "available", additionalBuckets: [{
+    id: "other-model", primary: { usedPercent: 0, remainingPercent: 100 },
+  }] });
+  expect(await readOnce({ usage: () => json({ rate_limit: {
+    primary_window: { limit_window_seconds: 18_000 },
+  } }) })).toMatchObject({ availability: "available", accountBucket: {
+    primary: { usedPercent: null, remainingPercent: null, windowDurationMins: 300 },
+  } });
+});
+
 test("the renderer re-reads a transient result at most three times, 30 s, 60 s and 120 s apart", () => {
   const now = START;
   const transient = { availability: "unavailable", coverage: "none", accountId: ID, reason: "timeout",

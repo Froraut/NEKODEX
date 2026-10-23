@@ -22,6 +22,14 @@ export interface QuotaFreshnessCopy {
   retainedAt: string;
 }
 
+/** A retained observation describes the last provider response, never current permission to run. */
+export function quotaFreshness(quota: AccountQuotaSnapshot | null | undefined, failed: boolean, now: number) {
+  const freshUntil = quota?.freshUntil ? Date.parse(quota.freshUntil) : Number.NaN;
+  const stale = quota?.freshness === "stale" || (Number.isFinite(freshUntil) && freshUntil <= now);
+  const retained = Boolean(quota?.refreshError) || failed;
+  return { stale, retained, historical: stale || retained };
+}
+
 /** Ids of an account's allowance section and its Codex sign-in section. */
 export function accountCodexIds(prefix: string) {
   return { quotaTitle: `${prefix}-quota-title`, quotaReason: `${prefix}-quota-reason`, quotaRefresh: `${prefix}-quota-refresh`,
@@ -68,13 +76,14 @@ export function AccountCodexAllowance({
   const updatedAt = reported ? quota.fetchedAt ?? quota.checkedAt ?? null : null;
   // The account-wide bucket is the allowance itself: its state sits beside the title and its meters follow
   // directly, instead of a second "General Codex allowance" heading row.
-  const accountState = reported ? bucketTone[quotaAvailability(quota.accountBucket)] : null;
+  const freshness = quotaFreshness(quota, quotaFailed, quotaNow);
+  const accountState = reported ? freshness.historical ? { dot: "idle" as const } : bucketTone[quotaAvailability(quota.accountBucket)] : null;
   return <section className="accounts-allowance" aria-labelledby={ids.quotaTitle}>
     <header className="accounts-allowance__header">
       <div className="accounts-allowance__title">
         <h3 id={ids.quotaTitle} className="nk-type-label">{copy.quotaTitle}</h3>
         {reported && accountState ? <Badge {...accountState}>
-          {accountAvailabilityCopy(language)[quotaAvailability(quota.accountBucket)]}</Badge> : null}
+          {freshness.historical ? copy.quotaLastKnownBadge : accountAvailabilityCopy(language)[quotaAvailability(quota.accountBucket)]}</Badge> : null}
       </div>
       {updatedAt ? <p className="accounts-caption nk-type-caption">{copy.quotaUpdated.replace("{time}", formatDateTime(updatedAt, language, copy.quotaUnknown))}</p> : null}
       <Button size="sm" icon="reload" id={ids.quotaRefresh}
@@ -88,7 +97,7 @@ export function AccountCodexAllowance({
     </header>
     {quotaDisabledReason && !quotaReasonId ? <p className="accounts-reason nk-type-caption" id={ids.quotaReason}>{quotaDisabledReason}</p> : null}
     <QuotaContent copy={copy} language={language} quota={quota} disabledReason={quotaDisabledReason}
-      failed={quotaFailed} readFailedText={quotaReadFailedText} freshnessCopy={quotaFreshnessCopy} now={quotaNow} />
+      failed={quotaFailed} readFailedText={quotaReadFailedText} freshness={freshness} freshnessCopy={quotaFreshnessCopy} now={quotaNow} />
   </section>;
 }
 
@@ -223,11 +232,12 @@ function moveFocus(region: HTMLElement | null) {
   message.focus();
 }
 
-function QuotaContent({ copy, disabledReason, failed, freshnessCopy, language, now, quota, readFailedText }: {
+function QuotaContent({ copy, disabledReason, failed, freshness, freshnessCopy, language, now, quota, readFailedText }: {
   copy: AccountCodexCopy;
   disabledReason?: string;
   failed: boolean;
   readFailedText: string;
+  freshness: ReturnType<typeof quotaFreshness>;
   freshnessCopy?: QuotaFreshnessCopy;
   language: Language;
   now: number;
@@ -251,36 +261,28 @@ function QuotaContent({ copy, disabledReason, failed, freshnessCopy, language, n
   }
   const updatedAt = quota.fetchedAt ?? quota.checkedAt ?? null;
   return <div className="accounts-allowance__content">
-    {freshnessCopy ? <QuotaFreshness copy={freshnessCopy} failed={failed} language={language}
-      now={now} quota={quota} updatedAt={updatedAt} /> : null}
-    <QuotaBucketMeters bucket={quota.accountBucket} copy={copy} language={language} />
+    {freshnessCopy ? <QuotaFreshness copy={freshnessCopy} freshness={freshness} language={language}
+      now={now} updatedAt={updatedAt} /> : null}
+    <QuotaBucketMeters bucket={quota.accountBucket} copy={copy} language={language} historical={freshness.historical} />
     {quota.additionalBuckets.length ? <Disclosure className="accounts-allowance__more"
       title={copy.quotaAdditional.replace("{count}", String(quota.additionalBuckets.length))}>
       <div className="accounts-allowance__buckets">
         {quota.additionalBuckets.map(bucket => <QuotaBucketView key={bucket.id} bucket={bucket} copy={copy}
-          language={language} fallbackName={bucket.id} />)}
+          language={language} fallbackName={bucket.id} historical={freshness.historical} />)}
       </div>
     </Disclosure> : null}
     {quota.additionalBucketsTruncated ? <p className="accounts-caption nk-type-caption">{copy.quotaCoverageTruncated}</p> : null}
   </div>;
 }
 
-function QuotaFreshness({ copy, failed, language, now, quota, updatedAt }: {
+function QuotaFreshness({ copy, freshness, language, now, updatedAt }: {
   copy: QuotaFreshnessCopy;
-  failed: boolean;
+  freshness: ReturnType<typeof quotaFreshness>;
   language: Language;
   now: number;
-  quota: AccountQuotaSnapshot;
   updatedAt: string | null;
 }) {
-  const metadata = quota as AccountQuotaSnapshot & {
-    freshness?: "fresh" | "stale";
-    freshUntil?: string | null;
-    refreshError?: string | null;
-  };
-  const freshUntil = metadata.freshUntil ? Date.parse(metadata.freshUntil) : Number.NaN;
-  const stale = metadata.freshness === "stale" || (Number.isFinite(freshUntil) && freshUntil <= now);
-  const retained = Boolean(metadata.refreshError) || failed;
+  const { stale, retained } = freshness;
   const label = retained || stale ? copy.quotaLastKnown : copy.quotaCurrent;
   const updated = updatedAt ? Date.parse(updatedAt) : Number.NaN;
   const age = Number.isFinite(updated) ? (retained || stale ? copy.retainedAt : copy.checkedAt)
@@ -299,10 +301,11 @@ const bucketTone: Record<ReturnType<typeof quotaAvailability>, { tone?: Tone; do
 };
 
 /** A model-specific bucket: its name and state, then its meters. */
-function QuotaBucketView({ bucket, copy, fallbackName, language }: {
+function QuotaBucketView({ bucket, copy, fallbackName, historical, language }: {
   bucket: AccountQuotaBucket;
   copy: AccountCodexCopy;
   fallbackName: string;
+  historical: boolean;
   language: Language;
 }) {
   const name = bucket.name || bucket.normalModelSlug || fallbackName;
@@ -310,42 +313,45 @@ function QuotaBucketView({ bucket, copy, fallbackName, language }: {
   return <article className="accounts-bucket">
     <header className="accounts-bucket__head">
       <h4 className="nk-type-label">{name}</h4>
-      <Badge {...bucketTone[availability]}>{accountAvailabilityCopy(language)[availability]}</Badge>
+      <Badge {...(historical ? { dot: "idle" as const } : bucketTone[availability])}>{historical ? copy.quotaLastKnownBadge : accountAvailabilityCopy(language)[availability]}</Badge>
     </header>
-    <QuotaBucketMeters bucket={bucket} copy={copy} language={language} />
+    <QuotaBucketMeters bucket={bucket} copy={copy} language={language} historical={historical} />
   </article>;
 }
 
-function QuotaBucketMeters({ bucket, copy, language }: {
+function QuotaBucketMeters({ bucket, copy, historical, language }: {
   bucket: AccountQuotaBucket;
   copy: AccountCodexCopy;
+  historical: boolean;
   language: Language;
 }) {
   return <div className="accounts-bucket__meters">
-    <QuotaWindowMeter label={copy.quotaPrimary} value={bucket.primary} copy={copy} language={language} />
-    <QuotaWindowMeter label={copy.quotaSecondary} value={bucket.secondary} copy={copy} language={language} />
+    <QuotaWindowMeter label={copy.quotaPrimary} value={bucket.primary} copy={copy} language={language} historical={historical} />
+    <QuotaWindowMeter label={copy.quotaSecondary} value={bucket.secondary} copy={copy} language={language} historical={historical} />
   </div>;
 }
 
-function QuotaWindowMeter({ copy, label, language, value }: {
+function QuotaWindowMeter({ copy, historical, label, language, value }: {
   copy: AccountCodexCopy;
   label: string;
   language: Language;
   value: AccountQuotaWindow;
+  historical: boolean;
 }) {
   const duration = value.windowDurationMins === null ? null
     : formatDuration(value.windowDurationMins, copy, language);
   const reset = value.resetsAt === null ? null
-    : copy.quotaResets.replace("{time}", formatDateTime(value.resetsAt * 1_000, language, copy.quotaUnknown));
+    : (historical ? copy.quotaReportedReset : copy.quotaResets).replace("{time}", formatDateTime(value.resetsAt * 1_000, language, copy.quotaUnknown));
   const note = [duration, reset].filter(Boolean).join(" · ") || undefined;
   const remaining = value.remainingPercent;
   if (remaining === null) {
     // Missing values are not zero: the kit shows the words and an empty, decorative track (no progressbar).
     return <ProgressMeter className="accounts-meter is-unreported" label={label} unreported={copy.quotaUnknown} note={note} />;
   }
-  const tone = remaining <= 0 ? "error" : remaining < 25 ? "warning" : "success";
+  const tone = historical ? undefined : remaining <= 0 ? "error" : remaining < 25 ? "warning" : "success";
+  const valueLabel = copy.quotaRemaining.replace("{value}", formatPercent(remaining, language));
   return <ProgressMeter className="accounts-meter" label={label}
-    valueLabel={copy.quotaRemaining.replace("{value}", formatPercent(remaining, language))}
+    valueLabel={valueLabel} valueText={historical ? `${copy.quotaLastKnownBadge}: ${valueLabel}` : undefined}
     value={remaining / 100} tone={tone} note={note} />;
 }
 
