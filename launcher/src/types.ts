@@ -110,6 +110,14 @@ export interface BrowserState {
   observation?: SnapshotObservation;
   accountId?: string;
   accountName?: string;
+  /** Selected-account connector evidence and own-mode tunnel, captured with this browser observation. */
+  accountTools?: {
+    accountId: string;
+    interactionMode: BrowserInteractionMode;
+    checked: boolean;
+    connectorReady: boolean;
+    tunnelReady: boolean;
+  };
   status: "idle" | "loading" | "signed-out" | "ready" | "testing" | "running" | "error";
   message: string;
   url: string;

@@ -469,7 +469,7 @@
   {"path":"launcher/src/ipc-error.ts","dependencies":[]},
   {"path":"launcher/src/language-selection.ts","dependencies":["launcher/src/locale-catalog.ts"]},
   {"path":"launcher/src/launcher-log-store.ts","dependencies":[]},
-  {"path":"launcher/src/launcher-readiness.ts","dependencies":[]},
+  {"path":"launcher/src/launcher-readiness.ts","dependencies":["launcher/src/account-tools-onboarding.ts"]},
   {"path":"launcher/src/launcher-ui.tsx","dependencies":["launcher/electron/languages.json","launcher/src/design/index.ts","launcher/src/i18n.ts","launcher/src/ipc-error.ts","launcher/src/modal-focus.ts","react","react-dom","react/jsx-dev-runtime","src/chatgpt-web-models.ts"]},
   {"path":"launcher/src/local-control-api-types.ts","dependencies":[]},
   {"path":"launcher/src/locale-catalog.ts","dependencies":["launcher/src/i18n-en.json","launcher/src/i18n-ja.json","launcher/src/i18n-ko.json","launcher/src/i18n-ru.json","launcher/src/i18n-zh-CN.json","launcher/src/i18n-zh-TW.json"]},

@@ -1,10 +1,11 @@
 /** Pure cross-account display projection; never owns hosts, ledgers or leases. */
 function projectAccountBrowserSnapshot({ observation, selectedId, accounts, selectedState, accountTabs,
-  taskHistories, workspaces, queue, toolProof, maxTabs }) {
+  taskHistories, workspaces, queue, toolProof, maxTabs, accountTools }) {
   const labels = new Map(accounts.map(({ id, label }) => [id, label]));
   const historyIssues = new Map(taskHistories.map(({ accountId, issue }) => [accountId, issue]));
   return {
     ...selectedState, observation, accountId: selectedId, accountName: labels.get(selectedId), maxTabs,
+    ...(accountTools ? { accountTools } : {}),
     ...(workspaces ? { workspaces } : {}),
     toolProof: toolProof ? { ...toolProof, accountName: labels.get(toolProof.accountId) } : null,
     queue: queue ? { ...queue, accounts: accounts.map(({ id, label }) => ({ id, label })) } : undefined,

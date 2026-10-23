@@ -534,12 +534,22 @@ class AccountBrowserPool {
   }
   snapshot() {
     const registry = this.registry.snapshot();
-    const selectedState = this.getHost(registry.selectedId).snapshot();
+    const selectedHost = this.getHost(registry.selectedId);
+    const selectedState = selectedHost.snapshot();
+    const interactionMode = this.options.getBrowserInteractionMode?.() ?? 'automatic';
+    const tunnel = this.accountTunnel(registry.selectedId, interactionMode);
     // Only the selected account needs native navigation/title observations.
     // Other accounts contribute turn rows, never a second full host snapshot.
     return projectAccountBrowserSnapshot({
       observation: this.observationStamp(),
       selectedId: registry.selectedId, accounts: registry.accounts, selectedState,
+      accountTools: {
+        accountId: registry.selectedId, interactionMode,
+        checked: this.capabilities.has(registry.selectedId),
+        connectorReady: this.connectors.get(registry.selectedId) === selectedHost.connectorName(),
+        tunnelReady: tunnel.accountId === registry.selectedId && tunnel.interactionMode === interactionMode
+          && tunnel.ready === true,
+      },
       maxTabs: this.options.maxTabs,
       workspaces: this.workspaceDirectory ? this.workspaceSnapshot() : undefined,
       queue: this.admissionQueue?.snapshot(),
