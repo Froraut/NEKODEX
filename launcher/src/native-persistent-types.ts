@@ -2,6 +2,9 @@ export type NativeConversationMode = 'neko-json-v1' | 'canonical-text-v1';
 export interface NativePersistentConversation {
   id: string;
   revision: number;
+  label?: string;
+  labelRevision?: number;
+  renameAvailable?: boolean;
   threadId: string | null;
   model: string;
   status: 'idle' | 'running' | 'unknown' | 'unavailable' | 'unloaded' | 'archived';
@@ -33,6 +36,8 @@ export interface NativePersistentSnapshot {
   conversations: NativePersistentConversation[];
   archivedConversations?: NativePersistentConversation[];
   archivedCount?: number;
+  archivedTotalCount?: number;
+  archiveQuery?: string;
   archivedConversationIds?: string[];
   archiveNextCursor?: string | null;
   quota?: { conversations: number; conversationLimit: number; actions: number; actionLimit: number };
@@ -46,9 +51,10 @@ export interface NativePersistentSnapshot {
 export interface NativePersistentContext { profileId: string; epoch: string; serverGeneration: string }
 
 export type NativePersistentRequest =
-  | { action: 'snapshot'; actionId?: string; archiveCursor?: string }
+  | { action: 'snapshot'; actionId?: string; archiveCursor?: string; archiveQuery?: string }
   | { action: 'create'; actionId: string; model: string; text: string; retainContext: true; expectedContext: NativePersistentContext;
       conversationMode?: NativeConversationMode; recordFutureText?: { consent: true; acknowledgeUnknownSecrets: true } }
+  | { action: 'rename'; actionId: string; conversationId: string; revision: number; expectedContext: NativePersistentContext; expectedLabel: string; label: string }
   | { action: 'send'; actionId: string; conversationId: string; revision: number; text: string; expectedContext: NativePersistentContext }
   | { action: 'fork'; actionId: string; conversationId: string; revision: number; expectedContext: NativePersistentContext; lastTurnId?: string }
   | { action: 'closeIdle' | 'resume' | 'archive' | 'stop'; actionId: string; conversationId: string; revision: number; expectedContext: NativePersistentContext };

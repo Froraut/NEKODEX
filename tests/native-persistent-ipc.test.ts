@@ -114,3 +114,20 @@ test('Stop IPC accepts only opaque conversation identity and projects stopping w
   expect(await handler(null, { ...request, expectedContext: { ...expectedContext, epoch: randomUUID() } })).toMatchObject({ ok: false, error: { code: 'context_changed', knownNotStarted: true } });
   expect(calls).toHaveLength(1);
 });
+
+test('metadata Rename and archive-query IPC project label-only intent and retain full active metadata', async () => {
+  let handler: Function = () => {}; const expectedContext = { profileId: randomUUID(), epoch: randomUUID(), serverGeneration: randomUUID() };
+  const id = randomUUID(), actionId = randomUUID(), calls: any[] = [];
+  const receipt = { actionId, conversationId: id, kind: 'rename', state: 'completed' };
+  const source = { conversations: [{ id, revision: 2, label: 'New label', renameAvailable: true, status: 'running', model: 'fixture', createdAt: 1, updatedAt: 1 }],
+    actions: [receipt], archivedConversations: [], archivedCount: 0, archivedTotalCount: 3, archiveQuery: 'needle' };
+  registerPersistentNativeConversations({ handle: (_: string, value: Function) => { handler = value; }, getContext: () => expectedContext,
+    getService: () => ({ rename: async (input: any) => { calls.push(input); return source; }, list: (input: any) => { calls.push(input); return source; }, inspectAction: () => receipt }) });
+  const request = { action: 'rename', actionId, conversationId: id, revision: 2, expectedContext, expectedLabel: '', label: 'New label' };
+  expect(await handler(null, request)).toMatchObject({ ok: true, value: { observedAction: receipt, conversations: [{ id, revision: 2, label: 'New label', status: 'running' }] } });
+  expect(calls[0]).toEqual({ actionId, conversationId: id, revision: 2, expectedContext, expectedLabel: '', label: 'New label' });
+  expect(await handler(null, { action: 'snapshot', archiveQuery: 'needle' })).toMatchObject({ ok: true, value: { archivedCount: 0, archivedTotalCount: 3, archiveQuery: 'needle', conversations: [{ id }] } });
+  expect(calls.at(-1)).toEqual({ archiveCursor: undefined, archiveQuery: 'needle' });
+  expect(await handler(null, { ...request, threadId: randomUUID() })).toMatchObject({ ok: false, error: { code: 'invalid_request', knownNotStarted: true } });
+  expect(await handler(null, { action: 'snapshot', archiveQuery: 'x'.repeat(121) })).toMatchObject({ ok: false, error: { code: 'invalid_request' } });
+});

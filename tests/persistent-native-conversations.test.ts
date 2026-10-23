@@ -537,3 +537,54 @@ test('Archive byte-cap refusal preserves exact revision/status/actions before an
     expect(f.methods).toHaveLength(calls);
   } finally { await f.close(); }
 });
+
+test('conversation Rename preserves live Send revision/context, uses metadata-only receipt and cannot edit archives', async () => {
+  const f = await fixture(3, 5000);
+  try {
+    await f.service.create(f.create('first')); const original = f.service.list().conversations[0];
+    f.hold(); const seen = f.waitForTurn('continued'), send = { actionId: randomUUID(), conversationId: original.id, revision: original.revision, expectedContext: f.expectedContext, text: 'continued' };
+    const sending = f.service.send(send); await seen; await Promise.resolve();
+    const before = JSON.parse(readFileSync(join(f.storageRoot, 'registry.json'), 'utf8')), row = before.conversations[0], calls = f.methods.length;
+    const rename = { actionId: randomUUID(), conversationId: row.id, revision: row.revision, expectedContext: f.expectedContext, expectedLabel: '', label: ' My retained work ' };
+    const result = await f.service.rename(rename);
+    expect(result.conversations[0]).toMatchObject({ label: 'My retained work', revision: row.revision, status: 'running', stopAvailable: true });
+    const after = JSON.parse(readFileSync(join(f.storageRoot, 'registry.json'), 'utf8'));
+    expect(after.conversations[0]).toEqual({ ...row, label: 'My retained work', labelRevision: 1 });
+    expect(after.selected).toEqual(before.selected); expect(result.quota.actions).toBe(2); expect(f.methods).toHaveLength(calls);
+    expect(f.service.inspectAction(rename.actionId)).toMatchObject({ kind: 'rename', state: 'completed', ownerHeld: false });
+    await f.service.rename(rename); expect(f.methods).toHaveLength(calls);
+    f.release(original.threadId); await sending;
+    expect(f.service.list().conversations[0]).toMatchObject({ label: 'My retained work', revision: row.revision, lastSummary: 'Observed continued', status: 'idle' });
+    await expect(f.service.rename({ ...rename, actionId: randomUUID(), expectedLabel: '', label: 'stale' })).rejects.toMatchObject({ code: 'conversation_label_changed', actionRecorded: false });
+    await f.service.rename({ ...rename, actionId: randomUUID(), expectedLabel: 'My retained work', label: '' });
+    expect(f.service.list().conversations[0].label).toBeUndefined();
+    expect(f.service.list().conversations[0].labelRevision).toBe(2);
+    await f.service.archive({ actionId: randomUUID(), conversationId: row.id, revision: row.revision, expectedContext: f.expectedContext });
+    expect(f.service.list().archivedConversations[0].renameAvailable).toBe(false);
+    await expect(f.service.rename({ ...rename, actionId: randomUUID(), revision: row.revision + 1 })).rejects.toMatchObject({ actionRecorded: false });
+  } finally { await f.close(); }
+});
+
+test('archive query pages bounded scoped metadata with query-bound cursor and never filters active conversation metadata', async () => {
+  const f = await fixture();
+  try {
+    await f.service.create(f.create('first'));
+    await f.rewriteRegistry(value => {
+      const row = value.conversations[0]; row.label = 'Active draft';
+      for (let i = 0; i < 51; i++) value.conversations.push({ ...row, id: randomUUID(), label: 'Needle ' + i, archivedAt: Date.now() - i, status: 'unloaded' });
+      value.conversations.push({ ...row, id: randomUUID(), label: 'Other title', lastSummary: 'Other summary', archivedAt: Date.now(), status: 'unloaded' });
+      value.conversations.push({ ...row, id: randomUUID(), epoch: randomUUID(), label: 'Needle foreign scope', archivedAt: Date.now(), status: 'unloaded' });
+    });
+    const active = f.service.list().conversations;
+    const page = f.service.list({ archiveQuery: ' Needle ' });
+    expect(page).toMatchObject({ archivedCount: 51, archivedTotalCount: 52, archiveQuery: 'Needle' });
+    expect(page.archivedConversations).toHaveLength(50); expect(page.conversations).toEqual(active);
+    expect(page.archivedConversationIds).toHaveLength(52);
+    expect(f.service.list({ archiveQuery: 'NEEDLE', archiveCursor: page.archiveNextCursor }).archivedConversations).toHaveLength(1);
+    expect(() => f.service.list({ archiveQuery: 'Other', archiveCursor: page.archiveNextCursor })).toThrow('query changed');
+    const selected = page.archivedConversations[0]; expect(f.service.list({ archiveQuery: selected.id }).archivedConversations.map((row: any) => row.id)).toEqual([selected.id]);
+    expect(f.service.list({ archiveQuery: 'Other summary' }).archivedCount).toBe(1);
+    expect(() => f.service.list({ archiveQuery: 'x'.repeat(121) })).toThrow('at most 120');
+    expect(f.service.list({ archiveQuery: 'no match' }).conversations).toEqual(active);
+  } finally { await f.close(); }
+});

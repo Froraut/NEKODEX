@@ -1,11 +1,12 @@
 'use strict';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const KEYS = {
-  snapshot: ['action', 'actionId', 'archiveCursor'],
+  snapshot: ['action', 'actionId', 'archiveCursor', 'archiveQuery'],
   create: ['action', 'actionId', 'model', 'text', 'retainContext', 'expectedContext', 'conversationMode', 'recordFutureText'],
   send: ['action', 'actionId', 'conversationId', 'revision', 'text', 'expectedContext'],
   fork: ['action', 'actionId', 'conversationId', 'revision', 'expectedContext', 'lastTurnId'],
   closeIdle: ['action', 'actionId', 'conversationId', 'revision', 'expectedContext'],
+  rename: ['action', 'actionId', 'conversationId', 'revision', 'expectedContext', 'expectedLabel', 'label'],
   stop: ['action', 'actionId', 'conversationId', 'revision', 'expectedContext'],
   archive: ['action', 'actionId', 'conversationId', 'revision', 'expectedContext'],
   resume: ['action', 'actionId', 'conversationId', 'revision', 'expectedContext'],
@@ -19,12 +20,12 @@ function registerPersistentNativeConversations({ handle, getService, getContext 
     ...(row.ownerHeld === true ? { ownerHeld: true } : {}),
     ...(row.reasonCode ? { reasonCode: row.reasonCode } : {}),
     ...(['completed', 'failed', 'interrupted'].includes(row.nativeStatus) ? { nativeStatus: row.nativeStatus } : {}) });
-  const snapshot = async (value, actionId, archiveCursor) => {
-    const source = value || await getService().list({ archiveCursor });
+  const snapshot = async (value, actionId, archiveCursor, archiveQuery) => {
+    const source = value || await getService().list({ archiveCursor, ...(archiveQuery !== undefined ? { archiveQuery } : {}) });
     const context = getContext();
     const observed = actionId ? getService().inspectAction(actionId) : undefined;
     const projectConversation = row => ({
-        id: row.id, revision: row.revision, threadId: row.threadId, model: row.model,
+        id: row.id, revision: row.revision, ...(typeof row.label === 'string' ? { label: row.label } : {}), labelRevision: row.labelRevision || 0, renameAvailable: row.renameAvailable === true, threadId: row.threadId, model: row.model,
         status: row.status, createdAt: row.createdAt, updatedAt: row.updatedAt,
         ...(row.parentId ? { parentId: row.parentId } : {}),
         conversationMode: row.conversationMode === 'canonical-text-v1' ? 'canonical-text-v1' : 'neko-json-v1',
@@ -47,7 +48,7 @@ function registerPersistentNativeConversations({ handle, getService, getContext 
       models: (context?.models || []).map(model => ({ id: model.id, ...(model.label ? { label: model.label } : {}) })),
       conversations: source.conversations.map(projectConversation),
       archivedConversations: (source.archivedConversations || []).map(projectConversation),
-      archivedCount: source.archivedCount || 0, archivedConversationIds: source.archivedConversationIds || [],
+      archivedCount: source.archivedCount || 0, archivedTotalCount: source.archivedTotalCount ?? source.archivedCount ?? 0, archiveQuery: source.archiveQuery || '', archivedConversationIds: source.archivedConversationIds || [],
       archiveNextCursor: source.archiveNextCursor || null, quota: source.quota,
       actions: source.actions.map(projectAction),
       ...(observed ? { observedAction: projectAction(observed) } : {}),
@@ -63,8 +64,9 @@ function registerPersistentNativeConversations({ handle, getService, getContext 
         || Object.keys(body).some(key => !KEYS[body.action].includes(key))
         || Buffer.byteLength(JSON.stringify(body)) > 34 * 1024) throw invalid();
       if (body.action === 'snapshot') {
-        if (body.actionId !== undefined && !UUID.test(body.actionId) || body.archiveCursor !== undefined && !UUID.test(body.archiveCursor)) throw invalid();
-        return { ok: true, value: await snapshot(undefined, body.actionId, body.archiveCursor) };
+        if (body.actionId !== undefined && !UUID.test(body.actionId) || body.archiveCursor !== undefined && (typeof body.archiveCursor !== 'string' || !/^[0-9a-f-]{36}(?::[0-9a-f]{16})?$/i.test(body.archiveCursor))) throw invalid();
+        if (body.archiveQuery !== undefined && (typeof body.archiveQuery !== 'string' || body.archiveQuery.length > 120 || /\p{C}/u.test(body.archiveQuery))) throw invalid();
+        return { ok: true, value: await snapshot(undefined, body.actionId, body.archiveCursor, body.archiveQuery) };
       }
       if (!UUID.test(body.actionId)) throw invalid();
       const expected = body.expectedContext;
@@ -83,6 +85,7 @@ function registerPersistentNativeConversations({ handle, getService, getContext 
           || Object.keys(body.recordFutureText).sort().join(',') !== 'acknowledgeUnknownSecrets,consent'
           || body.recordFutureText.consent !== true || body.recordFutureText.acknowledgeUnknownSecrets !== true)) throw invalid();
       } else if (!UUID.test(body.conversationId) || !Number.isSafeInteger(body.revision) || body.revision < 0) throw invalid();
+      if (body.action === 'rename' && [body.expectedLabel, body.label].some(value => typeof value !== 'string' || value.length > 80 || /\p{C}/u.test(value))) throw invalid();
       if (body.lastTurnId !== undefined && (body.action !== 'fork' || typeof body.lastTurnId !== 'string' || !body.lastTurnId
         || body.lastTurnId.length > 128 || /[\u0000-\u001f]/.test(body.lastTurnId))) throw invalid();
       if (['create', 'send'].includes(body.action) && (typeof body.text !== 'string' || !body.text.trim()
