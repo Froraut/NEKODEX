@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+const { RuntimeSupervisor } = createRequire(import.meta.url)("../../launcher/electron/runtime-supervisor.cjs");
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, watch, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { AgentModeRuntime, AgentModeStore } from "../../src/agent-mode";
@@ -14,6 +16,8 @@ let server: ReturnType<typeof startServer> | undefined;
 let toolPid: number | undefined;
 let approval: Promise<any> | undefined;
 let nativeRequests = 0;
+let holdNative = false; let releaseNative: (() => void) | undefined; let markNativeStarted: (() => void) | undefined;
+const nativeStarted = new Promise<void>(resolve => { markNativeStarted = resolve; });
 let failure: unknown;
 try {
   const store = new AgentModeStore(join(home, "agent-mode", "state.sqlite"));
@@ -38,7 +42,7 @@ try {
     command, commandSha256: sha256(readFileSync(command)), args: [script, counter, release], pinnedFiles: [{ path: script, sha256: sha256(readFileSync(script)) }], cwd: home, envSecretRefs: {} }] });
   const config = { ...defaultConfig("full"), port: 0, browserHost: "launcher" as const,
     brokerSocketPath: process.platform === "win32" ? defaultBrokerEndpoint(home) : join(home, "b.sock") };
-  server = startServer(config, { fetchUpstream: async request => { assert.ok(new URL(request.url).pathname.endsWith("/alpha/search")); nativeRequests++; return Response.json({ fixtureNative: true }); } });
+  server = startServer(config, { fetchUpstream: async request => { assert.ok(new URL(request.url).pathname.endsWith("/alpha/search")); nativeRequests++; if (holdNative) { markNativeStarted!(); await new Promise<void>(resolve => { releaseNative = resolve; }); } return Response.json({ fixtureNative: true }); } });
   const base = `http://127.0.0.1:${server.port}`;
   const post = async (path: string, body: unknown) => { const response = await fetch(`${base}${path}`, { method: "POST", headers: { authorization: `Bearer ${config.controlToken}`, "content-type": "application/json" }, body: JSON.stringify(body) }); return { status: response.status, body: await response.json() as any }; };
   const health = async () => await (await fetch(`${base}/healthz`)).json() as any;
@@ -64,14 +68,34 @@ try {
   assert.equal((await post("/admin/agent-tools", { action: "discover", scope, explicitUserAction: true })).status, 409);
   const native = await post("/v1/alpha/search", { query: "inert fixture native request" }); assert.equal(native.status, 200); assert.equal(native.body.fixtureNative, true); assert.equal(nativeRequests, 1);
   assert.equal((await post("/admin/runtime-session", { action: "attach", instanceId: initial.instance_id })).status, 200);
+  // Exercise the actual temporary-quiescence wrapper over the real daemon fence,
+  // with one independent Native HTTP request held at the inert upstream boundary.
+  holdNative = true;
+  const heldNative = post("/v1/alpha/search", { query: "held inert native request" });
+  await nativeStarted;
+  const runtime = new RuntimeSupervisor({ app: {}, logger: { info() {}, warn() {}, error() {} }, coreHome: home, sourceRoot: home });
+  let ownPeersStopped = false, restored = false;
+  Object.assign(runtime, { daemon: { pid: process.pid }, readConfig: () => ({ ...config, accountTunnelMode: true }),
+    runtimeSession: async (_: unknown, action: string) => { const result = await post("/admin/runtime-session", { action, instanceId: initial.instance_id }); if (result.status !== 200) throw new Error("Actual idle fence refused"); return result.body; },
+    accountTunnelSupervisor: { stop: async () => { ownPeersStopped = true; }, ownedKeys: () => ['inert-owned'], restartOwned: async (keys: string[]) => { assert.deepEqual(keys, ['inert-owned']); restored = true; }, snapshot: () => [{ ready: false }] },
+    reportTunnelStatus: async () => {} });
+  await runtime.withNativeRecoveryQuiescence(async () => {
+    const paused = await health(); assert.equal(paused.launcher_detached, true); assert.equal(paused.active_http_turns, 1); assert.equal(paused.active_web_http_turns, 0);
+    assert.equal(paused.native_accepting_turns, true); assert.equal(ownPeersStopped, true);
+    assert.equal((await post("/admin/agent-tools", { action: "discover", scope, explicitUserAction: true })).status, 409);
+  });
+  assert.equal(restored, true); assert.equal((await health()).launcher_detached, false);
+  releaseNative!(); const heldResult = await heldNative; assert.equal(heldResult.status, 200); assert.equal(heldResult.body.fixtureNative, true);
+
   assert.equal((await post("/admin/agent-tools", { action: "discover", scope, explicitUserAction: true })).status, 200);
   const duplicate = await post("/admin/agent-tools", { action: "approveInvoke", scope, explicitUserAction: true }); assert.equal(duplicate.body.value.state, "completed"); assert.equal(readFileSync(counter, "utf8"), "1");
   const detail = await post("/admin/agent-mode", { action: "get", taskId: scope.taskId }); assert.equal(detail.body.value.effectiveToolOutcomes[0].state, "completed"); assert.equal(detail.body.value.dispatches.length, 1);
   await server.stop(true); server = undefined;
   assert.throws(() => process.kill(toolPid!, 0), (error: any) => error.code === "ESRCH");
-  console.log(JSON.stringify({ ok: true, webReady: false, syntheticPendingSource: true, realSdkEffectCount: 1, refusedBusyDetach: true, idleDetach: true, blockedDetachedScope: true, attachedScopeRestored: true, nativeFixtureRequests: nativeRequests, sdkChildReaped: true }));
+  console.log(JSON.stringify({ ok: true, webReady: false, syntheticPendingSource: true, realSdkEffectCount: 1, refusedBusyDetach: true, idleDetach: true, blockedDetachedScope: true, attachedScopeRestored: true, nativeFixtureRequests: nativeRequests, nativeRecoveryQuiescence: true, sdkChildReaped: true }));
 } catch (error) { failure = error; }
 finally {
+  releaseNative?.();
   writeFileSync(release, "cleanup release");
   await approval?.catch(() => {}); await server?.stop(true);
   rmSync(home, { recursive: true, force: true });
