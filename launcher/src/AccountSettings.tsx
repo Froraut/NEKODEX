@@ -1,3 +1,5 @@
+import { AccountCardManagement } from "./AccountCardManagement";
+import { accountManagementCopy } from "./account-management-copy";
 import { useAccountPoolSnapshot } from "./useAccountPoolSnapshot";
 import { useAccountCodexLogin } from "./useAccountCodexLogin";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -42,7 +44,7 @@ function nextQuotaClockAt(values: Iterable<AccountQuotaSnapshot | null>, now: nu
 }
 
 /** The card action (or page action) a pool mutation is running for: that control shows the spinner. */
-type PendingKind = "enabled" | "credentials" | "select" | "check" | "connector" | "mode" | "add" | "safety" | "proxy" | "resume";
+type PendingKind = "enabled" | "credentials" | "select" | "check" | "connector" | "mode" | "add" | "safety" | "proxy" | "resume" | "rename" | "remove" | "reauthenticate";
 type Pending = { kind: PendingKind; accountId: string | null };
 
 /** The page's one next step, which alone gets the primary button. */
@@ -747,7 +749,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
                 aria-describedby={describedBy(enabledDisabled, blockedReason)}
                 onChange={checked => void run("enabled", account.id, () => api.setAccountEnabled(account.id, checked))} />
               <div className="accounts-card__buttons">
-                {!authUnavailable ? <Button size="sm" variant={isPrimary("sign-in", account.id) ? "primary" : "secondary"}
+                <Button size="sm" variant={isPrimary("sign-in", account.id) ? "primary" : "secondary"}
                   icon="browser" busy={pendingHere === "credentials"}
                   disabled={credentialDisabled} aria-label={credentialLabel}
                   aria-describedby={describedBy(credentialDisabled, credentialReason)}
@@ -758,7 +760,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
                     openBrowser();
                     await api.openAccountLogin(account.id);
                     return api.accounts();
-                  })}>{credentialLabel}</Button> : null}
+                  })}>{credentialLabel}</Button>
                 {/* Only a person passes Cloudflare's check, and a retry reloads the page that shows it. */}
                 {authUnavailable && account.authenticationIssue !== "challenge" ? <Button size="sm" icon="reload"
                   busy={authRefreshBusy}
@@ -784,6 +786,18 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
                   disabled={toolsDisabled || !toolsSetup.connectorName}
                   onClick={() => void run("connector", account.id, () => api.checkAccount(account.id, true))}>
                   {pendingHere === "connector" ? workflow.session.checkingVerification : copy.accountsCheckConnector}</Button> : null}
+                <AccountCardManagement id={account.id} label={account.label} language={language}
+                  authenticated={account.authenticated} manual={manual} disabled={mutationsDisabled}
+                  accessBlocked={active || loginBoundActive || quotaReadBusy ? blockedReason ?? accountManagementCopy(language).busyReason : undefined}
+                  removeReason={account.id === 'default' ? accountManagementCopy(language).defaultReason
+                    : account.enabled && state.accounts.filter(row => row.enabled).length < 2 ? accountManagementCopy(language).lastEnabled : undefined}
+                  fallbackLabel={selected ? state.accounts.find(row => row.id !== account.id && row.enabled)?.label : undefined}
+                  rename={name => run('rename', account.id, () => api.renameAccount(account.id, name))}
+                  remove={() => run('remove', account.id, () => api.removeAccount(account.id, true))}
+                  reauthenticate={() => run('reauthenticate', account.id, async () => {
+                    await api.reauthenticateAccount(account.id, true); const receipt = await api.accounts();
+                    if (receipt.selectedId === account.id) openBrowser(); return receipt;
+                  })} />
               </div>
               {caption ? <p className="accounts-card__hint nk-type-caption" id={ids.hint} role="status">{caption}</p> : null}
             </>}>

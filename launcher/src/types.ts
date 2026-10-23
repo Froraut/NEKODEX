@@ -764,6 +764,9 @@ export interface LauncherApi extends NativeThreadsApi, NativePersistentApi, Work
   openCodexLogin(flowId: string, id: string): Promise<boolean>;
   cancelCodexLogin(flowId: string, id: string): Promise<CodexLoginProgress>;
   copyCodexLoginCode(flowId: string, id: string): Promise<boolean>;
+  renameAccount(id: string, label: string): Promise<AccountPoolSnapshot>;
+  removeAccount(id: string, confirmed: boolean): Promise<AccountPoolSnapshot>;
+  reauthenticateAccount(id: string, confirmed: boolean): Promise<BrowserState>;
   addAccount(label: string): Promise<AccountPoolSnapshot>;
   selectAccount(id: string): Promise<AccountPoolSnapshot>;
   setAccountEnabled(id: string, enabled: boolean): Promise<AccountPoolSnapshot>;

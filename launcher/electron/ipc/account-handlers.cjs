@@ -1,6 +1,6 @@
 // Policy stays in main: never register these handlers against raw ipcMain.
 function registerAccountHandlers({
-  handle, getBrowserHost, getAccountToolsService, isRuntimeBusy, invalidateAccountProof,
+  handle, getBrowserHost, getAccountToolsService, getRuntimeHost, isRuntimeBusy, invalidateAccountProof,
 }) {
   handle("launcher:accounts", () => getBrowserHost().accountSnapshot());
   // A retry performs fresh account-owned browser observation. Keep it behind lifecycle admission:
@@ -23,6 +23,23 @@ function registerAccountHandlers({
   handle("launcher:codex-login-cancel", (_event, flowId, id) => getAccountToolsService().cancel(flowId, id));
   handle("launcher:codex-login-copy-code", (_event, flowId, id) => getAccountToolsService().copyCode(flowId, id));
   handle("launcher:account-add", (_event, label) => getBrowserHost().addAccount(label));
+  handle('launcher:account-rename', (_event, id, label) => getBrowserHost().renameAccount(id, label));
+  handle('launcher:account-remove', async (_event, id, confirmed) => {
+    if (confirmed !== true) throw new Error('Explicit account removal confirmation is required');
+    if (isRuntimeBusy()) throw new Error('Finish the current runtime operation before removing an account');
+    getAccountToolsService().assertAccountMutable(id);
+    const runtime = getRuntimeHost?.();
+    if (!runtime) throw new Error('Account removal runtime is unavailable');
+    const result = await getBrowserHost().removeAccount(id, commit => runtime.removeAccountBindings(id, commit));
+    invalidateAccountProof();
+    return result;
+  });
+  handle('launcher:account-reauthenticate', (_event, id, confirmed) => {
+    if (isRuntimeBusy()) throw new Error('Finish the current runtime operation before signing in again');
+    getAccountToolsService().assertAccountMutable(id);
+    invalidateAccountProof();
+    return getBrowserHost().reauthenticateAccount(id, confirmed);
+  });
   handle("launcher:account-select", async (_event, id) => {
     invalidateAccountProof();
     return getBrowserHost().selectAccount(id);

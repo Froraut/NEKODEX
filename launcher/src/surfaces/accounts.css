@@ -88,3 +88,6 @@
 @container workspace (max-width: 640px) {
   .accounts-routing > .nk-select { flex: 1 1 100%; }
 }
+
+.accounts-management-remove { display: inline-flex; flex-direction: column; gap: 4px; max-width: 260px; }
+.accounts-management-remove .field-hint { font-size: 11px; color: var(--text-secondary); line-height: 1.4; }

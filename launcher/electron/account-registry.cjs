@@ -42,19 +42,20 @@ function validateConfig(value) {
   }
   const ids = new Set();
   const accounts = value.accounts.map((account) => {
-    requireShape(account, ["id", "label", "enabled"], "account metadata");
+    requireShape(account, Object.hasOwn(account, "removed") ? ["id", "label", "enabled", "removed"] : ["id", "label", "enabled"], "account metadata");
+    if (Object.hasOwn(account, "removed") && (account.removed !== true || account.enabled !== false || account.id === "default")) throw new TypeError("Removed accounts must be disabled retained owners");
     const id = validateAccountId(account.id);
     const label = validateLabel(account.label);
     if (ids.has(id)) throw new Error("Duplicate account id in registry");
     if (label !== account.label) throw new TypeError("Saved account labels must be trimmed");
     if (typeof account.enabled !== "boolean") throw new TypeError("Account enabled must be boolean");
     ids.add(id);
-    return { id, label, enabled: account.enabled };
+    return { id, label, enabled: account.enabled, ...(account.removed ? { removed: true } : {}) };
   });
   if (!ids.has("default")) throw new Error("Account registry must retain the default account");
   if (!accounts.some((account) => account.enabled)) throw new Error("At least one account must be enabled");
   const selectedId = validateAccountId(value.selectedId);
-  if (!ids.has(selectedId)) throw new Error("Selected account does not exist");
+  if (!accounts.some(account => account.id === selectedId && !account.removed)) throw new Error("Selected account does not exist");
   return { accounts, selectedId, mode: validateMode(value.mode) };
 }
 
@@ -93,7 +94,7 @@ function createAccountRegistry(coreHome) {
 
   function snapshot() {
     return {
-      accounts: state.accounts.map(({ id, label, enabled }) => ({ id, label, enabled })),
+      accounts: state.accounts.filter(account => !account.removed).map(({ id, label, enabled }) => ({ id, label, enabled })),
       selectedId: state.selectedId,
       mode: state.mode,
     };
@@ -108,7 +109,7 @@ function createAccountRegistry(coreHome) {
 
   function requireAccount(id) {
     validateAccountId(id);
-    const account = state.accounts.find((entry) => entry.id === id);
+    const account = state.accounts.find((entry) => entry.id === id && !entry.removed);
     if (!account) throw new Error("Account does not exist");
     return account;
   }
@@ -116,6 +117,26 @@ function createAccountRegistry(coreHome) {
   return Object.freeze({
     snapshot,
     list: snapshot,
+    hasRetainedOwner(id) { validateAccountId(id); return state.accounts.some(account => account.id === id); },
+    isRemoved(id) { validateAccountId(id); return state.accounts.some(account => account.id === id && account.removed); },
+    rename(id, label) {
+      requireAccount(id);
+      const normalized = validateLabel(label);
+      return save({ ...state, accounts: state.accounts.map(account => account.id === id ? { ...account, label: normalized } : account) });
+    },
+    assertRemovable(id) {
+      const account = requireAccount(id);
+      if (id === 'default') throw new Error('The built-in primary account cannot be removed');
+      if (account.enabled && !state.accounts.some(row => row.id !== id && row.enabled)) throw new Error('Enable another account before removing the last enabled account');
+    },
+    remove(id) {
+      this.assertRemovable(id);
+      const fallback = state.accounts.find(account => account.id !== id && !account.removed && account.enabled)
+        ?? state.accounts.find(account => account.id === 'default');
+      // Retain affinity owners so old conversations fail explicitly rather than rerouting.
+      return save({ ...state, selectedId: state.selectedId === id ? fallback.id : state.selectedId,
+        accounts: state.accounts.map(account => account.id === id ? { ...account, enabled: false, removed: true } : account) });
+    },
     add(label) {
       const normalizedLabel = validateLabel(label);
       let id;
