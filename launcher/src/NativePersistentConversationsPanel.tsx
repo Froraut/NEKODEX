@@ -211,7 +211,7 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
     if (!selected?.stopAvailable || !context || pendingStop) return;
     void mutate({ action: 'stop', actionId: crypto.randomUUID(), conversationId: selected.id, revision: selected.revision, expectedContext: context });
   };
-  const archivePending = archiveTarget !== null && [...pending.current.values()].some(({ body }) => body.action === 'archive' && body.conversationId === archiveTarget.conversationId);
+  const archivePending = archiveTarget !== null && [...pending.current.values()].some(({ body, uncertain: unknown }) => !unknown && body.action === 'archive' && body.conversationId === archiveTarget.conversationId);
   const archiveReason = (reason?: string | null) => ({
     prior_outcome_unresolved: ru ? 'Сначала проверьте исход предыдущего действия.' : 'Inspect the prior action outcome first.',
     conversation_busy: ru ? 'Сначала дождитесь завершения диалога.' : 'Wait for the conversation to settle first.',
