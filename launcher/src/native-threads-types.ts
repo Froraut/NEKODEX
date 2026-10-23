@@ -19,6 +19,7 @@ export interface NativeThreadsApi {
     Promise<NativeThreadsResult<CodexClientControlSnapshot>>;
   /** Exclusive cooperative handoff; optional so older preload bundles keep metadata-only behavior. */
   nativeThreadHandoffSnapshot?(): Promise<NativeThreadsResult<CodexThreadHandoffSnapshot>>;
+  nativeThreadStopHandoff?(params: { actionId: string; threadId: string }): Promise<NativeThreadsResult<CodexThreadHandoffSnapshot>>;
   nativeThreadContinue?(params: { threadId: string; text: string }): Promise<NativeThreadsResult<CodexThreadHandoffReceipt>>;
   nativeThreadAcknowledgeHandoff?(params: { actionId: string; threadId: string; confirmedInspection: true }):
     Promise<NativeThreadsResult<CodexThreadHandoffSnapshot>>;

@@ -23,6 +23,7 @@ const MESSAGES = {
   invalid_text: 'Provide nonempty message text of at most 32 KiB.',
   handoff_unavailable: 'Exclusive native handoff is not configured in this build.',
   handoff_journal_unavailable: 'Private native handoff receipts are unavailable. Nothing was sent.',
+  handoff_stop_unavailable: 'The selected handoff no longer owns an acknowledged active turn. Refresh its state.',
   handoff_busy: 'Another native handoff is running or needs inspection. Wait or acknowledge it first.',
   handoff_reconciliation_required: 'Inspect and acknowledge the earlier handoff of this thread before sending again.',
   handoff_owner_active: 'Another Codex client still owns this thread. Close or switch away from it in Codex, wait for Codex to release it, then try again. Nothing was sent.',
@@ -100,6 +101,11 @@ function registerCodexClientControlIpc({ handle, getClient, getHandoff }) {
     if (typeof params.text !== 'string' || !params.text.trim() || Buffer.byteLength(params.text) > 32 * 1024
       || params.text.includes('\0')) throw Object.assign(new Error(MESSAGES.invalid_text), { code: 'invalid_text' });
     return handoff().continueThread({ threadId: id(params.threadId), text: params.text, userInitiated: true });
+  });
+  register('launcher:native-thread-stop-handoff', args => {
+    if (args.length !== 1) invalid();
+    const params = input(args[0], ['actionId', 'threadId']);
+    return handoff().stop({ actionId: id(params.actionId), threadId: id(params.threadId), userInitiated: true });
   });
   register('launcher:native-thread-acknowledge-handoff', args => {
     if (args.length !== 1) invalid();

@@ -526,10 +526,16 @@ profile's configured service tier, so the service passes the tier the thread las
 recorded itself (read-only from its rollout by `codex-rollout-settings.cjs`) and
 refuses before sending if Codex reports another one. It requires an idle thread,
 journals `dispatching` before its only `turn/start`, awaits `turn/completed`
-(interrupting only its own turn on timeout) and closes the child, which releases
+(interrupting only its own turn on timeout or explicit Stop) and closes the child, which releases
 the writer. Lost receipts are unknown and block that thread until explicit
 inspection; nothing is replayed. Its private journal
 (`native-thread-control/handoffs.json`) stores identities and phases only.
+Explicit `native-thread-stop-handoff` carries the original single-turn handoff
+`actionId` plus thread ID; main derives the acknowledged turn from that current
+exclusive lease, refusing stale actions even on the same thread. It persists
+`stopRequested` before the single interrupt and exposes stopping/unknown control
+state. ACK does not finish the original terminal wait or release its child.
+The panel polls local state while Send waits and owns a separate Stop lock.
 See [Codex client control](docs/design/codex-client-control.md).
 
 ### Selected attachments and partial history

@@ -19,7 +19,8 @@ export interface CodexThreadHandoffSnapshot {
   exclusivity: 'codex-thread-writer-lock';
   /** The thread's approval requests get the protocol's user decline; every other server request is refused. */
   approvals: 'declined';
-  active: { actionId: string; threadId: string; phase: CodexHandoffPhase } | null;
+  active: { actionId: string; threadId: string; phase: CodexHandoffPhase; turnId: string | null;
+    stopAvailable: boolean; stopState: 'requested' | 'acknowledged' | 'unknown' | null } | null;
   uncertainHandoffs: CodexHandoffAction[];
   errorCode: string | null;
 }
@@ -39,6 +40,8 @@ export interface CodexThreadHandoffReceipt {
 export interface CodexThreadHandoff {
   /** One explicit action: acquire exclusively, send one message, await its final state, release. */
   continueThread(params: { threadId: string; text: string; userInitiated: true }): Promise<CodexThreadHandoffReceipt>;
+  /** actionId is the ORIGINAL single-turn handoff ID, not a new Stop ID. Main derives its ACK turn under the current exclusive lease. ACK is not terminal or release. */
+  stop(params: { actionId: string; threadId: string; userInitiated: true }): Promise<CodexThreadHandoffSnapshot>;
   acknowledge(params: { actionId: string; threadId: string; confirmedInspection: true }): CodexThreadHandoffSnapshot;
   snapshot(): CodexThreadHandoffSnapshot;
   currentOperation(): string | null;

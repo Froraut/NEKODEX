@@ -57,7 +57,9 @@ function createCodexThreadHandoff({ executable, codexHome, journalPath, cwd, env
       transport: 'owned-stdio-server',
       exclusivity: 'codex-thread-writer-lock',
       approvals: 'declined',
-      active: current ? { actionId: current.actionId, threadId: current.threadId, phase: current.phase } : null,
+      active: current ? { actionId: current.actionId, threadId: current.threadId, phase: current.phase,
+        turnId: current.turnId || null, stopState: current.stopState || null,
+        stopAvailable: current.phase === 'running' && !!current.turnId && !current.terminal?.() && !current.stopState } : null,
       uncertainHandoffs: journal?.snapshot() || [],
       errorCode: lastError,
     };
@@ -91,7 +93,7 @@ function createCodexThreadHandoff({ executable, codexHome, journalPath, cwd, env
         } else return;
         signal();
       } });
-    current = { actionId, threadId, phase: 'acquiring', connection };
+    current = { actionId, threadId, phase: 'acquiring', connection, turnId: null, terminal: () => turns.has(turnId) };
     lastError = null;
     const phase = (next, patch = {}) => { journal.update(actionId, { phase: next, ...patch }); current.phase = next; };
     const settle = (state, reasonCode, patch = {}) => {
@@ -182,14 +184,14 @@ function createCodexThreadHandoff({ executable, codexHome, journalPath, cwd, env
         journal.uncertain(actionId, 'invalid_turn_receipt', { approvalsRefused });
         throw error('handoff_outcome_unknown', 'Codex returned an invalid turn receipt; inspect the thread');
       }
-      turnId = started.turn.id;
+      turnId = started.turn.id; current.turnId = turnId;
       phase('running', { turnId });
       let status;
       try {
         status = await waitTurn(turnTimeoutMs);
         if (status === null) {
           // Our own turn only: the exclusive owner may interrupt what it started.
-          try { await connection.request('turn/interrupt', { threadId, turnId }); } catch { /* Settled below. */ }
+          try { await stop({ actionId, threadId, userInitiated: true }); } catch { /* Settled below. */ }
           status = await waitTurn(interruptGraceMs);
           if (status === null) throw error('handoff_turn_unsettled', 'The turn did not settle after interruption');
         }
@@ -220,6 +222,23 @@ function createCodexThreadHandoff({ executable, codexHome, journalPath, cwd, env
       current = null;
     }
   }
+  async function stop({ actionId, threadId, userInitiated } = {}) {
+    if (userInitiated !== true || typeof actionId !== 'string' || !UUID.test(actionId)
+      || typeof threadId !== 'string' || !UUID.test(threadId)) throw error('invalid_parameters', 'Stop requires the exact current handoff');
+    const owner = current;
+    if (!owner || owner.actionId !== actionId || owner.threadId !== threadId || !owner.turnId) throw error('handoff_stop_unavailable', 'No exact owned acknowledged handoff turn is available');
+    if (owner.stopState || owner.terminal()) return snapshot(); // Observe; never repeat an interrupt.
+    if (owner.phase !== 'running' || owner.connection.isClosed()) throw error('handoff_stop_unavailable', 'The exact handoff turn is unavailable');
+    journal.update(actionId, { stopRequested: true }); // Durable consumed control before write.
+    owner.stopState = 'requested';
+    try {
+      await owner.connection.request('turn/interrupt', { threadId, turnId: owner.turnId });
+      owner.stopState = 'acknowledged';
+    } catch { owner.stopState = 'unknown'; }
+    // ACK/lost ACK changes only the control observation. continueThread owns its
+    // original terminal wait and process cleanup; Stop never releases the writer.
+    return snapshot();
+  }
   function acknowledge({ actionId, threadId, confirmedInspection } = {}) {
     if (confirmedInspection !== true || typeof actionId !== 'string' || !UUID.test(actionId)
       || typeof threadId !== 'string' || !UUID.test(threadId)) {
@@ -234,7 +253,7 @@ function createCodexThreadHandoff({ executable, codexHome, journalPath, cwd, env
     destroyed = true;
     await current?.connection.destroy();
   }
-  return Object.freeze({ continueThread, acknowledge, snapshot, currentOperation, destroy });
+  return Object.freeze({ continueThread, stop, acknowledge, snapshot, currentOperation, destroy });
 }
 
 module.exports = { createCodexThreadHandoff };

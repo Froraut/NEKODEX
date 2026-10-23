@@ -130,6 +130,7 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   terminalClose: reference => ipcRenderer.invoke('launcher:terminal-close', reference),
   nativeThreadAcknowledgeFork: input => ipcRenderer.invoke('launcher:native-thread-acknowledge-fork', input),
   nativeThreadHandoffSnapshot: () => ipcRenderer.invoke('launcher:native-thread-handoff-snapshot'),
+  nativeThreadStopHandoff: input => ipcRenderer.invoke('launcher:native-thread-stop-handoff', input),
   nativeThreadContinue: input => ipcRenderer.invoke('launcher:native-thread-continue', input),
   nativeThreadAcknowledgeHandoff: input => ipcRenderer.invoke('launcher:native-thread-acknowledge-handoff', input),
   remoteWorkspaceHosts: () => ipcRenderer.invoke('launcher:remote-workspace-hosts'),
