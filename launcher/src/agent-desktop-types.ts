@@ -8,6 +8,8 @@ export interface AgentDesktopStatus {
   platform: string;
   state: 'disabled' | 'enabled' | 'unavailable' | 'closed';
   enabled: boolean;
+  /** Cached readiness; false also includes a missing selection or permission. */
+  available?: boolean;
   created: boolean;
   activeCount: number;
   permissions: null | { screenCaptureGranted: boolean; accessibilityGranted: boolean; postEventGranted: boolean };
