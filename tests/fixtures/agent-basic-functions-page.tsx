@@ -1,7 +1,9 @@
 /** Inert renderer-only review: no preload, filesystem, provider, network or process tools. */
-import { createElement } from '../../launcher/node_modules/react';
+import { createElement, useState } from '../../launcher/node_modules/react';
 import { createRoot } from '../../launcher/node_modules/react-dom/client';
 import { AgentModeSurface } from '../../launcher/src/AgentModeSurface';
+import { AgentToolsInstaller } from '../../launcher/src/AgentToolsInstaller';
+import { OFFICIAL_MCP_CATALOG } from '../../src/agent-tools/installer';
 import { AgentToolsSurface } from '../../launcher/src/AgentToolsSurface';
 import type { AgentTask } from '../../src/agent-mode/types';
 import type { AgentModeApi } from '../../launcher/src/agent-mode-types';
@@ -48,5 +50,20 @@ const toolsApi: AgentToolsApi = { async request(body) {
   if (body.action === 'saveServer') return tools; // recorded only, never config write
   throw new Error(`Unexpected inert action: ${body.action}`);
 }, pickSkillRoot: async () => ({ cancelled: true }), listTasks: async () => ({ tasks: [{ id: taskId, generation: 1, status: 'awaiting_input' }] }), getTask: async id => ({ task: { id, familyId: 'family-inert', generation: 1, revision: 1, status: id === taskId ? 'awaiting_input' : 'stopped' }, dispatches: [], pendingToolCalls: approved || id !== taskId ? [] : [{ toolCallId: 'call-a', tool: 'skill-script/run', arguments: { workspaceGrantId: grant.id, versionId: 'e'.repeat(64), relativePath: 'run.mjs', argv: [] } }] }) };
+function InstallerFixture() {
+  const [locked, setLocked] = useState(false), [error, setError] = useState('');
+  const receipt = { actionId: 'retained-installation', catalogId: 'official-filesystem', allowedRoot: '/inert/old-root', state: params.get('state') === 'unknown' ? 'outcome_unknown' : params.get('state') === 'held' ? 'failed' : 'installed', ...(params.get('state') === 'held' ? { childPid: 44 } : {}) };
+  const status = { ...tools, capabilities: { ...tools.capabilities, install: true }, installCatalog: OFFICIAL_MCP_CATALOG, installations: { rows: [receipt], truncated: false } } as AgentToolsStatus;
+  const api = { ...toolsApi, async request(body: Record<string, unknown>) {
+    requests.push(body);
+    if (body.action === 'installReceipt') return body.actionId === receipt.actionId ? receipt : null;
+    if (body.action === 'prepareInstall') return { actionId: body.actionId, catalogId: body.catalogId, allowedRoot: body.allowedRoot, state: 'prepared' };
+    throw new Error(`Unexpected installer fixture action: ${body.action}`);
+  } };
+  return createElement('div', null,
+    createElement('p', null, 'Inert installer fixture: no packages, files, network or processes.'),
+    error ? createElement('p', { role: 'alert' }, error) : null,
+    createElement(AgentToolsInstaller, { api, status, locked, choose: en => en, refresh: async () => {}, onReview: () => {}, act: async operation => { if (locked) return; setLocked(true); try { await operation(); } catch (cause) { setError(String(cause)); } finally { setLocked(false); } } }));
+}
 (window as any).basicFunctionsFixture = { requests, tools };
-createRoot(document.getElementById('root')!).render(params.get('surface') === 'tasks' ? createElement(AgentModeSurface, { api: modeApi, language: 'en' }) : createElement(AgentToolsSurface, { api: toolsApi, language: 'en' }));
+createRoot(document.getElementById('root')!).render(params.get('surface') === 'installer' ? createElement(InstallerFixture) : params.get('surface') === 'tasks' ? createElement(AgentModeSurface, { api: modeApi, language: 'en' }) : createElement(AgentToolsSurface, { api: toolsApi, language: 'en' }));

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { Badge, Button, Checkbox, Notice, Panel, Select, TextField } from './design';
 import type { AgentToolsApi, AgentToolsStatus, ManagedInstallReceipt, ServerRecipe } from './agent-tools-types';
 export function AgentToolsInstaller({ api, status, locked, choose, act, refresh, onReview }: {
@@ -8,20 +8,25 @@ export function AgentToolsInstaller({ api, status, locked, choose, act, refresh,
   refresh: () => Promise<void>;
   onReview: (review: { reviewId: string; recipe: ServerRecipe; trust: string }) => void;
 }) {
+  const rootId = useId(), rootField = useRef<HTMLDivElement>(null);
+  const [transactionStarted, setTransactionStarted] = useState(false);
   const [actionId, setActionId] = useState<string>(() => crypto.randomUUID());
   const [catalogId, setCatalogId] = useState('official-filesystem');
   const selectedRecipe = status?.installCatalog?.find(row => row.id === catalogId);
   const [root, setRoot] = useState(''); const [consent, setConsent] = useState(false);
   const [receipt, setReceipt] = useState<ManagedInstallReceipt | null>(null);
+  const terminalKnown = Boolean(receipt && receipt.actionId === actionId && ['installed', 'failed', 'cancelled', 'archived'].includes(receipt.state) && !receipt.childPid);
   const inspect = async (id = actionId) => {
     const next = await api.request({ action: 'installReceipt', actionId: id }) as ManagedInstallReceipt | null;
+    if (next && next.actionId !== id) throw new Error('Installation receipt identity mismatch');
     setReceipt(next);
+    if (next) setTransactionStarted(true);
     if (next) { setCatalogId(next.catalogId); setRoot(next.allowedRoot); setConsent(false); }
     await refresh();
   };
   return <Panel title={choose('Reviewed official MCP catalogue', 'Проверенный официальный каталог MCP')}>
     <p>{choose('Choose an exact reviewed package. Preparation resolves an exact dependency graph without running package scripts. Installation, file review, saving disabled, enablement and connection remain separate actions.', 'Выберите точный проверенный пакет. Подготовка закрепляет граф зависимостей без запуска package scripts. Установка, проверка файлов, сохранение выключенным, включение и подключение остаются отдельными действиями.')}</p>
-    <Select label={choose('Official package', 'Официальный пакет')} value={catalogId} disabled={locked} onChange={value => { setCatalogId(value); setConsent(false); setReceipt(null); setActionId(crypto.randomUUID()); }} options={(status?.installCatalog ?? []).map(recipe => ({ value: recipe.id, label: `${recipe.label} · ${recipe.version}` }))} />
+    <Select label={choose('Official package', 'Официальный пакет')} value={catalogId} disabled={locked || transactionStarted} onChange={value => { setCatalogId(value); setConsent(false); }} options={(status?.installCatalog ?? []).map(recipe => ({ value: recipe.id, label: `${recipe.label} · ${recipe.version}` }))} />
     {selectedRecipe ? <div className="agent-tools-review">
       <strong>{selectedRecipe.package}@{selectedRecipe.version}</strong><p>{selectedRecipe.capabilities}</p>
       <details><summary>{choose('Package identity and execution boundary', 'Идентичность пакета и граница исполнения')}</summary><dl>
@@ -36,11 +41,17 @@ export function AgentToolsInstaller({ api, status, locked, choose, act, refresh,
       </dl></details>
       <p>{choose('Capabilities above describe the reviewed package. Actual tools and connection status appear only after a separate enabled connection; a successful installation supplies neither.', 'Возможности выше описывают проверенный пакет. Реальные инструменты и состояние подключения появляются после отдельного включения и подключения; успешная установка их не подтверждает.')}</p>
     </div> : null}
-    <TextField label={choose(selectedRecipe?.launch === 'no-arguments' ? 'Explicit installation selection directory (no data grant for this recipe)' : 'Explicit data directory', selectedRecipe?.launch === 'no-arguments' ? 'Выбранный каталог установки (этот рецепт не получает доступ к данным)' : 'Явный каталог данных')} value={root} onChange={event => { setRoot(event.target.value); setConsent(false); }} action={api.pickInstallRoot ? <Button disabled={locked} onClick={() => void act(async () => { const chosen = await api.pickInstallRoot!(); if (!chosen.cancelled && chosen.root) { setRoot(chosen.root); setConsent(false); } })}>{choose('Choose directory', 'Выбрать каталог')}</Button> : undefined} />
-    <Checkbox checked={consent} onChange={setConsent} label={choose('I select this exact package and its displayed data scope. Enablement, connection and tool approval are separate actions.', 'Я выбираю этот точный пакет и показанную область данных. Включение, подключение и подтверждение инструментов — отдельные действия.')} />
-    <TextField label={choose('Stable installation action ID', 'Постоянный ID установки')} value={actionId} onChange={event => { setActionId(event.target.value); setReceipt(null); }} />
-    <div className="agent-tools-state"><Button disabled={locked || !consent || !root || !status?.capabilities.install || !selectedRecipe} onClick={() => void act(async () => { setReceipt(await api.request({ action: 'prepareInstall', actionId, catalogId, allowedRoot: root, explicitUserAction: true }) as ManagedInstallReceipt); await refresh(); })}>{choose('Prepare dependency graph', 'Подготовить граф зависимостей')}</Button><Button disabled={locked || !actionId} onClick={() => void act(() => inspect())}>{choose('Inspect owned transaction', 'Посмотреть состояние операции')}</Button></div>
-    {status?.installations?.rows.map(row => <div className="agent-tools-root" key={row.actionId}><span>{row.catalogId} · {row.state}</span><code>{row.actionId}</code><Button size="sm" disabled={locked} onClick={() => void act(async () => { setActionId(row.actionId); await inspect(row.actionId); })}>{choose('Inspect receipt', 'Посмотреть квитанцию')}</Button></div>)}
+    <div ref={rootField}><TextField id={rootId} readOnly={transactionStarted} disabled={locked} label={choose(selectedRecipe?.launch === 'no-arguments' ? 'Explicit installation selection directory (no data grant for this recipe)' : 'Explicit data directory', selectedRecipe?.launch === 'no-arguments' ? 'Выбранный каталог установки (этот рецепт не получает доступ к данным)' : 'Явный каталог данных')} value={root} onChange={event => { setRoot(event.target.value); setConsent(false); }} action={api.pickInstallRoot ? <Button disabled={locked || transactionStarted} onClick={() => void act(async () => { const chosen = await api.pickInstallRoot!(); if (!chosen.cancelled && chosen.root) { setRoot(chosen.root); setConsent(false); } })}>{choose('Choose directory', 'Выбрать каталог')}</Button> : undefined} /></div>
+    <Checkbox disabled={locked || transactionStarted} checked={consent} onChange={setConsent} label={choose('I select this exact package and its displayed data scope. Enablement, connection and tool approval are separate actions.', 'Я выбираю этот точный пакет и показанную область данных. Включение, подключение и подтверждение инструментов — отдельные действия.')} />
+    <TextField label={choose('Stable installation action ID', 'Постоянный ID установки')} value={actionId} disabled={locked} readOnly={transactionStarted} onChange={event => { setActionId(event.target.value); setReceipt(null); setConsent(false); }} />
+    <div className="agent-tools-state"><Button disabled={locked || transactionStarted || !consent || !root || !status?.capabilities.install || !selectedRecipe} onClick={() => void act(async () => { setTransactionStarted(true); setReceipt(await api.request({ action: 'prepareInstall', actionId, catalogId, allowedRoot: root, explicitUserAction: true }) as ManagedInstallReceipt); await refresh(); })}>{choose('Prepare dependency graph', 'Подготовить граф зависимостей')}</Button><Button disabled={locked || !actionId} onClick={() => void act(() => inspect())}>{choose('Inspect owned transaction', 'Посмотреть состояние операции')}</Button></div>
+    {transactionStarted ? <Notice>{choose('This transaction keeps its exact package, directory and action ID. Inspect its receipt or cancel its owned work before starting another installation.', 'Эта транзакция сохраняет точный пакет, каталог и ID действия. Проверьте квитанцию или остановите свою операцию перед новой установкой.')}</Notice> : null}
+    <Button disabled={locked || !terminalKnown} onClick={() => {
+      if (!terminalKnown) return;
+      setActionId(crypto.randomUUID()); setReceipt(null); setConsent(false); setTransactionStarted(false);
+      requestAnimationFrame(() => rootField.current?.querySelector('input')?.focus());
+    }}>{choose('New installation', 'Новая установка')}</Button>
+    {status?.installations?.rows.map(row => <div className="agent-tools-root" key={row.actionId}><span>{row.catalogId} · {row.state}</span><code>{row.actionId}</code><Button size="sm" disabled={locked || transactionStarted && !terminalKnown && row.actionId !== actionId} onClick={() => void act(async () => { setActionId(row.actionId); await inspect(row.actionId); })}>{choose('Inspect receipt', 'Посмотреть квитанцию')}</Button></div>)}
     {receipt ? <div><Badge tone={receipt.state === 'installed' ? 'success' : 'neutral'}>{receipt.state}</Badge><pre>{JSON.stringify(receipt, null, 2)}</pre>
       {receipt.state === 'prepared' ? <Button disabled={locked} onClick={() => void act(async () => { setReceipt(await api.request({ action: 'installReviewed', actionId: receipt.actionId, graphSha256: receipt.graphSha256, explicitUserAction: true }) as ManagedInstallReceipt); await refresh(); })}>{choose('Install this exact reviewed graph without scripts', 'Установить этот граф без package scripts')}</Button> : null}
       {receipt.state === 'installed' ? <><Notice>{choose('Package bytes are installed. Installation did not start or enable a server.', 'Файлы пакета установлены. Установка не включала и не запускала сервер.')}</Notice><Button disabled={locked} onClick={() => void act(async () => { onReview(await api.request({ action: 'reviewInstalled', actionId: receipt.actionId, explicitUserAction: true }) as Parameters<typeof onReview>[0]); })}>{choose('Review installed files before configuring', 'Проверить установленные файлы')}</Button><Button disabled={locked} onClick={() => void act(async () => { setReceipt(await api.request({ action: 'uninstallManaged', actionId: receipt.actionId, explicitUserAction: true }) as ManagedInstallReceipt); await refresh(); })}>{choose('Disable and archive owned package runtime', 'Выключить и архивировать свой runtime пакета')}</Button></> : null}
