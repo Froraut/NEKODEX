@@ -566,7 +566,7 @@ function LauncherShell({
     development: snapshot.profile === "development",
   });
   const devProfile = snapshot.profile === "development";
-  const toolProof = currentToolProof(snapshot, operation);
+  const toolProof = currentToolProof(snapshot, operation, browser);
   const browserAuthenticationStatus = browser?.authenticationStatus
     ?? (browser?.authenticated ? "verified"
       : browser?.status === "signed-out" ? "signed-out" : "unknown");

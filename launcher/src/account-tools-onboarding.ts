@@ -6,7 +6,7 @@ export function accountTunnelFor(account: Account | null | undefined, mode: Brow
   return view && view.accountId === account?.id && view.interactionMode === mode ? view : null;
 }
 
-export function accountToolsStep(account: Account, runtimeConfigured: boolean) {
+export function accountToolsStep(account: Pick<Account, 'authenticated' | 'authenticationStatus' | 'checked' | 'connectorReady'>, runtimeConfigured: boolean) {
   if (account.authenticationStatus === 'unavailable') return 'verification';
   if (account.authenticationStatus === 'unknown') return 'checking';
   if (!account.authenticated || (account.authenticationStatus && account.authenticationStatus !== 'verified')) return 'sign-in';

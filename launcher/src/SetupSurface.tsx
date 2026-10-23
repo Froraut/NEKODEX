@@ -65,7 +65,7 @@ export function SetupSurface({
   const pendingContext = typeof snapshot.state.pendingBiggerContext === "boolean";
   const troubleshooting = useRef<HTMLDetailsElement>(null);
   const signInRow = useRef<HTMLDivElement>(null);
-  const toolsVerified = currentToolProof(snapshot, operation);
+  const toolsVerified = currentToolProof(snapshot, operation, browser);
   const nextStep = setupNextStep({ manual: manualInteraction, signedIn: browser?.authenticated === true,
     smokePassed: snapshot.smokePassed, installed: snapshot.state.coreSetupComplete === true,
     catalogVerified: snapshot.state.codexCatalogVerified === true, pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
