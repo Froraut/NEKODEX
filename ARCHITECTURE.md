@@ -577,6 +577,15 @@ No provider thread or captured transcript is deleted. There is no archive restor
 or implicit Resume. Main projects exact selected-account tombstones plus pages of
 50 archived metadata/preview rows; an opaque last-row cursor reads later pages.
 
+The persistent `stop` route derives the exact Native offer/turn from the selected
+conversation revision and current worker. It does not revise or replace the
+sending action and can run while that Send is awaiting Native. Its durable intent
+is quota-exempt. An interrupt ACK projects `stopping`, a lost ACK stays `unknown`,
+and repeated action IDs only observe receipts. Exact terminal Native status plus
+physical subscription cleanup completes the Stop and leaves an unloaded retained
+conversation available for explicit Resume; cleanup grants no input/capture
+capability. A natural terminal race retains its actual completed/failed status.
+
 ### Owned canonical text conversations
 
 New retained conversations can explicitly select `canonical-text-v1`; existing

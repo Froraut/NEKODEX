@@ -6,11 +6,11 @@ export interface PersistentNativeExecutionContext extends PersistentNativeContex
 export interface PersistentNativeConversation {
   id:string;revision:number;threadId:string|null;model:string;status:'idle'|'running'|'unknown'|'unavailable'|'unloaded'|'archived';
   resumeAvailable:boolean;resumeReason:string|null;
-  archivedAt?:number;archiveAvailable:boolean;archiveReason:string|null;
+  archivedAt?:number;stopAvailable:boolean;stopReason:string|null;archiveAvailable:boolean;archiveReason:string|null;
   ownerAvailable:boolean;createdAt:number;updatedAt:number;parentId?:string;lastSummary?:string;conversationMode:'neko-json-v1'|'canonical-text-v1';lastTextPreview?:string;lastTextTruncated?:boolean;lastTurnId?:string;recordingRequiredBeforeFirstSend:boolean;
 }
 export interface PersistentNativeConversationAction {
-  actionId:string;kind:'create'|'send'|'fork'|'closeIdle'|'resume'|'archive';conversationId:string;state:'prepared'|'completed'|'failed'|'unknown';ownerHeld:boolean;reasonCode?:string;nativeTurnNotStarted?:boolean;
+  actionId:string;kind:'create'|'send'|'fork'|'closeIdle'|'resume'|'archive'|'stop';conversationId:string;state:'prepared'|'stopping'|'completed'|'failed'|'unknown';ownerHeld:boolean;reasonCode?:string;nativeStatus?:'completed'|'failed'|'interrupted';nativeTurnNotStarted?:boolean;
 }
 export interface PersistentNativeConversationSnapshot {
   archivedConversations:PersistentNativeConversation[];archivedCount:number;archivedConversationIds:string[];archiveNextCursor:string|null;
@@ -31,6 +31,7 @@ export function createPersistentNativeConversations(options:{
   send(input:{actionId:string;conversationId:string;revision:number;text:string;expectedContext:PersistentNativeContextIdentity}):Promise<PersistentNativeConversationSnapshot>;
   fork(input:{actionId:string;conversationId:string;revision:number;lastTurnId?:string;expectedContext:PersistentNativeContextIdentity}):Promise<PersistentNativeConversationSnapshot>;
   closeIdle(input:{actionId:string;conversationId:string;revision:number;expectedContext:PersistentNativeContextIdentity}):Promise<PersistentNativeConversationSnapshot>;
+  stop(input:{actionId:string;conversationId:string;revision:number;expectedContext:PersistentNativeContextIdentity}):Promise<PersistentNativeConversationSnapshot>;
   archive(input:{actionId:string;conversationId:string;revision:number;expectedContext:PersistentNativeContextIdentity}):Promise<PersistentNativeConversationSnapshot>;
   resume(input:{actionId:string;conversationId:string;revision:number;expectedContext:PersistentNativeContextIdentity}):Promise<PersistentNativeConversationSnapshot>;
   inspectAction(actionId:string):PersistentNativeConversationAction|undefined;currentOperation():string|null;destroy():Promise<void>;

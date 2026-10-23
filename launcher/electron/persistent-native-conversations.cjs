@@ -15,8 +15,8 @@ const textInput = value => {
 function activeQuota(state) {
   const active = new Set(state.conversations.filter(row => !row.archivedAt).map(row => row.id));
   return { conversations: active.size, conversationLimit: 128,
-    actions: state.actions.filter(row => ['prepared', 'unknown'].includes(row.state) || row.ownerHeld === true
-      || row.kind !== 'archive' && row.state !== 'failed' && active.has(row.conversationId)).length, actionLimit: 512 };
+    actions: state.actions.filter(row => ['prepared', 'stopping', 'unknown'].includes(row.state) || row.ownerHeld === true
+      || !['archive', 'stop'].includes(row.kind) && row.state !== 'failed' && active.has(row.conversationId)).length, actionLimit: 512 };
 }
 /** Main-only. Native retains full context by explicit consent; this registry contains
  * ownership/receipts and the last summary only, never credentials or raw rollouts. */
@@ -28,10 +28,11 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
   let owned = false, lastDigest, destroyed = false, closing;
   const operations = new Set();
   const pending = new Set();
+  const settlingStops = new Set();
   let state;
   try {
     const bytes = regular(file, 4 * 1024 * 1024); lastDigest = digest(bytes); state = JSON.parse(bytes);
-    if (![1, 2, 3].includes(state.version) || !Array.isArray(state.conversations) || !Array.isArray(state.actions) || activeQuota(state).conversations > 128 || activeQuota(state).actions - state.actions.filter(row => row.kind === 'archive' && (['prepared', 'unknown'].includes(row.state) || row.ownerHeld === true)).length > 512) throw new Error();
+    if (![1, 2, 3].includes(state.version) || !Array.isArray(state.conversations) || !Array.isArray(state.actions) || activeQuota(state).conversations > 128 || activeQuota(state).actions - state.actions.filter(row => ['archive', 'stop'].includes(row.kind) && (['prepared', 'stopping', 'unknown'].includes(row.state) || row.ownerHeld === true)).length > 512) throw new Error();
     for (const row of state.conversations) { uuid(row.id); uuid(row.profileId); uuid(row.epoch); uuid(row.serverGeneration); if (!Number.isSafeInteger(row.revision) || row.revision < 0 || row.archivedAt !== undefined && (!Number.isSafeInteger(row.archivedAt) || row.archivedAt <= 0)) throw new Error(); }
     for (const row of state.actions) { uuid(row.actionId); uuid(row.conversationId); }
   } catch (reason) {
@@ -66,7 +67,7 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
   const sameScope = (row, context) => context && row.profileId === context.profileId && row.epoch === context.epoch && row.serverGeneration === context.serverGeneration;
   function resumeReason(row, context) {
     if (![2, 3].includes(row.contextVersion) || row.contextVersion === 3 && row.conversationMode !== 'canonical-text-v1' || !isAgentNativeHistorySource(row.historySource)) return 'legacy_identity_unproven';
-    if (state.actions.some(action => action.conversationId === row.id && (['prepared', 'unknown'].includes(action.state) || action.ownerHeld === true))) return 'prior_outcome_unresolved';
+    if (state.actions.some(action => action.conversationId === row.id && (['prepared', 'stopping', 'unknown'].includes(action.state) || action.ownerHeld === true))) return 'prior_outcome_unresolved';
     if (!row.threadId || !['idle', 'unloaded'].includes(row.status)) return 'retained_context_unavailable';
     if (!context || destroyed || !context.server.inspect().accepting) return 'account_owner_unavailable';
     if (row.profileId !== context.profileId || row.epoch !== context.epoch) return 'account_scope_changed';
@@ -75,13 +76,84 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
     if (sameScope(row, context) && live.has(row.id)) return 'already_loaded';
     return null;
   }
+  function stopTarget(row, context) {
+    if (destroyed || row.archivedAt || !sameScope(row, context) || !context.server.inspect().accepting) return null;
+    const worker = live.get(row.id), action = state.actions.find(action => action.actionId === row.activeActionId && action.revision === row.revision);
+    if (!worker || !action || !['create', 'send'].includes(action.kind)) return null;
+    const snapshot = worker.inspectOwnedWorker(), receipt = snapshot.receipts.find(receipt => receipt.actionId === action.turnActionId
+      && receipt.workerHandle === snapshot.workerHandle && receipt.threadId === row.threadId);
+    if (!receipt?.turnId || receipt.nativeStatus || receipt.ownerHeld !== true) return null;
+    return { worker, action, receipt, workerHandle: snapshot.workerHandle };
+  }
+  function stopReason(row, context) {
+    if (state.actions.some(action => action.kind === 'stop' && action.targetActionId === row.activeActionId)) return 'stop_already_requested';
+    return stopTarget(row, context) ? null : 'exact_active_turn_unavailable';
+  }
+  function scheduleStopSettlement(row, target) {
+    if (!target.nativeStatus) return;
+    for (const stop of state.actions.filter(action => action.kind === 'stop' && action.targetActionId === target.actionId && !['completed', 'failed'].includes(action.state))) {
+      if (settlingStops.has(stop.actionId)) continue;
+      const worker = live.get(row.id); if (!worker) continue;
+      settlingStops.add(stop.actionId);
+      // Receipt observers fire before the Native worker clears its active offer.
+      // Yield once; reentrant destroy must never replace a known terminal receipt.
+      const work = Promise.resolve().then(async () => {
+        await worker.destroy();
+        if (live.get(row.id) === worker) live.delete(row.id);
+        stop.state = 'completed'; stop.ownerHeld = false; stop.nativeStatus = target.nativeStatus;
+        stop.reasonCode = target.nativeStatus === 'interrupted' ? 'native_interrupted' : target.nativeStatus === 'completed' ? 'native_completed' : 'native_failed';
+        row.status = 'unloaded'; row.updatedAt = Date.now(); save();
+      }).catch(reason => {
+        stop.state = 'unknown'; stop.ownerHeld = true; stop.reasonCode = reason.code || 'stop_cleanup_unknown'; save();
+      }).finally(() => { settlingStops.delete(stop.actionId); notify(); });
+      pending.add(work); work.finally(() => pending.delete(work)).catch(() => {});
+    }
+  }
+  function stop(input) {
+    let recorded = false;
+    const run = async () => {
+      if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !['actionId', 'conversationId', 'revision', 'expectedContext'].includes(key))) throw fail('invalid_intent', 'Unsupported Native stop input');
+      uuid(input.actionId); uuid(input.conversationId);
+      if (!input.expectedContext || Object.keys(input.expectedContext).sort().join(',') !== 'epoch,profileId,serverGeneration') throw fail('stale_account', 'Select the exact current account generation');
+      for (const key of ['profileId', 'epoch', 'serverGeneration']) uuid(input.expectedContext[key]);
+      const fingerprint = digest(canonical({ kind: 'stop', input })), old = state.actions.find(action => action.actionId === input.actionId);
+      if (old) { recorded = true; if (old.fingerprint !== fingerprint) throw fail('intent_conflict', 'Native stop action identity changed'); return list(); }
+      const context = getExecution(), row = state.conversations.find(row => row.id === input.conversationId);
+      if (!row || row.revision !== input.revision) throw fail('stale_conversation', 'Select the exact active conversation revision');
+      if (!context || !['profileId', 'epoch', 'serverGeneration'].every(key => context[key] === input.expectedContext[key])) throw fail('stale_account', 'The selected Native account generation changed');
+      const target = stopReason(row, context) === null && stopTarget(row, context);
+      if (!target) throw fail('stop_unavailable', 'An exact acknowledged active Native turn is required');
+      const action = { actionId: input.actionId, conversationId: row.id, kind: 'stop', fingerprint, state: 'prepared', ownerHeld: true,
+        targetActionId: target.action.actionId, targetNativeActionId: target.receipt.actionId, targetTurnId: target.receipt.turnId, revision: row.revision };
+      state.actions.push(action); recorded = true; save(); // Quota-exempt control intent; never revises the sending action.
+      try {
+        const current = getExecution();
+        if (!current || current.server !== context.server || !sameScope(row, current) || live.get(row.id) !== target.worker || destroyed) throw fail('stale_account', 'Native Stop owner changed before dispatch');
+        const result = await target.worker.interruptOwnedTurn({ workerHandle: target.workerHandle, actionId: action.actionId,
+          targetActionId: action.targetNativeActionId, turnId: action.targetTurnId });
+        if (action.state !== 'completed') {
+          action.state = result.state === 'unknown' ? 'unknown' : 'stopping';
+          action.reasonCode = result.state === 'unknown' ? 'native_interrupt_unknown' : 'awaiting_native_terminal'; save();
+          if (result.receipt.nativeStatus) { target.action.nativeStatus = result.receipt.nativeStatus; scheduleStopSettlement(row, target.action); }
+        }
+        return list();
+      } catch (reason) {
+        action.state = 'unknown'; action.reasonCode = reason.code || 'native_interrupt_unknown'; save(); throw reason;
+      }
+    };
+    const result = run().catch(reason => { reason.actionRecorded = recorded; throw reason; });
+    pending.add(result); result.finally(() => pending.delete(result)).catch(() => {}); return result;
+  }
   function archiveReason(row, context) {
     if (row.archivedAt || !['idle', 'unloaded', 'unavailable'].includes(row.status)) return 'conversation_not_settled';
-    if (state.actions.some(action => action.conversationId === row.id && (['prepared', 'unknown'].includes(action.state) || action.ownerHeld === true))) return 'prior_outcome_unresolved';
+    if (state.actions.some(action => action.conversationId === row.id && (['prepared', 'stopping', 'unknown'].includes(action.state) || action.ownerHeld === true))) return 'prior_outcome_unresolved';
     if (operations.has(row.id)) return 'conversation_busy';
     if (!context || destroyed || !context.server.inspect().accepting) return 'account_unavailable';
     if (row.profileId !== context.profileId || row.epoch !== context.epoch) return 'profile_epoch_changed';
     if (live.has(row.id) && !sameScope(row, context)) return 'account_unavailable';
+    const worker = live.get(row.id), snapshot = worker?.inspectOwnedWorker();
+    if (worker && (worker.currentOperation() || !['ready', 'retired'].includes(snapshot.state)
+      || snapshot.receipts.some(receipt => receipt.ownerHeld === true || ['prepared', 'offered', 'acknowledged', 'unknown'].includes(receipt.state)))) return 'conversation_busy';
     return null;
   }
   function list({ archiveCursor } = {}) {
@@ -91,6 +163,7 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
       const worker = live.get(row.id), available = !destroyed && sameScope(row, context) && worker && !context.server.inspect().closed && context.server.inspect().accepting;
       return { id: row.id, revision: row.revision, threadId: row.threadId, model: row.model,
         status: row.archivedAt ? 'archived' : available ? row.status : row.status === 'unloaded' ? 'unloaded' : 'unavailable', ownerAvailable: Boolean(available), createdAt: row.createdAt, updatedAt: row.updatedAt,
+        stopAvailable: stopReason(row, context) === null, stopReason: stopReason(row, context),
         resumeAvailable: !row.archivedAt && resumeReason(row, context) === null, resumeReason: row.archivedAt ? 'archived' : resumeReason(row, context),
         archiveAvailable: archiveReason(row, context) === null, archiveReason: archiveReason(row, context),
         ...(row.archivedAt ? { archivedAt: row.archivedAt } : {}),
@@ -106,7 +179,8 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
     const page = archived.slice(start, start + 50);
     const ids = new Set(conversations.map(row => row.id));
     return { conversations, actions: state.actions.filter(row => ids.has(row.conversationId)).map(row => ({ actionId: row.actionId, kind: row.kind,
-      conversationId: row.conversationId, state: row.state, ownerHeld: row.ownerHeld === true, ...(row.reasonCode ? { reasonCode: row.reasonCode } : {}) })),
+      conversationId: row.conversationId, state: row.state, ownerHeld: row.ownerHeld === true, ...(row.reasonCode ? { reasonCode: row.reasonCode } : {}),
+      ...(row.nativeStatus ? { nativeStatus: row.nativeStatus } : {}) })),
       archivedConversations: page.map(project), archivedCount: archived.length, archivedConversationIds: archived.map(row => row.id),
       archiveNextCursor: start + page.length < archived.length ? page.at(-1).id : null, quota: activeQuota(state),
       busy: operations.size > 0, retention: 'explicit-native-context', resumeSupported: true };
@@ -114,6 +188,9 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
   function recordNative(action, row, receipt) {
     if (receipt.actionId !== action.turnActionId) return;
     if (row.revision !== action.revision || row.activeActionId !== action.actionId) return;
+    // A late duplicate terminal observation cannot undo a proven Stop cleanup.
+    if (state.actions.some(stop => stop.kind === 'stop' && stop.targetActionId === action.actionId && stop.state === 'completed')) return;
+    if (receipt.nativeStatus) action.nativeStatus = receipt.nativeStatus;
     action.nativeReceiptId = receipt.actionId; action.ownerHeld = receipt.ownerHeld;
     if (['acknowledged', 'completed'].includes(receipt.state) && receipt.turnId) row.requireCaptureUntilFirstSent = false;
     if (receipt.state === 'completed' && typeof receipt.turnId === 'string' && receipt.turnId.length > 0 && receipt.turnId.length <= 128) { action.turnId = receipt.turnId; row.lastTurnId = receipt.turnId; }
@@ -140,6 +217,7 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
       action.state = receipt.state; action.reasonCode = receipt.reasonCode || 'native_outcome_unavailable'; row.status = receipt.state === 'unknown' ? 'unknown' : 'unavailable';
     }
     row.updatedAt = Date.now(); save();
+    scheduleStopSettlement(row, action);
   }
   function execute(kind, input) {
     let recorded = false;
@@ -176,7 +254,7 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
         else {
           if (!sameScope(source, context) || !live.has(source.id)) throw fail('owner_unavailable', 'This retained conversation has no current owner; explicitly Resume first');
           if (source.status !== 'idle') throw fail('stale_conversation', 'Select the current idle conversation revision');
-          if (state.actions.some(action => action.conversationId === source.id && (['prepared', 'unknown'].includes(action.state) || action.ownerHeld === true))) throw fail('resume_unavailable', 'Prior conversation outcome is unresolved');
+          if (state.actions.some(action => action.conversationId === source.id && (['prepared', 'stopping', 'unknown'].includes(action.state) || action.ownerHeld === true))) throw fail('resume_unavailable', 'Prior conversation outcome is unresolved');
         }
       }
       if (kind === 'create' && input.retainContext !== true) throw fail('retention_consent_required', 'Explicit consent to retain full Native context is required');
@@ -211,7 +289,8 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
           recorded = true; save();
           let worker;
           try {
-            if (kind === 'send' || kind === 'closeIdle' || kind === 'archive' && live.has(row.id)) worker = operation.useWorker(live.get(row.id));
+            if (kind === 'archive' && live.get(row.id)?.inspectOwnedWorker().state === 'retired') worker = live.get(row.id);
+            else if (kind === 'send' || kind === 'closeIdle' || kind === 'archive' && live.has(row.id)) worker = operation.useWorker(live.get(row.id));
             else if (kind !== 'archive') {
               const binding = { workerBindingId: randomUUID(), workerGeneration: 1, taskId: row.id, familyId: row.id, generation: 1,
                 agentWorkerId: row.id, admissionId: selectedModel.admissionId, model: selectedModel.id };
@@ -230,7 +309,7 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
               // every fingerprint stay in this one atomic bounded registry.
               if (worker) {
                 action.ownerHeld = true; save();
-                await worker.retireOwnedWorker({ workerHandle: worker.inspectOwnedWorker().workerHandle, actionId: action.closeActionId });
+                if (worker.inspectOwnedWorker().state !== 'retired') await worker.retireOwnedWorker({ workerHandle: worker.inspectOwnedWorker().workerHandle, actionId: action.closeActionId });
                 await worker.destroy(); live.delete(row.id); action.ownerHeld = false;
               }
               assertContext();
@@ -322,12 +401,12 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
     })().catch(reason => { closing = undefined; throw reason; });
     return closing;
   }
-  return Object.freeze({ list, transcriptScope, currentHistoryScopes, resolveHistoryScope, readTranscriptPage, create: input => execute('create', input), send: input => execute('send', input), fork: input => execute('fork', input),
+  return Object.freeze({ list, stop, transcriptScope, currentHistoryScopes, resolveHistoryScope, readTranscriptPage, create: input => execute('create', input), send: input => execute('send', input), fork: input => execute('fork', input),
     archive: input => execute('archive', input), closeIdle: input => execute('closeIdle', input), resume: input => execute('resume', input),
     inspectAction: actionId => {
       uuid(actionId); const row = state.actions.find(value => value.actionId === actionId);
       return row ? { actionId: row.actionId, kind: row.kind, conversationId: row.conversationId, state: row.state,
-        ownerHeld: row.ownerHeld === true, ...(row.reasonCode ? { reasonCode: row.reasonCode } : {}), ...(row.nativeTurnNotStarted ? { nativeTurnNotStarted: true } : {}) } : undefined;
+        ownerHeld: row.ownerHeld === true, ...(row.reasonCode ? { reasonCode: row.reasonCode } : {}), ...(row.nativeStatus ? { nativeStatus: row.nativeStatus } : {}), ...(row.nativeTurnNotStarted ? { nativeTurnNotStarted: true } : {}) } : undefined;
     },
     currentOperation: () => operations.size ? 'Native persistent conversation' : [...live.values()].some(worker => worker.currentOperation()) ? 'Awaiting persistent Native ownership settlement' : null,
     destroy });

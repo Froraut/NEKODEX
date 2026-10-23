@@ -21,6 +21,8 @@ async function fixture(capacity = 3, terminalTimeoutMs = 50) {
   let admissionId = 'a'.repeat(64); const model = 'synthetic-model';
   const profileId = randomUUID(), epoch = randomUUID();
   const historySource = { profileId, authEpoch: epoch, backendAccountId: 'synthetic-account', sourceId: 'c'.repeat(64) };
+  const interrupted = new Map<string, () => void>();
+  let holdInterrupt = false;
   const forkParents = new Map<string, string | null>();
   let holdClose = false, closeSeen: (() => void) | undefined;
   let emitThreadClose: ((id: string) => void) | undefined, holdResume = false, resumeSeen: (() => void) | undefined;
@@ -58,6 +60,7 @@ async function fixture(capacity = 3, terminalTimeoutMs = 50) {
             const params = request.params, turnId = randomUUID(), threadId = params.threadId;
             histories.get(threadId)!.push(params.input[0].text);
             response(request, { turn: { id: turnId } });
+            interrupted.set(threadId, () => event('turn/completed', { threadId, turn: { id: turnId, status: 'interrupted' } }));
             const finish = () => {
               event('item/completed', { threadId, turnId, completedAtMs: Date.now(), item: { type: 'userMessage', id: randomUUID(), clientId: params.clientUserMessageId, content: params.input } });
               event('item/completed', { threadId, turnId, completedAtMs: Date.now(), item: { type: 'agentMessage', id: randomUUID(), phase: 'final_answer', text: JSON.stringify({ protocol: 'neko-agent-v1', kind: 'final', requestId: null, toolId: null, argumentsJson: null, summary: `Observed ${params.input[0].text}` }) } });
@@ -66,6 +69,7 @@ async function fixture(capacity = 3, terminalTimeoutMs = 50) {
             if (holdNext) { holdNext = false; held.set(threadId, finish); } else finish();
             turnWaiters.get(params.input[0].text)?.(); turnWaiters.delete(params.input[0].text);
           }
+          if (request.method === 'turn/interrupt' && !holdInterrupt) response(request, {});
           if (request.method === 'thread/unsubscribe') { response(request, {}); if (holdClose) { closeSeen?.(); } else event('thread/closed', { threadId: request.params.threadId }); }
         }); done();
       } });
@@ -88,6 +92,8 @@ async function fixture(capacity = 3, terminalTimeoutMs = 50) {
       writeFileSync(file, JSON.stringify(value), { mode: 0o600 });
       service = createPersistentNativeConversations({ getExecution: () => context, storageRoot });
     },
+    interruptTerminal: (threadId: string) => { interrupted.get(threadId)!(); held.delete(threadId); },
+    holdInterrupt: () => { holdInterrupt = true; },
     holdClose: () => { holdClose = true; return new Promise<void>(resolve => { closeSeen = resolve; }); },
     emitOldClose: (threadId: string) => emitThreadClose!(threadId),
     holdResume: () => { holdResume = true; return new Promise<void>(resolve => { resumeSeen = resolve; }); },
@@ -447,5 +453,68 @@ test('Archive listing is account scoped and paginated; settled failed receipts d
     expect(first.quota.actions).toBe(1);
     expect(f.service.list({ archiveCursor: first.archiveNextCursor }).archivedConversations).toHaveLength(1);
     await f.service.create(f.create('not blocked by failed history'));
+  } finally { await f.close(); }
+});
+
+test('Stop works at the action quota while Send is pending; ACK waits terminal and exact cleanup then Resume', async () => {
+  const f = await fixture(3, 5000);
+  try {
+    await f.service.create(f.create('old'));
+    await f.rewriteRegistry(value => { for (let i = 1; i < 511; i++) value.actions.push({ ...value.actions[0], actionId: randomUUID(), fingerprint: 'old-completed-fixture' }); });
+    f.hold(); const turnSeen = f.waitForTurn('held'), input = f.create('held'), sending = f.service.create(input);
+    await turnSeen; await Promise.resolve();
+    const active = f.service.list().conversations.find((row: any) => row.status === 'running');
+    expect(f.service.list().quota.actions).toBe(512); expect(active.stopAvailable).toBe(true);
+    const stop = { actionId: randomUUID(), conversationId: active.id, revision: active.revision, expectedContext: f.expectedContext };
+    const response = await f.service.stop(stop);
+    expect(response.conversations.find((row: any) => row.id === active.id)).toMatchObject({ revision: active.revision, stopAvailable: false, status: 'running' });
+    expect(f.service.inspectAction(stop.actionId)).toMatchObject({ state: 'stopping', ownerHeld: true });
+    await f.service.stop(stop);
+    expect(f.methods.filter(row => row.method === 'turn/interrupt')).toHaveLength(1);
+    const closed = f.holdClose(); f.interruptTerminal(active.threadId); await sending; await closed;
+    expect(f.service.inspectAction(stop.actionId).state).toBe('stopping');
+    f.emitOldClose(active.threadId);
+    // Await a concrete service completion observation without arbitrary sleeps.
+    await f.service.destroy();
+    expect(f.service.inspectAction(stop.actionId)).toMatchObject({ state: 'completed', ownerHeld: false, nativeStatus: 'interrupted' });
+    const disk = JSON.parse(readFileSync(join(f.storageRoot, 'registry.json'), 'utf8'));
+    expect(disk.conversations.find((row: any) => row.id === active.id)).toMatchObject({ status: 'unloaded', revision: active.revision, activeActionId: input.actionId });
+    expect(disk.actions.find((row: any) => row.actionId === input.actionId)).toMatchObject({ state: 'failed', nativeStatus: 'interrupted' });
+    await f.restart();
+    const resumed = await f.service.resume({ actionId: randomUUID(), conversationId: active.id, revision: active.revision, expectedContext: f.expectedContext });
+    expect(resumed.conversations.find((row: any) => row.id === active.id).status).toBe('idle');
+    expect(f.methods.filter(row => row.method === 'turn/start')).toHaveLength(2);
+  } finally { await f.close(); }
+});
+
+test('lost Stop ACK remains nonreplayable and late exact terminal settles the retained Stop', async () => {
+  const f = await fixture(3, 5000);
+  try {
+    f.hold(); const turnSeen = f.waitForTurn('held-stop'), sending = f.service.create(f.create('held-stop'));
+    await turnSeen; await Promise.resolve(); const row = f.service.list().conversations[0];
+    f.holdInterrupt(); const input = { actionId: randomUUID(), conversationId: row.id, revision: row.revision, expectedContext: f.expectedContext };
+    await f.service.stop(input);
+    expect(f.service.inspectAction(input.actionId)).toMatchObject({ state: 'unknown', ownerHeld: true });
+    await f.service.stop(input);
+    await expect(f.service.stop({ ...input, actionId: randomUUID() })).rejects.toMatchObject({ actionRecorded: false, code: 'stop_unavailable' });
+    expect(f.methods.filter(row => row.method === 'turn/interrupt')).toHaveLength(1);
+    f.interruptTerminal(row.threadId); await sending; await f.service.destroy();
+    expect(f.service.inspectAction(input.actionId)).toMatchObject({ state: 'completed', nativeStatus: 'interrupted' });
+  } finally { await f.close(); }
+});
+
+test('Archive accepts a known failed settled subscription without manufacturing an unknown retirement', async () => {
+  const f = await fixture(3, 5000);
+  try {
+    f.hold(); const turnSeen = f.waitForTurn('failed-turn'), sending = f.service.create(f.create('failed-turn'));
+    await turnSeen; await Promise.resolve(); const row = f.service.list().conversations[0];
+    f.interruptTerminal(row.threadId); await sending;
+    // The matching closed event is delivered by the same in-memory fixture queue.
+    await Promise.resolve();
+    const current = f.service.list().conversations[0]; expect(current.archiveAvailable).toBe(true);
+    const input = { actionId: randomUUID(), conversationId: row.id, revision: current.revision, expectedContext: f.expectedContext };
+    await f.service.archive(input);
+    expect(f.service.inspectAction(input.actionId)).toMatchObject({ state: 'completed', ownerHeld: false });
+    expect(f.service.list().archivedCount).toBe(1);
   } finally { await f.close(); }
 });
