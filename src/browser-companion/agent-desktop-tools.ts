@@ -76,7 +76,7 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
     if (closed || platform !== "darwin") throw new Error("Native desktop provider is unavailable on this platform");
     return native ??= options.createProvider();
   }
-  const propertyPermission = () => enabled && !!native && native.passiveStatus().enabled && !native.passiveStatus().closed && !native.passiveStatus().uncertain
+  const propertyPermission = () => enabled && !!native && native.passiveStatus().enabled && !native.passiveStatus().closed && !native.passiveStatus().transportClosed && !native.passiveStatus().uncertain
     && !!cached?.enabled && cached.accessibilityGranted && !cached.uncertain;
   const propertiesAvailable = () => propertyPermission() && !!cached?.selectionCurrent && cached.inputWindowBound;
   const available = () => propertiesAvailable() && !!cached?.screenCaptureGranted;
@@ -85,9 +85,11 @@ export function createAgentDesktopToolsProvider(options: AgentDesktopToolsOption
     if (scope) validateToolScope(scope);
     const selected = cached?.selected ? selectionOf(cached.selected) : null;
     const count = Math.max(pending.size, native?.passiveStatus().activeCount ?? 0);
+    const helperClosed = native?.passiveStatus().transportClosed === true;
     return {
       providerId: PROVIDER_ID, platform, state: closed ? "closed" as const : reason && !enabled ? "unavailable" as const : enabled ? "enabled" as const : "disabled" as const,
-      enabled, created: !!native, activeCount: count, available: available(), reason,
+      enabled, created: !!native, activeCount: count, available: available(), helperClosed,
+      reason: reason ?? (helperClosed ? "Native desktop helper is closed; no automatic restart" : null),
       permissions: cached ? { screenCaptureGranted: cached.screenCaptureGranted, accessibilityGranted: cached.accessibilityGranted, postEventGranted: cached.postEventGranted } : null,
       permissionClient: cached ? structuredClone(cached.permissionClient) : null,
       permissionInspectionAt: inspectedAt, nativeStatus: cached ? structuredClone(cached) : null,

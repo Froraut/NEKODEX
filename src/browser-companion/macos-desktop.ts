@@ -46,6 +46,8 @@ export type MacosWindowMetadata = z.infer<typeof windowSchema>;
 export type MacosDesktopStatus = z.infer<typeof statusSchema>;
 export interface NativeDesktopTransport {
   readonly activeCount?: number;
+  /** Passive transport lifecycle only; reading this never starts a helper. */
+  readonly isClosed?: boolean;
   request(command: 'status' | 'listWindows' | 'openPermissionSettings' | 'enable' | 'select' | 'observe' | 'image' | 'act' | 'invalidate' | 'properties', body?: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
   close(): Promise<void>;
   readExistingReceipt?(operationId: string, binding: DesktopBinding): unknown | undefined;
@@ -60,6 +62,7 @@ export class NativeDesktopHelperClient implements NativeDesktopTransport {
   private receipts = new Map<string, { binding: DesktopBinding; fingerprint: string; value?: unknown }>();
   private bytes = Buffer.alloc(0);
   private closed = false;
+  get isClosed(): boolean { return this.closed; }
   private closing?: Promise<void>;
   private idleWaiters = new Set<() => void>();
   /** `prepare` re-establishes the pinned bytes at `executable` before each start (the stable
@@ -177,7 +180,7 @@ export class NativeDesktopHelperClient implements NativeDesktopTransport {
 }
 
 export interface MacosDesktopProvider extends DesktopProviderPort {
-  passiveStatus(): { activeCount: number; uncertain: boolean; enabled: boolean; closed: boolean };
+  passiveStatus(): { activeCount: number; uncertain: boolean; enabled: boolean; closed: boolean; transportClosed: boolean };
   waitForIdle(): Promise<void>;
   status(signal?: AbortSignal): Promise<MacosDesktopStatus>;
   listWindows(signal?: AbortSignal): Promise<MacosWindowMetadata[]>;
@@ -217,7 +220,7 @@ export function createMacosDesktopProvider(options: { helperExecutable: string; 
   };
   const status = async (signal?: AbortSignal) => statusSchema.parse(await native().request('status', {}, signal));
   const provider: MacosDesktopProvider = {
-    passiveStatus: () => ({ activeCount: Math.max(busy ? 1 : 0, transport?.activeCount ?? 0, closingOwners), uncertain, enabled, closed }),
+    passiveStatus: () => ({ activeCount: Math.max(busy ? 1 : 0, transport?.activeCount ?? 0, closingOwners), uncertain, enabled, closed, transportClosed: transport?.isClosed === true }),
     async waitForIdle() {
       const current = transport;
       if ((current?.activeCount ?? 0) > 0 && current?.waitForIdle) await current.waitForIdle();
