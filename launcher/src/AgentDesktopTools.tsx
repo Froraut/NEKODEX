@@ -18,10 +18,11 @@ export function AgentDesktopTools({ api, desktop, scope, locked, choose, act, re
   const supported = desktop?.platform === 'darwin';
   const closed = desktop?.state === 'closed';
   const enabled = desktop?.enabled === true;
-  // Enabled is the user's preference, not proof that the retained helper still runs.
-  // A false readiness value alone can also mean a missing selection or permission.
-  const helperUnavailable = enabled && desktop?.available === false && desktop.nativeStatus === null && !!desktop.reason;
+  // Only the transport owner can establish closure. A rejected read also clears
+  // cached native status while leaving the same helper alive and inspectable.
+  const helperUnavailable = desktop?.helperClosed === true;
   const unavailable = desktop?.state === 'unavailable' || closed || helperUnavailable;
+  const inspectionRequired = enabled && !unavailable && desktop?.nativeStatus === null;
   const send = (body: Record<string, unknown>) => void act(async () => { await api.request(body); await refresh(); });
   const client = desktop?.permissionClient ?? null;
   const entry = client?.name ?? DESKTOP_HELPER_ENTRY;
@@ -38,13 +39,14 @@ export function AgentDesktopTools({ api, desktop, scope, locked, choose, act, re
   return <Panel title={choose('Selected macOS desktop tools', 'Инструменты окон macOS')} className="agent-desktop-tools">
     <p>{choose(`Enable desktop access and add up to ${maximum} exact windows to this task. The model chooses an attached window for each approved read; each click or text input needs a fresh observation of that window. Access is off after a runtime restart.`, `Включите доступ к рабочему столу и добавьте в задачу до ${maximum} точных окон. Модель выбирает прикреплённое окно для каждого подтверждённого чтения; клик или ввод текста требует свежего наблюдения этого окна. После перезапуска среды доступ выключен.`)}</p>
     <div className="agent-desktop-tools__actions">
-      <Badge tone={enabled && !unavailable ? 'success' : 'neutral'}>{!desktop ? choose('Status unavailable', 'Состояние недоступно') : unavailable ? choose('Desktop helper unavailable', 'Desktop helper недоступен') : enabled ? choose('Enabled by explicit action', 'Включено явным действием') : choose('Disabled', 'Выключено')}</Badge>
+      <Badge tone={enabled && !unavailable && !inspectionRequired ? 'success' : 'neutral'}>{!desktop ? choose('Status unavailable', 'Состояние недоступно') : unavailable ? choose('Desktop helper unavailable', 'Desktop helper недоступен') : inspectionRequired ? choose('Inspection required', 'Требуется проверка') : enabled ? choose('Enabled by explicit action', 'Включено явным действием') : choose('Disabled', 'Выключено')}</Badge>
       <Badge tone={bound ? 'success' : 'neutral'}>{bound ? choose(`${attachments.length} windows in this task`, `Окон в задаче: ${attachments.length}`) : choose('No windows in this task', 'В задаче нет окон')}</Badge>
       <span>{choose('Active operations', 'Активные операции')}: {desktop?.activeCount ?? 0}</span>
     </div>
-    {!desktop ? <Notice>{choose('Native desktop controller status is unavailable. This panel does not start a helper automatically.', 'Состояние native desktop controller недоступно. Эта панель не запускает helper автоматически.')}</Notice> : !supported ? <Notice tone="warning">{choose('Native desktop control is available only on macOS. This platform is unavailable.', 'Native desktop поддерживается только на macOS. На текущей платформе он недоступен.')}</Notice> : unavailable || desktop.reason ? <Notice tone="warning">
-      <p>{desktop.reason ?? choose('The native desktop owner is unavailable.', 'Native desktop owner недоступен.')}</p>
+    {!desktop ? <Notice>{choose('Native desktop controller status is unavailable. This panel does not start a helper automatically.', 'Состояние native desktop controller недоступно. Эта панель не запускает helper автоматически.')}</Notice> : !supported ? <Notice tone="warning">{choose('Native desktop control is available only on macOS. This platform is unavailable.', 'Native desktop поддерживается только на macOS. На текущей платформе он недоступен.')}</Notice> : unavailable || inspectionRequired || desktop.reason ? <Notice tone="warning">
+      <p>{desktop.reason ?? (inspectionRequired ? choose('Current desktop status has not been inspected.', 'Актуальное состояние desktop не проверено.') : choose('The native desktop owner is unavailable.', 'Native desktop owner недоступен.'))}</p>
       {unavailable && enabled && !closed ? <p>{choose('Choose Disable and release desktop access, then Enable desktop provider to start a fresh helper and answer its Allow confirmation. Nothing restarts automatically; retained unknown outcomes are not replayed.', 'Нажмите «Выключить и освободить доступ», затем «Включить desktop provider», чтобы запустить новый helper и ответить на его подтверждение Allow. Автоматического перезапуска и повтора сохранённых неизвестных исходов нет.')}</p> : null}
+      {inspectionRequired ? <p>{choose('The last desktop read did not confirm current status. Choose Inspect permissions without prompting, then refresh the window list if needed. Inspection does not enable desktop access or replay input.', 'Последнее чтение не подтвердило актуальное состояние. Нажмите «Проверить разрешения без системного запроса», затем при необходимости обновите список окон. Проверка не включает доступ и не повторяет ввод.')}</p> : null}
     </Notice> : null}
     <dl className="agent-desktop-tools__permissions">
       {rows.map(row => <div key={row.permission}><dt>{row.label}</dt><dd>{permission(row.granted)}
@@ -83,6 +85,7 @@ export function AgentDesktopTools({ api, desktop, scope, locked, choose, act, re
       })}</ul>
     </> : null}
     {unavailable && desktop?.windows.length ? <Notice>{choose('The window list below is cached. The unavailable helper cannot confirm these windows or add them to this task.', 'Список окон ниже сохранён в кэше. Недоступный helper не может подтвердить эти окна или добавить их в задачу.')}</Notice> : null}
+    {inspectionRequired && desktop?.windows.length ? <Notice>{choose('The window list below is cached. Inspect current status before adding a window to this task.', 'Список окон ниже сохранён в кэше. Перед добавлением окна проверьте актуальное состояние.')}</Notice> : null}
     {desktop?.windows.length ? <ul className="agent-desktop-tools__windows">{desktop.windows.map(row => {
       const selection = { windowId: row.windowId, processId: row.processId, windowEpoch: row.windowEpoch };
       const attached = attachments.some(attachment => sameWindow(attachment.selection, selection));
@@ -90,7 +93,7 @@ export function AgentDesktopTools({ api, desktop, scope, locked, choose, act, re
         <strong>{row.owner}{row.title ? ` · ${row.title}` : ''}</strong>
         <span>{row.foreground ? choose('Foreground', 'Активное окно') : choose('Background', 'Фоновое окно')} · {choose('Window', 'Окно')}: {row.windowId} · {choose('Process', 'Процесс')}: {row.processId}</span>
         <code>{row.windowEpoch}</code>
-        <div><Button size="sm" disabled={locked || !scope || !enabled || !supported || attached || unavailable || attachments.length >= maximum} onClick={() => send({ action: 'selectDesktopWindow', scope, expectedSelection: selection, explicitUserAction: true })}>{attached ? choose('In this task', 'В этой задаче') : choose('Add this window to the task', 'Добавить окно в задачу')}</Button></div>
+        <div><Button size="sm" disabled={locked || !scope || !enabled || !supported || attached || unavailable || inspectionRequired || attachments.length >= maximum} onClick={() => send({ action: 'selectDesktopWindow', scope, expectedSelection: selection, explicitUserAction: true })}>{attached ? choose('In this task', 'В этой задаче') : choose('Add this window to the task', 'Добавить окно в задачу')}</Button></div>
       </li>;
     })}</ul> : <p className="agent-desktop-tools__muted">{choose('The cached window list is empty. Use List window metadata to refresh it. No screenshot is read on this screen.', 'Сохранённый список окон пуст. Обновите его кнопкой «Получить список окон». Снимки экрана на этой панели не читаются.')}</p>}
     <div><Button disabled={locked || !scope || !bound} onClick={() => send({ action: 'revokeDesktopTools', scope, explicitUserAction: true })}>{choose('Remove all windows from this task', 'Убрать все окна из задачи')}</Button></div>

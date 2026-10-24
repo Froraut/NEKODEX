@@ -10,6 +10,8 @@ export interface AgentDesktopStatus {
   enabled: boolean;
   /** Cached readiness; false also includes a missing selection or permission. */
   available?: boolean;
+  /** Passive transport closure, distinct from a rejected read or stale status. */
+  helperClosed?: boolean;
   created: boolean;
   activeCount: number;
   permissions: null | { screenCaptureGranted: boolean; accessibilityGranted: boolean; postEventGranted: boolean };
